@@ -80,6 +80,10 @@ class CubeData:
 
         # Populate instance attributes in the correct units
         self.wave = wave.to("AA")
+        # Converting from MJy to CGS flux units:
+        # 1 MJy = 10^6 Jy
+        # 1 Jy = 10^-23 erg s^-1 cm^-2 Hz^-1
+        # Fλdλ = Fνdν  --->  Fλ = Fν|dν/dλ| = Fν(c/λ^2)
         self.intensity = intensity.to("erg/(s cm2 AA sr)", equivalencies=u.spectral_density(self._wv_extend))
         self.error = error.to("erg/(s cm2 AA sr)", equivalencies=u.spectral_density(self._wv_extend))
         self.omega = omega.to("sr/pix")
@@ -151,6 +155,7 @@ class CubeData:
         # nu or lambda subscript
         if space in ('freq', 'frequency'):
             sub = r'\nu'
+            # Fλdλ = Fνdν  --->  Fν = Fλ|dλ/dν| = Fν(λ^2/c)
             i_plot = i_plot.to("erg / (s cm2 Hz sr)", equivalencies=u.spectral_density(self._wv_extend))
             e_plot = e_plot.to("erg / (s cm2 Hz sr)", equivalencies=u.spectral_density(self._wv_extend))
         elif space in ('wave', 'wavelength'):
@@ -248,7 +253,9 @@ class CubeData:
             xval = self.wave.to('um')
         elif space in ('freq', 'frequency'):
             sub = r'\nu'
+            # c = λν ---> ν = c/λ
             xval = self.wave.to(u.THz, equivalencies=u.spectral())
+            # Fλdλ = Fνdν  --->  Fν = Fλ|dλ/dν| = Fν(λ^2/c)
             i_plot = i_plot.to("erg / (s cm2 Hz sr)", equivalencies=u.spectral_density(self._wv_extend))
             e_plot = e_plot.to("erg / (s cm2 Hz sr)", equivalencies=u.spectral_density(self._wv_extend))
 
@@ -332,7 +339,7 @@ class CubeData:
         :param filepath: str
             the path to the 's3d' JWST FITS file
         :param z: float, optional
-            the redshift of the source
+            the redshift of the source, if known
         
         :return cls:
             the object
