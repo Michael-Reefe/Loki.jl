@@ -8,6 +8,9 @@ from astropy.wcs import WCS
 from astropy import units as u
 from astropy.visualization import quantity_support
 
+# Useful constants
+C_KMS = 299792.458  # speed of light in km/s
+
 # MATPLOTLIB SETTINGS TO MAKE PLOTS LOOK PRETTY :)
 SMALL = 12
 MED = 14
@@ -28,8 +31,8 @@ quantity_support()
 
 class CubeData:
 
-    __slots__ = ['wave', 'intensity', 'error', 'mask', 'z', 'wcs', 'omega', 'name', 'ra', 'dec', 
-        'instrument', 'detector', 'channel', 'band', 'nx', 'ny', 'nz']
+    __slots__ = ['_wave', '_intensity', '_error', '_mask', 'z', 'wcs', '_omega', 'name', '_ra', '_dec', 
+        'instrument', 'detector', 'channel', 'band']
 
     @u.quantity_input(wave="AA", intensity="erg / (s cm2 AA sr)", error="erg / (s cm2 AA sr)", omega="sr/pix", ra="deg", dec="deg",
         equivalencies=u.spectral_density(None))
@@ -75,27 +78,25 @@ class CubeData:
         assert (error.ndim == 3) and (error.shape[0] == wave.shape[0]), "err array's first axis must match wavelength"
         assert omega.ndim == 0, "omega must be a scalar"
 
-        # Store dimensions of the cube as parameters
-        self.nz, self.ny, self.nx = intensity.shape
-
         # Populate instance attributes in the correct units
-        self.wave = wave.to("AA")
+        self._wave = wave.to("AA").value
+        _wv_extend = np.broadcast_to(self.wave[:, np.newaxis, np.newaxis], intensity.shape) << u.AA
         # Converting from MJy to CGS flux units:
         # 1 MJy = 10^6 Jy
         # 1 Jy = 10^-23 erg s^-1 cm^-2 Hz^-1
         # Fλdλ = Fνdν  --->  Fλ = Fν|dν/dλ| = Fν(c/λ^2)
-        self.intensity = intensity.to("erg/(s cm2 AA sr)", equivalencies=u.spectral_density(self._wv_extend))
-        self.error = error.to("erg/(s cm2 AA sr)", equivalencies=u.spectral_density(self._wv_extend))
-        self.omega = omega.to("sr/pix")
-        self.ra = ra.to("deg")
-        self.dec = dec.to("deg")
+        self._intensity = intensity.to("erg/(s cm2 AA sr)", equivalencies=u.spectral_density(_wv_extend)).value
+        self._error = error.to("erg/(s cm2 AA sr)", equivalencies=u.spectral_density(_wv_extend)).value
+        self._omega = omega.to("sr/pix").value
+        self._ra = ra.to("deg").value
+        self._dec = dec.to("deg").value
+        if mask is None:
+            mask = np.array([False] * self.intensity.size).reshape(self.intensity.shape)
+        self._mask = mask
 
         # Additional non-unit data
         self.name = name
         self.wcs = wcs
-        if mask is None:
-            mask = np.array([False] * self.intensity.size).reshape(self.intensity.shape)
-        self.mask = mask
         self.instrument = instrument
         self.detector = detector
         self.channel = channel
@@ -117,9 +118,9 @@ class CubeData:
         s += f'DETECTOR:     {self.detector}\n'
         s += f'CHANNEL:      {self.channel}\n'
         s += f'BAND:         {self.band}\n'
-        s += f'COORDINATES: ({self.ra.value:.2f},{self.dec.value:.2f})\n'
+        s += f'COORDINATES:  ({self.ra:.2f},{self.dec:.2f})\n'
         s += f'REDSHIFT:     {self.z:.4f}\n'
-        s += f'WAVELENGTH:  ({np.nanmin(self.wave.value):.2f} - {np.nanmax(self.wave.value):.2f}) {self.wave.unit}\n'
+        s += f'WAVELENGTH:   ({np.nanmin(self.wave)/1e4:.2f} - {np.nanmax(self.wave)/1e4:.2f}) um\n'
         s += '########################################################################################\n'
         return s
 
@@ -149,6 +150,9 @@ class CubeData:
         
         :return None:
         """
+        if (intensity is not False) and (error is not False) and (intensity != error):
+            raise ValueError("intensity and error should be plotted in the same units!")
+
         i_plot = self.intensity.copy()
         e_plot = self.error.copy()
 
@@ -156,8 +160,10 @@ class CubeData:
         if space in ('freq', 'frequency'):
             sub = r'\nu'
             # Fλdλ = Fνdν  --->  Fν = Fλ|dλ/dν| = Fν(λ^2/c)
-            i_plot = i_plot.to("erg / (s cm2 Hz sr)", equivalencies=u.spectral_density(self._wv_extend))
-            e_plot = e_plot.to("erg / (s cm2 Hz sr)", equivalencies=u.spectral_density(self._wv_extend))
+            i_plot *= self._wv_extend**2 / (C_KMS * 1e13)
+            e_plot *= self._wv_extend**2 / (C_KMS * 1e13)
+            # i_plot = i_plot.to("erg / (s cm2 Hz sr)", equivalencies=u.spectral_density(self._wv_extend))
+            # e_plot = e_plot.to("erg / (s cm2 Hz sr)", equivalencies=u.spectral_density(self._wv_extend))
         elif space in ('wave', 'wavelength'):
             sub = r'\lambda'
         else:
@@ -179,7 +185,7 @@ class CubeData:
         if log_e:
             e_plot = e_plot / np.abs(np.log(log_e) * i_plot)
         if log_i:
-            i_plot = np.log(i_plot / i_plot.unit) / np.log(log_i)
+            i_plot = np.log(i_plot) / np.log(log_i)
 
         unit_str = r"erg$\,$s$^{-1}\,$cm$^{-2}\,$" + \
             (r"${\rm \AA}^{-1}\,$" if space in ("wave", "wavelength") else r"Hz$^{-1}\,$") + \
@@ -191,7 +197,7 @@ class CubeData:
             ax1 = fig.add_subplot(121, projection=self.wcs if use_wcs else None)
             ax1.set_title(self.name)
             cdata = ax1.imshow(i_plot, origin='lower', cmap=colormap, 
-                vmin=np.nanpercentile(i_plot, 1).value, vmax=np.nanpercentile(i_plot, 99).value)
+                vmin=np.nanpercentile(i_plot, 1), vmax=np.nanpercentile(i_plot, 99))
             fig.colorbar(cdata, ax=ax1, fraction=0.046, pad=0.04,
                 label=('' if log_i is None else r'$\log_{%s}$(' % str(log_i)) + r'$I_{%s}\,/\,$' % sub + unit_str + (r')' if log_i else ''))
             ax1.set_xlabel(r'$\alpha$' if use_wcs else r'$x$ (spaxels)')
@@ -203,7 +209,7 @@ class CubeData:
             ax2 = fig.add_subplot(122, projection=self.wcs if use_wcs else None, sharey=ax1)
             ax2.set_title(self.name)
             cdata = ax2.imshow(e_plot, origin='lower', cmap=colormap,
-                vmin=np.nanpercentile(e_plot, 1).value, vmax=np.nanpercentile(e_plot, 99).value)
+                vmin=np.nanpercentile(e_plot, 1), vmax=np.nanpercentile(e_plot, 99))
             fig.colorbar(cdata, ax=ax2, fraction=0.046, pad=0.04,
                 label=r'$\sigma_{I_{%s}}\,/\,$' % sub + unit_str if log_e is None else r'$\sigma_{{\rm log_{%s}} I_{%s}}$' % (str(log_e), sub))
             ax2.set_xlabel(r'$\alpha$' if use_wcs else r'$x$ (spaxels)')
@@ -235,7 +241,7 @@ class CubeData:
         :param space: str
             Specifies if in wavelength or frequency space, accepts 'wave', 'wavelength', 'freq', 'frequency'
         :param spaxel: tuple, optional
-            Tuple of (x,y) spaxel coordinates to plot the 1D spectrum for; otherwise sum over all spaxels.
+            Tuple of (y,x) spaxel coordinates to plot the 1D spectrum for; otherwise sum over all spaxels.
         :param linestyle: str
             The matplotlib linestyle argument.
         
@@ -250,14 +256,19 @@ class CubeData:
         # Conversion to frequency space
         if space in ('wave', 'wavelength'):
             sub = r'\lambda'
-            xval = self.wave.to('um')
+            # Convert to um
+            xval = self.wave / 1e4
         elif space in ('freq', 'frequency'):
             sub = r'\nu'
             # c = λν ---> ν = c/λ
-            xval = self.wave.to(u.THz, equivalencies=u.spectral())
+            # factor of 1e13 for AA/km but factor of 1/1e12 for THz
+            xval = (C_KMS * 10) / self.wave
+            # xval = self.wave.to(u.THz, equivalencies=u.spectral())
             # Fλdλ = Fνdν  --->  Fν = Fλ|dλ/dν| = Fν(λ^2/c)
-            i_plot = i_plot.to("erg / (s cm2 Hz sr)", equivalencies=u.spectral_density(self._wv_extend))
-            e_plot = e_plot.to("erg / (s cm2 Hz sr)", equivalencies=u.spectral_density(self._wv_extend))
+            i_plot *= self._wv_extend**2 / (C_KMS * 1e13)
+            e_plot *= self._wv_extend**2 / (C_KMS * 1e13)
+            # i_plot = i_plot.to("erg / (s cm2 Hz sr)", equivalencies=u.spectral_density(self._wv_extend))
+            # e_plot = e_plot.to("erg / (s cm2 Hz sr)", equivalencies=u.spectral_density(self._wv_extend))
 
         # Convert to per pixel units
         if intensity in ("pix", "spax") or error in ("pix", "spax"):
@@ -281,16 +292,17 @@ class CubeData:
 
         else:
             # Get data for the single spaxel to plot
-            i_plot = i_plot[:, spaxel[1], spaxel[0]]
-            e_plot = e_plot[:, spaxel[1], spaxel[0]]
+            i_plot = i_plot[:, spaxel[0], spaxel[1]]
+            e_plot = e_plot[:, spaxel[0], spaxel[1]]
 
         # Take the logarithm if specified
         if space in ('wave', 'wavelength') and log:
             e_plot = e_plot / np.abs(i_plot * np.log(log))
-            i_plot = np.log(self.wave / self.wave.unit * i_plot / i_plot.unit) / np.log(log)
+            i_plot = np.log(self.wave * i_plot) / np.log(log)
         elif space in ('freq', 'frequency') and log:
             e_plot = e_plot / np.abs(i_plot * np.log(log))
-            i_plot = np.log(self.wave.to('Hz', equivalencies=u.spectral()) / u.Hz * i_plot / i_plot.unit) / np.log(log)
+            freq_Hz = (C_KMS * 1e13) / self.wave
+            i_plot = np.log(freq_Hz * i_plot) / np.log(log)
         
         xunit = r"${\rm \mu m}$" if space in ('wave', 'wavelength') else r"THz"
         yunit = r"erg$\,$s$^{-1}\,$cm$^{-2}\,$" + \
@@ -317,19 +329,6 @@ class CubeData:
         ax.tick_params(direction='in')
         plt.savefig(fname, dpi=300, bbox_inches='tight')
         plt.close()
-    
-    # Framework for extending the wavelength array into 3D for usage with astropy unit conversions
-    @property
-    def _wv_extend(self):
-        return np.broadcast_to(self.wave[:, np.newaxis, np.newaxis], (self.nz,self.ny,self.nx)) << self.wave.unit
-    
-    @_wv_extend.setter
-    def _wv_extend(self, value):
-        raise ValueError("The _wv_extend property may not be set.")
-
-    @_wv_extend.deleter
-    def _wv_extend(self):
-        raise ValueError("The _wv_extend property may not be deleted.")
     
     @classmethod
     def from_fits(cls, filepath, z=0):
@@ -373,4 +372,104 @@ class CubeData:
         band = hdu[0].header['BAND']
 
         return cls(wave, intensity, error, mask, z, wcs, omega, name, ra, dec, inst, detector, channel, band)
+    
+    @property
+    def _wv_extend(self):
+        """
+        Convenience function for broadcasting the wavelength vector to the shape of the intensity/error arrays
+        """
+        return np.broadcast_to(self.wave[:, np.newaxis, np.newaxis], self.intensity.shape)
+    
+    @_wv_extend.setter
+    def _wv_extend(self, val):
+        raise ValueError("the _wv_extend property cannot be set.")
+    
+    @_wv_extend.deleter
+    def _wv_extend(self):
+        raise ValueError("the _wv_extend property cannot be deleted.")
+    
+    # Basic data should be read-only
+    @property
+    def wave(self):
+        return self._wave
+    
+    @wave.setter
+    def wave(self, val):
+        raise ValueError("this data is read-only; if you need different data, make a new CubeData object")
+    
+    @wave.deleter
+    def wave(self):
+        raise ValueError("this data is read-only; if you need different data, make a new CubeData object")
 
+    @property
+    def intensity(self):
+        return self._intensity
+    
+    @intensity.setter
+    def intensity(self, val):
+        raise ValueError("this data is read-only; if you need different data, make a new CubeData object")
+    
+    @intensity.deleter
+    def intensity(self):
+        raise ValueError("this data is read-only; if you need different data, make a new CubeData object")
+
+    @property
+    def error(self):
+        return self._error
+    
+    @error.setter
+    def error(self, val):
+        raise ValueError("this data is read-only; if you need different data, make a new CubeData object")
+    
+    @error.deleter
+    def error(self):
+        raise ValueError("this data is read-only; if you need different data, make a new CubeData object")
+    
+    @property
+    def mask(self):
+        return self._mask
+    
+    @mask.setter
+    def mask(self, val):
+        raise ValueError("this data is read-only; if you need different data, make a new CubeData object")
+    
+    @mask.deleter
+    def mask(self):
+        raise ValueError("this data is read-only; if you need different data, make a new CubeData object")
+    
+    @property
+    def omega(self):
+        return self._omega
+    
+    @omega.setter
+    def omega(self, val):
+        raise ValueError("this data is read-only; if you need different data, make a new CubeData object")
+    
+    @omega.deleter
+    def omega(self):
+        raise ValueError("this data is read-only; if you need different data, make a new CubeData object")
+    
+    @property
+    def ra(self):
+        return self._ra
+    
+    @ra.setter
+    def ra(self, val):
+        raise ValueError("this data is read-only; if you need different data, make a new CubeData object")
+    
+    @ra.deleter
+    def ra(self):
+        raise ValueError("this data is read-only; if you need different data, make a new CubeData object")
+    
+    @property
+    def dec(self):
+        return self._dec
+    
+    @dec.setter
+    def dec(self, val):
+        raise ValueError("this data is read-only; if you need different data, make a new CubeData object")
+    
+    @dec.deleter
+    def dec(self):
+        raise ValueError("this data is read-only; if you need different data, make a new CubeData object")
+    
