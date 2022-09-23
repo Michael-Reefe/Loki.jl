@@ -71,8 +71,8 @@ class CubeData:
         assert wave.ndim == 1, "wave array must be 1D"
 
         # Check dimensions
-        assert (intensity.ndim == 3) and (intensity.shape[0] == wave.shape[0]), "intensity array's last axis must match wavelength"
-        assert (error.ndim == 3) and (error.shape[0] == wave.shape[0]), "err array's last axis must match wavelength"
+        assert (intensity.ndim == 3) and (intensity.shape[0] == wave.shape[0]), "intensity array's first axis must match wavelength"
+        assert (error.ndim == 3) and (error.shape[0] == wave.shape[0]), "err array's first axis must match wavelength"
         assert omega.ndim == 0, "omega must be a scalar"
 
         # Store dimensions of the cube as parameters
