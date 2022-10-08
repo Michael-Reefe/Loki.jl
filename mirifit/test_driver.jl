@@ -1,4 +1,11 @@
-include("mirifit.jl")
+include("cubedata.jl")
+include("parameters.jl")
+include("cubefit.jl")
+
+using .CubeData
+using .Parameters
+using .CubeFit
+
 using PlotlyJS
 
 obs = from_fits(["jw01328-o015_t014_miri_ch1-mediumshortlong-_s3d.fits", 

@@ -1,9 +1,11 @@
+module CubeData
+
+export DataCube, Observation, from_fits, to_rest_frame, apply_mask, correct, plot_2d, plot_1d, cube_rebin!
+
 # Import packages
 using Statistics
 using NaNStatistics  # => statistics functions, but ignoring NaNs
-using Distributions
 using ProgressMeter
-using JSON
 
 # Import astronomy packages
 using FITSIO
@@ -27,6 +29,9 @@ plt.switch_backend("Agg")
 using PyCall
 py_anchored_artists = pyimport("mpl_toolkits.axes_grid1.anchored_artists")
 
+include("utils.jl")
+using .Utils
+
 
 # MATPLOTLIB SETTINGS TO MAKE PLOTS LOOK PRETTY :)
 SMALL = 12
@@ -43,22 +48,6 @@ plt.rc("figure", titlesize=BIG)   # fontsize of the figure title
 plt.rc("text", usetex=true)
 plt.rc("font", family="Times New Roman")
 
-# CONVENIENT / SHORT ALIASES
-
-# Useful constants
-const C_MS = 299792458
-
-# Sum along specific dimensions, ignoring nans, and dropping those dimensions
-Σ(array, dims) = dropdims(nansum(array, dims=dims), dims=dims)
-
-# Extend a 1D array into other dimensions
-extend(array1d, shape) = repeat(reshape(array1d, (1,1,length(array1d))), outer=[shape...,1])
-
-# Convert wavelength to rest-frame
-rest_frame(λ, z) = @. λ / (1 + z)
-
-
-######################################## DATACUBES START #############################################
 
 struct DataCube{T1<:Real,T2<:Real,S<:Int}
     """ 
@@ -548,10 +537,6 @@ function plot_1d(data::DataCube, fname::String; intensity::Union{Bool,Symbol}=:s
 
 end
 
-########################################  DATACUBES END  #############################################
-
-
-####################################### OBSERVATION START ############################################
 
 struct Observation
     """
@@ -767,137 +752,4 @@ function cube_rebin!(obs::Observation, channels::Union{Vector{Int},Nothing}=noth
 
 end
 
-####################################### OBSERVATION  END  ############################################
-
-
-####################################### PARAMETERS START #############################################
-
-
-struct Parameter{T<:UnivariateDistribution}
-    """
-    A struct for holding information about parameters' initial value and priors
-    
-    :param value: Float
-        the initial value of the parameter
-    :param locked: Bool
-        false to allow the parameter to vary based on the prior, true to keep it fixed
-    :param prior: UnivariateDistribution
-        distribution structure that defines the prior (i.e. Normal, Uniform, LogUniform)
-    :param mcmc_scale: Float
-        the mcmc walker scale for the parameter
-    """
-
-    value::Float64
-    locked::Bool
-    prior::T
-    mcmc_scale::Float64
-
-    function Parameter(value::Float64, locked::Bool, prior::T) where {T<:UnivariateDistribution}
-        """
-        Constructor function without keyword arguments
-        """
-        if typeof(prior) <: Normal
-            mcmc_scale = std(prior) / 10
-        elseif typeof(prior) <: Uniform
-            dx₁ = abs(maximum(prior) - value)
-            dx₂ = abs(value - minimum(prior))
-            mcmc_scale = minimum([dx₁, dx₂]) / 100
-        else
-            mcmc_scale = value / 100
-        end
-
-        return new{T}(value, locked, prior, mcmc_scale)
-    end
-    
-    function Parameter(value::Float64; locked::Bool, prior::T) where {T<:UnivariateDistribution}
-        """
-        Constructor function with keyword arguments
-        """
-        if typeof(prior) <: Normal
-            mcmc_scale = std(prior) / 10
-        elseif typeof(prior) <: Uniform
-            dx₁ = abs(maximum(prior) - value)
-            dx₂ = abs(value - minimum(prior))
-            mcmc_scale = minimum([dx₁, dx₂]) / 100
-        else
-            mcmc_scale = value / 100
-        end
-
-        return new{T}(value, locked, prior, mcmc_scale)
-    end
 end
-
-Parameters = Dict{Symbol, Parameter}
-
-function to_json(parameters::Parameters, fname::String)
-    # Convert dict of parameters to serializable format
-    serial = Dict()
-    for key ∈ keys(parameters)
-        serial[key] = Dict(ki=>getfield(parameters[key], ki) for ki ∈ fieldnames(Parameter))
-        serial[key][:prior_name] = split(string(serial[key][:prior]), "{")[1]
-        serial[key][:prior_param] = params(serial[key][:prior])
-        delete!(serial[key], :prior)
-    end
-
-    # Save to json file
-    open(fname, "w") do f
-        JSON.print(f, serial, 4)
-    end
-end
-
-function from_json(fname::String)
-    # Read the JSON file
-    serial = JSON.parsefile(fname)
-    parameters = Parameters()
-
-    # Convert json strings to prior objects
-    for key ∈ keys(serial)
-        prior = eval(Meta.parse(serial[key]["prior_name"] * "($(serial[key]["prior_param"])...)"))
-        param = Parameter(serial[key]["value"], serial[key]["locked"], prior)
-        parameters[Symbol(key)] = param
-    end
-
-    return parameters
-end
-
-#######################################  PARAMETERS END  #############################################
-
-
-######################################### FITTING START ##############################################
-
-astropy_units = pyimport("astropy.units")
-helpers = pyimport("pahfit.helpers")
-
-function pahfit_spaxel(λ::Vector{Float64}, F::Vector{Float64}, σ::Vector{Float64}, label::String; nostart::Bool=false,
-    maxiter=10_000)
-
-    # Add astropy units
-    λ_q = λ << astropy_units.Angstrom
-    F_q = F << astropy_units.Unit("erg / (s cm2 AA)")
-    σ_q = σ << astropy_units.Unit("erg / (s cm2 AA)")
-
-    # Create the data object
-    pah_obs = Dict(
-        "x" => λ_q.to("um") << astropy_units.um,
-        "y" => F_q.to("Jy", equivalencies=astropy_units.spectral_density(λ_q)) << astropy_units.Jy,
-        "unc" => σ_q.to("Jy", equivalencies=astropy_units.spectral_density(λ_q)) << astropy_units.Jy
-        )
-    
-    # Create the model
-    pah_model = helpers.initialize_model("scipack_ExGal_SpitzerIRSSLLL.ipac", pah_obs, !nostart)
-
-    # Fit the spectrum with LevMarLSQFitter
-    pah_fit = helpers.fit_spectrum(pah_obs, pah_model, maxiter=maxiter)
-
-    pah_model.save(pah_fit, label, "ipac")
-    pah_model = helpers.initialize_model("$(label)_output.ipac", pah_obs, false)
-
-    compounds = helpers.calculate_compounds(pah_obs, pah_model)
-    cont_flux_Jy = (compounds["tot_cont"] .+ compounds["dust_features"]) .* compounds["extinction_model"]
-
-    F_cont = cont_flux_Jy .* 1e-23 .* (C_MS .* 1e10) ./ (pah_obs["x"].value .* 1e4).^2
-
-    return pah_model, F_cont
-end
-
-#########################################  FITTING END  ##############################################
