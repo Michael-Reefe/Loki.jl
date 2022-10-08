@@ -1,5 +1,10 @@
-# FITS files
+# data / plot files
 *.fits
+*.ipac
+
+*.pdf
+*.html
+
 # vscode
 .vscode/*
 # DS_Store
