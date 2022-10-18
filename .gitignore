@@ -1,9 +1,5 @@
-# data / plot files
-*.fits
-*.ipac
-
-*.pdf
-*.html
+test/**
+!test/test_driver.jl
 
 # vscode
 .vscode/*

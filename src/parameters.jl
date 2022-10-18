@@ -1,12 +1,10 @@
-module Parameters
-
-export Parameter, ParamDict, to_json, from_json
+module Param
 
 # Import packages
 using Distributions
 using JSON
 
-struct Parameter{T<:UnivariateDistribution}
+mutable struct Parameter{T<:UnivariateDistribution}
     """
     A struct for holding information about parameters' initial value and priors
     
@@ -61,6 +59,17 @@ struct Parameter{T<:UnivariateDistribution}
 end
 
 ParamDict = Dict{Symbol, Parameter}
+struct TransitionLine
+    """
+    A structure for an emission/absorption line with a given name, rest wavelength, and fitting parameters
+    """
+
+    name::String
+    λ₀::Float64
+    profile::Symbol
+    parameters::ParamDict
+
+end
 
 function to_json(parameters::ParamDict, fname::String)
     # Convert dict of parameters to serializable format

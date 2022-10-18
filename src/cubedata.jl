@@ -16,6 +16,7 @@ using Interpolations
 # Plotting utilities
 using ColorSchemes
 using LaTeXStrings
+using Reexport
 
 # Plotting with Python
 using PyPlot
@@ -30,8 +31,7 @@ using PyCall
 py_anchored_artists = pyimport("mpl_toolkits.axes_grid1.anchored_artists")
 
 include("utils.jl")
-using .Utils
-
+@reexport using .Util
 
 # MATPLOTLIB SETTINGS TO MAKE PLOTS LOOK PRETTY :)
 SMALL = 12
@@ -119,28 +119,6 @@ struct DataCube{T1<:Real,T2<:Real,S<:Int}
         return new{eltype(λ),eltype(Iλ),typeof(nx)}(λ, Iλ, σI, mask, Ω, α, δ, wcs, channel, band, nx, ny, nz, rest_frame, masked)
     end
 
-    # With keywords
-    function DataCube(λ::Vector{T1}, Iλ::Array{T2,3}, σI::Array{T2,3}; mask::Union{BitArray{3},Nothing}=nothing, 
-        Ω::T1=NaN, α::T1=NaN, δ::T1=NaN, wcs::Union{WCSTransform,Nothing}=nothing, channel::String="Generic Channel", 
-        band::String="Generic Band", rest_frame::Bool=false, masked::Bool=false) where {T1,T2}
-        """
-        A constructor for DataCube objects with keywords
-        """
-
-        # Make sure inputs have the right dimensions
-        @assert ndims(λ) == 1
-        @assert (ndims(Iλ) == 3) && (size(Iλ)[end] == size(λ)[1])
-        @assert (ndims(σI) == 3) && (size(σI)[end] == size(λ)[1])
-        nx, ny, nz = size(Iλ)
-
-        # Make default mask
-        if isnothing(mask)
-            mask = falses(shape(Iλ))
-        end
-
-        return new{eltype(λ),eltype(Iλ),typeof(nx)}(λ, Iλ, σI, mask, Ω, α, δ, wcs, channel, band, nx, ny, nz, rest_frame, masked)
-    end
-
 end
 
 # FITS Constructor 
@@ -199,15 +177,15 @@ function from_fits(filename::String)
     Å = 1e4
     λ .*= Å
     # Extend wavelength into same dimensionality as I and σI
-    ext_λ = extend(λ, (nx,ny)) 
+    ext_λ = Util.extend(λ, (nx,ny)) 
 
     # 1 Jy = 10^-23 erg s^-1 cm^-2 Hz^-1
     # 1 MJy = 10^6 Jy
     # Fνdν = Fλdλ
     # Fλ = Fν(dν/dλ) = Fν(c/λ²)
     # 1 erg s^-1 cm^-2 Å^-1 sr^-1 = Ω * 1 erg s^-1 cm^-2 Å^-1 spax^-1
-    Iλ = Iλ .* 1e-7 .* C_MS ./ ext_λ.^2
-    σI = σI .* 1e-7 .* C_MS ./ ext_λ.^2
+    Iλ = Iλ .* 1e-7 .* Util.C_MS ./ ext_λ.^2
+    σI = σI .* 1e-7 .* Util.C_MS ./ ext_λ.^2
 
     return DataCube(λ, Iλ, σI, mask, Ω, ra, dec, wcs, channel, band, false, false)
 end
@@ -225,7 +203,7 @@ function to_rest_frame(cube::DataCube, z::Float64)
     """
 
     if !cube.rest_frame
-        new_λ = rest_frame(cube.λ, z)
+        new_λ = Util.rest_frame(cube.λ, z)
         return DataCube(new_λ, cube.Iλ, cube.σI, cube.mask, cube.Ω, cube.α, cube.δ, cube.wcs, cube.channel, cube.band, true, cube.masked)
     end
     return cube
@@ -258,7 +236,7 @@ end
 # Plotting functions
 function plot_2d(data::DataCube, fname::String; intensity::Union{Bool,Symbol}=:sr, err::Symbol=:sr, logᵢ::Union{Int,Nothing}=10,
     logₑ::Union{Int,Nothing}=nothing, colormap::Symbol=:cubehelix, space::Symbol=:wave, name::Union{String,Nothing}=nothing, 
-    slice::Union{Int,Nothing}=nothing, z::Union{Float64,Nothing}=nothing)
+    slice::Union{Int,Nothing}=nothing, z::Union{Float64,Nothing}=nothing, marker::Union{Tuple{T,T},Nothing} where {T<:Real}=nothing)
     """
     A plotting utility function for 2D maps of the intensity / error
 
@@ -284,6 +262,8 @@ function plot_2d(data::DataCube, fname::String; intensity::Union{Bool,Symbol}=:s
         Index along the wavelength axis to plot. If nothing, sums the data along the wavelength axis.
     :param z: Float, optional
         The redshift of the source, used to calculate the distance and thus the spatial scale in kpc.
+    :param marker: Tuple, optional
+        Position in (x,y) coordinates to place a marker.
     
     :return nothing:
     """
@@ -295,21 +275,21 @@ function plot_2d(data::DataCube, fname::String; intensity::Union{Bool,Symbol}=:s
     # Copy arrays
     Iλ = copy(data.Iλ)
     σI = copy(data.σI)
-    ext_λ = extend(data.λ, (data.nx, data.ny))
+    ext_λ = Util.extend(data.λ, (data.nx, data.ny))
     
     # Convert to frequency domain if necessary
     if space ∈ (:freq, :frequency, :ν)
         # Fλdλ = Fνdν  --->  Fν = Fλ|dλ/dν| = Fν(λ^2/c)
-        Iλ .*= ext_λ.^2 ./ (C_MS .* 1e10)
-        σI .*= ext_λ.^2 ./ (C_MS .* 1e10)
+        Iλ .*= ext_λ.^2 ./ (Util.C_MS .* 1e10)
+        σI .*= ext_λ.^2 ./ (Util.C_MS .* 1e10)
     elseif !(space ∈ (:wave, :wavelength, :λ))
         error("Unrecognized argument for 'space': $space")
     end
 
     if isnothing(slice)
         # Sum up data along wavelength dimension
-        I = Σ(Iλ, 3)
-        σ = sqrt.(Σ(σI.^2, 3))
+        I = Util.Σ(Iλ, 3)
+        σ = sqrt.(Util.Σ(σI.^2, 3))
         # Reapply masks
         I[I .≤ 0.] .= NaN
         σ[σ .≤ 0.] .= NaN
@@ -381,6 +361,10 @@ function plot_2d(data::DataCube, fname::String; intensity::Union{Bool,Symbol}=:s
             ax1.add_artist(scalebar)
         end
 
+        if !isnothing(marker)
+            ax1.plot(marker[1], marker[2], "rx", ms=5)
+        end
+
     end
 
     if err ≠ false
@@ -406,6 +390,10 @@ function plot_2d(data::DataCube, fname::String; intensity::Union{Bool,Symbol}=:s
             scalebar = py_anchored_artists.AnchoredSizeBar(ax2.transData, n_pix, "1 kpc", "upper right", pad=1, color=:black,
                 frameon=false, size_vertical=0.2)
             ax2.add_artist(scalebar)
+        end
+
+        if !isnothing(marker)
+            ax2.plot(marker[1], marker[2], "rx", ms=5)
         end
 
     end
@@ -456,10 +444,10 @@ function plot_1d(data::DataCube, fname::String; intensity::Union{Bool,Symbol}=:s
     if space ∈ (:freq, :frequency, :ν)
         sub = "\\nu"
         # Fλdλ = Fνdν  --->  Fν = Fλ|dλ/dν| = Fν(λ^2/c)
-        Iλ .*= ext_λ.^2 ./ (C_MS .* 1e10)
-        σI .*= ext_λ.^2 ./ (C_MS .* 1e10)
+        Iλ .*= ext_λ.^2 ./ (Util.C_MS .* 1e10)
+        σI .*= ext_λ.^2 ./ (Util.C_MS .* 1e10)
         # factor of 1e10 for AA/m but factor of 1/1e12 for THz
-        xval = (C_MS / 100) ./ data.λ
+        xval = (Util.C_MS / 100) ./ data.λ
     elseif space ∈ (:wave, :wavelength, :λ)
         sub = "\\lambda"
         # convert to um
@@ -475,18 +463,18 @@ function plot_1d(data::DataCube, fname::String; intensity::Union{Bool,Symbol}=:s
 
     if isnothing(spaxel)
         # Sum up data along spatial dimensions
-        I = Σ(Iλ, (1,2))
-        σ = sqrt.(Σ(σI.^2, (1,2)))
+        I = Util.Σ(Iλ, (1,2))
+        σ = sqrt.(Util.Σ(σI.^2, (1,2)))
         # Reapply masks
         I[I .≤ 0.] .= NaN
         σ[σ .≤ 0.] .= NaN
 
         # If intensity was not per spaxel, we pick up an extra spaxel/sr term that must be divided out
         if intensity == :sr
-            I ./= Σ(Array{Int}(.~data.mask), (1,2))
+            I ./= Util.Σ(Array{Int}(.~data.mask), (1,2))
         end
         if err == :sr
-            σ ./= Σ(Array{Int}(.~data.mask), (1,2))
+            σ ./= Util.Σ(Array{Int}(.~data.mask), (1,2))
         end
 
     else
@@ -501,7 +489,7 @@ function plot_1d(data::DataCube, fname::String; intensity::Union{Bool,Symbol}=:s
         I .= log.(data.λ .* I) / log.(logᵢ)
     elseif logᵢ ≠ false && space ∈ (:freq, :frequency, :ν)
         σ .= σ ./ abs.(I .* log.(logᵢ)) 
-        ν_Hz = (C_MS .* 1e10) ./ data.λ
+        ν_Hz = (Util.C_MS .* 1e10) ./ data.λ
         I .= log.(ν_Hz .* I) / log.(logᵢ)
     end
 
@@ -577,15 +565,6 @@ struct Observation
         return new(channels, name, z, α, δ, instrument, detector, rest_frame, masked)
     end
     
-    function Observation(;channels::Dict{Int,DataCube}=Dict{Int,DataCube}(), name::String="Generic Observation",
-        z::Float64=NaN, α::Float64=NaN, δ::Float64=NaN, instrument::String="Generic Instrument", detector::String="Generic Detector",
-        rest_frame::Bool=false, masked::Bool=false)
-        """
-        A constructor for Observations with keywords
-        """
-
-        return new(channels, name, z, α, δ, instrument, detector, rest_frame, masked)
-    end
 end
 
 function from_fits(filenames::Vector{String}, z::Float64)
@@ -698,8 +677,8 @@ function cube_rebin!(obs::Observation, channels::Union{Vector{Int},Nothing}=noth
         # 2D Cubic interpolations at each wavelength bin
         prog = Progress(wi_size, dt=0.01, desc="Interpolating channel $ch_in...", showspeed=true)
         for wi ∈ 1:wi_size
-            interp_func_I = extrapolate(interpolate(ch_Iλ[:, :, wi], BSpline(Cubic(Flat(OnGrid())))), Flat())
-            interp_func_σ = extrapolate(interpolate(ch_σI[:, :, wi], BSpline(Cubic(Flat(OnGrid())))), Flat())
+            interp_func_I = extrapolate(interpolate(ch_Iλ[:, :, wi], BSpline(Cubic(Interpolations.Flat(OnGrid())))), Interpolations.Flat())
+            interp_func_σ = extrapolate(interpolate(ch_σI[:, :, wi], BSpline(Cubic(Interpolations.Flat(OnGrid())))), Interpolations.Flat())
             
             for (xᵣ, yᵣ) ∈ collect(Iterators.product(1:shape_ref[1], 1:shape_ref[2]))
                 xᵢ, yᵢ = pix_transform(xᵣ, yᵣ)
