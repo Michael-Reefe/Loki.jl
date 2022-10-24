@@ -22,25 +22,8 @@ mutable struct Parameter{T<:UnivariateDistribution}
     locked::Bool
     prior::T
     mcmc_scale::Float64
-
-    function Parameter(value::Float64, locked::Bool, prior::T) where {T<:UnivariateDistribution}
-        """
-        Constructor function without keyword arguments
-        """
-        if typeof(prior) <: Normal
-            mcmc_scale = std(prior) / 10
-        elseif typeof(prior) <: Uniform
-            dx₁ = abs(maximum(prior) - value)
-            dx₂ = abs(value - minimum(prior))
-            mcmc_scale = minimum([dx₁, dx₂]) / 100
-        else
-            mcmc_scale = value / 100
-        end
-
-        return new{T}(value, locked, prior, mcmc_scale)
-    end
     
-    function Parameter(value::Float64; locked::Bool, prior::T) where {T<:UnivariateDistribution}
+    function Parameter(value::Float64, locked::Bool, prior::T) where {T<:UnivariateDistribution}
         """
         Constructor function with keyword arguments
         """
@@ -56,50 +39,54 @@ mutable struct Parameter{T<:UnivariateDistribution}
 
         return new{T}(value, locked, prior, mcmc_scale)
     end
+
 end
 
-ParamDict = Dict{Symbol, Parameter}
+
+function from_dict(dict::Dict)
+    """
+    Constructor function from dictionary
+    """
+    value = dict["val"]
+    locked = dict["locked"]
+    pval = dict["pval"]
+    prior = eval(Meta.parse(dict["prior"] * "($pval...)"))
+
+    return Parameter(value, locked, prior)
+end 
+
+function from_dict_wave(dict::Dict)
+    value = dict["val"]
+    locked = dict["locked"]
+    pval = dict["val"] .+ dict["pval"]
+    prior = eval(Meta.parse(dict["prior"] * "($pval...)"))
+
+    return Parameter(value, locked, prior)
+end
+
+function from_dict_fwhm(dict::Dict)
+    value = dict["val"]
+    locked = dict["locked"]
+    pval = dict["val"] .* dict["pval"]
+    prior = eval(Meta.parse(dict["prior"] * "($pval...)"))
+
+    return Parameter(value, locked, prior)
+end
+
+# Aliasing
+ParamDict = Dict{Union{Symbol,String}, Parameter}
+
 struct TransitionLine
     """
     A structure for an emission/absorption line with a given name, rest wavelength, and fitting parameters
     """
-
-    name::String
     λ₀::Float64
     profile::Symbol
     parameters::ParamDict
 
 end
 
-function to_json(parameters::ParamDict, fname::String)
-    # Convert dict of parameters to serializable format
-    serial = Dict()
-    for key ∈ keys(parameters)
-        serial[key] = Dict(ki=>getfield(parameters[key], ki) for ki ∈ fieldnames(Parameter))
-        serial[key][:prior_name] = split(string(serial[key][:prior]), "{")[1]
-        serial[key][:prior_param] = params(serial[key][:prior])
-        delete!(serial[key], :prior)
-    end
-
-    # Save to json file
-    open(fname, "w") do f
-        JSON.print(f, serial, 4)
-    end
-end
-
-function from_json(fname::String)
-    # Read the JSON file
-    serial = JSON.parsefile(fname)
-    parameters = ParamDict()
-
-    # Convert json strings to prior objects
-    for key ∈ keys(serial)
-        prior = eval(Meta.parse(serial[key]["prior_name"] * "($(serial[key]["prior_param"])...)"))
-        param = Parameter(serial[key]["value"], serial[key]["locked"], prior)
-        parameters[Symbol(key)] = param
-    end
-
-    return parameters
-end
+# More aliasing
+LineDict = Dict{Union{Symbol,String}, TransitionLine}
 
 end

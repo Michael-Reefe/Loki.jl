@@ -1,0 +1,15 @@
+[SI_69865]
+wave = 6.9865
+profile = "Gaussian"
+
+    [SI_69865.voff]
+    val = 0.0
+    prior = "Uniform"
+    pval = [-500.0, 500.0]
+    locked = false
+
+    [SI_69865.fwhm]
+    val = 100.0
+    prior = "Uniform"
+    pval = [10.0, 1000.0]
+    locked = false

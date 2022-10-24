@@ -6,6 +6,7 @@ export DataCube, Observation, from_fits, to_rest_frame, apply_mask, correct, plo
 using Statistics
 using NaNStatistics  # => statistics functions, but ignoring NaNs
 using ProgressMeter
+using Printf
 
 # Import astronomy packages
 using FITSIO
@@ -56,9 +57,9 @@ struct DataCube{T1<:Real,T2<:Real,S<:Int}
     :param λ: array
         1D array of wavelengths, in Angstroms
     :param Iλ: array
-        3D array of intensity, in erg s^-1 cm^-2 Angstrom^-1 sr^-1
+        3D array of intensity, in MJy/sr
     :param σI: array
-        3D array of uncertainties, in erg s^-1 cm^-2 Angstrom^-1 sr^-1
+        3D array of uncertainties, in MJy/sr
     :param mask: array, optional
         3D array of booleans acting as a mask for the flux/error data
     :param wcs: WCS, optional
@@ -172,20 +173,23 @@ function from_fits(filename::String)
     if hdr["CUNIT3"] ≠ "um"
         error("Unrecognized wavelength unit: $(hdr["CUNIT3"])")
     end
-    # Convert units
-    # 1 μm = 10^4 Å
-    Å = 1e4
-    λ .*= Å
-    # Extend wavelength into same dimensionality as I and σI
-    ext_λ = Util.extend(λ, (nx,ny)) 
+    # # Convert units
+    # # 1 μm = 10^4 Å
+    # Å = 1e4
+    # λ .*= Å
+    # # Extend wavelength into same dimensionality as I and σI
+    # ext_λ = Util.extend(λ, (nx,ny)) 
 
-    # 1 Jy = 10^-23 erg s^-1 cm^-2 Hz^-1
-    # 1 MJy = 10^6 Jy
-    # Fνdν = Fλdλ
-    # Fλ = Fν(dν/dλ) = Fν(c/λ²)
-    # 1 erg s^-1 cm^-2 Å^-1 sr^-1 = Ω * 1 erg s^-1 cm^-2 Å^-1 spax^-1
-    Iλ = Iλ .* 1e-7 .* Util.C_MS ./ ext_λ.^2
-    σI = σI .* 1e-7 .* Util.C_MS ./ ext_λ.^2
+    # # 1 Jy = 10^-23 erg s^-1 cm^-2 Hz^-1
+    # # 1 MJy = 10^6 Jy
+    # # Fνdν = Fλdλ
+    # # Fλ = Fν(dν/dλ) = Fν(c/λ²)
+    # # 1 erg s^-1 cm^-2 Å^-1 sr^-1 = Ω * 1 erg s^-1 cm^-2 Å^-1 spax^-1
+    
+    # Iλ = Iλ .* 1e-7 .* Util.C_MS ./ ext_λ.^2
+    # σI = σI .* 1e-7 .* Util.C_MS ./ ext_λ.^2
+    Iλ = Array{Float64, 3}(Iλ)
+    σI = Array{Float64, 3}(σI)
 
     return DataCube(λ, Iλ, σI, mask, Ω, ra, dec, wcs, channel, band, false, false)
 end
@@ -234,28 +238,24 @@ function apply_mask(cube::DataCube)
 end
 
 # Plotting functions
-function plot_2d(data::DataCube, fname::String; intensity::Union{Bool,Symbol}=:sr, err::Symbol=:sr, logᵢ::Union{Int,Nothing}=10,
-    logₑ::Union{Int,Nothing}=nothing, colormap::Symbol=:cubehelix, space::Symbol=:wave, name::Union{String,Nothing}=nothing, 
+function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=true, logᵢ::Union{Int,Nothing}=10,
+    logₑ::Union{Int,Nothing}=nothing, colormap::Symbol=:cubehelix, name::Union{String,Nothing}=nothing, 
     slice::Union{Int,Nothing}=nothing, z::Union{Float64,Nothing}=nothing, marker::Union{Tuple{T,T},Nothing} where {T<:Real}=nothing)
     """
     A plotting utility function for 2D maps of the intensity / error
 
     :param fname: String
         The file name of the plot to be saved.
-    :param intensity: Bool, Symbol
-        If 'sr', plot the intensity in flux sr^-1 units. If 'spax' or 'pix', plot in flux spax^-1 units. If false,
-        do not plot the intensity.
-    :param err: Bool, Symbol
-        If 'sr', plot the error in flux sr^-1 units. If 'spax' or 'pix', plot in flux spax^-1 units. If false,
-        do not plot the error.
-    :param log_i: Float, optional
+    :param intensity: Bool
+        If true, plot the intensity.
+    :param err: Bool
+        If true, plot the error.
+    :param logᵢ: Float, optional
         The base of the logarithm to take for intensity data. Set to None to not take the logarithm.
-    :param log_e: Float, optional
+    :param logₑ: Float, optional
         The base of the logarithm to take for the error data. Set to None to not take the logarithm.
     :param colormap: Symbol
         Matplotlib colormap for the data.
-    :param space: Symbol
-        Specifies if in wavelength or frequency space, accepts 'wave', 'wavelength', 'freq', 'frequency'
     :param name: String
         Name to put in the title of the plot.
     :param slice: Int, optional
@@ -267,47 +267,20 @@ function plot_2d(data::DataCube, fname::String; intensity::Union{Bool,Symbol}=:s
     
     :return nothing:
     """
-
-    if intensity ≠ false && err ≠ false && intensity ≠ err
-        error("intensity and error should be plotted in the same units!")
-    end
-    
-    # Copy arrays
-    Iλ = copy(data.Iλ)
-    σI = copy(data.σI)
-    ext_λ = Util.extend(data.λ, (data.nx, data.ny))
-    
-    # Convert to frequency domain if necessary
-    if space ∈ (:freq, :frequency, :ν)
-        # Fλdλ = Fνdν  --->  Fν = Fλ|dλ/dν| = Fν(λ^2/c)
-        Iλ .*= ext_λ.^2 ./ (Util.C_MS .* 1e10)
-        σI .*= ext_λ.^2 ./ (Util.C_MS .* 1e10)
-    elseif !(space ∈ (:wave, :wavelength, :λ))
-        error("Unrecognized argument for 'space': $space")
-    end
-
     if isnothing(slice)
         # Sum up data along wavelength dimension
-        I = Util.Σ(Iλ, 3)
-        σ = sqrt.(Util.Σ(σI.^2, 3))
+        I = Util.Σ(data.Iλ, 3)
+        σ = sqrt.(Util.Σ(data.σI.^2, 3))
         # Reapply masks
         I[I .≤ 0.] .= NaN
         σ[σ .≤ 0.] .= NaN
         sub = ""
     else
         # Take the wavelength slice
-        I = Iλ[:, :, slice]
-        σ = σI[:, :, slice]
-        λᵢ = trunc(Int, data.λ[slice])
-        sub = "\\lambda$λᵢ"
-    end
-
-    # Convert to spaxel units if plotting w/r/t spaxels
-    if intensity ∈ (:spax, :pix) || err ∈ (:spax, :pix)
-        I .*= data.Ω
-        σ .*= data.Ω
-    elseif intensity ≠ :sr
-        error("Unrecognized intensity solid angle unit: $intensity")
+        I = data.Iλ[:, :, slice]
+        σ = data.σI[:, :, slice]
+        λᵢ = data.λ[slice]
+        sub = @sprintf "\\lambda%.2f" λᵢ
     end
 
     # Take logarithm if specified
@@ -319,9 +292,7 @@ function plot_2d(data::DataCube, fname::String; intensity::Union{Bool,Symbol}=:s
     end
 
     # Format units
-    unit_str = "erg\$\\,\$s\$^{-1}\\,\$cm\$^{-2}\\,\$" * 
-        (isnothing(slice) ? "" : (space ∈ (:wave, :wavelength, :λ) ? "\${\\rm \\AA}^{-1}\\,\$" : "Hz\$^{-1}\\,\$")) * 
-        (intensity == :sr || err == :sr ? "sr\$^{-1}\$" : "spax\$^{-1}\$")
+    unit_str = isnothing(slice) ? "MJy\$\\,\$sr\$^{-1}\\,\\mu\$m" : "MJy\$\\,\$sr\$^{-1}\$"
 
     ax1 = ax2 = nothing
 
@@ -335,8 +306,8 @@ function plot_2d(data::DataCube, fname::String; intensity::Union{Bool,Symbol}=:s
         DL = luminosity_dist(ΛCDM, z).val
     end
 
-    fig = plt.figure(figsize=intensity ≠ false && err ≠ false ? (12, 6) : (12,12))
-    if intensity ≠ false
+    fig = plt.figure(figsize=intensity && err ? (12, 6) : (12,12))
+    if intensity
         # Plot intensity on a 2D map
         ax1 = fig.add_subplot(121)
         ax1.set_title(isnothing(name) ? "" : name)
@@ -367,7 +338,7 @@ function plot_2d(data::DataCube, fname::String; intensity::Union{Bool,Symbol}=:s
 
     end
 
-    if err ≠ false
+    if err
         # Plot error on a 2D map
         ax2 = fig.add_subplot(122)
         ax2.set_title(isnothing(name) ? "" : name)
@@ -405,23 +376,19 @@ function plot_2d(data::DataCube, fname::String; intensity::Union{Bool,Symbol}=:s
 end
 
 
-function plot_1d(data::DataCube, fname::String; intensity::Union{Bool,Symbol}=:sr, err::Union{Bool,Symbol}=:sr, logᵢ::Union{Bool,Int}=false,
-    space::Symbol=:wave, spaxel::Union{Tuple{Int,Int},Nothing}=nothing, linestyle::String="-", name::Union{String,Nothing}=nothing)
+function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=true, logᵢ::Union{Bool,Int}=false,
+    spaxel::Union{Tuple{Int,Int},Nothing}=nothing, linestyle::String="-", name::Union{String,Nothing}=nothing)
     """
     A plotting utility function for 1D spectra of individual spaxels or the full cube.
     
     :param fname: String
         The file name of the plot to be saved.
-    :param intensity: Bool, Symbol
-        If 'sr', plot the intensity in flux sr^-1 units. If 'spax' or 'pix', plot in flux spax^-1 units. If False,
-        do not plot the intensity.
+    :param intensity: Bool
+        If true, plot the intensity.
     :param err: Bool
-        If 'sr', plot the error in flux sr^-1 units. If 'spax' or 'pix', plot in flux spax^-1 units. If False,
-        do not plot the error.
+        If true, plot the error.
     :param log: Int, optional
         The base of the logarithm to take for the flux/error data. Set to None to not take the logarithm.
-    :param space: String
-        Specifies if in wavelength or frequency space, accepts 'wave', 'wavelength', 'freq', 'frequency'
     :param spaxel: Tuple{Int,Int}, optional
         Tuple of (x,y) spaxel coordinates to plot the 1D spectrum for; otherwise sum over all spaxels.
     :param linestyle: String
@@ -431,93 +398,53 @@ function plot_1d(data::DataCube, fname::String; intensity::Union{Bool,Symbol}=:s
     
     :return nothing:
     """
-    if intensity ≠ false && err ≠ false && intensity ≠ err
-        error("intensity and error should be plotted in the same units!")
-    end
-
-    # Copy arrays
-    Iλ = copy(data.Iλ)
-    σI = copy(data.σI)
-    ext_λ = repeat(reshape(data.λ, (1,1,length(data.λ))), outer=[data.nx,data.ny,1]) 
-
-    # Convert to frequency domain if necessary
-    if space ∈ (:freq, :frequency, :ν)
-        sub = "\\nu"
-        # Fλdλ = Fνdν  --->  Fν = Fλ|dλ/dν| = Fν(λ^2/c)
-        Iλ .*= ext_λ.^2 ./ (Util.C_MS .* 1e10)
-        σI .*= ext_λ.^2 ./ (Util.C_MS .* 1e10)
-        # factor of 1e10 for AA/m but factor of 1/1e12 for THz
-        xval = (Util.C_MS / 100) ./ data.λ
-    elseif space ∈ (:wave, :wavelength, :λ)
-        sub = "\\lambda"
-        # convert to um
-        xval = data.λ ./ 1e4
-    else
-        error("Unrecognized argument for 'space': $space")
-    end 
-
-    if intensity ∈ (:spax, :pix) || err ∈ (:spax, :pix)
-        Iλ .*= data.Ω
-        σI .*= data.Ω
-    end
-
+    λ = data.λ
     if isnothing(spaxel)
         # Sum up data along spatial dimensions
-        I = Util.Σ(Iλ, (1,2))
-        σ = sqrt.(Util.Σ(σI.^2, (1,2)))
+        I = Util.Σ(data.Iλ, (1,2))
+        σ = sqrt.(Util.Σ(data.σI.^2, (1,2)))
         # Reapply masks
         I[I .≤ 0.] .= NaN
         σ[σ .≤ 0.] .= NaN
 
         # If intensity was not per spaxel, we pick up an extra spaxel/sr term that must be divided out
-        if intensity == :sr
-            I ./= Util.Σ(Array{Int}(.~data.mask), (1,2))
-        end
-        if err == :sr
-            σ ./= Util.Σ(Array{Int}(.~data.mask), (1,2))
-        end
-
+        I ./= Util.Σ(Array{Int}(.~data.mask), (1,2))
+        σ ./= Util.Σ(Array{Int}(.~data.mask), (1,2))
     else
         # Take the spaxel
-        I = Iλ[spaxel..., :]
-        σ = σI[spaxel..., :]
+        I = data.Iλ[spaxel..., :]
+        σ = data.σI[spaxel..., :]
         sub = "\\lambda"
     end
 
-    if logᵢ ≠ false && space ∈ (:wave, :wavelength, :λ)
-        σ .= σ ./ abs.(I .* log.(logᵢ))
-        I .= log.(data.λ .* I) / log.(logᵢ)
-    elseif logᵢ ≠ false && space ∈ (:freq, :frequency, :ν)
+    if logᵢ ≠ false
         σ .= σ ./ abs.(I .* log.(logᵢ)) 
-        ν_Hz = (Util.C_MS .* 1e10) ./ data.λ
+        ν_Hz = (Util.C_MS .* 1e6) ./ data.λ
         I .= log.(ν_Hz .* I) / log.(logᵢ)
     end
 
-    xunit = space ∈ (:wave, :wavelength, :λ) ? "\${\\rm \\mu m}\$" : "\${\\rm THz}\$"
-    yunit = "erg\$\\,\$s\$^{-1}\\,\$cm\$^{-2}\\,\$" * 
-        (space ∈ (:wave, :wavelength, :λ) && logᵢ == false ? "\${\\rm \\AA}^{-1}\\,\$" : (space ∈ (:freq, :frequency, :ν) && logᵢ == false ? "Hz\$^{-1}\\,\$" : "")) * 
-        (intensity == :sr || err == :sr ? "sr\$^{-1}\$" : (intensity ∈ (:spax, :pix) || err ∈ (:spax, :pix)) && !isnothing(spaxel) ? "spax\$^{-1}\$" : "")
-    yunittype = (intensity ∈ (:spax, :pix) || err ∈ (:spax, :pix)) && isnothing(spaxel) ? "F" : "I"
+    xunit = "\${\\rm \\mu m}\$"
+    yunit = logᵢ == false ? "MJy\$\\,\$sr\$^{-1}\$" : "MJy\$\\,\$sr\$^{-1}\\,\$Hz"
 
     # Plot formatting
     fig, ax = plt.subplots(figsize=(10,5))
-    if intensity ≠ false
-        ax.plot(xval, I, "k", linestyle=linestyle, label="Data")
+    if intensity
+        ax.plot(λ, I, "k", linestyle=linestyle, label="Data")
     end
-    if err ≠ false && intensity == false
-        ax.plot(xval, σ, "k", linestyle=linestyle, label="\$1\\sigma\$ Error")
+    if err && !intensity
+        ax.plot(λ, σ, "k", linestyle=linestyle, label="\$1\\sigma\$ Error")
     end
-    if intensity ≠ false && err ≠ false
-        ax.fill_between(xval, I.-σ, I.+σ, color="k", alpha=0.5, label="\$1\\sigma\$ Error")
+    if intensity && !err
+        ax.fill_between(λ, I.-σ, I.+σ, color="k", alpha=0.5, label="\$1\\sigma\$ Error")
     end
-    ax.set_xlabel("\$$sub\$ ($xunit)")
+    ax.set_xlabel("\$\\lambda\$ ($xunit)")
     if logᵢ == false
-        ax.set_ylabel("\$$(yunittype)_{$sub}\$ ($yunit)")
+        ax.set_ylabel("\$I_{\\nu}\$ ($yunit)")
     else
-        ax.set_ylabel("\$\\log_{$logᵢ}{$sub}{$yunittype}_{$sub}\$ ($yunit)")
+        ax.set_ylabel("\$\\log_{$logᵢ}{\\nu}{I}_{\\nu}\$ ($yunit)")
     end
     ax.legend(loc="upper right", frameon=false)
-    ax.set_xlim(minimum(xval), maximum(xval))
+    ax.set_xlim(minimum(λ), maximum(λ))
     ax.set_title(isnothing(name) ? "" * (isnothing(spaxel) ? "" : "Spaxel ($(spaxel[1]),$(spaxel[2]))") : name)
     ax.tick_params(direction="in")
     plt.savefig(fname, dpi=300, bbox_inches=:tight)

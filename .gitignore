@@ -1,5 +1,5 @@
 test/**
-!test/test_driver.jl
+!test/test_driver*.jl
 
 # vscode
 .vscode/*

@@ -1,0 +1,478 @@
+[stellar_continuum_temp]
+val = 5000.0
+prior = "Uniform"
+pval = [0.0, 1.0]
+locked = true
+
+[[dust_continuum_temps]]
+val = 300.0
+prior = "Uniform"
+pval = [0.0, 1.0]
+locked = true
+[[dust_continuum_temps]]
+val = 200.0
+prior = "Uniform"
+pval = [0.0, 1.0]
+locked = true
+[[dust_continuum_temps]]
+val = 135.0
+prior = "Uniform"
+pval = [0.0, 1.0]
+locked = true
+[[dust_continuum_temps]]
+val = 90.0
+prior = "Uniform"
+pval = [0.0, 1.0]
+locked = true
+[[dust_continuum_temps]]
+val = 65.0
+prior = "Uniform"
+pval = [0.0, 1.0]
+locked = true
+[[dust_continuum_temps]]
+val = 50.0
+prior = "Uniform"
+pval = [0.0, 1.0]
+locked = true
+[[dust_continuum_temps]]
+val = 40.0
+prior = "Uniform"
+pval = [0.0, 1.0]
+locked = true
+[[dust_continuum_temps]]
+val = 35.0
+prior = "Uniform"
+pval = [0.0, 1.0]
+locked = true
+
+[dust_features."PAH_5.24".wave]
+val = 5.24
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_5.24".fwhm]
+val = 0.058
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_5.27".wave]
+val = 5.27
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_5.27".fwhm]
+val = 0.179
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_5.70".wave]
+val = 5.7
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_5.70".fwhm]
+val = 0.2
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_5.87".wave]
+val = 5.87
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_5.87".fwhm]
+val = 0.2
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_6.00".wave]
+val = 6.0
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_6.00".fwhm]
+val = 0.2
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_6.18".wave]
+val = 6.18
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_6.18".fwhm]
+val = 0.1
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_6.30".wave]
+val = 6.3
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_6.30".fwhm]
+val = 0.187
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_6.69".wave]
+val = 6.69
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_6.69".fwhm]
+val = 0.468
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_7.42".wave]
+val = 7.42
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_7.42".fwhm]
+val = 0.935
+prior = "Uniform"
+pval = [0.4, 1.1]
+locked = false
+
+[dust_features."PAH_7.52".wave]
+val = 7.52
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_7.52".fwhm]
+val = 0.24
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_7.62".wave]
+val = 7.62
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_7.62".fwhm]
+val = 0.24
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_7.85".wave]
+val = 7.85
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_7.85".fwhm]
+val = 0.416
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_8.33".wave]
+val = 8.33
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_8.33".fwhm]
+val = 0.417
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_8.61".wave]
+val = 8.61
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_8.61".fwhm]
+val = 0.336
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_10.68".wave]
+val = 10.68
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_10.68".fwhm]
+val = 0.214
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_11.00".wave]
+val = 11.0
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_11.00".fwhm]
+val = 0.1
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_11.15".wave]
+val = 11.15
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_11.15".fwhm]
+val = 0.03
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_11.20".wave]
+val = 11.2
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_11.20".fwhm]
+val = 0.03
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_11.22".wave]
+val = 11.22
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_11.22".fwhm]
+val = 0.1
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_11.25".wave]
+val = 11.25
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_11.25".fwhm]
+val = 0.135
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_11.33".wave]
+val = 11.33
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_11.33".fwhm]
+val = 0.363
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_11.99".wave]
+val = 11.99
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_11.99".fwhm]
+val = 0.54
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_12.62".wave]
+val = 12.62
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_12.62".fwhm]
+val = 0.53
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_12.69".wave]
+val = 12.69
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_12.69".fwhm]
+val = 0.12
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_13.48".wave]
+val = 13.48
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_13.48".fwhm]
+val = 0.539
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_14.04".wave]
+val = 14.04
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_14.04".fwhm]
+val = 0.225
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_14.19".wave]
+val = 14.19
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_14.19".fwhm]
+val = 0.355
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_14.65".wave]
+val = 14.65
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_14.65".fwhm]
+val = 0.5
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_15.90".wave]
+val = 15.9
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_15.90".fwhm]
+val = 0.318
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_16.45".wave]
+val = 16.45
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_16.45".fwhm]
+val = 0.23
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_17.04".wave]
+val = 17.04
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_17.04".fwhm]
+val = 1.108
+prior = "Uniform"
+pval = [0.4, 1.1]
+locked = false
+
+[dust_features."PAH_17.375".wave]
+val = 17.375
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_17.375".fwhm]
+val = 0.209
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_17.87".wave]
+val = 17.87
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_17.87".fwhm]
+val = 0.286
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_18.92".wave]
+val = 18.92
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_18.92".fwhm]
+val = 0.359
+prior = "Uniform"
+pval = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_33.10".wave]
+val = 33.1
+prior = "Uniform"
+pval = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_33.10".fwhm]
+val = 1.655
+prior = "Uniform"
+pval = [0.4, 1.1]
+locked = false
+
+[extinction.tau_9_7]
+val = 0.5
+prior = "Uniform"
+pval = [0.0, 2.0]
+locked = false
+
+[extinction.beta]
+val = 0.1
+prior = "Uniform"
+pval = [0.0, 1.0]
+locked = true
