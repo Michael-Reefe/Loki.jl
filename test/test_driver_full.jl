@@ -21,15 +21,13 @@ obs = from_fits(["jw01328-o015_t014_miri_ch1-mediumshortlong-_s3d.fits",
 
 obs = correct(obs)
 
-# cube_rebin!(obs, [1,2])
-# x, y = 15, 15
-spax = Dict(1 => (19,25), 2 => (21,19), 3 => (22,25), 4 => (15,12))
-x, y = spax[1]
+# spax = Dict(1 => (19,25), 2 => (21,19), 3 => (22,25), 4 => (15,12))
+# x, y = spax[1]
 
-# Pick a spaxel to fit
-λ = obs.channels[1].λ
-I = obs.channels[1].Iλ[x, y, :]
-σ = obs.channels[1].σI[x, y, :]
+# # Pick a spaxel to fit
+# λ = obs.channels[1].λ
+# I = obs.channels[1].Iλ[x, y, :]
+# σ = obs.channels[1].σI[x, y, :]
 
 # Fit the cube
 param_maps, I_model = fit_cube(obs.channels[1]; progress=true, plot_continua=:none, plot_lines=:none)

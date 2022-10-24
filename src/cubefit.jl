@@ -8,6 +8,7 @@ using Interpolations
 using Dierckx
 using NaNStatistics
 using Optim
+# using BlackBoxOptim
 using CMPFit
 using TOML
 using NumericalIntegration
@@ -139,20 +140,28 @@ function continuum_fit_spaxel(λ::Vector{Float64}, I::Vector{Float64}, σ::Vecto
     λ_dc = clamp.(2898 ./ [Ti.value for Ti ∈ T_dc], minimum(λ), maximum(λ))
     A_dc = clamp.(Spline1D(λ, I, k=2, bc="extrapolate").(λ_dc) ./ 
         [Util.Blackbody_ν(λ_dci, T_dci.value) for (λ_dci, T_dci) ∈ zip(λ_dc, T_dc)] .* (λ_dc ./ 9.7).^2 ./ 5., 0., Inf)
+    amp_dc_prior = Uniform(0., 1e20)
+    amp_df_prior = Uniform(0., maximum(I))
     
     mean_df = [options[:dust_features][df][:wave] for df ∈ keys(options[:dust_features])]
     fwhm_df = [options[:dust_features][df][:fwhm] for df ∈ keys(options[:dust_features])]
 
     stellar_pars = [A_s, T_s.value]
     stellar_pnames = ["A_s", "T_s"]
+    stellar_priors = [amp_dc_prior, T_s.prior]
+
     dc_pars = vcat([[Ai, Ti.value] for (Ai, Ti) ∈ zip(A_dc, T_dc)]...)
     dc_pnames = vcat([["A_$i", "T_$i"] for i ∈ 1:n_dust_cont]...)
+    dc_priors = vcat([[amp_dc_prior, Ti.prior] for Ti ∈ T_dc]...)
+
     df_pars = vcat([[Ai, mi.value, fi.value] for (Ai, mi, fi) ∈ zip(A_df, mean_df, fwhm_df)]...)
     df_pnames = vcat([["A_$i", "μ_$i", "FWHM_$i"] for i ∈ 1:n_dust_features]...)
+    df_priors = vcat([[amp_df_prior, mi.prior, fi.prior] for (mi, fi) ∈ zip(mean_df, fwhm_df)]...)
 
     # Initial parameter vector
     p₀ = vcat(stellar_pars, dc_pars, df_pars, [τ_97.value], [β.value])
     pnames = vcat(stellar_pnames, dc_pnames, df_pnames, ["τ_9.7"], ["β"])
+    priors = vcat(stellar_priors, dc_priors, df_priors, [τ_97.prior], [β.prior])
 
     # Convert parameter limits into CMPFit object
     parinfo = CMPFit.Parinfo(length(p₀))
@@ -220,6 +229,22 @@ function continuum_fit_spaxel(λ::Vector{Float64}, I::Vector{Float64}, σ::Vecto
 
     res = cmpfit(λ, I, σ, (x, p) -> Util.Continuum(x, p, n_dust_cont, n_dust_features), p₀, parinfo=parinfo, config=config)
     popt = res.param
+
+    # function ln_prior(p)
+    #     logpdfs = [logpdf(priors[i], p[i]) for i ∈ 1:length(p)]
+    #     return sum(logpdfs)
+    # end
+
+    # function ln_probability(p)
+    #     model = Util.Continuum(λ, p, n_dust_cont, n_dust_features)
+    #     return Util.ln_likelihood(I, model, σ) + ln_prior(p)
+    # end
+
+    # @time res = bboptimize(p -> -ln_probability(p), p₀; SearchRange=[Distributions.params(prior) for prior ∈ priors],
+    #     MaxSteps=50000)
+    # popt = best_candidate(res)
+    # χ2 = -best_fitness(res)
+    # χ2red = χ2
 
     # Final optimized continuum fit
     I_cont, comps = Util.Continuum(λ, popt, n_dust_cont, n_dust_features, return_components=true)
