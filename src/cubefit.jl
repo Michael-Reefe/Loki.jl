@@ -5,11 +5,11 @@ export fit_cube
 # Import packages
 using Distributions
 using Interpolations
-using Dierckx
 using NaNStatistics
 using Optim
 # using BlackBoxOptim
 using CMPFit
+# using NLopt
 using TOML
 using NumericalIntegration
 using ProgressMeter
@@ -132,14 +132,17 @@ function continuum_fit_spaxel(λ::Vector{Float64}, I::Vector{Float64}, σ::Vecto
     n_dust_cont = length(T_dc)
     n_dust_features = length(options[:dust_features])
 
+    Δλ = diff(λ)[1]
+    λ_min, λ_max = minimum(λ), maximum(λ)
+    interp_func = cubic_spline_interpolation(λ_min:Δλ:λ_max, I, extrapolation_bc=Line())
+
     # Stellar amplitude
-    A_s = clamp(Spline1D(λ, I, k=2, bc="extrapolate")(5.5) / Util.Blackbody_ν(5.5, T_s.value), 0., Inf)
+    A_s = clamp(interp_func(5.5) / Util.Blackbody_ν(5.5, T_s.value), 0., Inf)
     # Dust feature amplitudes
     A_df = repeat([clamp(nanmedian(I)/2, 0., Inf)], n_dust_features)
     # Dust continuum amplitudes
     λ_dc = clamp.(2898 ./ [Ti.value for Ti ∈ T_dc], minimum(λ), maximum(λ))
-    A_dc = clamp.(Spline1D(λ, I, k=2, bc="extrapolate").(λ_dc) ./ 
-        [Util.Blackbody_ν(λ_dci, T_dci.value) for (λ_dci, T_dci) ∈ zip(λ_dc, T_dc)] .* (λ_dc ./ 9.7).^2 ./ 5., 0., Inf)
+    A_dc = clamp.(interp_func.(λ_dc) ./ [Util.Blackbody_ν(λ_dci, T_dci.value) for (λ_dci, T_dci) ∈ zip(λ_dc, T_dc)] .* (λ_dc ./ 9.7).^2 ./ 5., 0., Inf)
     amp_dc_prior = Uniform(0., 1e20)
     amp_df_prior = Uniform(0., maximum(I))
     
@@ -172,6 +175,7 @@ function continuum_fit_spaxel(λ::Vector{Float64}, I::Vector{Float64}, σ::Vecto
     # Stellar temp
     parinfo[2].fixed = T_s.locked
     if !(T_s.locked)
+        @assert T_s.prior isa Uniform
         parinfo[2].limited = (1,1)
         parinfo[2].limits = params(T_s.prior)
     end
@@ -229,27 +233,25 @@ function continuum_fit_spaxel(λ::Vector{Float64}, I::Vector{Float64}, σ::Vecto
 
     res = cmpfit(λ, I, σ, (x, p) -> Util.Continuum(x, p, n_dust_cont, n_dust_features), p₀, parinfo=parinfo, config=config)
     popt = res.param
+    χ2 = res.bestnorm
+    χ2red = res.bestnorm / res.dof
 
     # function ln_prior(p)
     #     logpdfs = [logpdf(priors[i], p[i]) for i ∈ 1:length(p)]
     #     return sum(logpdfs)
     # end
 
-    # function ln_probability(p)
+    # function nln_probability(p)
     #     model = Util.Continuum(λ, p, n_dust_cont, n_dust_features)
-    #     return Util.ln_likelihood(I, model, σ) + ln_prior(p)
+    #     return -Util.ln_likelihood(I, model, σ) - ln_prior(p)
     # end
 
-    # @time res = bboptimize(p -> -ln_probability(p), p₀; SearchRange=[Distributions.params(prior) for prior ∈ priors],
-    #     MaxSteps=50000)
-    # popt = best_candidate(res)
-    # χ2 = -best_fitness(res)
-    # χ2red = χ2
+    # res = optimize(nln_probability, minimum.(priors), maximum.(priors), p₀, NelderMead())
+    # popt = res.minimizer
+    # χ2 = χ2red = -res.minimum
 
     # Final optimized continuum fit
     I_cont, comps = Util.Continuum(λ, popt, n_dust_cont, n_dust_features, return_components=true)
-    χ2 = res.bestnorm
-    χ2red = res.bestnorm / res.dof
 
     if verbose
         println("Fit Results")
@@ -296,6 +298,8 @@ function continuum_fit_spaxel(λ::Vector{Float64}, I::Vector{Float64}, σ::Vecto
                     line=Dict(:color => "blue", :width => 1), name="Dust Features")])
             end
         end
+        # append!(traces, [PlotlyJS.scatter(x=λ, y=Util.Continuum(λ, p₀, n_dust_cont, n_dust_features), mode="lines",
+            # line=Dict(:color => "red", :width => 1, :dash => "dash"), name="Initial Guess")])
         append!(traces, [PlotlyJS.scatter(x=λ, y=comps["extinction"] .* (sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] .+ comps["stellar"]), mode="lines",
             line=Dict(:color => "green", :width => 1), name="Dust+Stellar Continuum")])
         layout = PlotlyJS.Layout(

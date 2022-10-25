@@ -1,7 +1,7 @@
 module Util
 
 using NaNStatistics
-using Dierckx
+using Interpolations
 
 # CONSTANTS
 
@@ -74,67 +74,52 @@ end
 
 # BLACKBODY PROFILE
 
-function Blackbody_ν(λ::Union{T,Vector{T}}, Temp::T) where {T<:Real}
+function Blackbody_ν(λ::T, Temp::T) where {T<:Real}
     """
     Return the Blackbody function Bν (per unit FREQUENCY) in MJy/sr,
     given a wavelength in μm and a temperature in Kelvins.
     """
-    return @. Bν_1/λ^3 / (exp(Bν_2/(λ*Temp))-1)
+    return Bν_1/λ^3 / (exp(Bν_2/(λ*Temp))-1)
 end
 
 # PAH PROFILES
 
-function Drude(x::Union{T,Vector{T}}, params::AbstractVector{T}) where {T<:Real}
+function Drude(x::T, A::T, μ::T, FWHM::T) where {T<:Real}
     """
     Calculate a Drude profile
     """
-    A, μ, FWHM = params
     return @. A * (FWHM/μ)^2 / ((x/μ - μ/x)^2 + (FWHM/μ)^2)
 end
 
 # EXTINCTION
 
-function τ_kvt(λ::Vector{T}, β::T) where {T<:Real}
+function τ_kvt(λ::T, β::T) where {T<:Real}
     """
     Calculate extinction curve
     """
-    ext = zeros(length(λ))
-
     mx, mn = argmax(kvt_prof[:, 1]), argmin(kvt_prof[:, 1])
     λ_mx, λ_mn = kvt_prof[mx, 1], kvt_prof[mn, 1]
 
-    low = findall(x -> x < λ_mn, λ)
-    if length(low) > 0
-        ext[low] .= kvt_prof[mn, 2] .* exp.(2.03 .* (λ[low] .- λ_mn))
+    if λ ≤ λ_mn
+        ext = kvt_prof[mn, 2] * exp(2.03 * (λ - λ_mn))
+    elseif λ_mn < λ < λ_mx
+        ext = linear_interpolation(kvt_prof[:, 1], kvt_prof[:, 2])(λ)
+    elseif λ_mx < λ < λ_mx + 2
+        ext = cubic_spline_interpolation(8.0:0.2:12.6, [kvt_prof[1:9, 2]; kvt_prof[12:26, 2]], extrapolation_bc=Line())(λ)
+    else
+        ext = 0.
     end
+    ext = ext < 0 ? 0. : ext
+    ext += Drude(λ, 0.4, 18., 4.446)
 
-    on_profile = findall(x -> (λ_mn < x < λ_mx), λ)
-    if length(on_profile) > 0
-        ext[on_profile] .= Spline1D(kvt_prof[:, 1], kvt_prof[:, 2], k=1, bc="extrapolate").(λ[on_profile])
-    end
-
-    fit = findall(x -> ((λ_mx - 2.5) ≤ x ≤ λ_mx), λ)
-    anchor = findall(x -> ((λ_mx + 2) ≤ x ≤ (λ_mx + 3)), λ)
-    fit = [fit; anchor]
-
-    extend = findall(x -> (λ_mx < x < (λ_mx + 2)), λ)
-    if length(extend) > 0
-        ext[extend] .= Spline1D(λ[fit], ext[fit], k=2, bc="extrapolate").(λ[extend])
-    end
-
-    ext[ext .< 0] .= 0.
-    ext .+= Drude(λ, [0.4, 18., 4.446])
-
-    ext = @. (1 - β) * ext + β * (9.7/λ)^1.7
-    return ext
+    return (1 - β) * ext + β * (9.7/λ)^1.7
 end
 
-function Extinction(τ_97::T, ext::Vector{T}) where {T<:Real}
+function Extinction(ext::T, τ_97::T) where {T<:Real}
     """
     Calculate the overall extinction factor
     """
-    return iszero(τ_97) ? ones(length(ext)) : (1 .- exp.(-τ_97.*ext)) ./ (τ_97.*ext)
-    # return exp.(-τ_97.*ext)
+    return iszero(τ_97) ? 1. : (1 - exp(-τ_97*ext)) / (τ_97*ext)
 end
 
 function Continuum(λ::Vector{T}, params::AbstractVector{T},
@@ -146,27 +131,27 @@ function Continuum(λ::Vector{T}, params::AbstractVector{T},
     contin = zeros(length(λ))
 
     # Stellar blackbody continuum (usually at 5000 K)
-    comps["stellar"] = params[1] .* Blackbody_ν(λ, params[2])
+    comps["stellar"] = params[1] .* Blackbody_ν.(λ, params[2])
     contin .+= comps["stellar"]
     pᵢ = 3
 
     # Add dust continua at various temperatures
     for i ∈ 1:n_dust_cont
-        comps["dust_cont_$i"] = params[pᵢ] .* (9.7 ./ λ).^2 .* Blackbody_ν(λ, params[pᵢ+1])
+        comps["dust_cont_$i"] = params[pᵢ] .* (9.7 ./ λ).^2 .* Blackbody_ν.(λ, params[pᵢ+1])
         contin .+= comps["dust_cont_$i"] 
         pᵢ += 2
     end
 
     # Add dust features with drude profiles
     for i ∈ 1:n_dust_features
-        comps["dust_feat_$i"] = Drude(λ, params[pᵢ:pᵢ+2])
+        comps["dust_feat_$i"] = Drude.(λ, params[pᵢ:pᵢ+2]...)
         contin .+= comps["dust_feat_$i"]
         pᵢ += 3
     end
 
     # Extinction 
-    ext_curve = τ_kvt(λ, params[pᵢ+1])
-    comps["extinction"] = Extinction(params[pᵢ], ext_curve)
+    ext_curve = τ_kvt.(λ, params[pᵢ+1])
+    comps["extinction"] = Extinction.(ext_curve, params[pᵢ])
     contin .*= comps["extinction"]
     
     if return_components
@@ -178,7 +163,7 @@ end
 
 # LINE PROFILES
 
-function Gaussian(x::AbstractVector{T}, params::AbstractVector{U}) where {T<:Real,U<:Real}
+function Gaussian(x::Vector{T}, params::AbstractVector{T}) where {T<:Real}
     """
     Gaussian profile parameterized in terms of the FWHM
     """
