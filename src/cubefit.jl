@@ -9,7 +9,7 @@ using NaNStatistics
 using Optim
 # using BlackBoxOptim
 using CMPFit
-# using NLopt
+# using LsqFit
 using TOML
 using NumericalIntegration
 using ProgressMeter
@@ -236,6 +236,11 @@ function continuum_fit_spaxel(λ::Vector{Float64}, I::Vector{Float64}, σ::Vecto
     χ2 = res.bestnorm
     χ2red = res.bestnorm / res.dof
 
+    # res = curve_fit((x, p) -> Util.Continuum(x, p, n_dust_cont, n_dust_features), λ, I, p₀, lower=minimum.(priors), upper=maximum.(priors),
+    #     autodiff=:forward)
+    # popt = res.param
+    # χ2 = χ2red = sum(res.resid.^2) / length(p₀)
+
     # function ln_prior(p)
     #     logpdfs = [logpdf(priors[i], p[i]) for i ∈ 1:length(p)]
     #     return sum(logpdfs)
@@ -243,10 +248,12 @@ function continuum_fit_spaxel(λ::Vector{Float64}, I::Vector{Float64}, σ::Vecto
 
     # function nln_probability(p)
     #     model = Util.Continuum(λ, p, n_dust_cont, n_dust_features)
-    #     return -Util.ln_likelihood(I, model, σ) - ln_prior(p)
+    #     return -Util.ln_likelihood(I, model, σ)
     # end
 
-    # res = optimize(nln_probability, minimum.(priors), maximum.(priors), p₀, NelderMead())
+    # df = TwiceDifferentiable(nln_probability, p₀; autodiff=:forward)
+    # dfc = TwiceDifferentiableConstraints(minimum.(priors), maximum.(priors))
+    # res = optimize(df, dfc, p₀, IPNewton())
     # popt = res.minimizer
     # χ2 = χ2red = -res.minimum
 

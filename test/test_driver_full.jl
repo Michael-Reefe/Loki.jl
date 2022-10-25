@@ -29,7 +29,7 @@ x, y = spax[1]
 I = obs.channels[1].Iλ[x, y, :]
 σ = obs.channels[1].σI[x, y, :]
 
-# # Fit a spaxel
+# Fit a spaxel
 # CubeFit.continuum_fit_spaxel(λ, I, σ; plot=:plotly)
 
 # Fit the cube
