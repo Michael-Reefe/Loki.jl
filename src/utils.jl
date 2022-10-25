@@ -88,7 +88,7 @@ function Drude(x::T, A::T, μ::T, FWHM::T) where {T<:Real}
     """
     Calculate a Drude profile
     """
-    return @. A * (FWHM/μ)^2 / ((x/μ - μ/x)^2 + (FWHM/μ)^2)
+    return A * (FWHM/μ)^2 / ((x/μ - μ/x)^2 + (FWHM/μ)^2)
 end
 
 # EXTINCTION
