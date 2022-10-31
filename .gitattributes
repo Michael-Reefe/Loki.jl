@@ -1,0 +1,3 @@
+# Reclassify .pro files as IDL
+*.pro linguist-language=IDL
+k
