@@ -29,7 +29,10 @@ plt.switch_backend("Agg")
 # Pkg.build("PyCall")
 
 using PyCall
-py_anchored_artists = pyimport("mpl_toolkits.axes_grid1.anchored_artists")
+const py_anchored_artists = PyNULL()
+function __init__()
+    copy!(py_anchored_artists, pyimport_conda("mpl_toolkits.axes_grid1.anchored_artists", "matplotlib"))
+end
 
 include("utils.jl")
 @reexport using .Util
@@ -139,20 +142,22 @@ function from_fits(filename::String)
     nx, ny, nz = hdr["NAXIS1"], hdr["NAXIS2"], hdr["NAXIS3"]
     # Solid angle of each spaxel
     Ω = hdr["PIXAR_SR"]
-    # Construct wavelength array
-    λ = hdr["CRVAL3"] .+ hdr["CDELT3"] .* collect(0:nz-1)
     # Intensity and error arrays
     Iλ = read(hdu["SCI"])
     σI = read(hdu["ERR"])
 
     # Construct 2D World coordinate system
-    wcs = WCSTransform(2)
-    wcs.cdelt = [hdr["CDELT1"], hdr["CDELT2"]]
-    wcs.ctype = [hdr["CTYPE1"], hdr["CTYPE2"]]
-    wcs.crpix = [hdr["CRPIX1"], hdr["CRPIX2"]]
-    wcs.crval = [hdr["CRVAL1"], hdr["CRVAL2"]]
-    wcs.cunit = [hdr["CUNIT1"], hdr["CUNIT2"]]
-    wcs.pc = [hdr["PC1_1"] hdr["PC1_2"]; hdr["PC2_1"] hdr["PC2_2"]]
+    wcs = WCSTransform(3)
+    wcs.cdelt = [hdr["CDELT1"], hdr["CDELT2"], hdr["CDELT3"]]
+    wcs.ctype = [hdr["CTYPE1"], hdr["CTYPE2"], hdr["CTYPE3"]]
+    wcs.crpix = [hdr["CRPIX1"], hdr["CRPIX2"], hdr["CRPIX3"]]
+    wcs.crval = [hdr["CRVAL1"], hdr["CRVAL2"], hdr["CRVAL3"]]
+    wcs.cunit = [hdr["CUNIT1"], hdr["CUNIT2"], hdr["CUNIT3"]]
+    wcs.pc = [hdr["PC1_1"] hdr["PC1_2"] hdr["PC1_3"]; hdr["PC2_1"] hdr["PC2_2"] hdr["PC2_3"]; hdr["PC3_1"] hdr["PC3_2"] hdr["PC3_3"]]
+
+    # Wavelength vector
+    λ = hdr["CRVAL3"] .+ hdr["CDELT3"] .* collect(0:nz-1)
+    # λ = pix_to_world(wcs, Matrix(hcat(ones(nz), ones(nz), collect(1:nz))'))[3,:] ./ 1e-6
 
     # Data quality map to mask
     dq = read(hdu["DQ"])

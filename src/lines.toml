@@ -13,3 +13,19 @@ profile = "Gaussian"
     prior = "Uniform"
     pval = [10.0, 1000.0]
     locked = false
+
+[NeVI_76524]
+wave = 7.6524
+profile = "Gaussian"
+
+    [NeVI_76524.voff]
+    val = 0.0
+    prior = "Uniform"
+    pval = [-500.0, 500.0]
+    locked = false
+
+    [NeVI_76524.fwhm]
+    val = 100.0
+    prior = "Uniform"
+    pval = [10.0, 1000.0]
+    locked = false

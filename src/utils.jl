@@ -68,13 +68,13 @@ to_cgs(F, λ) = F .* 1e-7 .* Util.C_MS ./ λ.^2    # λ in angstroms, F (MJy/sr)
 to_MJy_sr(F, λ) = F .* 1e7 ./ Util.C_MS .* λ.^2  # λ in angstroms, F (erg/s/cm^2/A/sr) -> (MJy/sr)
 
 # Log of the likelihood for a given model
-function ln_likelihood(data::Vector{T}, model::AbstractVector{V}, err::Vector{T}) where {T<:Real,V<:Real}
+function ln_likelihood(data::Vector{Float64}, model::Vector{Float64}, err::Vector{Float64})
     return -0.5 * sum((data .- model).^2 ./ err.^2 .+ log.(2π .* err.^2))
 end
 
 # BLACKBODY PROFILE
 
-function Blackbody_ν(λ::T, Temp::V) where {T<:Real,V<:Real}
+function Blackbody_ν(λ::Float64, Temp::Float64) 
     """
     Return the Blackbody function Bν (per unit FREQUENCY) in MJy/sr,
     given a wavelength in μm and a temperature in Kelvins.
@@ -84,7 +84,7 @@ end
 
 # PAH PROFILES
 
-function Drude(x::T, A::V, μ::V, FWHM::V) where {T<:Real,V<:Real}
+function Drude(x::Float64, A::Float64, μ::Float64, FWHM::Float64)
     """
     Calculate a Drude profile
     """
@@ -93,7 +93,7 @@ end
 
 # EXTINCTION
 
-function τ_kvt(λ::T, β::V) where {T<:Real,V<:Real}
+function τ_kvt(λ::Float64, β::Float64)
     """
     Calculate extinction curve
     """
@@ -115,20 +115,20 @@ function τ_kvt(λ::T, β::V) where {T<:Real,V<:Real}
     return (1 - β) * ext + β * (9.7/λ)^1.7
 end
 
-function Extinction(ext::T, τ_97::V) where {T<:Real,V<:Real}
+function Extinction(ext::Float64, τ_97::Float64)
     """
     Calculate the overall extinction factor
     """
     return iszero(τ_97) ? 1. : (1 - exp(-τ_97*ext)) / (τ_97*ext)
 end
 
-function Continuum(λ::Vector{T}, params::AbstractVector{V}, n_dust_cont::Int, n_dust_features::Int; 
-    return_components::Bool=false) where {T<:Real,V<:Real}
+function Continuum(λ::Vector{Float64}, params::Vector{Float64}, n_dust_cont::Int64, n_dust_features::Int64; 
+    return_components::Bool=false)
 
     # Adapted from PAHFIT (IDL)
 
-    comps = Dict{String, Vector{V}}()
-    contin = zeros(V, length(λ))
+    comps = Dict{String, Vector{Float64}}()
+    contin = zeros(Float64, length(λ))
 
     # Stellar blackbody continuum (usually at 5000 K)
     comps["stellar"] = params[1] .* Blackbody_ν.(λ, params[2])
@@ -163,7 +163,7 @@ end
 
 # LINE PROFILES
 
-function Gaussian(x::Vector{T}, params::AbstractVector{T}) where {T<:Real}
+function Gaussian(x::AbstractVector{T}, params::Vector{Float64}) where {T<:Real}
     """
     Gaussian profile parameterized in terms of the FWHM
     """
