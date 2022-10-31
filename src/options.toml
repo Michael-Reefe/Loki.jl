@@ -76,7 +76,7 @@ pval = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_5.70".fwhm]
-val = 0.2
+val = 0.200
 prior = "Uniform"
 pval = [0.4, 1.4]
 locked = false
@@ -88,7 +88,7 @@ pval = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_5.87".fwhm]
-val = 0.2
+val = 0.200
 prior = "Uniform"
 pval = [0.4, 1.4]
 locked = false
@@ -100,7 +100,7 @@ pval = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_6.00".fwhm]
-val = 0.2
+val = 0.198
 prior = "Uniform"
 pval = [0.4, 1.4]
 locked = false
@@ -112,7 +112,7 @@ pval = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_6.18".fwhm]
-val = 0.1
+val = 0.099
 prior = "Uniform"
 pval = [0.4, 1.4]
 locked = false
@@ -124,7 +124,7 @@ pval = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_6.30".fwhm]
-val = 0.187
+val = 0.189
 prior = "Uniform"
 pval = [0.4, 1.4]
 locked = false
@@ -160,7 +160,7 @@ pval = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_7.52".fwhm]
-val = 0.24
+val = 0.226
 prior = "Uniform"
 pval = [0.4, 1.4]
 locked = false
@@ -172,7 +172,7 @@ pval = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_7.62".fwhm]
-val = 0.24
+val = 0.152
 prior = "Uniform"
 pval = [0.4, 1.4]
 locked = false
@@ -232,7 +232,7 @@ pval = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_11.00".fwhm]
-val = 0.1
+val = 0.099
 prior = "Uniform"
 pval = [0.4, 1.4]
 locked = false
@@ -244,7 +244,7 @@ pval = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_11.15".fwhm]
-val = 0.03
+val = 0.033
 prior = "Uniform"
 pval = [0.4, 1.4]
 locked = false
@@ -256,7 +256,7 @@ pval = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_11.20".fwhm]
-val = 0.03
+val = 0.034
 prior = "Uniform"
 pval = [0.4, 1.4]
 locked = false
@@ -268,7 +268,7 @@ pval = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_11.22".fwhm]
-val = 0.1
+val = 0.101
 prior = "Uniform"
 pval = [0.4, 1.4]
 locked = false
@@ -304,7 +304,7 @@ pval = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_11.99".fwhm]
-val = 0.54
+val = 0.540
 prior = "Uniform"
 pval = [0.4, 1.4]
 locked = false
@@ -316,7 +316,7 @@ pval = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_12.62".fwhm]
-val = 0.53
+val = 0.530
 prior = "Uniform"
 pval = [0.4, 1.4]
 locked = false
@@ -328,7 +328,7 @@ pval = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_12.69".fwhm]
-val = 0.12
+val = 0.165
 prior = "Uniform"
 pval = [0.4, 1.4]
 locked = false
@@ -376,7 +376,7 @@ pval = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_14.65".fwhm]
-val = 0.5
+val = 0.498
 prior = "Uniform"
 pval = [0.4, 1.4]
 locked = false
@@ -400,7 +400,7 @@ pval = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_16.45".fwhm]
-val = 0.23
+val = 0.230
 prior = "Uniform"
 pval = [0.4, 1.4]
 locked = false
