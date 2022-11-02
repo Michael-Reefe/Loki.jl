@@ -122,8 +122,8 @@ function Extinction(ext::Float64, τ_97::Float64)
     return iszero(τ_97) ? 1. : (1 - exp(-τ_97*ext)) / (τ_97*ext)
 end
 
-function Continuum(λ::Vector{Float64}, params::Vector{Float64}, n_dust_cont::Int64, n_dust_features::Int64; 
-    return_components::Bool=false)
+function fit_spectrum(λ::Vector{Float64}, params::Vector{Float64}, n_dust_cont::Int64, n_dust_features::Int64,
+    n_lines::Int64, line_profiles::Vector{Symbol}; return_components::Bool=false)
 
     # Adapted from PAHFIT (IDL)
 
@@ -143,9 +143,16 @@ function Continuum(λ::Vector{Float64}, params::Vector{Float64}, n_dust_cont::In
     end
 
     # Add dust features with drude profiles
-    for i ∈ 1:n_dust_features
-        comps["dust_feat_$i"] = Drude.(λ, params[pᵢ:pᵢ+2]...)
-        contin .+= comps["dust_feat_$i"]
+    for j ∈ 1:n_dust_features
+        comps["dust_feat_$j"] = Drude.(λ, params[pᵢ:pᵢ+2]...)
+        contin .+= comps["dust_feat_$j"]
+        pᵢ += 3
+    end
+
+    # Add emission lines
+    for k ∈ 1:n_lines
+        comps["line_$k"] = eval(line_profiles[k]).(λ, params[pᵢ:pᵢ+2]...)
+        contin .+= comps["line_$k"]
         pᵢ += 3
     end
 
@@ -163,12 +170,11 @@ end
 
 # LINE PROFILES
 
-function Gaussian(x::AbstractVector{T}, params::Vector{Float64}) where {T<:Real}
+function Gaussian(x::Float64, A::Float64, μ::Float64, FWHM::Float64)
     """
     Gaussian profile parameterized in terms of the FWHM
     """
-    A, μ, FWHM = params
-    return @. A * exp(-(x-μ)^2 / (2(FWHM/(2√(2log(2))))^2))
+    return A * exp(-(x-μ)^2 / (2(FWHM/(2√(2log(2))))^2))
 end
 
 end

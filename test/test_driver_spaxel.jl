@@ -46,19 +46,14 @@ obs = from_fits(["jw01328-o015_t014_miri_ch1-mediumshortlong-_s3d.fits",
     0.016317)
 
 obs = correct(obs)
-# plot_2d(obs.channels[1], "test.pdf")
-
-# spax = Dict(1 => (19,25), 2 => (21,19), 3 => (22,25), 4 => (15,12))
-# x, y = spax[1]
-
-# # Pick a spaxel to fit
-# λ = obs.channels[1].λ
-# I = obs.channels[1].Iλ[x, y, :]
-# σ = obs.channels[1].σI[x, y, :]
 
 # Fit a spaxel
-# CubeFit.continuum_fit_spaxel(λ, I, σ; plot=:plotly)
-
-# Fit the cube
-param_maps, I_model = @time fit_cube(obs.channels[2]; parallel=false, 
-    plot_spaxels=:plotly, plot_maps=true, name=obs.name * "_ch2", z=obs.z)
+x = [28, 25, 10]
+y = [12, 20, 14]
+for (xi, yi) ∈ zip(x, y)
+    # Pick a spaxel to fit
+    λ = obs.channels[2].λ
+    I = obs.channels[2].Iλ[xi, yi, :]
+    σ = obs.channels[2].σI[xi, yi, :]
+    CubeFit.levmar_fit_spaxel(λ, I, σ; plot=:plotly, name="test", label="spaxel_$(xi)_$(yi)")
+end

@@ -1,31 +1,363 @@
-[SI_69865]
-wave = 6.9865
+[H200_S8]
 profile = "Gaussian"
+latex = "${\\rm H}_2\\ S(8)$"
 
-    [SI_69865.voff]
-    val = 0.0
-    prior = "Uniform"
-    pval = [-500.0, 500.0]
+    [H200_S8.wave]
+    val = 5.053
+    plim = [-0.02, 0.02]
     locked = false
 
-    [SI_69865.fwhm]
-    val = 100.0
-    prior = "Uniform"
-    pval = [10.0, 1000.0]
+    [H200_S8.fwhm]
+    val = 0.0015
+    plim = [0.5, 1.5]
     locked = false
 
-[NeVI_76524]
-wave = 7.6524
+[FeII_5340]
 profile = "Gaussian"
+latex = "[Fe II]"
 
-    [NeVI_76524.voff]
-    val = 0.0
-    prior = "Uniform"
-    pval = [-500.0, 500.0]
+    [FeII_5340.wave]
+    val = 5.340
+    plim = [-0.02, 0.02]
     locked = false
 
-    [NeVI_76524.fwhm]
-    val = 100.0
-    prior = "Uniform"
-    pval = [10.0, 1000.0]
+    [FeII_5340.fwhm]
+    val = 0.0015
+    plim = [0.5, 1.5]
+    locked = false
+
+[FeVIII_5447]
+profile = "Gaussian"
+latex = "[Fe VIII]"
+
+    [FeVIII_5447.wave]
+    val = 5.447
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [FeVIII_5447.fwhm]
+    val = 0.0015
+    plim = [0.5, 1.5]
+    locked = false
+
+[H200_S7]
+profile = "Gaussian"
+latex = "${\\rm H}_2\\ S(7)$"
+
+    [H200_S7.wave]
+    val = 5.551
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [H200_S7.fwhm]
+    val = 0.0015
+    plim = [0.5, 1.5]
+    locked = false
+
+[MgV_5609]
+profile = "Gaussian"
+latex = "[Mg V]"
+
+    [MgV_5609.wave]
+    val = 5.609
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [MgV_5609.fwhm]
+    val = 0.0015
+    plim = [0.5, 1.5]
+    locked = false
+
+[H200_S6]
+profile = "Gaussian"
+latex = "${\\rm H}_2\\ S(6)$"
+
+    [H200_S6.wave]
+    val = 6.109
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [H200_S6.fwhm]
+    val = 0.0015
+    plim = [0.5, 1.5]
+    locked = false
+
+[H200_S5]
+profile = "Gaussian"
+latex = "${\\rm H}_2\\ S(5)$"
+
+    [H200_S5.wave]
+    val = 6.909
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [H200_S5.fwhm]
+    val = 0.0015
+    plim = [0.5, 1.5]
+    locked = false
+
+[ArII_6985]
+profile = "Gaussian"
+latex = "[Ar II]"
+
+    [ArII_6985.wave]
+    val = 6.985
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [ArII_6985.fwhm]
+    val = 0.0015
+    plim = [0.5, 1.5]
+    locked = false
+
+[HI65]
+profile = "Gaussian"
+latex = "${\\rm HI}\\ 6-5$"
+
+    [HI65.wave]
+    val = 7.460
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [HI65.fwhm]
+    val = 0.003
+    plim = [0.5, 1.5]
+    locked = false
+
+[NeVI_7652]
+profile = "Gaussian"
+latex = "[Ne VI]"
+
+    [NeVI_7652.wave]
+    val = 7.652
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [NeVI_7652.fwhm]
+    val = 0.003
+    plim = [0.5, 1.5]
+    locked = false
+
+[ArV_7901]
+profile = "Gaussian"
+latex = "[Ar V]"
+
+    [ArV_7901.wave]
+    val = 7.901
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [ArV_7901.fwhm]
+    val = 0.003
+    plim = [0.5, 1.5]
+    locked = false
+
+[H200_S4]
+profile = "Gaussian"
+latex = "${\\rm H}_2\\ S(4)$"
+
+    [H200_S4.wave]
+    val = 8.026
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [H200_S4.fwhm]
+    val = 0.003
+    plim = [0.5, 1.5]
+    locked = false
+
+[ArIII_8991]
+profile = "Gaussian"
+latex = "[Ar III]"
+
+    [ArIII_8991.wave]
+    val = 8.991
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [ArIII_8991.fwhm]
+    val = 0.003
+    plim = [0.5, 1.5]
+    locked = false
+
+[H200_S3]
+profile = "Gaussian"
+latex = "${\\rm H}_2\\ S(3)$"
+
+    [H200_S3.wave]
+    val = 9.665
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [H200_S3.fwhm]
+    val = 0.006
+    plim = [0.25, 1.5]
+    locked = false
+
+[SIV_10551]
+profile = "Gaussian"
+latex = "[S IV]"
+
+    [SIV_10551.wave]
+    val = 10.551
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [SIV_10551.fwhm]
+    val = 0.003
+    plim = [0.5, 1.5]
+    locked = false
+
+[H200_S2]
+profile = "Gaussian"
+latex = "${\\rm H}_2\\ S(2)$"
+
+    [H200_S2.wave]
+    val = 12.278
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [H200_S2.fwhm]
+    val = 0.008
+    plim = [0.5, 1.5]
+    locked = false
+
+[HI76]
+profile = "Gaussian"
+latex = "{\\rm HI}\\ 7-6$"
+
+    [HI76.wave]
+    val = 12.370
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [HI76.fwhm]
+    val = 0.008
+    plim = [0.5, 1.5]
+    locked = false
+
+[NeII_12813]
+profile = "Gaussian"
+latex = "[Ne II]"
+
+    [NeII_12813.wave]
+    val = 12.813
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [NeII_12813.fwhm]
+    val = 0.008
+    plim = [0.5, 1.5]
+    locked = false
+
+[NeV_14322]
+profile = "Gaussian"
+latex = "[Ne V]"
+
+    [NeV_14322.wave]
+    val = 14.322
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [NeV_14322.fwhm]
+    val = 0.008
+    plim = [0.5, 1.5]
+    locked = false
+
+[NeIII_15555]
+profile = "Gaussian"
+latex = "[Ne III]"
+
+    [NeIII_15555.wave]
+    val = 15.555
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [NeIII_15555.fwhm]
+    val = 0.008
+    plim = [0.5, 1.5]
+    locked = false
+
+[H200_S1]
+profile = "Gaussian"
+latex = "${\\rm H}_2\\ S(1)$"
+
+    [H200_S1.wave]
+    val = 17.035
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [H200_S1.fwhm]
+    val = 0.008
+    plim = [0.5, 1.5]
+    locked = false
+
+[PIII_17885]
+profile = "Gaussian"
+latex = "[P III]"
+
+    [PIII_17885.wave]
+    val = 17.885
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [PIII_17885.fwhm]
+    val = 0.010
+    plim = [0.5, 1.5]
+    locked = false
+
+[FeII_17936]
+profile = "Gaussian"
+latex = "[Fe II]"
+
+    [FeII_17936.wave]
+    val = 17.936
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [FeII_17936.fwhm]
+    val = 0.010
+    plim = [0.5, 1.5]
+    locked = false
+
+[SIII_18713]
+profile = "Gaussian"
+latex = "[S III]"
+
+    [SIII_18713.wave]
+    val = 18.713
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [SIII_18713.fwhm]
+    val = 0.010
+    plim = [0.5, 1.5]
+    locked = false
+
+[FeIII_22925]
+profile = "Gaussian"
+latex = "[Fe III]"
+
+    [FeIII_22925.wave]
+    val = 22.925
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [FeIII_22925.fwhm]
+    val = 0.010
+    plim = [0.5, 1.5]
+    locked = false
+
+[NeIV_24318]
+profile = "Gaussian"
+latex = "[Ne IV]"
+
+    [NeIV_24318.wave]
+    val = 24.318
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [NeIV_24318.fwhm]
+    val = 0.010
+    plim = [0.5, 1.5]
     locked = false

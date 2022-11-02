@@ -49,8 +49,14 @@ function from_dict(dict::Dict)
     """
     value = dict["val"]
     locked = dict["locked"]
-    pval = dict["pval"]
-    prior = eval(Meta.parse(dict["prior"] * "($pval...)"))
+    if "plim" ∈ keys(dict) && !("pval" ∈ keys(dict))
+        prior = truncated(Uniform(-Inf,Inf), dict["plim"]...)
+    end
+    if "pval" ∈ keys(dict)
+        pval = dict["pval"]
+        prior = eval(Meta.parse(dict["prior"] * "($pval...)"))
+        prior = truncated(prior, dict["plim"]...)
+    end
 
     return Parameter(value, locked, prior)
 end 
@@ -58,8 +64,15 @@ end
 function from_dict_wave(dict::Dict)
     value = dict["val"]
     locked = dict["locked"]
-    pval = dict["val"] .+ dict["pval"]
-    prior = eval(Meta.parse(dict["prior"] * "($pval...)"))
+    if "plim" ∈ keys(dict) && !("pval" ∈ keys(dict))
+        plim = dict["plim"] .+ value
+        prior = truncated(Uniform(-Inf,Inf), plim...)
+    end
+    if "pval" ∈ keys(dict)
+        pval = dict["pval"]
+        prior = eval(Meta.parse(dict["prior"] * "($pval...)"))
+        prior = truncated(prior, dict["plim"]...)
+    end
 
     return Parameter(value, locked, prior)
 end
@@ -67,8 +80,15 @@ end
 function from_dict_fwhm(dict::Dict)
     value = dict["val"]
     locked = dict["locked"]
-    pval = dict["val"] .* dict["pval"]
-    prior = eval(Meta.parse(dict["prior"] * "($pval...)"))
+    if "plim" ∈ keys(dict) && !("pval" ∈ keys(dict))
+        plim = dict["plim"] .* value
+        prior = truncated(Uniform(-Inf,Inf), plim...)
+    end
+    if "pval" ∈ keys(dict)
+        pval = dict["pval"]
+        prior = eval(Meta.parse(dict["prior"] * "($pval...)"))
+        prior = truncated(prior, dict["plim"]...)
+    end
 
     return Parameter(value, locked, prior)
 end
@@ -80,8 +100,8 @@ struct TransitionLine
     """
     A structure for an emission/absorption line with a given name, rest wavelength, and fitting parameters
     """
-    λ₀::Float64
     profile::Symbol
+    latex::String
     parameters::ParamDict
 
 end

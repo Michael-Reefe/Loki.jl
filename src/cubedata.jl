@@ -21,7 +21,6 @@ using Reexport
 
 # Plotting with Python
 using PyPlot
-plt.switch_backend("Agg")
 
 # Python imports
 # ENV["PYTHON"] = "/opt/homebrew/Caskroom/miniforge/base/envs/jwst_env/bin/python3"
@@ -32,6 +31,7 @@ using PyCall
 const py_anchored_artists = PyNULL()
 function __init__()
     copy!(py_anchored_artists, pyimport_conda("mpl_toolkits.axes_grid1.anchored_artists", "matplotlib"))
+    plt.switch_backend("Agg")
 end
 
 include("utils.jl")
@@ -132,7 +132,7 @@ function from_fits(filename::String)
     """
 
     # Open the fits file
-    hdu = FITS(filename)
+    hdu = FITS(filename, "r")
     if read_header(hdu[1])["DATAMODL"] ≠ "IFUCubeModel"
         error("The FITS file must contain IFU data!")
     end
@@ -244,7 +244,7 @@ end
 
 # Plotting functions
 function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=true, logᵢ::Union{Int,Nothing}=10,
-    logₑ::Union{Int,Nothing}=nothing, colormap::Symbol=:cubehelix, name::Union{String,Nothing}=nothing, 
+    logₑ::Union{Int,Nothing}=nothing, colormap::Symbol=:magma, name::Union{String,Nothing}=nothing, 
     slice::Union{Int,Nothing}=nothing, z::Union{Float64,Nothing}=nothing, marker::Union{Tuple{T,T},Nothing} where {T<:Real}=nothing)
     """
     A plotting utility function for 2D maps of the intensity / error
