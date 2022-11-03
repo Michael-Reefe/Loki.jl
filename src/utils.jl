@@ -174,7 +174,7 @@ function Gaussian(x::Float64, A::Float64, μ::Float64, FWHM::Float64)
     """
     Gaussian profile parameterized in terms of the FWHM
     """
-    return A * exp(-(x-μ)^2 / (2(FWHM/(2√(2log(2))))^2))
+    return A * exp(-(x-μ)^2 / (2(FWHM/2.354820045)^2))
 end
 
 end

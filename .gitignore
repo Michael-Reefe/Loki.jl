@@ -1,6 +1,6 @@
 test/**
 !test/test_driver*.jl
-src/idl_data
+src/idl_data*
 
 # vscode
 .vscode/*

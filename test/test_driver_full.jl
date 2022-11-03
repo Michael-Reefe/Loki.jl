@@ -9,16 +9,13 @@ using Printf
 using PyPlot
 using PyCall
 
-# addprocs(maximum([0, Sys.CPU_THREADS ÷ 2 - 1]))
-# # addprocs(9)
-# @everywhere begin
-#     using Pkg; Pkg.activate(dirname(@__DIR__))
-#     Pkg.instantiate(); Pkg.precompile()
-# end
-# @everywhere using Loki
-using Pkg; Pkg.activate(dirname(@__DIR__))
-Pkg.instantiate(); Pkg.precompile()
-using Loki
+addprocs(maximum([0, Sys.CPU_THREADS ÷ 2 - 1]))
+# addprocs(9)
+@everywhere begin
+    using Pkg; Pkg.activate(dirname(@__DIR__))
+    Pkg.instantiate(); Pkg.precompile()
+end
+@everywhere using Loki
 
 py_anchored_artists = pyimport("mpl_toolkits.axes_grid1.anchored_artists")
 
@@ -46,19 +43,10 @@ obs = from_fits(["jw01328-o015_t014_miri_ch1-mediumshortlong-_s3d.fits",
     0.016317)
 
 obs = correct(obs)
-# plot_2d(obs.channels[1], "test.pdf")
 
-# spax = Dict(1 => (19,25), 2 => (21,19), 3 => (22,25), 4 => (15,12))
-# x, y = spax[1]
+# Create the cube fitting object
+cube_fitter = CubeFitter(obs.channels[2], obs.z, obs.name * "_ch2"; parallel=true, plot_spaxels=:pyplot,
+    plot_maps=true, save_fits=true)
 
-# # Pick a spaxel to fit
-# λ = obs.channels[1].λ
-# I = obs.channels[1].Iλ[x, y, :]
-# σ = obs.channels[1].σI[x, y, :]
-
-# Fit a spaxel
-# CubeFit.continuum_fit_spaxel(λ, I, σ; plot=:plotly)
-
-# Fit the cube
-param_maps, I_model = @time fit_cube(obs.channels[2]; parallel=false, 
-    plot_spaxels=:plotly, plot_maps=true, name=obs.name * "_ch2", z=obs.z)
+# Perform the Levenberg-Marquardt least-squares fitting
+cube_fitter = @time fit_cube(cube_fitter)

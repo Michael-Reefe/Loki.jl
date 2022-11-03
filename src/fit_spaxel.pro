@@ -45,7 +45,7 @@ df_out = []
 for i=0,n-1 do if (dust_features[i].WAVELENGTH ge min(data.field1)-.5) && (dust_features[i].WAVELENGTH le max(data.field1)+.5) then df_out = [df_out, dust_features[i]]
 lines = [{WAVELENGTH: 5.0D, NAME: "1"}, {WAVELENGTH: 5.1D, NAME: "2"}]
 
-fit = pahfit(data.field1, data.field2, data.field3, REDSHIFT=0., /REPORT, DUST_FEATURES=df_out, LINES=lines)
+fit = pahfit(data.field1, data.field2, data.field3, REDSHIFT=0., /REPORT, /PLOT_PROGRESS, XSIZE=1000, YSIZE=600, DUST_FEATURES=df_out)
 
 t_stellar = fit.STARLIGHT.TEMPERATURE[0] 
 t_stellar_unc = fit.STARLIGHT.TEMPERATURE_UNC[0]
@@ -91,6 +91,6 @@ I_cont = fit.FINAL_FIT
 out2 = REPSTR(name, ".csv", "_fit.csv")
 WRITE_CSV, out2, data.field1, I_cont, header=["wave", "intensity"]
 
-exit
+
 
 

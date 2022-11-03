@@ -8,8 +8,36 @@ latex = "${\\rm H}_2\\ S(8)$"
     locked = false
 
     [H200_S8.fwhm]
-    val = 0.0015
-    plim = [0.5, 1.5]
+    val = 0.003
+    plim = [0.25, 2.0]
+    locked = false
+
+[FeII_5062]
+profile = "Gaussian"
+latex = "[Fe II]"
+
+    [FeII_5062.wave]
+    val = 5.062
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [FeII_5062.fwhm]
+    val = 0.003
+    plim = [0.25, 2.0]
+    locked = false
+
+[HeII_5228]
+profile = "Gaussian"
+latex = "He II"
+
+    [HeII_5228.wave]
+    val = 5.228
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [HeII_5228.fwhm]
+    val = 0.003
+    plim = [0.25, 2.0]
     locked = false
 
 [FeII_5340]
@@ -22,8 +50,8 @@ latex = "[Fe II]"
     locked = false
 
     [FeII_5340.fwhm]
-    val = 0.0015
-    plim = [0.5, 1.5]
+    val = 0.003
+    plim = [0.25, 2.0]
     locked = false
 
 [FeVIII_5447]
@@ -36,8 +64,22 @@ latex = "[Fe VIII]"
     locked = false
 
     [FeVIII_5447.fwhm]
-    val = 0.0015
-    plim = [0.5, 1.5]
+    val = 0.003
+    plim = [0.25, 2.0]
+    locked = false
+
+[MgVII_5503]
+profile = "Gaussian"
+latex = "[Mg VII]"
+
+    [MgVII_5503.wave]
+    val = 5.503
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [MgVII_5503.fwhm]
+    val = 0.003
+    plim = [0.25, 2.0]
     locked = false
 
 [H200_S7]
@@ -50,8 +92,8 @@ latex = "${\\rm H}_2\\ S(7)$"
     locked = false
 
     [H200_S7.fwhm]
-    val = 0.0015
-    plim = [0.5, 1.5]
+    val = 0.003
+    plim = [0.25, 2.0]
     locked = false
 
 [MgV_5609]
@@ -64,8 +106,8 @@ latex = "[Mg V]"
     locked = false
 
     [MgV_5609.fwhm]
-    val = 0.0015
-    plim = [0.5, 1.5]
+    val = 0.003
+    plim = [0.25, 2.0]
     locked = false
 
 [H200_S6]
@@ -78,8 +120,8 @@ latex = "${\\rm H}_2\\ S(6)$"
     locked = false
 
     [H200_S6.fwhm]
-    val = 0.0015
-    plim = [0.5, 1.5]
+    val = 0.003
+    plim = [0.25, 2.0]
     locked = false
 
 [H200_S5]
@@ -92,8 +134,8 @@ latex = "${\\rm H}_2\\ S(5)$"
     locked = false
 
     [H200_S5.fwhm]
-    val = 0.0015
-    plim = [0.5, 1.5]
+    val = 0.003
+    plim = [0.25, 2.0]
     locked = false
 
 [ArII_6985]
@@ -106,8 +148,22 @@ latex = "[Ar II]"
     locked = false
 
     [ArII_6985.fwhm]
-    val = 0.0015
-    plim = [0.5, 1.5]
+    val = 0.003
+    plim = [0.25, 2.0]
+    locked = false
+
+[NaIII_7318]
+profile = "Gaussian"
+latex = "[Na III]"
+
+    [NaIII_7318.wave]
+    val = 7.318
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [NaIII_7318.fwhm]
+    val = 0.006
+    plim = [0.25, 2.0]
     locked = false
 
 [HI65]
@@ -120,8 +176,8 @@ latex = "${\\rm HI}\\ 6-5$"
     locked = false
 
     [HI65.fwhm]
-    val = 0.003
-    plim = [0.5, 1.5]
+    val = 0.006
+    plim = [0.25, 2.0]
     locked = false
 
 [NeVI_7652]
@@ -134,8 +190,8 @@ latex = "[Ne VI]"
     locked = false
 
     [NeVI_7652.fwhm]
-    val = 0.003
-    plim = [0.5, 1.5]
+    val = 0.006
+    plim = [0.25, 2.0]
     locked = false
 
 [ArV_7901]
@@ -148,8 +204,8 @@ latex = "[Ar V]"
     locked = false
 
     [ArV_7901.fwhm]
-    val = 0.003
-    plim = [0.5, 1.5]
+    val = 0.006
+    plim = [0.25, 2.0]
     locked = false
 
 [H200_S4]
@@ -162,8 +218,8 @@ latex = "${\\rm H}_2\\ S(4)$"
     locked = false
 
     [H200_S4.fwhm]
-    val = 0.003
-    plim = [0.5, 1.5]
+    val = 0.006
+    plim = [0.25, 2.0]
     locked = false
 
 [ArIII_8991]
@@ -176,8 +232,22 @@ latex = "[Ar III]"
     locked = false
 
     [ArIII_8991.fwhm]
-    val = 0.003
-    plim = [0.5, 1.5]
+    val = 0.006
+    plim = [0.25, 2.0]
+    locked = false
+
+[FeVII_9527]
+profile = "Gaussian"
+latex = "[Fe VII]"
+
+    [FeVII_9527.wave]
+    val = 9.527
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [FeVII_9527.fwhm]
+    val = 0.006
+    plim = [0.25, 2.0]
     locked = false
 
 [H200_S3]
@@ -191,7 +261,7 @@ latex = "${\\rm H}_2\\ S(3)$"
 
     [H200_S3.fwhm]
     val = 0.006
-    plim = [0.25, 1.5]
+    plim = [0.25, 2.0]
     locked = false
 
 [SIV_10551]
@@ -204,8 +274,8 @@ latex = "[S IV]"
     locked = false
 
     [SIV_10551.fwhm]
-    val = 0.003
-    plim = [0.5, 1.5]
+    val = 0.006
+    plim = [0.25, 2.0]
     locked = false
 
 [H200_S2]
@@ -218,8 +288,8 @@ latex = "${\\rm H}_2\\ S(2)$"
     locked = false
 
     [H200_S2.fwhm]
-    val = 0.008
-    plim = [0.5, 1.5]
+    val = 0.016
+    plim = [0.25, 2.0]
     locked = false
 
 [HI76]
@@ -232,8 +302,8 @@ latex = "{\\rm HI}\\ 7-6$"
     locked = false
 
     [HI76.fwhm]
-    val = 0.008
-    plim = [0.5, 1.5]
+    val = 0.016
+    plim = [0.25, 2.0]
     locked = false
 
 [NeII_12813]
@@ -246,8 +316,8 @@ latex = "[Ne II]"
     locked = false
 
     [NeII_12813.fwhm]
-    val = 0.008
-    plim = [0.5, 1.5]
+    val = 0.016
+    plim = [0.25, 2.0]
     locked = false
 
 [NeV_14322]
@@ -260,8 +330,8 @@ latex = "[Ne V]"
     locked = false
 
     [NeV_14322.fwhm]
-    val = 0.008
-    plim = [0.5, 1.5]
+    val = 0.016
+    plim = [0.25, 2.0]
     locked = false
 
 [NeIII_15555]
@@ -274,8 +344,8 @@ latex = "[Ne III]"
     locked = false
 
     [NeIII_15555.fwhm]
-    val = 0.008
-    plim = [0.5, 1.5]
+    val = 0.016
+    plim = [0.25, 2.0]
     locked = false
 
 [H200_S1]
@@ -288,8 +358,8 @@ latex = "${\\rm H}_2\\ S(1)$"
     locked = false
 
     [H200_S1.fwhm]
-    val = 0.008
-    plim = [0.5, 1.5]
+    val = 0.016
+    plim = [0.25, 2.0]
     locked = false
 
 [PIII_17885]
@@ -302,8 +372,8 @@ latex = "[P III]"
     locked = false
 
     [PIII_17885.fwhm]
-    val = 0.010
-    plim = [0.5, 1.5]
+    val = 0.020
+    plim = [0.25, 2.0]
     locked = false
 
 [FeII_17936]
@@ -316,8 +386,8 @@ latex = "[Fe II]"
     locked = false
 
     [FeII_17936.fwhm]
-    val = 0.010
-    plim = [0.5, 1.5]
+    val = 0.020
+    plim = [0.25, 2.0]
     locked = false
 
 [SIII_18713]
@@ -330,8 +400,8 @@ latex = "[S III]"
     locked = false
 
     [SIII_18713.fwhm]
-    val = 0.010
-    plim = [0.5, 1.5]
+    val = 0.020
+    plim = [0.25, 2.0]
     locked = false
 
 [FeIII_22925]
@@ -344,8 +414,8 @@ latex = "[Fe III]"
     locked = false
 
     [FeIII_22925.fwhm]
-    val = 0.010
-    plim = [0.5, 1.5]
+    val = 0.020
+    plim = [0.25, 2.0]
     locked = false
 
 [NeIV_24318]
@@ -358,6 +428,20 @@ latex = "[Ne IV]"
     locked = false
 
     [NeIV_24318.fwhm]
-    val = 0.010
-    plim = [0.5, 1.5]
+    val = 0.020
+    plim = [0.25, 2.0]
+    locked = false
+
+[OIV_25890]
+profile = "Gaussian"
+latex = "[O IV]"
+
+    [OIV_25890.wave]
+    val = 25.890
+    plim = [-0.02, 0.02]
+    locked = false
+
+    [OIV_25890.fwhm]
+    val = 0.020
+    plim = [0.25, 2.0]
     locked = false

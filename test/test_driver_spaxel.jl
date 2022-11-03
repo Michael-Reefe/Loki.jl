@@ -9,13 +9,6 @@ using Printf
 using PyPlot
 using PyCall
 
-# addprocs(maximum([0, Sys.CPU_THREADS ÷ 2 - 1]))
-# # addprocs(9)
-# @everywhere begin
-#     using Pkg; Pkg.activate(dirname(@__DIR__))
-#     Pkg.instantiate(); Pkg.precompile()
-# end
-# @everywhere using Loki
 using Pkg; Pkg.activate(dirname(@__DIR__))
 Pkg.instantiate(); Pkg.precompile()
 using Loki
@@ -47,13 +40,13 @@ obs = from_fits(["jw01328-o015_t014_miri_ch1-mediumshortlong-_s3d.fits",
 
 obs = correct(obs)
 
-# Fit a spaxel
-x = [28, 25, 10]
-y = [12, 20, 14]
+# Create the cube fitting object
+cube_fitter = CubeFitter(obs.channels[2], obs.z, "test"; parallel=false, plot_spaxels=:plotly,
+    plot_maps=true, save_fits=true)
+
+# Fit some individual spaxels
+x = [33, 28, 25, 10, 6]
+y = [4, 12, 20, 14, 17]
 for (xi, yi) ∈ zip(x, y)
-    # Pick a spaxel to fit
-    λ = obs.channels[2].λ
-    I = obs.channels[2].Iλ[xi, yi, :]
-    σ = obs.channels[2].σI[xi, yi, :]
-    CubeFit.levmar_fit_spaxel(λ, I, σ; plot=:plotly, name="test", label="spaxel_$(xi)_$(yi)")
+    levmar_fit_spaxel(cube_fitter, (xi, yi))
 end
