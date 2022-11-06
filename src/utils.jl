@@ -115,15 +115,19 @@ function τ_kvt(λ::Float64, β::Float64)
     return (1 - β) * ext + β * (9.7/λ)^1.7
 end
 
-function Extinction(ext::Float64, τ_97::Float64)
+function Extinction(ext::Float64, τ_97::Float64, screen::Bool=true)
     """
     Calculate the overall extinction factor
     """
+    if screen
+        return exp(-τ_97*ext)
+    end
     return iszero(τ_97) ? 1. : (1 - exp(-τ_97*ext)) / (τ_97*ext)
 end
 
 function fit_spectrum(λ::Vector{Float64}, params::Vector{Float64}, n_dust_cont::Int64, n_dust_features::Int64,
-    n_lines::Int64, line_profiles::Vector{Symbol}; return_components::Bool=false)
+    n_lines::Int64, n_voff_tied::Int64, voff_tied_key::Vector{String}, line_tied::Vector{Union{String,Nothing}}, 
+    line_profiles::Vector{Symbol}, line_restwave::Vector{Float64}; return_components::Bool=false, verbose::Bool=false)
 
     # Adapted from PAHFIT (IDL)
 
@@ -131,12 +135,18 @@ function fit_spectrum(λ::Vector{Float64}, params::Vector{Float64}, n_dust_cont:
     contin = zeros(Float64, length(λ))
 
     # Stellar blackbody continuum (usually at 5000 K)
+    if verbose
+        println("Using $(params[1]) for stellar amp and $(params[2]) for stellar temp")
+    end
     comps["stellar"] = params[1] .* Blackbody_ν.(λ, params[2])
     contin .+= comps["stellar"]
     pᵢ = 3
 
     # Add dust continua at various temperatures
     for i ∈ 1:n_dust_cont
+        if verbose
+            println("Using $(params[pᵢ]) for dust continuum amp and $(params[pᵢ+1]) for dust continuum temp")
+        end
         comps["dust_cont_$i"] = params[pᵢ] .* (9.7 ./ λ).^2 .* Blackbody_ν.(λ, params[pᵢ+1])
         contin .+= comps["dust_cont_$i"] 
         pᵢ += 2
@@ -144,19 +154,50 @@ function fit_spectrum(λ::Vector{Float64}, params::Vector{Float64}, n_dust_cont:
 
     # Add dust features with drude profiles
     for j ∈ 1:n_dust_features
+        if verbose
+            println("Using $(params[pᵢ]) for dust feature amp, $(params[pᵢ+1]) for dust feature mean, 
+                and $(params[pᵢ+2]) for dust feature width")
+        end
         comps["dust_feat_$j"] = Drude.(λ, params[pᵢ:pᵢ+2]...)
         contin .+= comps["dust_feat_$j"]
         pᵢ += 3
     end
 
+    vᵢ = pᵢ
+    pᵢ += n_voff_tied
+
     # Add emission lines
     for k ∈ 1:n_lines
-        comps["line_$k"] = eval(line_profiles[k]).(λ, params[pᵢ:pᵢ+2]...)
-        contin .+= comps["line_$k"]
-        pᵢ += 3
+        # Check if voff is tied: if so, use the tied voff parameter, otherwise, use the line's own voff parameter
+        if isnothing(line_tied[k])
+            voff = params[pᵢ+1]
+            fwhm = params[pᵢ+2]
+            if verbose
+                println("Using $(params[pᵢ]) for line amp, untied $(params[pᵢ+1]) for line voff,
+                    and $(params[pᵢ+2]) for line width; for line at $(line_restwave[k])")
+            end
+        else
+            vwhere = findfirst(x -> x == line_tied[k], voff_tied_key)
+            voff = params[vᵢ + vwhere - 1]
+            fwhm = params[pᵢ+1]
+            if verbose
+                println("Using $(params[pᵢ]) for line amp, tied $(params[vᵢ+vwhere-1]) for line voff,
+                    and $(params[pᵢ+1]) for line width; for line at $(line_restwave[k])")
+            end
+        end
+        # Convert voff in km/s to mean wavelength in μm
+        mean_μm = Doppler_shift_λ(line_restwave[k], voff)
+        # Convert FWHM from km/s to μm
+        fwhm_μm = Doppler_shift_λ(line_restwave[k], fwhm) - line_restwave[k]
+        comps["line_$k"] = eval(line_profiles[k]).(λ, params[pᵢ], mean_μm, fwhm_μm)
+        contin .+= comps["line_$k"]        
+        pᵢ += isnothing(line_tied[k]) ? 3 : 2
     end
 
     # Extinction 
+    if verbose
+        println("Using $(params[pᵢ]) for extinction τ and $(params[pᵢ+1]) for extinction β")
+    end
     ext_curve = τ_kvt.(λ, params[pᵢ+1])
     comps["extinction"] = Extinction.(ext_curve, params[pᵢ])
     contin .*= comps["extinction"]

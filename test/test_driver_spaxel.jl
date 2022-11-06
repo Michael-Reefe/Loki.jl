@@ -45,8 +45,8 @@ cube_fitter = CubeFitter(obs.channels[2], obs.z, "test"; parallel=false, plot_sp
     plot_maps=true, save_fits=true)
 
 # Fit some individual spaxels
-x = [33, 28, 25, 10, 6]
-y = [4, 12, 20, 14, 17]
+x = [28, 33, 25, 10, 6]
+y = [12, 4, 19, 14, 17]
 for (xi, yi) ∈ zip(x, y)
-    levmar_fit_spaxel(cube_fitter, (xi, yi))
+    @time levmar_fit_spaxel(cube_fitter, (xi, yi))
 end

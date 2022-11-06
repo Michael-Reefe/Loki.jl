@@ -100,9 +100,10 @@ struct TransitionLine
     """
     A structure for an emission/absorption line with a given name, rest wavelength, and fitting parameters
     """
+    λ₀::Float64
     profile::Symbol
-    latex::String
     parameters::ParamDict
+    tied::Union{String,Nothing}
 
 end
 

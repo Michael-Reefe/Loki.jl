@@ -10,6 +10,10 @@ plim = [4999.9, 5000.1]
 locked = true
 
 [[dust_continuum_temps]]
+val = 500.0
+plim = [499.9, 500.1]
+locked = true
+[[dust_continuum_temps]]
 val = 300.0
 plim = [299.9, 300.1]
 locked = true

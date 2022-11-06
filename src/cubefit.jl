@@ -10,6 +10,7 @@ using NaNStatistics
 using Optim
 # using LsqFit
 using CMPFit
+# using NLopt
 using Distributed
 using SharedArrays
 using TOML
@@ -26,10 +27,10 @@ using PyPlot
 using PlotlyJS
 
 const py_anchored_artists = PyNULL()
-const scipy_opt = PyNULL()
+# const scipy_opt = PyNULL()
 function __init__()
     copy!(py_anchored_artists, pyimport_conda("mpl_toolkits.axes_grid1.anchored_artists", "matplotlib"))
-    copy!(scipy_opt, pyimport_conda("scipy.optimize", "scipy"))
+    # copy!(scipy_opt, pyimport_conda("scipy.optimize", "scipy"))
     plt.switch_backend("Agg")
 end
 
@@ -112,27 +113,68 @@ end
 function parse_lines()
     lines = TOML.parsefile(joinpath(sourcepath, "lines.toml"))
     lines_out = Param.LineDict()
-    keylist1 = ["profile", "latex", "wave", "fwhm"]
-    keylist2 = ["val", "plim", "locked"]
-    for line ∈ keys(lines)
-        for key ∈ keylist1
-            if !(key ∈ keys(lines[line]))
-                error("$line missing $key option!")
+
+    keylist1 = ["tie_H2_voff", "tie_IP_voff", "fwhm_init", "voff_init", "voff_plim", "fwhm_plim", "lines"]
+    for key ∈ keylist1
+        if !haskey(lines, key)
+            error("$key not found in line optiones!")
+        end
+    end
+    profiles = Dict(ln => "Gaussian" for ln ∈ keys(lines["lines"]))
+    if haskey(lines, "profiles")
+        for line ∈ keys(lines["lines"])
+            if haskey(lines["profiles"], line)
+                profiles[line] = lines["profiles"][line]
             end
         end
-        for key ∈ ["wave", "fwhm"]
-            for key2 ∈ keylist2
-                if !(key2 ∈ keys(lines[line][key]))
-                    error("$line's $key parameter is missing $key2 option!")
+    end
+
+    for line ∈ keys(lines["lines"])
+
+        voff_prior = Uniform(lines["voff_plim"]...)
+        voff_locked = false
+        fwhm_prior = Uniform(lines["fwhm_plim"]...)
+        fwhm_locked = false
+        if haskey(lines, "priors")
+            if haskey(lines["priors"], line)
+                if haskey(lines["priors"][line], "voff")
+                    voff_prior = eval(lines["priors"][line]["voff"]["pstr"])
+                    voff_locked = lines["priors"][line]["voff"]["locked"]
+                end
+                if haskey(lines["priors"][line], "fwhm")
+                    fwhm_prior = eval(lines["priors"][line]["fwhm"]["pstr"])
+                    fwhm_locked = lines["priors"][line]["fwhm"]["locked"]
                 end
             end
         end
-        wave = Param.from_dict_wave(lines[line]["wave"])
-        fwhm = Param.from_dict_fwhm(lines[line]["fwhm"])
-        params = Param.ParamDict(:wave => wave, :fwhm => fwhm)
-        lines_out[Symbol(line)] = Param.TransitionLine(Symbol(lines[line]["profile"]), lines[line]["latex"], params)
+        tied = nothing
+        if lines["tie_H2_voff"] && occursin("H2", line)
+            tied = "H2"
+        end
+
+        voff = Param.Parameter(lines["voff_init"], voff_locked, voff_prior)
+        fwhm = Param.Parameter(lines["fwhm_init"], fwhm_locked, fwhm_prior)
+        params = Param.ParamDict(:voff => voff, :fwhm => fwhm)
+        lines_out[Symbol(line)] = Param.TransitionLine(lines["lines"][line], Symbol(profiles[line]), params, tied)
+
     end
-    return lines_out
+
+    voff_tied_key = unique([lines_out[line].tied for line ∈ keys(lines_out)])
+    voff_tied_key = voff_tied_key[.!isnothing.(voff_tied_key)]
+    voff_tied = Dict{String, Param.Parameter}()
+    for voff_tie ∈ voff_tied_key
+        prior = Uniform(lines["voff_plim"]...)
+        locked = false
+        if haskey(lines, "priors")
+            if haskey(lines["priors"], voff_tie)
+                prior = lines["priors"][voff_tie]["pstr"]
+                locked = lines["priors"][voff_tie]["locked"]
+            end
+        end
+        voff_tied[voff_tie] = Param.Parameter(lines["voff_init"], locked, prior)
+    end
+
+    return lines_out, voff_tied
 end
 
 struct ParamMaps
@@ -144,13 +186,15 @@ struct ParamMaps
     dust_continuum::Dict{Int, Dict{Symbol, Array{Float64, 2}}}
     dust_features::Dict{String, Dict{Symbol, Array{Float64, 2}}}
     lines::Dict{Symbol, Dict{Symbol, Array{Float64, 2}}}
+    tied_voffs::Dict{String, Array{Float64, 2}}
     extinction::Dict{Symbol, Array{Float64, 2}}
     dust_complexes::Dict{String, Dict{Symbol, Array{Float64, 2}}}
 
 end
 
 function parammaps_empty(shape::Tuple{Int,Int,Int}, n_dust_cont::Int, df_names::Vector{String}, 
-    complexes::Vector{String}, line_names::Vector{Symbol})
+    complexes::Vector{String}, line_names::Vector{Symbol}, line_tied::Vector{Union{String,Nothing}},
+    voff_tied_key::Vector{String})
 
     nan_arr = ones(shape[1:2]...) .* NaN
 
@@ -178,11 +222,18 @@ function parammaps_empty(shape::Tuple{Int,Int,Int}, n_dust_cont::Int, df_names::
 
     # Nested dictionary -> first layer keys are line names, second layer keys are parameter names, which contain 2D arrays
     lines = Dict{Symbol, Dict{Symbol, Array{Float64, 2}}}()
-    for line ∈ line_names
+    for (line, tie) ∈ zip(line_names, line_tied)
         lines[line] = Dict{Symbol, Array{Float64, 2}}()
-        for pname ∈ [:amp, :voff, :fwhm, :intI, :SNR]
+        pnames = isnothing(tie) ? [:amp, :voff, :fwhm, :intI, :SNR] : [:amp, :fwhm, :intI, :SNR]
+        for pname ∈ pnames
             lines[line][pname] = copy(nan_arr)
         end
+    end
+
+    # Tied voff parameters
+    tied_voffs = Dict{String, Array{Float64, 2}}()
+    for vk ∈ voff_tied_key
+        tied_voffs[vk] = copy(nan_arr)
     end
 
     # Add extinction fitting parameters
@@ -198,7 +249,7 @@ function parammaps_empty(shape::Tuple{Int,Int,Int}, n_dust_cont::Int, df_names::
         dust_complexes[c][:SNR] = copy(nan_arr)
     end
 
-    return ParamMaps(stellar_continuum, dust_continuum, dust_features, lines, extinction, dust_complexes)
+    return ParamMaps(stellar_continuum, dust_continuum, dust_features, lines, tied_voffs, extinction, dust_complexes)
 end
 
 
@@ -248,12 +299,20 @@ struct CubeFitter
     β::Param.Parameter
 
     n_dust_cont::Int
+
     n_dust_feat::Int
     df_names::Vector{String}
     dust_features::Vector{Dict}
+
     n_lines::Int
     line_names::Vector{Symbol}
     lines::Vector{Param.TransitionLine}
+
+    n_voff_tied::Int
+    line_tied::Vector{Union{String,Nothing}}
+    voff_tied_key::Vector{String}
+    voff_tied::Vector{Param.Parameter}
+
     n_complexes::Int
     complexes::Vector{String}
     n_params::Int
@@ -264,7 +323,7 @@ struct CubeFitter
         plot_spaxels::Symbol=:pyplot, plot_maps::Bool=true, parallel::Bool=true, save_fits::Bool=true)
 
         options = parse_options() 
-        line_list = parse_lines()
+        line_list, voff_tied = parse_lines()
 
         # Get shape
         shape = size(cube.Iλ)
@@ -292,7 +351,7 @@ struct CubeFitter
         complexes = complexes[ss]
         n_complexes = length(complexes)
 
-        line_wave = [line_list[line].parameters[:wave].value for line ∈ keys(line_list)]
+        line_wave = [line_list[line].λ₀ for line ∈ keys(line_list)]
         ln_filt = [minimum(λ) < lw < maximum(λ) for lw ∈ line_wave]
         line_names = Vector{Symbol}(collect(keys(line_list))[ln_filt])
         ss = sortperm(line_wave[ln_filt])
@@ -300,13 +359,25 @@ struct CubeFitter
         lines = [line_list[line] for line ∈ line_names]
         n_lines = length(line_names)
 
-        # Full 3D intensity model array
-        cube_model = cubemodel_empty(shape, n_dust_cont, df_names, line_names)
-        # 2D maps of fitting parameters
-        param_maps = parammaps_empty(shape, n_dust_cont, df_names, complexes, line_names)
+        # Unpack the voff_tied dictionary
+        voff_tied_key = collect(keys(voff_tied))
+        voff_tied = [voff_tied[voff] for voff ∈ voff_tied_key]
+        n_voff_tied = length(voff_tied)
+        # Also store the "tied" parameter for each line, which will need to be checked against the voff_tied_key
+        # during fitting to find the proper location of the tied voff parameter to use
+        line_tied = Vector{Union{Nothing,String}}([line.tied for line ∈ lines])
 
         # Total number of parameters
         n_params = (2+2) + 2n_dust_cont + 3n_dust_features + (3+2)*n_lines + 2n_complexes
+        for vk ∈ voff_tied_key
+            n_tied = sum([line.tied == vk for line ∈ lines])
+            n_params -= (n_tied - 1)
+        end
+
+        # Full 3D intensity model array
+        cube_model = cubemodel_empty(shape, n_dust_cont, df_names, line_names)
+        # 2D maps of fitting parameters
+        param_maps = parammaps_empty(shape, n_dust_cont, df_names, complexes, line_names, line_tied, voff_tied_key)
 
         # Prepare output directories
         name = replace(name, " " => "_")
@@ -319,10 +390,45 @@ struct CubeFitter
 
         return new(cube, z, name, cube_model, param_maps, window_size, plot_spaxels, plot_maps, parallel, save_fits,
             T_s, T_dc, τ_97, β, n_dust_cont, n_dust_features, df_names, dust_features, n_lines, line_names, lines, 
-            n_complexes, complexes, n_params, cosmo)
+            n_voff_tied, line_tied, voff_tied_key, voff_tied, n_complexes, complexes, n_params, cosmo)
     end
 
 end
+
+function mask_emission_lines(λ::Vector{Float64}, I::Vector{Float64}, σ::Vector{Float64})
+
+    # Series of window sizes to perform median filtering
+    window_sizes = [2, 5, 10, 50, 100]
+    med_spec = zeros(length(λ), length(window_sizes))
+    mask = falses(length(λ))
+
+    # For each window size, do a sliding median filter
+    for i ∈ 1:length(window_sizes)
+        pix = 1:length(λ)
+        for p ∈ pix
+            i_sort = sortperm(abs.(p .- pix))
+            idx = pix[i_sort][1:window_sizes[i]]
+            # Subtract a linear fit to the continuum
+            I_lin = I[λ[p]-0.1 .< λ .< λ[p]+0.1]
+            I_lin = (I_lin[end] - I_lin[1]) / 0.2 .* (λ[idx] .- (λ[p].-0.1)) .+ I_lin[1]
+            med_spec[p, i] = nanmedian(I[idx] .- I_lin)
+        end
+    end
+    # Check if the std between the window medians is larger than the noise -> if so, there is a line
+    for j ∈ 1:length(λ)
+        I_lin = I[λ[j]-0.1 .< λ .< λ[j]+0.1]
+        I_lin = (I_lin[end] - I_lin[1]) / 0.2 .* (λ[λ[j]-0.1 .< λ .< λ[j]+0.1] .- (λ[j] .- 0.1)) .+ I_lin[1]
+        mask[j] = dropdims(std(med_spec, dims=2), dims=2)[j] > std(I[λ[j]-0.1 .< λ .< λ[j]+0.1] .- I_lin)
+    end
+    # Extend mask edges by a few pixels
+    mask_edges = findall(x -> x == 1, diff(mask))
+    for me ∈ mask_edges
+        mask[me-5:me+5] .= 1
+    end
+
+    return mask
+end
+
 
 function levmar_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int})
 
@@ -330,6 +436,11 @@ function levmar_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int})
     λ = cube_fitter.cube.λ
     I = cube_fitter.cube.Iλ[spaxel..., :]
     σ = cube_fitter.cube.σI[spaxel..., :]
+
+    # # Mask out emission lines so that they aren't included in the continuum fit
+    # mask_lines = mask_emission_lines(λ, I, σ)
+    # I[mask_lines] .= NaN
+    # σ[mask_lines] .= NaN
 
     # Filter NaNs
     if sum(.!isfinite.(I) .| .!isfinite.(σ)) > (size(I, 1) / 10)
@@ -345,7 +456,7 @@ function levmar_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int})
         Δλ = diffs[1]
 
         # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
-        λknots = λ[length(λ) ÷ 50]:Δλ*100:λ[end-(length(λ) ÷ 50)]
+        λknots = λ[length(λ) ÷ 50]:Δλ*50:λ[end-(length(λ) ÷ 50)]
         # ONLY replace NaN values, keep the rest of the data as-is
         I[filt] .= Spline1D(λ[isfinite.(I)], I[isfinite.(I)], λknots, k=3, bc="extrapolate").(λ[filt])
         σ[filt] .= Spline1D(λ[isfinite.(σ)], σ[isfinite.(σ)], λknots, k=3, bc="extrapolate").(λ[filt])
@@ -389,9 +500,8 @@ function levmar_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int})
     mean_df = [cdf[:wave] for cdf ∈ cube_fitter.dust_features]
     fwhm_df = [cdf[:fwhm] for cdf ∈ cube_fitter.dust_features]
 
-    mean_ln = [ln.parameters[:wave] for ln ∈ cube_fitter.lines]
+    voff_ln = [ln.parameters[:voff] for ln ∈ cube_fitter.lines]
     fwhm_ln = [ln.parameters[:fwhm] for ln ∈ cube_fitter.lines]
-    prof_ln = [ln.profile for ln ∈ cube_fitter.lines]
 
     stellar_pars = [A_s, cube_fitter.T_s.value]
     stellar_priors = [amp_dc_prior, cube_fitter.T_s.prior]
@@ -402,12 +512,27 @@ function levmar_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int})
     df_pars = vcat([[Ai, mi.value, fi.value] for (Ai, mi, fi) ∈ zip(A_df, mean_df, fwhm_df)]...)
     df_priors = vcat([[amp_df_prior, mi.prior, fi.prior] for (mi, fi) ∈ zip(mean_df, fwhm_df)]...)
 
-    ln_pars = vcat([[Ai, mi.value, fi.value] for (Ai, mi, fi) ∈ zip(A_ln, mean_ln, fwhm_ln)]...)
-    ln_priors = vcat([[amp_ln_prior, mi.prior, fi.prior] for (mi, fi) ∈ zip(mean_ln, fwhm_ln)]...)
+    ln_pars = Vector{Float64}()
+    ln_priors = Vector{Any}()
+    λ0_ln = Vector{Float64}()
+    prof_ln = Vector{Symbol}()
+    for (i, ln) ∈ enumerate(cube_fitter.lines)
+        if isnothing(ln.tied)
+            append!(ln_pars, [A_ln[i], voff_ln[i].value, fwhm_ln[i].value])
+            append!(ln_priors, [amp_ln_prior, voff_ln[i].prior, fwhm_ln[i].prior])
+        else
+            append!(ln_pars, [A_ln[i], fwhm_ln[i].value])
+            append!(ln_priors, [amp_ln_prior, fwhm_ln[i].prior])
+        end
+        append!(λ0_ln, [ln.λ₀])
+        append!(prof_ln, [ln.profile])
+    end
+    voff_tied_pars = [cube_fitter.voff_tied[i].value for i ∈ 1:cube_fitter.n_voff_tied]
+    voff_tied_priors = [cube_fitter.voff_tied[i].prior for i ∈ 1:cube_fitter.n_voff_tied]
 
     # Initial parameter vector
-    p₀ = vcat(stellar_pars, dc_pars, df_pars, ln_pars, [cube_fitter.τ_97.value], [cube_fitter.β.value])
-    priors = vcat(stellar_priors, dc_priors, df_priors, ln_priors, [cube_fitter.τ_97.prior], [cube_fitter.β.prior])
+    p₀ = vcat(stellar_pars, dc_pars, df_pars, voff_tied_pars, ln_pars, [cube_fitter.τ_97.value], [cube_fitter.β.value])
+    priors = vcat(stellar_priors, dc_priors, df_priors, voff_tied_priors, ln_priors, [cube_fitter.τ_97.prior], [cube_fitter.β.prior])
 
     # Convert parameter limits into CMPFit object
     parinfo = CMPFit.Parinfo(length(p₀))
@@ -415,6 +540,7 @@ function levmar_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int})
     # Stellar amplitude
     parinfo[1].limited = (1,0)
     parinfo[1].limits = (0., 0.)
+
     # Stellar temp
     parinfo[2].fixed = cube_fitter.T_s.locked
     if !(cube_fitter.T_s.locked)
@@ -437,8 +563,8 @@ function levmar_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int})
 
     # Dust feature amplitude, mean, fwhm
     for i ∈ 1:cube_fitter.n_dust_feat
-        parinfo[pᵢ].limited = (1,0)
-        parinfo[pᵢ].limits = (0., 0.)
+        parinfo[pᵢ].limited = (1,1)
+        parinfo[pᵢ].limits = (0., nanmaximum(I))
         parinfo[pᵢ+1].fixed = mean_df[i].locked
         if !(mean_df[i].locked)
             parinfo[pᵢ+1].limited = (1,1)
@@ -452,21 +578,40 @@ function levmar_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int})
         pᵢ += 3
     end
 
-    # Emission line amplitude, mean, fwhm
+    # Tied velocity offsets
+    for i ∈ 1:cube_fitter.n_voff_tied
+        parinfo[pᵢ].fixed = cube_fitter.voff_tied[i].locked
+        if !(cube_fitter.voff_tied[i].locked)
+            parinfo[pᵢ].limited = (1,1)
+            parinfo[pᵢ].limits = (minimum(cube_fitter.voff_tied[i].prior), maximum(cube_fitter.voff_tied[i].prior))
+        end
+        pᵢ += 1
+    end
+
+    # Emission line amplitude, voff, fwhm
     for i ∈ 1:cube_fitter.n_lines
-        parinfo[pᵢ].limited = (1,0)
-        parinfo[pᵢ].limits = (0., 0.)
-        parinfo[pᵢ+1].fixed = mean_ln[i].locked
-        if !(mean_ln[i].locked)
-            parinfo[pᵢ+1].limited = (1,1)
-            parinfo[pᵢ+1].limits = (minimum(mean_ln[i].prior), maximum(mean_ln[i].prior))
+        parinfo[pᵢ].limited = (1,1)
+        parinfo[pᵢ].limits = (0., nanmaximum(I))
+        if isnothing(cube_fitter.line_tied[i])
+            parinfo[pᵢ+1].fixed = voff_ln[i].locked
+            if !(voff_ln[i].locked)
+                parinfo[pᵢ+1].limited = (1,1)
+                parinfo[pᵢ+1].limits = (minimum(voff_ln[i].prior), maximum(voff_ln[i].prior))
+            end
+            parinfo[pᵢ+2].fixed = fwhm_ln[i].locked
+            if !(fwhm_ln[i].locked)
+                parinfo[pᵢ+2].limited = (1,1)
+                parinfo[pᵢ+2].limits = (minimum(fwhm_ln[i].prior), maximum(fwhm_ln[i].prior))
+            end
+            pᵢ += 3
+        else
+            parinfo[pᵢ+1].fixed = fwhm_ln[i].locked
+            if !(fwhm_ln[i].locked)
+                parinfo[pᵢ+1].limited = (1,1)
+                parinfo[pᵢ+1].limits = (minimum(fwhm_ln[i].prior), maximum(fwhm_ln[i].prior))
+            end
+            pᵢ += 2
         end
-        parinfo[pᵢ+2].fixed = fwhm_ln[i].locked
-        if !(fwhm_ln[i].locked)
-            parinfo[pᵢ+2].limited = (1,1)
-            parinfo[pᵢ+2].limits = (minimum(fwhm_ln[i].prior), maximum(fwhm_ln[i].prior))
-        end
-        pᵢ += 3
     end
 
     # Extinction
@@ -485,7 +630,8 @@ function levmar_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int})
     config = CMPFit.Config()
 
     res = cmpfit(λ, I, σ, (x, p) -> Util.fit_spectrum(x, p, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, 
-        cube_fitter.n_lines, prof_ln), p₀, parinfo=parinfo, config=config)
+        cube_fitter.n_lines, cube_fitter.n_voff_tied, cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, λ0_ln), 
+        p₀, parinfo=parinfo, config=config)
     popt = res.param
     χ2 = res.bestnorm
     χ2red = res.bestnorm / res.dof
@@ -496,9 +642,18 @@ function levmar_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int})
     # end
 
     # function nln_probability(p)
-    #     model = Util.fit_spectrum(λ, p, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, cube_fitter.n_lines, prof_ln)
+    #     model = Util.fit_spectrum(λ, p, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, cube_fitter.n_lines,
+    #         cube_fitter.n_voff_tied, cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, λ0_ln)
     #     return -Util.ln_likelihood(I, model, σ) - ln_prior(p)
     # end
+
+    # opt = Opt(:GN_DIRECT_NOSCAL, length(p₀))
+    # opt.lower_bounds = minimum.(priors)
+    # opt.upper_bounds = maximum.(priors)
+    # opt.min_objective = nln_probability
+
+    # (χ2, popt, ret) = NLopt.optimize(opt, p₀)
+    # χ2red = χ2
 
     # res = optimize(nln_probability, p₀, NelderMead())
     # popt = res.minimizer
@@ -508,14 +663,14 @@ function levmar_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int})
     # res = scipy_opt.basinhopping(
     #     func=nln_probability, x0=p₀, niter=100, stepsize=1.0,
     #     minimizer_kwargs=Dict(:method => "Nelder-Mead", :bounds => bounds, :options => Dict(:disp => false)),
-    #     niter_success=2
+    #     niter_success=10
     # )
     # popt = res["x"]
     # χ2 = χ2red = -nln_probability(popt)
 
     # Final optimized fit
     I_model, comps = Util.fit_spectrum(λ, popt, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, cube_fitter.n_lines, 
-        prof_ln, return_components=true)
+        cube_fitter.n_voff_tied, cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, λ0_ln, return_components=true)
 
     # Prepare outputs
     p_out = zeros(cube_fitter.n_params)
@@ -533,27 +688,47 @@ function levmar_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int})
         p_out[p_i+2] = popt[p_i+2]  # fwhm
         p_i += 3
     end
+    for l ∈ 1:cube_fitter.n_voff_tied
+        p_out[p_i] = popt[p_i]
+        p_i += 1
+    end
     p_o = p_i
     for (k, ln) ∈ enumerate(cube_fitter.lines)
         p_out[p_o] = popt[p_i] > 0. ? log10(popt[p_i]) : -Inf   # log amp
-        # Convert mean wavelength into velocity shift (km/s)
-        p_out[p_o+1] = Util.Doppler_shift_v(popt[p_i+1], ln.parameters[:wave].value)
-        # Convert fwhm to km/s
-        p_out[p_o+2] = Util.Doppler_shift_v(popt[p_i+2] + ln.parameters[:wave].value, ln.parameters[:wave].value)
+        if isnothing(cube_fitter.line_tied[k])
+            p_out[p_o+1] = popt[p_i+1]    # voff in km/s
+            p_out[p_o+2] = popt[p_i+2]    # fwhm in km/s
 
-        # Line intensity
-        profile = comps["line_$(k)"]
-        window = ln.parameters[:wave].value
-        p_out[p_o+3] = NumericalIntegration.integrate(λ, profile, SimpsonEven())
-        p_out[p_o+3] = p_out[p_o+3] > 0. ? log10(p_out[p_o+3]) : -Inf
+            # Line intensity
+            profile = comps["line_$(k)"]
+            window = ln.λ₀
+            p_out[p_o+3] = NumericalIntegration.integrate(λ, profile, SimpsonEven())
+            p_out[p_o+3] = p_out[p_o+3] > 0. ? log10(p_out[p_o+3]) : -Inf
 
-        # SNR
-        p_out[p_o+4] = popt[p_i] /
-            std(I[(window-2cube_fitter.window_size .< λ .< window-cube_fitter.window_size) .| 
-                (window+cube_fitter.window_size .< λ .< window+2cube_fitter.window_size)])
+            # SNR
+            p_out[p_o+4] = popt[p_i] /
+                std(I[(window-2cube_fitter.window_size .< λ .< window-cube_fitter.window_size) .| 
+                    (window+cube_fitter.window_size .< λ .< window+2cube_fitter.window_size)])
         
-        p_i += 3
-        p_o += 5
+            p_i += 3
+            p_o += 5
+        else
+            p_out[p_o+1] = popt[p_i+1]   # fwhm in km/s
+
+            # Line intensity
+            profile = comps["line_$(k)"]
+            window = ln.λ₀
+            p_out[p_o+2] = NumericalIntegration.integrate(λ, profile, SimpsonEven())
+            p_out[p_o+2] = p_out[p_o+2] > 0. ? log10(p_out[p_o+2]) : -Inf
+    
+            # SNR
+            p_out[p_o+3] = popt[p_i] /
+                std(I[(window-2cube_fitter.window_size .< λ .< window-cube_fitter.window_size) .| 
+                    (window+cube_fitter.window_size .< λ .< window+2cube_fitter.window_size)])
+            
+            p_i += 2
+            p_o += 4
+        end
     end
     p_out[p_o] = popt[p_i]       # tau_97
     p_out[p_o+1] = popt[p_i+1]   # beta
@@ -577,8 +752,8 @@ function levmar_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int})
     end 
 
     if cube_fitter.plot_spaxels != :none
-        plot_spaxel_fit(λ, I, I_model, comps, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, [ml.value for ml ∈ mean_ln], 
-            [ln.latex for ln ∈ cube_fitter.lines], χ2red, cube_fitter.name, "spaxel_$(spaxel[1])_$(spaxel[2])", backend=cube_fitter.plot_spaxels)
+        plot_spaxel_fit(λ, I, I_model, comps, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, λ0_ln, cube_fitter.line_names,
+            χ2red, cube_fitter.name, "spaxel_$(spaxel[1])_$(spaxel[2])", backend=cube_fitter.plot_spaxels)
     end
 
     return p_out, I_model, comps
@@ -587,7 +762,7 @@ end
 
 
 function plot_spaxel_fit(λ::Vector{Float64}, I::Vector{Float64}, I_cont::Vector{Float64}, comps::Dict{String, Vector{Float64}}, 
-    n_dust_cont::Int, n_dust_features::Int, line_wave::Vector{Float64}, line_latex::Vector{String}, χ2red::Float64, name::String, 
+    n_dust_cont::Int, n_dust_features::Int, line_wave::Vector{Float64}, line_names::Vector{Symbol}, χ2red::Float64, name::String, 
     label::String; backend::Symbol=:pyplot)
 
     if !isdir("output_$name/spaxel_fits")
@@ -616,8 +791,10 @@ function plot_spaxel_fit(λ::Vector{Float64}, I::Vector{Float64}, I_cont::Vector
                     line=Dict(:color => "rebeccapurple", :width => 1), name="Lines")])
             end
         end
-        for (lw, ll) ∈ zip(line_wave, line_latex)
-            append!(traces, [PlotlyJS.scatter(x=[lw, lw], y=[0., nanmaximum(I)*1.1], mode="lines", line=Dict(:color => "rebeccapurple", :width => 0.5, :dash => "dash"))])
+        for (lw, ln) ∈ zip(line_wave, line_names)
+            append!(traces, [PlotlyJS.scatter(x=[lw, lw], y=[0., nanmaximum(I)*1.1], mode="lines", 
+                line=Dict(:color => occursin("H2", String(ln)) ? "red" : (any(occursin.(["alpha", "beta", "gamma", "delta"], String(ln))) ? "#ff7f0e" : "rebeccapurple"), 
+                :width => 0.5, :dash => "dash"))])
         end
         # append!(traces, [PlotlyJS.scatter(x=λ, y=Util.Continuum(λ, p₀, n_dust_cont, n_dust_features), mode="lines",
             # line=Dict(:color => "red", :width => 1, :dash => "dash"), name="Initial Guess")])
@@ -630,9 +807,9 @@ function plot_spaxel_fit(λ::Vector{Float64}, I::Vector{Float64}, I_cont::Vector
             xaxis_constrain="domain",
             font_family="Georgia, Times New Roman, Serif",
             template="plotly_white",
-            annotations=[
-                attr(x=lw, y=nanmaximum(I)*.75, text=ll) for (lw, ll) ∈ zip(line_wave, line_latex)
-            ]
+            # annotations=[
+            #     attr(x=lw, y=nanmaximum(I)*.75, text=ll) for (lw, ll) ∈ zip(line_wave, line_latex)
+            # ]
         )
         p = PlotlyJS.plot(traces, layout)
         PlotlyJS.savefig(p, isnothing(label) ? "output_$name/spaxel_fits/levmar_fit_spaxel.html" : "output_$name/spaxel_fits/$label.html")
@@ -659,10 +836,11 @@ function plot_spaxel_fit(λ::Vector{Float64}, I::Vector{Float64}, I_cont::Vector
                 ax1.plot(λ, comps[comp] .* comps["extinction"], "-", color=:rebeccapurple, alpha=0.5)
             end
         end
-        for (lw, ll) ∈ zip(line_wave, line_latex)
-            ax1.axvline(lw, linestyle="--", color=:rebeccapurple, lw=0.5, alpha=0.5)
-            y_pos = lw ∈ (7.652, 8.026) ? nanmaximum(I) * 0.9 : nanmaximum(I)
-            ax1.text(lw+.025, y_pos, ll)
+        for (lw, ln) ∈ zip(line_wave, line_names)
+            ax1.axvline(lw, linestyle="--", 
+                color=occursin("H2", String(ln)) ? :red : (any(occursin.(["alpha", "beta", "gamma", "delta"], String(ln))) ? "#ff7f0e" : :rebeccapurple), lw=0.5, alpha=0.5)
+            # y_pos = lw ∈ (7.652, 8.026) ? nanmaximum(I) * 0.9 : nanmaximum(I)
+            # ax1.text(lw+.025, y_pos, ll)
         end
         ax1.plot(λ, comps["extinction"] .* (sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] .+ comps["stellar"]), "g-")
         ax1.set_xlim(minimum(λ), maximum(λ))
@@ -699,7 +877,7 @@ function pahfit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int,Int})
         Δλ = diffs[1]
 
         # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
-        λknots = λ[length(λ) ÷ 50]:Δλ*100:λ[end-(length(λ) ÷ 50)]
+        λknots = λ[length(λ) ÷ 50]:Δλ*50:λ[end-(length(λ) ÷ 50)]
         # ONLY replace NaN values, keep the rest of the data as-is
         I[filt] .= Spline1D(λ[isfinite.(I)], I[isfinite.(I)], λknots, k=3, bc="extrapolate").(λ[filt])
         σ[filt] .= Spline1D(λ[isfinite.(σ)], σ[isfinite.(σ)], λknots, k=3, bc="extrapolate").(λ[filt])
@@ -793,13 +971,24 @@ function fit_cube(cube_fitter::CubeFitter)
         cube_fitter.param_maps.dust_features[df][:fwhm] .= out_params[:, :, pᵢ+2]
         pᵢ += 3
     end
-    for ln ∈ cube_fitter.line_names
+    for vk ∈ cube_fitter.voff_tied_key
+        cube_fitter.param_maps.tied_voffs[vk] .= out_params[:, :, pᵢ]
+        pᵢ += 1
+    end
+    for (k, ln) ∈ enumerate(cube_fitter.line_names)
         cube_fitter.param_maps.lines[ln][:amp] .= out_params[:, :, pᵢ]
-        cube_fitter.param_maps.lines[ln][:voff] .= out_params[:, :, pᵢ+1]
-        cube_fitter.param_maps.lines[ln][:fwhm] .= out_params[:, :, pᵢ+2]
-        cube_fitter.param_maps.lines[ln][:intI] .= out_params[:, :, pᵢ+3]
-        cube_fitter.param_maps.lines[ln][:SNR] .= out_params[:, :, pᵢ+4]
-        pᵢ += 5
+        if isnothing(cube_fitter.line_tied[k])
+            cube_fitter.param_maps.lines[ln][:voff] .= out_params[:, :, pᵢ+1]
+            cube_fitter.param_maps.lines[ln][:fwhm] .= out_params[:, :, pᵢ+2]
+            cube_fitter.param_maps.lines[ln][:intI] .= out_params[:, :, pᵢ+3]
+            cube_fitter.param_maps.lines[ln][:SNR] .= out_params[:, :, pᵢ+4]
+            pᵢ += 5
+        else
+            cube_fitter.param_maps.lines[ln][:fwhm] .= out_params[:, :, pᵢ+1]
+            cube_fitter.param_maps.lines[ln][:intI] .= out_params[:, :, pᵢ+2]
+            cube_fitter.param_maps.lines[ln][:SNR] .= out_params[:, :, pᵢ+3]
+            pᵢ += 4
+        end
     end
     cube_fitter.param_maps.extinction[:tau_9_7] .= out_params[:, :, pᵢ]
     cube_fitter.param_maps.extinction[:beta] .= out_params[:, :, pᵢ+1]
@@ -924,6 +1113,11 @@ function plot_parameter_maps(cube_fitter::CubeFitter; snr_thresh=3.)
             plot_parameter_map(data, cube_fitter.name, name_i, Ω=cube_fitter.cube.Ω, z=cube_fitter.z, cosmo=cube_fitter.cosmology)
         end
     end
+    for vk ∈ cube_fitter.voff_tied_key
+        data = cube_fitter.param_maps.tied_voffs[vk]
+        name_i = join(["tied_voffs", vk], "_")
+        plot_parameter_map(data, cube_fitter.name, name_i, Ω=cube_fitter.cube.Ω, z=cube_fitter.z, cosmo=cube_fitter.cosmology)
+    end
     for line ∈ keys(cube_fitter.param_maps.lines)
         snr = cube_fitter.param_maps.lines[line][:SNR]
         for parameter ∈ keys(cube_fitter.param_maps.lines[line])
@@ -1039,6 +1233,13 @@ function write_fits(cube_fitter::CubeFitter)
                 write(f, data; header=hdr, name=name_i)
                 write_key(f[name_i], "BUNIT", bunit)      
             end
+        end
+        for vk ∈ cube_fitter.voff_tied_key
+            data = cube_fitter.param_maps.tied_voffs[vk]
+            name_i = join(["tied_voffs", vk], "_")
+            bunit = "km/s"
+            write(f, data; header=hdr, name=name_i)
+            write_key(f[name_i], "BUNIT", bunit)
         end
         for c ∈ keys(cube_fitter.param_maps.dust_complexes)
             snr = cube_fitter.param_maps.dust_complexes[c][:SNR]
