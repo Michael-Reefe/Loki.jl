@@ -1,6 +1,7 @@
 module CubeData
 
-export DataCube, Observation, from_fits, to_rest_frame, apply_mask, correct, plot_2d, plot_1d, cube_rebin!
+export DataCube, Observation, from_fits, to_rest_frame, apply_mask, correct, interpolate_cube!, 
+    plot_2d, plot_1d, cube_rebin!
 
 # Import packages
 using Statistics
@@ -13,6 +14,7 @@ using FITSIO
 using Cosmology
 using WCS
 using Interpolations
+using Dierckx
 
 # Plotting utilities
 using ColorSchemes
@@ -240,6 +242,48 @@ function apply_mask(cube::DataCube)
     end
     return cube
 
+end
+
+function interpolate_cube!(cube::DataCube)
+    """
+    Function to interpolate bad pixels in individual spaxels.  Does not interpolate any spaxels
+    where more than 10% of the datapoints are bad.  Uses a wide cubic spline interpolation to
+    get the general shape of the continuum but not fit noise or lines.
+    """
+
+    λ = cube.λ
+
+    for (x, y) ∈ Iterators.product(1:size(cube.Iλ, 1), 1:size(cube.Iλ, 2))
+
+        I = cube.Iλ[x, y, :]
+        σ = cube.σI[x, y, :]
+
+        # Filter NaNs
+        if sum(.!isfinite.(I) .| .!isfinite.(σ)) > (size(I, 1) / 10)
+            # Keep NaNs in spaxels that are a majority NaN (i.e., we do not want to fit them)
+            continue
+        end
+        filt = .!isfinite.(I) .& .!isfinite.(σ)
+
+        # Interpolate the NaNs
+        if sum(filt) > 0
+            # Make sure the wavelength vector is linear, since it is assumed later in the function
+            diffs = diff(λ)
+            @assert diffs[1] ≈ diffs[end]
+            Δλ = diffs[1]
+
+            # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
+            λknots = λ[length(λ) ÷ 50]:Δλ*50:λ[end-(length(λ) ÷ 50)]
+            # ONLY replace NaN values, keep the rest of the data as-is
+            I[filt] .= Spline1D(λ[isfinite.(I)], I[isfinite.(I)], λknots, k=3, bc="extrapolate").(λ[filt])
+            σ[filt] .= Spline1D(λ[isfinite.(σ)], σ[isfinite.(σ)], λknots, k=3, bc="extrapolate").(λ[filt])
+
+            # Reassign data in cube structure
+            cube.Iλ[x, y, :] .= I
+            cube.σI[x, y, :] .= σ
+
+        end 
+    end
 end
 
 # Plotting functions

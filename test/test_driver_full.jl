@@ -9,8 +9,7 @@ using Printf
 using PyPlot
 using PyCall
 
-addprocs(maximum([0, Sys.CPU_THREADS ÷ 2 - 1]))
-# addprocs(9)
+addprocs(maximum([0, Sys.CPU_THREADS ÷ 2]))
 @everywhere begin
     using Pkg; Pkg.activate(dirname(@__DIR__))
     Pkg.instantiate(); Pkg.precompile()
@@ -45,7 +44,7 @@ obs = from_fits(["jw01328-o015_t014_miri_ch1-mediumshortlong-_s3d.fits",
 obs = correct(obs)
 
 # Create the cube fitting object
-cube_fitter = CubeFitter(obs.channels[2], obs.z, obs.name * "_ch2_test"; parallel=true, plot_spaxels=:pyplot,
+cube_fitter = CubeFitter(obs.channels[2], obs.z, obs.name * "_ch2_test_sep"; parallel=true, plot_spaxels=:pyplot,
     plot_maps=true, save_fits=true)
 
 # Perform the Levenberg-Marquardt least-squares fitting

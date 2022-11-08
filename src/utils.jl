@@ -125,9 +125,8 @@ function Extinction(ext::Float64, τ_97::Float64, screen::Bool=true)
     return iszero(τ_97) ? 1. : (1 - exp(-τ_97*ext)) / (τ_97*ext)
 end
 
-function fit_spectrum(λ::Vector{Float64}, params::Vector{Float64}, n_dust_cont::Int64, n_dust_features::Int64,
-    n_lines::Int64, n_voff_tied::Int64, voff_tied_key::Vector{String}, line_tied::Vector{Union{String,Nothing}}, 
-    line_profiles::Vector{Symbol}, line_restwave::Vector{Float64}; return_components::Bool=false, verbose::Bool=false)
+function fit_spectrum(λ::Vector{Float64}, params::Vector{Float64}, n_dust_cont::Int64, n_dust_features::Int64; 
+    return_components::Bool=false, verbose::Bool=false)
 
     # Adapted from PAHFIT (IDL)
 
@@ -163,37 +162,6 @@ function fit_spectrum(λ::Vector{Float64}, params::Vector{Float64}, n_dust_cont:
         pᵢ += 3
     end
 
-    vᵢ = pᵢ
-    pᵢ += n_voff_tied
-
-    # Add emission lines
-    for k ∈ 1:n_lines
-        # Check if voff is tied: if so, use the tied voff parameter, otherwise, use the line's own voff parameter
-        if isnothing(line_tied[k])
-            voff = params[pᵢ+1]
-            fwhm = params[pᵢ+2]
-            if verbose
-                println("Using $(params[pᵢ]) for line amp, untied $(params[pᵢ+1]) for line voff,
-                    and $(params[pᵢ+2]) for line width; for line at $(line_restwave[k])")
-            end
-        else
-            vwhere = findfirst(x -> x == line_tied[k], voff_tied_key)
-            voff = params[vᵢ + vwhere - 1]
-            fwhm = params[pᵢ+1]
-            if verbose
-                println("Using $(params[pᵢ]) for line amp, tied $(params[vᵢ+vwhere-1]) for line voff,
-                    and $(params[pᵢ+1]) for line width; for line at $(line_restwave[k])")
-            end
-        end
-        # Convert voff in km/s to mean wavelength in μm
-        mean_μm = Doppler_shift_λ(line_restwave[k], voff)
-        # Convert FWHM from km/s to μm
-        fwhm_μm = Doppler_shift_λ(line_restwave[k], fwhm) - line_restwave[k]
-        comps["line_$k"] = eval(line_profiles[k]).(λ, params[pᵢ], mean_μm, fwhm_μm)
-        contin .+= comps["line_$k"]        
-        pᵢ += isnothing(line_tied[k]) ? 3 : 2
-    end
-
     # Extinction 
     if verbose
         println("Using $(params[pᵢ]) for extinction τ and $(params[pᵢ+1]) for extinction β")
@@ -208,6 +176,51 @@ function fit_spectrum(λ::Vector{Float64}, params::Vector{Float64}, n_dust_cont:
     return contin
 
 end
+
+function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_lines::Int64, n_voff_tied::Int64, 
+    voff_tied_key::Vector{String}, line_tied::Vector{Union{String,Nothing}}, line_profiles::Vector{Symbol}, 
+    line_restwave::Vector{Float64}; return_components::Bool=false, verbose::Bool=false)
+
+    comps = Dict{String, Vector{Float64}}()
+    contin = zeros(Float64, length(λ))
+    pᵢ = n_voff_tied + 1
+
+    # Add emission lines
+    for k ∈ 1:n_lines
+        # Check if voff is tied: if so, use the tied voff parameter, otherwise, use the line's own voff parameter
+        if isnothing(line_tied[k])
+            voff = params[pᵢ+1]
+            fwhm = params[pᵢ+2]
+            if verbose
+                println("Using $(params[pᵢ]) for line amp, untied $(params[pᵢ+1]) for line voff,
+                    and $(params[pᵢ+2]) for line width; for line at $(line_restwave[k])")
+            end
+        else
+            vwhere = findfirst(x -> x == line_tied[k], voff_tied_key)
+            voff = params[vwhere]
+            fwhm = params[pᵢ+1]
+            if verbose
+                println("Using $(params[pᵢ]) for line amp, tied $(params[vᵢ+vwhere-1]) for line voff,
+                    and $(params[pᵢ+1]) for line width; for line at $(line_restwave[k])")
+            end
+        end
+        # Convert voff in km/s to mean wavelength in μm
+        mean_μm = Doppler_shift_λ(line_restwave[k], voff)
+        # Convert FWHM from km/s to μm
+        fwhm_μm = Doppler_shift_λ(line_restwave[k], fwhm) - line_restwave[k]
+        comps["line_$k"] = eval(line_profiles[k]).(λ, params[pᵢ], mean_μm, fwhm_μm)
+        contin .+= comps["line_$k"]        
+        pᵢ += isnothing(line_tied[k]) ? 3 : 2
+
+    end
+
+    if return_components
+        return contin, comps
+    end
+    return contin
+
+end
+
 
 # LINE PROFILES
 
