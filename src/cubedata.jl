@@ -273,7 +273,7 @@ function interpolate_cube!(cube::DataCube)
             Δλ = diffs[1]
 
             # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
-            λknots = λ[length(λ) ÷ 50]:Δλ*50:λ[end-(length(λ) ÷ 50)]
+            λknots = λ[51]:Δλ*50:λ[end-51]
             # ONLY replace NaN values, keep the rest of the data as-is
             I[filt] .= Spline1D(λ[isfinite.(I)], I[isfinite.(I)], λknots, k=3, bc="extrapolate").(λ[filt])
             σ[filt] .= Spline1D(λ[isfinite.(σ)], σ[isfinite.(σ)], λknots, k=3, bc="extrapolate").(λ[filt])
