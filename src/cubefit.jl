@@ -202,7 +202,7 @@ end
 
 function parammaps_empty(shape::Tuple{Int,Int,Int}, n_dust_cont::Int, df_names::Vector{String}, 
     complexes::Vector{String}, line_names::Vector{Symbol}, line_tied::Vector{Union{String,Nothing}},
-    voff_tied_key::Vector{String})
+    voff_tied_key::Vector{String}, flexible_wavesol::Bool)
 
     nan_arr = ones(shape[1:2]...) .* NaN
 
@@ -232,7 +232,7 @@ function parammaps_empty(shape::Tuple{Int,Int,Int}, n_dust_cont::Int, df_names::
     lines = Dict{Symbol, Dict{Symbol, Array{Float64, 2}}}()
     for (line, tie) ∈ zip(line_names, line_tied)
         lines[line] = Dict{Symbol, Array{Float64, 2}}()
-        pnames = isnothing(tie) ? [:amp, :voff, :fwhm, :intI, :SNR] : [:amp, :fwhm, :intI, :SNR]
+        pnames = isnothing(tie) || flexible_wavesol ? [:amp, :voff, :fwhm, :intI, :SNR] : [:amp, :fwhm, :intI, :SNR]
         for pname ∈ pnames
             lines[line][pname] = copy(nan_arr)
         end
@@ -393,7 +393,7 @@ struct CubeFitter
         # Full 3D intensity model array
         cube_model = cubemodel_empty(shape, n_dust_cont, df_names, line_names)
         # 2D maps of fitting parameters
-        param_maps = parammaps_empty(shape, n_dust_cont, df_names, complexes, line_names, line_tied, voff_tied_key)
+        param_maps = parammaps_empty(shape, n_dust_cont, df_names, complexes, line_names, line_tied, voff_tied_key, flexible_wavesol)
 
         # Prepare output directories
         name = replace(name, " " => "_")
