@@ -44,7 +44,7 @@ obs = from_fits(["jw01328-o015_t014_miri_ch1-mediumshortlong-_s3d.fits",
 obs = correct(obs)
 
 # Create the cube fitting object
-cube_fitter = CubeFitter(obs.channels[2], obs.z, obs.name * "_ch2_test_sep"; parallel=true, plot_spaxels=:pyplot,
+cube_fitter = CubeFitter(obs.channels[2], obs.z, obs.name * "_ch2_test_flex"; parallel=true, plot_spaxels=:pyplot,
     plot_maps=true, save_fits=true)
 
 # Perform the Levenberg-Marquardt least-squares fitting

@@ -110,11 +110,12 @@ function parse_options()
     return options_out
 end
 
-function parse_lines()
+function parse_lines(channel::Int)
     lines = TOML.parsefile(joinpath(sourcepath, "lines.toml"))
     lines_out = Param.LineDict()
 
-    keylist1 = ["tie_H2_voff", "tie_IP_voff", "fwhm_init", "voff_init", "voff_plim", "fwhm_plim", "lines"]
+    keylist1 = ["tie_H2_voff", "tie_IP_voff", "fwhm_init", "voff_init", "voff_plim", "fwhm_pmax", 
+        "R", "flexible_wavesol", "wavesol_unc", "channels", "lines"]
     for key ∈ keylist1
         if !haskey(lines, key)
             error("$key not found in line optiones!")
@@ -131,25 +132,32 @@ function parse_lines()
 
     for line ∈ keys(lines["lines"])
 
+        fwhm_pmin = Util.C_KMS / lines["R"][channel]
+
         voff_prior = Uniform(lines["voff_plim"]...)
         voff_locked = false
-        fwhm_prior = Uniform(lines["fwhm_plim"]...)
+        fwhm_prior = Uniform(fwhm_pmin, lines["fwhm_pmax"])
         fwhm_locked = false
         if haskey(lines, "priors")
             if haskey(lines["priors"], line)
                 if haskey(lines["priors"][line], "voff")
-                    voff_prior = eval(lines["priors"][line]["voff"]["pstr"])
+                    voff_prior = eval(Meta.parse(lines["priors"][line]["voff"]["pstr"]))
                     voff_locked = lines["priors"][line]["voff"]["locked"]
                 end
                 if haskey(lines["priors"][line], "fwhm")
-                    fwhm_prior = eval(lines["priors"][line]["fwhm"]["pstr"])
+                    fwhm_prior = eval(Meta.parse(lines["priors"][line]["fwhm"]["pstr"]))
                     fwhm_locked = lines["priors"][line]["fwhm"]["locked"]
                 end
             end
         end
+
         tied = nothing
         if lines["tie_H2_voff"] && occursin("H2", line)
             tied = "H2"
+            if lines["flexible_wavesol"]
+                δv = lines["wavesol_unc"][channel]
+                voff_prior = Uniform(-δv, δv)
+            end
         end
 
         voff = Param.Parameter(lines["voff_init"], voff_locked, voff_prior)
@@ -174,7 +182,7 @@ function parse_lines()
         voff_tied[voff_tie] = Param.Parameter(lines["voff_init"], locked, prior)
     end
 
-    return lines_out, voff_tied
+    return lines_out, voff_tied, lines["R"], lines["flexible_wavesol"]
 end
 
 struct ParamMaps
@@ -319,12 +327,14 @@ struct CubeFitter
     n_params_lines::Int
     
     cosmology::Cosmology.AbstractCosmology
+    R::Int64
+    flexible_wavesol::Bool
 
     function CubeFitter(cube::CubeData.DataCube, z::Float64, name::String; window_size::Float64=.025, 
         plot_spaxels::Symbol=:pyplot, plot_maps::Bool=true, parallel::Bool=true, save_fits::Bool=true)
 
         options = parse_options() 
-        line_list, voff_tied = parse_lines()
+        line_list, voff_tied, R, flexible_wavesol = parse_lines(parse(Int, cube.channel))
 
         # Get shape
         shape = size(cube.Iλ)
@@ -373,7 +383,11 @@ struct CubeFitter
         n_params_lines = (3+2)*n_lines
         for vk ∈ voff_tied_key
             n_tied = sum([line.tied == vk for line ∈ lines])
-            n_params_lines -= (n_tied - 1)
+            if !flexible_wavesol
+                n_params_lines -= (n_tied - 1)
+            else
+                n_params_lines += 1
+            end
         end
 
         # Full 3D intensity model array
@@ -392,7 +406,8 @@ struct CubeFitter
 
         return new(cube, z, name, cube_model, param_maps, window_size, plot_spaxels, plot_maps, parallel, save_fits,
             T_s, T_dc, τ_97, β, n_dust_cont, n_dust_features, df_names, dust_features, n_lines, line_names, lines, 
-            n_voff_tied, line_tied, voff_tied_key, voff_tied, n_complexes, complexes, n_params_cont, n_params_lines, cosmo)
+            n_voff_tied, line_tied, voff_tied_key, voff_tied, n_complexes, complexes, n_params_cont, n_params_lines, 
+            cosmo, R[parse(Int, cube.channel)], flexible_wavesol)
     end
 
 end
@@ -460,7 +475,7 @@ function continuum_cubic_spline(λ::Vector{Float64}, I::Vector{Float64}, σ::Vec
     return mask_lines, I_out, σ_out
 end
 
-function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int})
+function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}; verbose::Bool=false)
 
     # Extract spaxel to be fit
     λ = cube_fitter.cube.λ
@@ -627,55 +642,99 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int})
         p_i += 2
     end 
 
+    if verbose
+        println("######################################################################")
+        println("################# SPAXEL FIT RESULTS -- CONTINUUM ####################")
+        println("######################################################################")
+        println()
+        println()
+        println("#> STELLAR CONTINUUM <#")
+        println()
+        println("Stellar_amp: \t\t\t $(@sprintf "%.3e" popt[1]) MJy/sr \t Limits: (0, Inf)")
+        println("Stellar_temp: \t\t\t $(@sprintf "%.0f" popt[2]) K \t (fixed)")
+        pᵢ = 3
+        println()
+        println("#> DUST CONTINUUM <#")
+        println()
+        for i ∈ 1:cube_fitter.n_dust_cont
+            println("Dust_continuum_$(i)_amp: \t\t $(@sprintf "%.3e" popt[pᵢ]) MJy/sr \t Limits: (0, Inf)")
+            println("Dust_continuum_$(i)_temp: \t\t $(@sprintf "%.0f" popt[pᵢ+1]) K \t\t\t (fixed)")
+            println()
+            pᵢ += 2
+        end
+        println()
+        println("#> DUST FEATURES <#")
+        println()
+        for (j, df) ∈ enumerate(cube_fitter.df_names)
+            println("$(df)_amp:\t\t\t $(@sprintf "%.1f" popt[pᵢ]) MJy/sr \t Limits: " *
+                "(0, $(@sprintf "%.1f" nanmaximum(I)))")
+            println("$(df)_mean:  \t\t $(@sprintf "%.3f" popt[pᵢ+1]) μm \t Limits: " *
+                "($(@sprintf "%.3f" minimum(mean_df[j].prior)), $(@sprintf "%.3f" maximum(mean_df[j].prior)))" * 
+                (mean_df[j].locked ? " (fixed)" : ""))
+            println("$(df)_fwhm:  \t\t $(@sprintf "%.3f" popt[pᵢ+2]) μm \t Limits: " *
+                "($(@sprintf "%.3f" minimum(fwhm_df[j].prior)), $(@sprintf "%.3f" maximum(fwhm_df[j].prior)))" * 
+                (fwhm_df[j].locked ? " (fixed)" : ""))
+            println()
+            pᵢ += 3
+        end
+        println()
+        println("#> EXTINCTION <#")
+        println()
+        println("τ_9.7: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ]) [-] \t Limits: " *
+            "($(@sprintf "%.2f" minimum(cube_fitter.τ_97.prior)), $(@sprintf "%.2f" maximum(cube_fitter.τ_97.prior)))" * 
+            (cube_fitter.τ_97.locked ? " (fixed)" : ""))
+        println("β: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ+1]) [-] \t Limits: " *
+            "($(@sprintf "%.2f" minimum(cube_fitter.β.prior)), $(@sprintf "%.2f" maximum(cube_fitter.β.prior)))" * 
+            (cube_fitter.β.locked ? " (fixed)" : ""))
+        println()
+        println("######################################################################")
+    end
+
     return p_out, I_model, comps, χ2red
 
 end
 
-function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int})
+function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}, continuum::Vector{Float64}; verbose::Bool=false)
 
     # Extract spaxel to be fit
     λ = cube_fitter.cube.λ
     I = cube_fitter.cube.Iλ[spaxel..., :]
     σ = cube_fitter.cube.σI[spaxel..., :]
 
-    # Get cubic spline interpolation of the data without the emission lines
     _, continuum, _ = continuum_cubic_spline(λ, I, σ)
-
-    Inorm = I .- continuum
-    σnorm = σ
-
-    N = abs(nanmaximum(Inorm))
+    N = abs(nanmaximum(I))
     N = N ≠ 0. ? N : 1.
-    Inorm ./= N
-    σnorm ./= N
+
+    Inorm = (I .- continuum) ./ N
+    σnorm = σ ./ N
 
     A_ln = ones(cube_fitter.n_lines) .* 0.5
-    amp_ln_prior = Uniform(0., 1.)
+    # amp_ln_prior = Uniform(0., 1.)
 
     voff_ln = [ln.parameters[:voff] for ln ∈ cube_fitter.lines]
     fwhm_ln = [ln.parameters[:fwhm] for ln ∈ cube_fitter.lines]
 
     ln_pars = Vector{Float64}()
-    ln_priors = Vector{Any}()
     λ0_ln = Vector{Float64}()
     prof_ln = Vector{Symbol}()
+    # ln_priors = Vector{Any}()
     for (i, ln) ∈ enumerate(cube_fitter.lines)
-        if isnothing(ln.tied)
+        if isnothing(ln.tied) || cube_fitter.flexible_wavesol
             append!(ln_pars, [A_ln[i], voff_ln[i].value, fwhm_ln[i].value])
-            append!(ln_priors, [amp_ln_prior, voff_ln[i].prior, fwhm_ln[i].prior])
+            # append!(ln_priors, [amp_ln_prior, voff_ln[i].prior, fwhm_ln[i].prior])
         else
             append!(ln_pars, [A_ln[i], fwhm_ln[i].value])
-            append!(ln_priors, [amp_ln_prior, fwhm_ln[i].prior])
+            # append!(ln_priors, [amp_ln_prior, fwhm_ln[i].prior])
         end
         append!(λ0_ln, [ln.λ₀])
         append!(prof_ln, [ln.profile])
     end
     voff_tied_pars = [cube_fitter.voff_tied[i].value for i ∈ 1:cube_fitter.n_voff_tied]
-    voff_tied_priors = [cube_fitter.voff_tied[i].prior for i ∈ 1:cube_fitter.n_voff_tied]
+    # voff_tied_priors = [cube_fitter.voff_tied[i].prior for i ∈ 1:cube_fitter.n_voff_tied]
 
     # Initial parameter vector
     p₀ = vcat(voff_tied_pars, ln_pars)
-    priors = vcat(voff_tied_priors, ln_priors)
+    # priors = vcat(voff_tied_priors, ln_priors)
 
     # Convert parameter limits into CMPFit object
     parinfo = CMPFit.Parinfo(length(p₀))
@@ -695,7 +754,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int})
     for i ∈ 1:cube_fitter.n_lines
         parinfo[pᵢ].limited = (1,1)
         parinfo[pᵢ].limits = (0., 1.0)
-        if isnothing(cube_fitter.line_tied[i])
+        if isnothing(cube_fitter.line_tied[i]) || cube_fitter.flexible_wavesol
             parinfo[pᵢ+1].fixed = voff_ln[i].locked
             if !(voff_ln[i].locked)
                 parinfo[pᵢ+1].limited = (1,1)
@@ -721,7 +780,8 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int})
     config = CMPFit.Config()
 
     res = cmpfit(λ, Inorm, σnorm, (x, p) -> Util.fit_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
-        cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, λ0_ln), p₀, parinfo=parinfo, config=config)
+        cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, λ0_ln, cube_fitter.flexible_wavesol), p₀, 
+        parinfo=parinfo, config=config)
     popt = res.param
     χ2 = res.bestnorm
     χ2red = res.bestnorm / res.dof
@@ -743,7 +803,8 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int})
 
     # Final optimized fit
     I_model, comps = Util.fit_line_residuals(λ, popt, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
-        cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, λ0_ln, return_components=true)
+        cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, λ0_ln, cube_fitter.flexible_wavesol, 
+        return_components=true)
     
     # Renormalize
     I_model = I_model .* N
@@ -761,10 +822,14 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int})
     for (k, ln) ∈ enumerate(cube_fitter.lines)
         p_out[p_o] = popt[p_i] > 0. ? log10(popt[p_i] * N) : -Inf   # log amp
 
-        if isnothing(cube_fitter.line_tied[k])
+        if isnothing(cube_fitter.line_tied[k]) || cube_fitter.flexible_wavesol
 
-            p_out[p_o+1] = popt[p_i+1]    # voff in km/s
-            p_out[p_o+2] = popt[p_i+2]    # fwhm in km/s
+            p_out[p_o+1] = popt[p_i+1]                                          # voff in km/s
+            if !isnothing(cube_fitter.line_tied[k])
+                vwhere = findfirst(x -> x == cube_fitter.line_tied[k], cube_fitter.voff_tied_key)
+                p_out[p_o+2] = popt[p_i+1]+popt[vwhere]
+            end
+            p_out[p_o+2] = √(popt[p_i+2]^2 - (Util.C_KMS / cube_fitter.R)^2)    # fwhm in km/s -> subtract instrumental broadening in quadrature
 
             # Line intensity
             profile = comps["line_$(k)"]
@@ -780,7 +845,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int})
             p_i += 3
             p_o += 5
         else
-            p_out[p_o+1] = popt[p_i+1]   # fwhm in km/s
+            p_out[p_o+1] = √(popt[p_i+1]^2 - (Util.C_KMS / cube_fitter.R)^2)   # fwhm in km/s -> subtract instrumental broadening in quadrature
 
             # Line intensity
             profile = comps["line_$(k)"]
@@ -796,6 +861,40 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int})
             p_i += 2
             p_o += 4
         end
+    end
+
+    if verbose
+        println("######################################################################")
+        println("############### SPAXEL FIT RESULTS -- EMISSION LINES #################")
+        println("######################################################################")
+        println()
+        pᵢ = 1
+        println("#> TIED VELOCITY OFFSETS <#")
+        println()
+        for (i, vk) ∈ enumerate(cube_fitter.voff_tied_key)
+            println("$(vk)_tied_voff: \t\t\t $(@sprintf "%.0f" popt[pᵢ]) km/s \t " *
+                "Limits: ($(@sprintf "%.0f" minimum(cube_fitter.voff_tied[i].prior)), $(@sprintf "%.0f" maximum(cube_fitter.voff_tied[i].prior)))")
+            pᵢ += 1
+        end
+        println()
+        println("#> EMISSION LINES <#")
+        println()
+        for (k, (ln, nm)) ∈ enumerate(zip(cube_fitter.lines, cube_fitter.line_names))
+            println("$(nm)_amp:\t\t\t $(@sprintf "%.0f" popt[pᵢ]*N) MJy/sr \t Limits: (0, $(@sprintf "%.0f" nanmaximum(I)))")
+            if isnothing(cube_fitter.line_tied[k]) || cube_fitter.flexible_wavesol
+                println("$(nm)_voff:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) km/s \t " *
+                    "Limits: ($(@sprintf "%.0f" minimum(voff_ln[k].prior)), $(@sprintf "%.0f" maximum(voff_ln[k].prior)))")
+                println("$(nm)_fwhm:   \t\t $(@sprintf "%.0f" popt[pᵢ+2]) km/s \t " *
+                    "Limits: ($(@sprintf "%.0f" minimum(fwhm_ln[k].prior)), $(@sprintf "%.0f" maximum(fwhm_ln[k].prior)))")
+                pᵢ += 3
+            else
+                println("$(nm)_fwhm:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) km/s \t " *
+                    "Limits: ($(@sprintf "%.0f" minimum(fwhm_ln[k].prior)), $(@sprintf "%.0f" maximum(fwhm_ln[k].prior)))")
+                pᵢ += 2
+            end
+            println()
+        end 
+        println("######################################################################")
     end
 
     return p_out, I_model, comps
@@ -965,7 +1064,7 @@ function fit_cube(cube_fitter::CubeFitter)
 
         # Fit the spaxel
         p_cont, I_cont, comps_cont, χ2red = continuum_fit_spaxel(cube_fitter, (xᵢ, yᵢ))
-        p_line, I_line, comps_line = line_fit_spaxel(cube_fitter, (xᵢ, yᵢ))
+        p_line, I_line, comps_line = line_fit_spaxel(cube_fitter, (xᵢ, yᵢ), I_cont)
 
         # Combine the continuum and line models
         I_model = I_cont .+ I_line
@@ -1041,7 +1140,7 @@ function fit_cube(cube_fitter::CubeFitter)
     end
     for (k, ln) ∈ enumerate(cube_fitter.line_names)
         cube_fitter.param_maps.lines[ln][:amp] .= out_params[:, :, pᵢ]
-        if isnothing(cube_fitter.line_tied[k])
+        if isnothing(cube_fitter.line_tied[k]) || cube_fitter.flexible_wavesol
             cube_fitter.param_maps.lines[ln][:voff] .= out_params[:, :, pᵢ+1]
             cube_fitter.param_maps.lines[ln][:fwhm] .= out_params[:, :, pᵢ+2]
             cube_fitter.param_maps.lines[ln][:intI] .= out_params[:, :, pᵢ+3]

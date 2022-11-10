@@ -74,8 +74,8 @@ for (xi, yi) ∈ zip(x, y)
     PlotlyJS.savefig(p, "output_test/linefilt_$(xi)_$(yi).html")
 
     # Fit continuum and lines
-    p_cont, I_cont, comps_cont, χ2red = @time continuum_fit_spaxel(cube_fitter, (xi, yi))
-    p_line, I_line, comps_line = @time line_fit_spaxel(cube_fitter, (xi, yi))
+    p_cont, I_cont, comps_cont, χ2red = @time continuum_fit_spaxel(cube_fitter, (xi, yi), verbose=true)
+    p_line, I_line, comps_line = @time line_fit_spaxel(cube_fitter, (xi, yi), I_cont, verbose=true)
 
     # Combine results
     I_model = I_cont .+ I_line

@@ -135,16 +135,20 @@ function fit_spectrum(λ::Vector{Float64}, params::Vector{Float64}, n_dust_cont:
 
     # Stellar blackbody continuum (usually at 5000 K)
     if verbose
-        println("Using $(params[1]) for stellar amp and $(params[2]) for stellar temp")
+        println("Stellar continuum:")
+        println("$(params[1]), $(params[2])")
     end
     comps["stellar"] = params[1] .* Blackbody_ν.(λ, params[2])
     contin .+= comps["stellar"]
     pᵢ = 3
 
     # Add dust continua at various temperatures
+    if verbose
+        println("Dust continua:")
+    end
     for i ∈ 1:n_dust_cont
         if verbose
-            println("Using $(params[pᵢ]) for dust continuum amp and $(params[pᵢ+1]) for dust continuum temp")
+            println("$(params[pᵢ]), $(params[pᵢ+1])")
         end
         comps["dust_cont_$i"] = params[pᵢ] .* (9.7 ./ λ).^2 .* Blackbody_ν.(λ, params[pᵢ+1])
         contin .+= comps["dust_cont_$i"] 
@@ -152,10 +156,12 @@ function fit_spectrum(λ::Vector{Float64}, params::Vector{Float64}, n_dust_cont:
     end
 
     # Add dust features with drude profiles
+    if verbose
+        println("Dust features:")
+    end
     for j ∈ 1:n_dust_features
         if verbose
-            println("Using $(params[pᵢ]) for dust feature amp, $(params[pᵢ+1]) for dust feature mean, 
-                and $(params[pᵢ+2]) for dust feature width")
+            println("$(params[pᵢ]), $(params[pᵢ+1]), $(params[pᵢ+2])")
         end
         comps["dust_feat_$j"] = Drude.(λ, params[pᵢ:pᵢ+2]...)
         contin .+= comps["dust_feat_$j"]
@@ -164,7 +170,8 @@ function fit_spectrum(λ::Vector{Float64}, params::Vector{Float64}, n_dust_cont:
 
     # Extinction 
     if verbose
-        println("Using $(params[pᵢ]) for extinction τ and $(params[pᵢ+1]) for extinction β")
+        println("Extinction:")
+        println("$(params[pᵢ]), $(params[pᵢ+1])")
     end
     ext_curve = τ_kvt.(λ, params[pᵢ+1])
     comps["extinction"] = Extinction.(ext_curve, params[pᵢ])
@@ -179,7 +186,7 @@ end
 
 function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_lines::Int64, n_voff_tied::Int64, 
     voff_tied_key::Vector{String}, line_tied::Vector{Union{String,Nothing}}, line_profiles::Vector{Symbol}, 
-    line_restwave::Vector{Float64}; return_components::Bool=false, verbose::Bool=false)
+    line_restwave::Vector{Float64}, flexible_wavesol::Bool; return_components::Bool=false, verbose::Bool=false)
 
     comps = Dict{String, Vector{Float64}}()
     contin = zeros(Float64, length(λ))
@@ -188,20 +195,31 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
     # Add emission lines
     for k ∈ 1:n_lines
         # Check if voff is tied: if so, use the tied voff parameter, otherwise, use the line's own voff parameter
+        if verbose
+            println("Line at $(line_restwave[k]):")
+        end
         if isnothing(line_tied[k])
             voff = params[pᵢ+1]
             fwhm = params[pᵢ+2]
             if verbose
-                println("Using $(params[pᵢ]) for line amp, untied $(params[pᵢ+1]) for line voff,
-                    and $(params[pᵢ+2]) for line width; for line at $(line_restwave[k])")
+                println("$(params[pᵢ]), $(params[pᵢ+1]) (united), $(params[pᵢ+2])")
+            end
+        elseif !isnothing(line_tied[k]) && flexible_wavesol
+            vwhere = findfirst(x -> x == line_tied[k], voff_tied_key)
+            voff_series = params[vwhere]
+            voff_indiv = params[pᵢ+1]
+            # Add velocity shifts of the tied lines and the individual offsets
+            voff = voff_series + voff_indiv
+            fwhm = params[pᵢ+2]
+            if verbose
+                println("$(params[pᵢ]), $(params[vwhere]) (tied) + $(params[pᵢ+1]) (united), $(params[pᵢ+2])")
             end
         else
             vwhere = findfirst(x -> x == line_tied[k], voff_tied_key)
             voff = params[vwhere]
             fwhm = params[pᵢ+1]
             if verbose
-                println("Using $(params[pᵢ]) for line amp, tied $(params[vᵢ+vwhere-1]) for line voff,
-                    and $(params[pᵢ+1]) for line width; for line at $(line_restwave[k])")
+                println("$(params[pᵢ]), $(params[vwhere]) (tied), $(params[pᵢ+1])")
             end
         end
         # Convert voff in km/s to mean wavelength in μm
@@ -210,7 +228,7 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
         fwhm_μm = Doppler_shift_λ(line_restwave[k], fwhm) - line_restwave[k]
         comps["line_$k"] = eval(line_profiles[k]).(λ, params[pᵢ], mean_μm, fwhm_μm)
         contin .+= comps["line_$k"]        
-        pᵢ += isnothing(line_tied[k]) ? 3 : 2
+        pᵢ += isnothing(line_tied[k]) || flexible_wavesol ? 3 : 2
 
     end
 
