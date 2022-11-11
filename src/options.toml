@@ -447,3 +447,8 @@ locked = false
 val = 0.1
 plim = [0.0, 1.0]
 locked = true
+
+[agn.cover]
+val = 0.5
+plim = [0.0, 1.0]
+locked = false

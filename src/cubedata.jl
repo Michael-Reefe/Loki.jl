@@ -195,8 +195,6 @@ function from_fits(filename::String)
     
     # Iλ = Iλ .* 1e-7 .* Util.C_MS ./ ext_λ.^2
     # σI = σI .* 1e-7 .* Util.C_MS ./ ext_λ.^2
-    Iλ = Array{Float64, 3}(Iλ)
-    σI = Array{Float64, 3}(σI)
 
     return DataCube(λ, Iλ, σI, mask, Ω, ra, dec, wcs, channel, band, false, false)
 end

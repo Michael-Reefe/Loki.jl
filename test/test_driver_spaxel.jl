@@ -33,10 +33,10 @@ plt.rc("font", family="Times New Roman")
 
 
 # Load in data
-obs = from_fits(["jw01328-o015_t014_miri_ch1-mediumshortlong-_s3d.fits", 
-    "jw01328-o015_t014_miri_ch2-mediumshortlong-_s3d.fits", 
-    "jw01328-o015_t014_miri_ch3-mediumshortlong-_s3d.fits", 
-    "jw01328-o015_t014_miri_ch4-mediumshortlong-_s3d.fits"], 
+obs = from_fits(["data/jw01328-o015_t014_miri_ch1-mediumshortlong-_s3d.fits", 
+    "data/jw01328-o015_t014_miri_ch2-mediumshortlong-_s3d.fits", 
+    "data/jw01328-o015_t014_miri_ch3-mediumshortlong-_s3d.fits", 
+    "data/jw01328-o015_t014_miri_ch4-mediumshortlong-_s3d.fits"], 
     0.016317)
 
 obs = correct(obs)
@@ -47,8 +47,8 @@ cube_fitter = CubeFitter(obs.channels[2], obs.z, "test"; parallel=false, plot_sp
 interpolate_cube!(cube_fitter.cube)
 
 # Fit some individual spaxels
-x = [28, 33, 25, 10, 6]
-y = [12, 4, 19, 14, 17]
+x = [28, 33, 25, 13, 10, 6, 15]
+y = [12, 4, 19, 18, 14, 17, 38]
 for (xi, yi) ∈ zip(x, y)
 
     λ = cube_fitter.cube.λ
@@ -74,18 +74,6 @@ for (xi, yi) ∈ zip(x, y)
     PlotlyJS.savefig(p, "output_test/linefilt_$(xi)_$(yi).html")
 
     # Fit continuum and lines
-    p_cont, I_cont, comps_cont, χ2red = @time continuum_fit_spaxel(cube_fitter, (xi, yi), verbose=true)
-    p_line, I_line, comps_line = @time line_fit_spaxel(cube_fitter, (xi, yi), I_cont, verbose=true)
+    @time fit_spaxel(cube_fitter, (xi, yi), verbose=true)
 
-    # Combine results
-    I_model = I_cont .+ I_line
-    comps = merge(comps_cont, comps_line)
-
-    # Plot results
-    λ0_ln = [ln.λ₀ for ln ∈ cube_fitter.lines]
-    if cube_fitter.plot_spaxels != :none
-        CubeFit.plot_spaxel_fit(cube_fitter.cube.λ, cube_fitter.cube.Iλ[xi, yi, :] , I_model, comps, 
-            cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, λ0_ln, cube_fitter.line_names,
-            χ2red, cube_fitter.name, "spaxel_$(xi)_$(yi)", backend=cube_fitter.plot_spaxels)
-    end
 end
