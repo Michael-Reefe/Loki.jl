@@ -72,6 +72,19 @@ function ln_likelihood(data::Vector{Float64}, model::Vector{Float64}, err::Vecto
     return -0.5 * sum((data .- model).^2 ./ err.^2 .+ log.(2π .* err.^2))
 end
 
+# Hermite polynomial of order n computed using the recurrence relations
+# (gets slow around/above order ~30)
+function hermite(x::Float64, n::Int)
+    if iszero(n)
+        return 1.
+    elseif isone(n)
+        return 2x
+    else
+        return 2x * hermite(x, n-1) - 2(n-1) * hermite(x, n-2)
+    end
+end
+
+
 # BLACKBODY PROFILE
 
 function Blackbody_ν(λ::Float64, Temp::Float64) 
@@ -203,8 +216,14 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
         if isnothing(line_tied[k])
             voff = params[pᵢ+1]
             fwhm = params[pᵢ+2]
+            msg = "$(params[pᵢ]), $(params[pᵢ+1]) (united), $(params[pᵢ+2])"
+            if line_profiles[k] == :GaussHermite
+                h3 = params[pᵢ+3]
+                h4 = params[pᵢ+4]
+                msg *= ", $(params[pᵢ+3]), $(params[pᵢ+4])"
+            end
             if verbose
-                println("$(params[pᵢ]), $(params[pᵢ+1]) (united), $(params[pᵢ+2])")
+                println(msg)
             end
         elseif !isnothing(line_tied[k]) && flexible_wavesol
             vwhere = findfirst(x -> x == line_tied[k], voff_tied_key)
@@ -213,24 +232,47 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
             # Add velocity shifts of the tied lines and the individual offsets
             voff = voff_series + voff_indiv
             fwhm = params[pᵢ+2]
+            mgs = "$(params[pᵢ]), $(params[vwhere]) (tied) + $(params[pᵢ+1]) (united), $(params[pᵢ+2])"
+            if line_profiles[k] == :GaussHermite
+                h3 = params[pᵢ+3]
+                h4 = params[pᵢ+4]
+                msg *= ", $(params[pᵢ+3]), $(params[pᵢ+4])"
+            end
             if verbose
-                println("$(params[pᵢ]), $(params[vwhere]) (tied) + $(params[pᵢ+1]) (united), $(params[pᵢ+2])")
+                println(msg)
             end
         else
             vwhere = findfirst(x -> x == line_tied[k], voff_tied_key)
             voff = params[vwhere]
             fwhm = params[pᵢ+1]
+            msg = "$(params[pᵢ]), $(params[vwhere]) (tied), $(params[pᵢ+1])"
+            if line_profiles[k] == :GaussHermite
+                h3 = params[pᵢ+2]
+                h4 = params[pᵢ+3]
+                msg *= ", $(params[pᵢ+2]), $(params[pᵢ+3])"
+            end
             if verbose
-                println("$(params[pᵢ]), $(params[vwhere]) (tied), $(params[pᵢ+1])")
+                println(msg)
             end
         end
         # Convert voff in km/s to mean wavelength in μm
         mean_μm = Doppler_shift_λ(line_restwave[k], voff)
         # Convert FWHM from km/s to μm
         fwhm_μm = Doppler_shift_λ(line_restwave[k], fwhm) - line_restwave[k]
-        comps["line_$k"] = eval(line_profiles[k]).(λ, params[pᵢ], mean_μm, fwhm_μm)
+        # Evaluate line profile
+        if line_profiles[k] == :Gaussian
+            comps["line_$k"] = Gaussian(λ, params[pᵢ], mean_μm, fwhm_μm)
+        elseif line_profiles[k] == :GaussHermite
+            comps["line_$k"] = GaussHermite(λ, params[pᵢ], mean_μm, fwhm_μm, [h3, h4])
+        else
+            error("Unrecognized line profile $(line_profiles[k])!")
+        end
+
         contin .+= comps["line_$k"]        
         pᵢ += isnothing(line_tied[k]) || flexible_wavesol ? 3 : 2
+        if line_profiles[k] == :GaussHermite
+            pᵢ += 2
+        end
 
     end
 
@@ -244,15 +286,43 @@ end
 
 # LINE PROFILES
 
-function Gaussian(x::Float64, A::Float64, μ::Float64, FWHM::Float64)
+function Gaussian(x::Vector{Float64}, A::Float64, μ::Float64, FWHM::Float64)
     """
     Gaussian profile parameterized in terms of the FWHM
     """
-    return A * exp(-(x-μ)^2 / (2(FWHM/2.354820045)^2))
+    # Reparametrize FWHM as dispersion σ
+    σ = FWHM / (2√(2log(2)))
+    return @. A * exp(-(x-μ)^2 / (2σ^2))
 end
 
-# function GaussHermite(x::Float64, A::Float64, μ::Float64, FWHM::Float64, h₃::Float64, h₄::Float64)
+function GaussHermite(x::Vector{Float64}, A::Float64, μ::Float64, FWHM::Float64, h::Vector{Float64})
+    """
+    Gauss-Hermite line profiles 
+    (see Riffel et al. 2010)
+    """
+    # Reparametrize FWHM as dispersion σ
+    σ = FWHM / (2√(2log(2)))
+    # Gaussian exponential argument w
+    w = @. (x - μ) / σ
+    # Normalized Gaussian
+    α = @. 1/√(2π * σ^2) * exp(-w^2 / 2)
 
-# end
+    # Calculate coefficients for the Hermite basis
+    n = 3:(length(h)+2)
+    norm = .√(factorial.(n) .* 2 .^ n)
+    coeff = vcat([1, 0, 0], h./norm)
+    # Calculate hermite basis
+    Herm = hcat((coeff[nᵢ] .* hermite.(w, nᵢ-1) for nᵢ ∈ 1:length(coeff))...)
+    # Collapse sum along the moment axis
+    Herm = dropdims(sum(Herm, dims=2), dims=2)
+
+    # Combine the Gaussian and Hermite profiles
+    GH = α .* Herm
+    # Renormalize
+    GH ./= maximum(GH)
+    GH .*= A
+
+    return GH
+end
 
 end

@@ -130,8 +130,9 @@ function parse_lines(channel::Int)
     lines = TOML.parsefile(joinpath(sourcepath, "lines.toml"))
     lines_out = Param.LineDict()
 
-    keylist1 = ["tie_H2_voff", "tie_IP_voff", "fwhm_init", "voff_init", "voff_plim", "fwhm_pmax", 
-        "R", "flexible_wavesol", "wavesol_unc", "channels", "lines"]
+    keylist1 = ["tie_H2_voff", "tie_IP_voff", "fwhm_init", "voff_init", "h3_init", "h4_init", 
+        "voff_plim", "fwhm_pmax", "h3_plim", "h4_plim", "R", "flexible_wavesol", "wavesol_unc", 
+        "channels", "lines"]
     for key ∈ keylist1
         if !haskey(lines, key)
             error("$key not found in line optiones!")
@@ -154,6 +155,12 @@ function parse_lines(channel::Int)
         voff_locked = false
         fwhm_prior = Uniform(fwhm_pmin, lines["fwhm_pmax"])
         fwhm_locked = false
+        if profiles[line] == "GaussHermite"
+            h3_prior = Uniform(lines["h3_plim"]...)
+            h3_locked = false
+            h4_prior = Uniform(lines["h4_plim"]...)
+            h4_locked = false
+        end
         if haskey(lines, "priors")
             if haskey(lines["priors"], line)
                 if haskey(lines["priors"][line], "voff")
@@ -163,6 +170,14 @@ function parse_lines(channel::Int)
                 if haskey(lines["priors"][line], "fwhm")
                     fwhm_prior = eval(Meta.parse(lines["priors"][line]["fwhm"]["pstr"]))
                     fwhm_locked = lines["priors"][line]["fwhm"]["locked"]
+                end
+                if haskey(lines["priors"][line], "h3")
+                    h3_prior = eval(Meta.parse(lines["priors"][line]["h3"]["pstr"]))
+                    h3_locked = lines["priors"][line]["h3"]["locked"]
+                end
+                if haskey(lines["priors"][line], "h4")
+                    h4_prior = eval(Meta.parse(lines["priors"][line]["h4"]["pstr"]))
+                    h4_locked = lines["priors"][line]["h4"]["locked"]
                 end
             end
         end
@@ -178,7 +193,13 @@ function parse_lines(channel::Int)
 
         voff = Param.Parameter(lines["voff_init"], voff_locked, voff_prior)
         fwhm = Param.Parameter(lines["fwhm_init"], fwhm_locked, fwhm_prior)
-        params = Param.ParamDict(:voff => voff, :fwhm => fwhm)
+        if profiles[line] == "Gaussian"
+            params = Param.ParamDict(:voff => voff, :fwhm => fwhm)
+        elseif profiles[line] == "GaussHermite"
+            h3 = Param.Parameter(lines["h3_init"], h3_locked, h3_prior)
+            h4 = Param.Parameter(lines["h4_init"], h4_locked, h4_prior)
+            params = Param.ParamDict(:voff => voff, :fwhm => fwhm, :h3 => h3, :h4 => h4)
+        end
         lines_out[Symbol(line)] = Param.TransitionLine(lines["lines"][line], Symbol(profiles[line]), params, tied)
 
     end
@@ -219,7 +240,7 @@ end
 
 function parammaps_empty(shape::Tuple{Int,Int,Int}, n_dust_cont::Int, df_names::Vector{String}, 
     complexes::Vector{String}, line_names::Vector{Symbol}, line_tied::Vector{Union{String,Nothing}},
-    voff_tied_key::Vector{String}, flexible_wavesol::Bool)
+    line_profiles::Vector{Symbol}, voff_tied_key::Vector{String}, flexible_wavesol::Bool)
 
     nan_arr = ones(shape[1:2]...) .* NaN
 
@@ -247,9 +268,13 @@ function parammaps_empty(shape::Tuple{Int,Int,Int}, n_dust_cont::Int, df_names::
 
     # Nested dictionary -> first layer keys are line names, second layer keys are parameter names, which contain 2D arrays
     lines = Dict{Symbol, Dict{Symbol, Array{Float64, 2}}}()
-    for (line, tie) ∈ zip(line_names, line_tied)
+    for (line, tie, prof) ∈ zip(line_names, line_tied, line_profiles)
         lines[line] = Dict{Symbol, Array{Float64, 2}}()
-        pnames = isnothing(tie) || flexible_wavesol ? [:amp, :voff, :fwhm, :intI, :SNR] : [:amp, :fwhm, :intI, :SNR]
+        pnames = isnothing(tie) || flexible_wavesol ? [:amp, :voff, :fwhm] : [:amp, :fwhm]
+        if prof == :GaussHermite
+            pnames = [pnames; :h3; :h4]
+        end
+        pnames = [pnames; :intI; :SNR]
         for pname ∈ pnames
             lines[line][pname] = copy(nan_arr)
         end
@@ -334,6 +359,7 @@ struct CubeFitter
 
     n_lines::Int
     line_names::Vector{Symbol}
+    line_profiles::Vector{Symbol}
     lines::Vector{Param.TransitionLine}
 
     n_voff_tied::Int
@@ -388,6 +414,7 @@ struct CubeFitter
         ss = sortperm(line_wave[ln_filt])
         line_names = line_names[ss]
         lines = [line_list[line] for line ∈ line_names]
+        line_profiles = [line_list[line].profile for line ∈ line_names]
         n_lines = length(line_names)
 
         # Unpack the voff_tied dictionary
@@ -400,7 +427,14 @@ struct CubeFitter
 
         # Total number of parameters
         n_params_cont = (2+2) + 2n_dust_cont + 3n_dust_features + 2n_complexes
-        n_params_lines = (3+2)*n_lines
+        n_params_lines = 0
+        for prof ∈ line_profiles
+            if prof == :Gaussian
+                n_params_lines += 5
+            elseif prof == :GaussHermite
+                n_params_lines += 7
+            end
+        end
         for vk ∈ voff_tied_key
             n_tied = sum([line.tied == vk for line ∈ lines])
             if !flexible_wavesol
@@ -413,7 +447,8 @@ struct CubeFitter
         # Full 3D intensity model array
         cube_model = cubemodel_empty(shape, n_dust_cont, df_names, line_names)
         # 2D maps of fitting parameters
-        param_maps = parammaps_empty(shape, n_dust_cont, df_names, complexes, line_names, line_tied, voff_tied_key, flexible_wavesol)
+        param_maps = parammaps_empty(shape, n_dust_cont, df_names, complexes, line_names, line_tied,
+            line_profiles, voff_tied_key, flexible_wavesol)
 
         # Prepare output directories
         name = replace(name, " " => "_")
@@ -425,8 +460,8 @@ struct CubeFitter
         cosmo = options[:cosmology]
 
         return new(cube, z, name, cube_model, param_maps, window_size, plot_spaxels, plot_maps, parallel, save_fits,
-            T_s, T_dc, τ_97, β, n_dust_cont, n_dust_features, df_names, dust_features, n_lines, line_names, lines, 
-            n_voff_tied, line_tied, voff_tied_key, voff_tied, n_complexes, complexes, n_params_cont, n_params_lines, 
+            T_s, T_dc, τ_97, β, n_dust_cont, n_dust_features, df_names, dust_features, n_lines, line_names, line_profiles, 
+            lines, n_voff_tied, line_tied, voff_tied_key, voff_tied, n_complexes, complexes, n_params_cont, n_params_lines, 
             cosmo, R[parse(Int, cube.channel)], flexible_wavesol)
     end
 
@@ -726,6 +761,8 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}, conti
 
     voff_ln = [ln.parameters[:voff] for ln ∈ cube_fitter.lines]
     fwhm_ln = [ln.parameters[:fwhm] for ln ∈ cube_fitter.lines]
+    h3_ln = [ln.profile == :GaussHermite ? ln.parameters[:h3] : nothing for ln ∈ cube_fitter.lines]
+    h4_ln = [ln.profile == :GaussHermite ? ln.parameters[:h4] : nothing for ln ∈ cube_fitter.lines]
 
     ln_pars = Vector{Float64}()
     λ0_ln = Vector{Float64}()
@@ -738,6 +775,10 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}, conti
         else
             append!(ln_pars, [A_ln[i], fwhm_ln[i].value])
             # append!(ln_priors, [amp_ln_prior, fwhm_ln[i].prior])
+        end
+        if ln.profile == :GaussHermite
+            append!(ln_pars, [h3_ln[i].value, h4_ln[i].value])
+            # append!(ln_priors, [h3_ln[i].prior, h4_ln[i].prior])
         end
         append!(λ0_ln, [ln.λ₀])
         append!(prof_ln, [ln.profile])
@@ -778,12 +819,38 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}, conti
                 parinfo[pᵢ+2].limited = (1,1)
                 parinfo[pᵢ+2].limits = (minimum(fwhm_ln[i].prior), maximum(fwhm_ln[i].prior))
             end
+            if prof_ln[i] == :GaussHermite
+                parinfo[pᵢ+3].fixed = h3_ln[i].locked
+                if !(h3_ln[i].locked)
+                    parinfo[pᵢ+3].limited = (1,1)
+                    parinfo[pᵢ+3].limits = (minimum(h3_ln[i].prior), maximum(h3_ln[i].prior))
+                end
+                parinfo[pᵢ+4].fixed = h4_ln[i].locked
+                if !(h4_ln[i].locked)
+                    parinfo[pᵢ+4].limited = (1,1)
+                    parinfo[pᵢ+4].limits = (minimum(h4_ln[i].prior), maximum(h4_ln[i].prior))
+                end
+                pᵢ += 2
+            end
             pᵢ += 3
         else
             parinfo[pᵢ+1].fixed = fwhm_ln[i].locked
             if !(fwhm_ln[i].locked)
                 parinfo[pᵢ+1].limited = (1,1)
                 parinfo[pᵢ+1].limits = (minimum(fwhm_ln[i].prior), maximum(fwhm_ln[i].prior))
+            end
+            if prof_ln[i] == :GaussHermite
+                parinfo[pᵢ+2].fixed = h3_ln[i].locked
+                if !(h3_ln[i].locked)
+                    parinfo[pᵢ+2].limited = (1,1)
+                    parinfo[pᵢ+2].limits = (minimum(h3_ln[i].prior), maximum(h3_ln[i].prior))
+                end
+                parinfo[pᵢ+3].fixed = h4_ln[i].locked
+                if !(h4_ln[i].locked)
+                    parinfo[pᵢ+3].limited = (1,1)
+                    parinfo[pᵢ+3].limits = (minimum(h4_ln[i].prior), maximum(h4_ln[i].prior))
+                end
+                pᵢ += 2       
             end
             pᵢ += 2
         end
@@ -855,10 +922,24 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}, conti
                     "Limits: ($(@sprintf "%.0f" minimum(voff_ln[k].prior)), $(@sprintf "%.0f" maximum(voff_ln[k].prior)))")
                 println("$(nm)_fwhm:   \t\t $(@sprintf "%.0f" popt[pᵢ+2]) km/s \t " *
                     "Limits: ($(@sprintf "%.0f" minimum(fwhm_ln[k].prior)), $(@sprintf "%.0f" maximum(fwhm_ln[k].prior)))")
+                if prof_ln[k] == :GaussHermite
+                    println("$(nm)_h3:    \t\t $(@sprintf "%.3f" popt[pᵢ+3])      \t " *
+                        "Limits: ($(@sprintf "%.3f" minimum(h3_ln[k].prior)), $(@sprintf "%.3f" maximum(h3_ln[k].prior)))")
+                    println("$(nm)_h4:    \t\t $(@sprintf "%.3f" popt[pᵢ+4])      \t " *
+                        "Limits: ($(@sprintf "%.3f" minimum(h4_ln[k].prior)), $(@sprintf "%.3f" maximum(h4_ln[k].prior)))")
+                    pᵢ += 2
+                end
                 pᵢ += 3
             else
                 println("$(nm)_fwhm:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) km/s \t " *
                     "Limits: ($(@sprintf "%.0f" minimum(fwhm_ln[k].prior)), $(@sprintf "%.0f" maximum(fwhm_ln[k].prior)))")
+                if prof_ln[k] == :GaussHermite
+                    println("$(nm)_h3:    \t\t $(@sprintf "%.3f" popt[pᵢ+2])      \t " *
+                        "Limits: ($(@sprintf "%.3f" minimum(h3_ln[k].prior)), $(@sprintf "%.3f" maximum(h3_ln[k].prior)))")
+                    println("$(nm)_h4:    \t\t $(@sprintf "%.3f" popt[pᵢ+3])      \t " *
+                        "Limits: ($(@sprintf "%.3f" minimum(h4_ln[k].prior)), $(@sprintf "%.3f" maximum(h4_ln[k].prior)))")
+                    pᵢ += 2
+                end
                 pᵢ += 2
             end
             println()
@@ -1198,10 +1279,22 @@ function fit_cube(cube_fitter::CubeFitter)
                 end
                 # FWHM -> subtract instrumental resolution in quadrature
                 cube_fitter.param_maps.lines[ln][:fwhm][xᵢ, yᵢ] = √(out_params[xᵢ, yᵢ, pᵢ+2]^2 - fwhm_res^2)
+                # Get Gauss-Hermite 3rd and 4th order moments
+                if cube_fitter.line_profiles[k] == :GaussHermite
+                    cube_fitter.param_maps.lines[ln][:h3][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+3]
+                    cube_fitter.param_maps.lines[ln][:h4][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+4]
+                    pᵢ += 2
+                end
                 pᵢ += 3
             else
                 # FWHM -> subtract instrumental resolution in quadrature
                 cube_fitter.param_maps.lines[ln][:fwhm][xᵢ, yᵢ] = √(out_params[xᵢ, yᵢ, pᵢ+1]^2 - fwhm_res^2)
+                # Get Gauss-Hermite 3rd and 4th order moments
+                if cube_fitter.line_profiles[k] == :GaussHermite
+                    cube_fitter.param_maps.lines[ln][:h3][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+2]
+                    cube_fitter.param_maps.lines[ln][:h4][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+3]
+                    pᵢ += 2
+                end
                 pᵢ += 2
             end
         end
@@ -1217,6 +1310,7 @@ function fit_cube(cube_fitter::CubeFitter)
             cube_fitter.param_maps.dust_complexes[c][:SNR][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+1]
             pᵢ += 2
         end
+
         for (k, ln) ∈ enumerate(cube_fitter.line_names)
             # Line intensity and SNR, from calculate_extra_parameters
             cube_fitter.param_maps.lines[ln][:intI][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? log10(out_params[xᵢ, yᵢ, pᵢ]) : -Inf
@@ -1305,6 +1399,10 @@ function plot_parameter_map(data::Union{Matrix{Float64},SharedMatrix{Float64}}, 
         bunit = "\$\\log_{10}(I /\$MJy sr\$^{-1}\$ \$\\mu\$m)"
     elseif occursin("chi2", String(name_i))
         bunit = "\$\\tilde{\\chi}^2\$"
+    elseif occursin("h3", String(name_i))
+        bunit = "\$h_3\$"
+    elseif occursin("h4", String(name_i))
+        bunit = "\$h_4\$"
     end
 
     filtered = copy(data)
@@ -1508,7 +1606,7 @@ function write_fits(cube_fitter::CubeFitter)
                     bunit = "km/s"
                 elseif occursin("intI", String(name_i))
                     bunit = "log10(I / MJy sr^-1 um)"
-                elseif occursin("SNR", String(name_i))
+                elseif occursin("SNR", String(name_i)) || occursin("h3", String(name_i)) || occursin("h4", String(name_i))
                     bunit = "unitless"
                 end
                 write(f, data; header=hdr, name=name_i)
