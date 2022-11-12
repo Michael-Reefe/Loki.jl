@@ -125,16 +125,6 @@ function Extinction(ext::Float64, τ_97::Float64, screen::Bool=true)
     return iszero(τ_97) ? 1. : (1 - exp(-τ_97*ext)) / (τ_97*ext)
 end
 
-function AGN_Power(λ::Float64, A::Float64)
-
-    if λ < 10.
-        power = A * (λ / 10.)^0.46
-    else
-        power = A * Blackbody_ν(λ, 1000.) / Blackbody_ν(10., 1000.)
-    end
-
-    return power
-end
 
 function fit_spectrum(λ::Vector{Float64}, params::Vector{Float64}, n_dust_cont::Int64, n_dust_features::Int64; 
     return_components::Bool=false, verbose::Bool=false)
@@ -189,10 +179,6 @@ function fit_spectrum(λ::Vector{Float64}, params::Vector{Float64}, n_dust_cont:
     contin .*= comps["extinction"]
     pᵢ += 2
 
-    # AGN
-    comps["agn"] = AGN_Power.(λ, params[pᵢ]) .* ((1 .- params[pᵢ+1]) .+ params[pᵢ+1] .* comps["extinction"])
-    contin .+= comps["agn"]
-    
     if return_components
         return contin, comps
     end
@@ -264,5 +250,9 @@ function Gaussian(x::Float64, A::Float64, μ::Float64, FWHM::Float64)
     """
     return A * exp(-(x-μ)^2 / (2(FWHM/2.354820045)^2))
 end
+
+# function GaussHermite(x::Float64, A::Float64, μ::Float64, FWHM::Float64, h₃::Float64, h₄::Float64)
+
+# end
 
 end

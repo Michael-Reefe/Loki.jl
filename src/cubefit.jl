@@ -62,10 +62,9 @@ function parse_options()
 
     options = TOML.parsefile(joinpath(sourcepath, "options.toml"))
     options_out = Dict()
-    keylist1 = ["cosmology", "stellar_continuum_temp", "dust_continuum_temps", "dust_features", "extinction", "agn"]
+    keylist1 = ["cosmology", "stellar_continuum_temp", "dust_continuum_temps", "dust_features", "extinction"]
     keylist2 = ["wave", "fwhm"]
     keylist3 = ["tau_9_7", "beta"]
-    keylist3_5 = ["cover"]
     keylist4 = ["val", "plim", "locked"]
     keylist5 = ["h", "omega_m", "omega_K", "omega_r"]
     for key ∈ keylist1
@@ -100,14 +99,6 @@ function parse_options()
                 error("Missing option $key in $ex_key options!")
             end
         end
-        for agn_key ∈ keylist3_5
-            if !(agn_key ∈ keys(options["agn"]))
-                error("Missing option $agn_key in agn options!")
-            end
-            if !(key ∈ keys(options["agn"][agn_key]))
-                error("Missing option $key in $agn_key options!")
-            end
-        end
     end
     for key ∈ keylist5
         if !(key ∈ keys(options["cosmology"]))
@@ -131,8 +122,6 @@ function parse_options()
     options_out[:extinction] = Param.ParamDict()
     options_out[:extinction][:tau_9_7] = Param.from_dict(options["extinction"]["tau_9_7"])
     options_out[:extinction][:beta] = Param.from_dict(options["extinction"]["beta"])
-    options_out[:agn] = Param.ParamDict()
-    options_out[:agn][:cover] = Param.from_dict(options["agn"]["cover"])
 
     return options_out
 end
@@ -223,8 +212,8 @@ struct ParamMaps
     lines::Dict{Symbol, Dict{Symbol, Array{Float64, 2}}}
     tied_voffs::Dict{String, Array{Float64, 2}}
     extinction::Dict{Symbol, Array{Float64, 2}}
-    agn::Dict{Symbol, Array{Float64, 2}}
     dust_complexes::Dict{String, Dict{Symbol, Array{Float64, 2}}}
+    reduced_χ2::Array{Float64, 2}
 
 end
 
@@ -277,11 +266,6 @@ function parammaps_empty(shape::Tuple{Int,Int,Int}, n_dust_cont::Int, df_names::
     extinction[:tau_9_7] = copy(nan_arr)
     extinction[:beta] = copy(nan_arr)
 
-    # Add AGN fitting parameters
-    agn = Dict{Symbol, Array{Float64, 2}}()
-    agn[:amp] = copy(nan_arr)
-    agn[:cover] = copy(nan_arr)
-
     # Add dusts complexes with extrapolated parameters
     dust_complexes = Dict{String, Dict{Symbol, Array{Float64, 2}}}()
     for c ∈ complexes
@@ -290,7 +274,10 @@ function parammaps_empty(shape::Tuple{Int,Int,Int}, n_dust_cont::Int, df_names::
         dust_complexes[c][:SNR] = copy(nan_arr)
     end
 
-    return ParamMaps(stellar_continuum, dust_continuum, dust_features, lines, tied_voffs, extinction, agn, dust_complexes)
+    reduced_χ2 = copy(nan_arr)
+
+    return ParamMaps(stellar_continuum, dust_continuum, dust_features, lines, tied_voffs, 
+        extinction, dust_complexes, reduced_χ2)
 end
 
 
@@ -304,7 +291,6 @@ struct CubeModel
     dust_continuum::Array{Float32, 4}
     dust_features::Array{Float32, 4}
     extinction::Array{Float32, 3}
-    agn::Array{Float32, 3}
     lines::Array{Float32, 4}
 
 end
@@ -316,10 +302,9 @@ function cubemodel_empty(shape::Tuple{Int,Int,Int}, n_dust_cont::Int, df_names::
     dust_continuum = zeros(Float32, shape..., n_dust_cont)
     dust_features = zeros(Float32, shape..., length(df_names))
     extinction = zeros(Float32, shape...)
-    agn = zeros(Float32, shape...)
     lines = zeros(Float32, shape..., length(line_names))
 
-    return CubeModel(model, stellar, dust_continuum, dust_features, extinction, agn, lines)
+    return CubeModel(model, stellar, dust_continuum, dust_features, extinction, lines)
 end
 
 
@@ -340,7 +325,6 @@ struct CubeFitter
     T_dc::Vector{Param.Parameter}
     τ_97::Param.Parameter
     β::Param.Parameter
-    cover::Param.Parameter
 
     n_dust_cont::Int
 
@@ -381,7 +365,6 @@ struct CubeFitter
         T_dc = options[:dust_continuum_temps]
         τ_97 = options[:extinction][:tau_9_7]
         β = options[:extinction][:beta]
-        cover = options[:agn][:cover]
 
         #### PREPARE OUTPUTS ####
         n_dust_cont = length(T_dc)
@@ -416,7 +399,7 @@ struct CubeFitter
         line_tied = Vector{Union{Nothing,String}}([line.tied for line ∈ lines])
 
         # Total number of parameters
-        n_params_cont = (2+2+2) + 2n_dust_cont + 3n_dust_features + 2n_complexes
+        n_params_cont = (2+2) + 2n_dust_cont + 3n_dust_features + 2n_complexes
         n_params_lines = (3+2)*n_lines
         for vk ∈ voff_tied_key
             n_tied = sum([line.tied == vk for line ∈ lines])
@@ -442,7 +425,7 @@ struct CubeFitter
         cosmo = options[:cosmology]
 
         return new(cube, z, name, cube_model, param_maps, window_size, plot_spaxels, plot_maps, parallel, save_fits,
-            T_s, T_dc, τ_97, β, cover, n_dust_cont, n_dust_features, df_names, dust_features, n_lines, line_names, lines, 
+            T_s, T_dc, τ_97, β, n_dust_cont, n_dust_features, df_names, dust_features, n_lines, line_names, lines, 
             n_voff_tied, line_tied, voff_tied_key, voff_tied, n_complexes, complexes, n_params_cont, n_params_lines, 
             cosmo, R[parse(Int, cube.channel)], flexible_wavesol)
     end
@@ -557,10 +540,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}; 
     λ_dc = clamp.(2898 ./ [Ti.value for Ti ∈ cube_fitter.T_dc], minimum(λ), maximum(λ))
     A_dc = clamp.(interp_func.(λ_dc) ./ [Util.Blackbody_ν(λ_dci, T_dci.value) for (λ_dci, T_dci) ∈ zip(λ_dc, cube_fitter.T_dc)] .* 
         (λ_dc ./ 9.7).^2 ./ 5., 0., Inf)
-    
-    # AGN amplitude
-    A_agn = clamp(nanmedian(I)/4, 0., Inf)
-    
+        
     amp_dc_prior = amp_agn_prior = Uniform(0., 1e100)  # just set it arbitrarily large, otherwise infinity gives bad logpdfs
     amp_df_prior = Uniform(0., maximum(I) > 0. ? maximum(I) : 1e100)
     
@@ -576,12 +556,9 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}; 
     df_pars = vcat([[Ai, mi.value, fi.value] for (Ai, mi, fi) ∈ zip(A_df, mean_df, fwhm_df)]...)
     df_priors = vcat([[amp_df_prior, mi.prior, fi.prior] for (mi, fi) ∈ zip(mean_df, fwhm_df)]...)
 
-    agn_pars = [A_agn, cube_fitter.cover.value]
-    agn_priors = [amp_agn_prior, cube_fitter.cover.prior]
-
     # Initial parameter vector
-    p₀ = vcat(stellar_pars, dc_pars, df_pars, [cube_fitter.τ_97.value, cube_fitter.β.value], agn_pars)
-    priors = vcat(stellar_priors, dc_priors, df_priors, [cube_fitter.τ_97.prior, cube_fitter.β.prior], agn_priors)
+    p₀ = vcat(stellar_pars, dc_pars, df_pars, [cube_fitter.τ_97.value, cube_fitter.β.value])
+    priors = vcat(stellar_priors, dc_priors, df_priors, [cube_fitter.τ_97.prior, cube_fitter.β.prior])
 
     # Convert parameter limits into CMPFit object
     parinfo = CMPFit.Parinfo(length(p₀))
@@ -640,23 +617,21 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}; 
     end
     pᵢ += 2
 
-    # AGN 
-    parinfo[pᵢ].limited = (1,0)
-    parinfo[pᵢ].limits = (0., 0.)
-    parinfo[pᵢ+1].fixed = cube_fitter.cover.locked
-    if !(cube_fitter.cover.locked)
-        parinfo[pᵢ+1].limited = (1,1)
-        parinfo[pᵢ+1].limits = (minimum(cube_fitter.cover.prior), maximum(cube_fitter.cover.prior))
-    end
-
     # Create a `config` structure
     config = CMPFit.Config()
 
     res = cmpfit(λ, I, σ, (x, p) -> Util.fit_spectrum(x, p, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat), 
         p₀, parinfo=parinfo, config=config)
+
+    # Get best fit results
     popt = res.param
-    χ2 = res.bestnorm
-    χ2red = res.bestnorm / res.dof
+    # Count free parameters
+    n_free = 0
+    for pᵢ ∈ 1:length(popt)
+        if iszero(parinfo[pᵢ].fixed)
+            n_free += 1
+        end
+    end
 
     # function ln_prior(p)
     #     logpdfs = [logpdf(priors[i], p[i]) for i ∈ 1:length(p)]
@@ -719,19 +694,11 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}; 
         println("β: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ+1]) [-] \t Limits: " *
             "($(@sprintf "%.2f" minimum(cube_fitter.β.prior)), $(@sprintf "%.2f" maximum(cube_fitter.β.prior)))" * 
             (cube_fitter.β.locked ? " (fixed)" : ""))
-        pᵢ += 2
-        println()
-        println("#> AGN <#")
-        println()
-        println("AGN_amp: \t\t\t $(@sprintf "%.3e" popt[pᵢ]) MJy/sr \t Limits: (0, Inf)")
-        println("AGN_cover: \t\t\t $(@sprintf "%.2f" popt[pᵢ+1]) [-] \t Limits: " *
-            "($(@sprintf "%.2f" minimum(cube_fitter.cover.prior)), $(@sprintf "%.2f" maximum(cube_fitter.cover.prior)))" * 
-            (cube_fitter.cover.locked ? " (fixed)" : ""))
         println()
         println("######################################################################")
     end
 
-    return popt, I_model, comps, χ2red
+    return σ, popt, I_model, comps, n_free
 
 end
 
@@ -828,9 +795,16 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}, conti
     res = cmpfit(λ, Inorm, σnorm, (x, p) -> Util.fit_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
         cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, λ0_ln, cube_fitter.flexible_wavesol), p₀, 
         parinfo=parinfo, config=config)
+
+    # Get best fit results
     popt = res.param
-    χ2 = res.bestnorm
-    χ2red = res.bestnorm / res.dof
+    # Count free parameters
+    n_free = 0
+    for pᵢ ∈ 1:length(popt)
+        if iszero(parinfo[pᵢ].fixed)
+            n_free += 1
+        end
+    end
 
     # function ln_prior(p)
     #     logpdfs = [logpdf(priors[i], p[i]) for i ∈ 1:length(p)]
@@ -892,7 +866,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}, conti
         println("######################################################################")
     end
 
-    return popt, I_model, comps
+    return σ, popt, I_model, comps, n_free
 
 end
 
@@ -924,9 +898,6 @@ function plot_spaxel_fit(λ::Vector{Float64}, I::Vector{Float32}, I_cont::Vector
             elseif occursin("line", comp)
                 append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* comps["extinction"], mode="lines",
                     line=Dict(:color => "rebeccapurple", :width => 1), name="Lines")])
-            elseif occursin("agn", comp)
-                append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp], mode="lines",
-                    line=Dict(:color => "#F1C40F", :width => 1), name="AGN")])
             end
         end
         for (lw, ln) ∈ zip(line_wave, line_names)
@@ -934,7 +905,7 @@ function plot_spaxel_fit(λ::Vector{Float64}, I::Vector{Float32}, I_cont::Vector
                 line=Dict(:color => occursin("H2", String(ln)) ? "red" : (any(occursin.(["alpha", "beta", "gamma", "delta"], String(ln))) ? "#ff7f0e" : "rebeccapurple"), 
                 :width => 0.5, :dash => "dash"))])
         end
-        append!(traces, [PlotlyJS.scatter(x=λ, y=comps["extinction"] .* (sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] .+ comps["stellar"]) .+ comps["agn"], mode="lines",
+        append!(traces, [PlotlyJS.scatter(x=λ, y=comps["extinction"] .* (sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] .+ comps["stellar"]), mode="lines",
             line=Dict(:color => "green", :width => 1), name="Dust+Stellar Continuum")])
         layout = PlotlyJS.Layout(
             xaxis_title="\$\\lambda\\ (\\mu{\\rm m})\$",
@@ -970,8 +941,6 @@ function plot_spaxel_fit(λ::Vector{Float64}, I::Vector{Float32}, I_cont::Vector
                 ax1.plot(λ, comps[comp] .* comps["extinction"], "b-", alpha=0.5)
             elseif occursin("line", comp)
                 ax1.plot(λ, comps[comp] .* comps["extinction"], "-", color=:rebeccapurple, alpha=0.5)
-            elseif occursin("agn", comp)
-                ax1.plot(λ, comps[comp], "--", color="#F1C40F")
             end
         end
         for (lw, ln) ∈ zip(line_wave, line_names)
@@ -980,7 +949,7 @@ function plot_spaxel_fit(λ::Vector{Float64}, I::Vector{Float32}, I_cont::Vector
             ax2.axvline(lw, linestyle="--", 
                 color=occursin("H2", String(ln)) ? :red : (any(occursin.(["alpha", "beta", "gamma", "delta"], String(ln))) ? "#ff7f0e" : :rebeccapurple), lw=0.5, alpha=0.5)
         end
-        ax1.plot(λ, comps["extinction"] .* (sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] .+ comps["stellar"]) .+ comps["agn"], "g-")
+        ax1.plot(λ, comps["extinction"] .* (sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] .+ comps["stellar"]), "g-")
         ax1.set_xlim(minimum(λ), maximum(λ))
         ax2.set_xlim(minimum(λ), maximum(λ))
         ax3.set_ylim(0., 1.1)
@@ -1110,29 +1079,38 @@ end
 function fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}; verbose::Bool=false)
 
     # Skip spaxels with NaNs (post-interpolation)
-    if any(.!isfinite.(cube_fitter.cube.Iλ[spaxel..., :]) .| .!isfinite.(cube_fitter.cube.σI[spaxel..., :]))
+    λ = cube_fitter.cube.λ
+    I = cube_fitter.cube.Iλ[spaxel..., :]
+    if any(.!isfinite.(I) .| .!isfinite.(I))
         return
     end
 
     # Fit the spaxel
-    popt_c, I_cont, comps_cont, χ2red = continuum_fit_spaxel(cube_fitter, spaxel, verbose=verbose)
-    popt_l, I_line, comps_line = line_fit_spaxel(cube_fitter, spaxel, I_cont, verbose=verbose)
+    σ, popt_c, I_cont, comps_cont, n_free_c = continuum_fit_spaxel(cube_fitter, spaxel, verbose=verbose)
+    _, popt_l, I_line, comps_line, n_free_l = line_fit_spaxel(cube_fitter, spaxel, I_cont, verbose=verbose)
 
     # Combine the continuum and line models
     I_model = I_cont .+ I_line
     comps = merge(comps_cont, comps_line)
+
+    # Total free parameters
+    n_free = n_free_c + n_free_l
+    n_data = length(I)
+
+    # Reduced chi^2 of the model
+    χ2red = 1 / (n_data - n_free) * sum((I .- I_model).^2 ./ σ.^2)
 
     p_complex, p_lines = calculate_extra_parameters(cube_fitter, spaxel, comps)
     p_out = [popt_c; popt_l; p_complex; p_lines]
 
     λ0_ln = [ln.λ₀ for ln ∈ cube_fitter.lines]
     if cube_fitter.plot_spaxels != :none
-        plot_spaxel_fit(cube_fitter.cube.λ, cube_fitter.cube.Iλ[spaxel..., :] , I_model, comps, 
+        plot_spaxel_fit(λ, I, I_model, comps, 
             cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, λ0_ln, cube_fitter.line_names,
             χ2red, cube_fitter.name, "spaxel_$(spaxel[1])_$(spaxel[2])", backend=cube_fitter.plot_spaxels)
     end
 
-    return p_out, I_model, comps
+    return p_out, I_model, comps, χ2red
 end
 
 function fit_cube(cube_fitter::CubeFitter)
@@ -1143,15 +1121,15 @@ function fit_cube(cube_fitter::CubeFitter)
 
     # Prepare output array
     println("Preparing output data structures...")
-    out_params = SharedArray(ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines) .* NaN)
+    out_params = SharedArray(ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 1) .* NaN)
 
     #########################
     function fit_spax_i(xᵢ::Int, yᵢ::Int)
 
         result = fit_spaxel(cube_fitter, (xᵢ, yᵢ))
         if !isnothing(result)
-            p_out, _, _ = result
-            out_params[xᵢ, yᵢ, :] .= p_out
+            p_out, _, _, χ2red = result
+            out_params[xᵢ, yᵢ, :] .= [p_out; χ2red]
         end
 
         return
@@ -1160,7 +1138,7 @@ function fit_cube(cube_fitter::CubeFitter)
     println("Beginning Levenberg-Marquardt least squares fitting...")
     # Use multiprocessing (not threading) to iterate over multiple spaxels at once using multiple CPUs
     if cube_fitter.parallel
-        @showprogress pmap(Iterators.product(1:shape[1], 1:shape[2])) do (xᵢ, yᵢ)
+        @showprogress pmap(Iterators.product(28:29, 12:13)) do (xᵢ, yᵢ)
             fit_spax_i(xᵢ, yᵢ)
         end
     else
@@ -1193,11 +1171,6 @@ function fit_cube(cube_fitter::CubeFitter)
         # Extinction parameters
         cube_fitter.param_maps.extinction[:tau_9_7][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ]
         cube_fitter.param_maps.extinction[:beta][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+1]
-        pᵢ += 2
-
-        # AGN parameters
-        cube_fitter.param_maps.agn[:amp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? log10(out_params[xᵢ, yᵢ, pᵢ]) : -Inf
-        cube_fitter.param_maps.agn[:cover][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+1]
         pᵢ += 2
 
         # End of continuum parameters: recreate the continuum model
@@ -1251,6 +1224,9 @@ function fit_cube(cube_fitter::CubeFitter)
             pᵢ += 2
         end
 
+        # Reduced χ^2
+        cube_fitter.param_maps.reduced_χ2[xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ]
+
         # Set the 3D model cube outputs
         I_model = I_cont .+ I_line
         comps = merge(comps_c, comps_l)
@@ -1267,7 +1243,6 @@ function fit_cube(cube_fitter::CubeFitter)
             cube_fitter.cube_model.lines[xᵢ, yᵢ, :, k] .= comps["line_$k"]
         end
         cube_fitter.cube_model.extinction[xᵢ, yᵢ, :] .= comps["extinction"]
-        cube_fitter.cube_model.agn[xᵢ, yᵢ, :] .= comps["agn"]
 
     end
 
@@ -1328,6 +1303,8 @@ function plot_parameter_map(data::Union{Matrix{Float64},SharedMatrix{Float64}}, 
         bunit = "\$\\tau_{9.7}\$"
     elseif occursin("intI", String(name_i))
         bunit = "\$\\log_{10}(I /\$MJy sr\$^{-1}\$ \$\\mu\$m)"
+    elseif occursin("chi2", String(name_i))
+        bunit = "\$\\tilde{\\chi}^2\$"
     end
 
     filtered = copy(data)
@@ -1371,6 +1348,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter; snr_thresh=3.)
         name_i = join(["stellar_continuum", parameter], "_")
         plot_parameter_map(data, cube_fitter.name, name_i, Ω=cube_fitter.cube.Ω, z=cube_fitter.z, cosmo=cube_fitter.cosmology)
     end
+
     for i ∈ keys(cube_fitter.param_maps.dust_continuum)
         for parameter ∈ keys(cube_fitter.param_maps.dust_continuum[i])
             data = cube_fitter.param_maps.dust_continuum[i][parameter]
@@ -1378,6 +1356,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter; snr_thresh=3.)
             plot_parameter_map(data, cube_fitter.name, name_i, Ω=cube_fitter.cube.Ω, z=cube_fitter.z, cosmo=cube_fitter.cosmology)
         end
     end
+
     for df ∈ keys(cube_fitter.param_maps.dust_features)
         for parameter ∈ keys(cube_fitter.param_maps.dust_features[df])
             data = cube_fitter.param_maps.dust_features[df][parameter]
@@ -1385,16 +1364,13 @@ function plot_parameter_maps(cube_fitter::CubeFitter; snr_thresh=3.)
             plot_parameter_map(data, cube_fitter.name, name_i, Ω=cube_fitter.cube.Ω, z=cube_fitter.z, cosmo=cube_fitter.cosmology)
         end
     end
+
     for parameter ∈ keys(cube_fitter.param_maps.extinction)
         data = cube_fitter.param_maps.extinction[parameter]
         name_i = join(["extinction", parameter], "_")
         plot_parameter_map(data, cube_fitter.name, name_i, Ω=cube_fitter.cube.Ω, z=cube_fitter.z, cosmo=cube_fitter.cosmology)
     end
-    for parameter ∈ keys(cube_fitter.param_maps.agn)
-        data = cube_fitter.param_maps.agn[parameter]
-        name_i = join(["agn", parameter], "_")
-        plot_parameter_map(data, cube_fitter.name, name_i, Ω=cube_fitter.cube.Ω, z=cube_fitter.z, cosmo=cube_fitter.cosmology)
-    end
+
     for c ∈ keys(cube_fitter.param_maps.dust_complexes)
         snr = cube_fitter.param_maps.dust_complexes[c][:SNR]
         for parameter ∈ keys(cube_fitter.param_maps.dust_complexes[c])
@@ -1404,11 +1380,13 @@ function plot_parameter_maps(cube_fitter::CubeFitter; snr_thresh=3.)
                 snr_filter=parameter ≠ :SNR ? snr : nothing, snr_thresh=snr_thresh)
         end
     end
+
     for vk ∈ cube_fitter.voff_tied_key
         data = cube_fitter.param_maps.tied_voffs[vk]
         name_i = join(["tied_voffs", vk], "_")
         plot_parameter_map(data, cube_fitter.name, name_i, Ω=cube_fitter.cube.Ω, z=cube_fitter.z, cosmo=cube_fitter.cosmology)
     end
+
     for line ∈ keys(cube_fitter.param_maps.lines)
         snr = cube_fitter.param_maps.lines[line][:SNR]
         for parameter ∈ keys(cube_fitter.param_maps.lines[line])
@@ -1418,6 +1396,10 @@ function plot_parameter_maps(cube_fitter::CubeFitter; snr_thresh=3.)
                 snr_filter=parameter ≠ :SNR ? snr : nothing, snr_thresh=snr_thresh)
         end
     end
+
+    data = cube_fitter.param_maps.reduced_χ2
+    name_i = "reduced_chi2"
+    plot_parameter_map(data, cube_fitter.name, name_i, Ω=cube_fitter.cube.Ω, z=cube_fitter.z, cosmo=cube_fitter.cosmology)
 
 end
 
@@ -1468,7 +1450,6 @@ function write_fits(cube_fitter::CubeFitter)
             write(f, cube_fitter.cube_model.lines[:, :, :, k]; header=hdr, name="$line")                        # Emission line profiles
         end
         write(f, cube_fitter.cube_model.extinction; header=hdr, name="EXTINCTION")                              # Extinction model
-        write(f, cube_fitter.cube_model.agn; header=hdr, name="AGN")                                            # AGN model (power law + blackbody)
         write_key(f["MODEL"], "BUNIT", "MJy/sr")
     end
 
@@ -1488,6 +1469,7 @@ function write_fits(cube_fitter::CubeFitter)
             write(f, data; header=hdr, name=name_i)
             write_key(f[name_i], "BUNIT", bunit)
         end
+
         for i ∈ keys(cube_fitter.param_maps.dust_continuum)
             for parameter ∈ keys(cube_fitter.param_maps.dust_continuum[i])
                 data = cube_fitter.param_maps.dust_continuum[i][parameter]
@@ -1501,6 +1483,7 @@ function write_fits(cube_fitter::CubeFitter)
                 write_key(f[name_i], "BUNIT", bunit)  
             end
         end
+
         for df ∈ keys(cube_fitter.param_maps.dust_features)
             for parameter ∈ keys(cube_fitter.param_maps.dust_features[df])
                 data = cube_fitter.param_maps.dust_features[df][parameter]
@@ -1514,6 +1497,7 @@ function write_fits(cube_fitter::CubeFitter)
                 write_key(f[name_i], "BUNIT", bunit)      
             end
         end
+
         for line ∈ keys(cube_fitter.param_maps.lines)
             for parameter ∈ keys(cube_fitter.param_maps.lines[line])
                 data = cube_fitter.param_maps.lines[line][parameter]
@@ -1531,6 +1515,7 @@ function write_fits(cube_fitter::CubeFitter)
                 write_key(f[name_i], "BUNIT", bunit)   
             end
         end
+
         for parameter ∈ keys(cube_fitter.param_maps.extinction)
             data = cube_fitter.param_maps.extinction[parameter]
             name_i = join(["extinction", parameter], "_")
@@ -1538,17 +1523,7 @@ function write_fits(cube_fitter::CubeFitter)
             write(f, data; header=hdr, name=name_i)
             write_key(f[name_i], "BUNIT", bunit)  
         end
-        for parameter ∈ keys(cube_fitter.param_maps.agn)
-            data = cube_fitter.param_maps.agn[parameter]
-            name_i = join(["agn", parameter], "_")
-            if occursin("amp", String(name_i))
-                bunit = "log10(I / MJy sr^-1)"
-            else
-                bunit = "unitless"
-            end
-            write(f, data; header=hdr, name=name_i)
-            write_key(f[name_i], "BUNIT", bunit)
-        end
+
         for vk ∈ cube_fitter.voff_tied_key
             data = cube_fitter.param_maps.tied_voffs[vk]
             name_i = join(["tied_voffs", vk], "_")
@@ -1556,6 +1531,7 @@ function write_fits(cube_fitter::CubeFitter)
             write(f, data; header=hdr, name=name_i)
             write_key(f[name_i], "BUNIT", bunit)
         end
+
         for c ∈ keys(cube_fitter.param_maps.dust_complexes)
             snr = cube_fitter.param_maps.dust_complexes[c][:SNR]
             for parameter ∈ keys(cube_fitter.param_maps.dust_complexes[c])
@@ -1570,6 +1546,12 @@ function write_fits(cube_fitter::CubeFitter)
                 write_key(f[name_i], "BUNIT", bunit)
             end
         end
+
+        data = cube_fitter.param_maps.reduced_χ2
+        name_i = "reduced_chi2"
+        bunit = "unitless"
+        write(f, data; header=hdr, name=name_i)
+        write_key(f[name_i], "BUNIT", bunit)
 
     end
 end
