@@ -897,11 +897,11 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}, conti
     end
 
     # First, perform a global optimization with scipy basinhopping
-    bounds = scipy_opt.Bounds(lb=minimum.(priors), ub=maximum.(priors), keep_feasible=true)
-    res = scipy_opt.basinhopping(func=nln_probability, x0=p₀, stepsize=1.0,
-        minimizer_kwargs=Dict(:method => "Nelder-Mead", :bounds => bounds, :options => Dict(:disp => false)),
-        disp=false, niter_success=10)
-    p₁ = res["x"]
+    # res = scipy_opt.basinhopping(func=nln_probability, x0=p₀, stepsize=1.0,
+    #     minimizer_kwargs=Dict(:method => "Nelder-Mead", :options => Dict(:disp => false)),
+    #     disp=false, niter_success=10)
+    # p₁ = res["x"]
+    p₁ = p₀
 
     # Convert parameter limits into CMPFit object
     parinfo = CMPFit.Parinfo(length(p₀))
