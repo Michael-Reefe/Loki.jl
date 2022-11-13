@@ -3,10 +3,10 @@ tie_H2_voff = true
 tie_IP_voff = false
 
 # Starting line FWHMs and voffs
-voff_init = 0.0
-fwhm_init = 100.0
-h3_init = 0.0
-h4_init = 0.0
+# fwhm_init = 100.0
+# voff_init = 0.0
+# h3_init = 0.0
+# h4_init = 0.0
 
 # Line voff and FWHM limits
 voff_plim = [-500.0, 500.0]            # -500 to 500 km/s
@@ -86,7 +86,7 @@ OIV_25890    = 25.890
 PIII_17885   = 17.885
 
 # Atomic Sulfur Lines
-SIV_10551    = 10.551
+SIV_10511    = 10.511
 SIII_18713   = 18.713
 
 # Molecular Hydrogen Lines
@@ -377,6 +377,7 @@ H200_S0    = 28.21883
 
 [profiles]
 NeVI_7652 = "GaussHermite"
+SIV_10511 = "GaussHermite"
 
 # example:
 # [priors]

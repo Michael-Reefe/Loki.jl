@@ -27,10 +27,10 @@ using PyPlot
 using PlotlyJS
 
 const py_anchored_artists = PyNULL()
-# const scipy_opt = PyNULL()
+const scipy_opt = PyNULL()
 function __init__()
     copy!(py_anchored_artists, pyimport_conda("mpl_toolkits.axes_grid1.anchored_artists", "matplotlib"))
-    # copy!(scipy_opt, pyimport_conda("scipy.optimize", "scipy"))
+    copy!(scipy_opt, pyimport_conda("scipy.optimize", "scipy"))
     plt.switch_backend("Agg")
 end
 
@@ -62,75 +62,91 @@ function parse_options()
 
     options = TOML.parsefile(joinpath(sourcepath, "options.toml"))
     options_out = Dict()
-    keylist1 = ["cosmology", "stellar_continuum_temp", "dust_continuum_temps", "dust_features", "extinction"]
-    keylist2 = ["wave", "fwhm"]
-    keylist3 = ["tau_9_7", "beta"]
-    keylist4 = ["val", "plim", "locked"]
-    keylist5 = ["h", "omega_m", "omega_K", "omega_r"]
-    for key ∈ keylist1
+    keylist1 = ["chi2_threshold", "cosmology"]
+    keylist2 = ["h", "omega_m", "omega_K", "omega_r"]
+    for key ∈ keylist1 
         if !(key ∈ keys(options))
             error("Missing option $key in options file!")
         end
     end
-    for key ∈ keylist4
-        if !(key ∈ keys(options["stellar_continuum_temp"]))
-            error("Missing option $key in stellar continuum temp options!")
-        end
-        for dc ∈ options["dust_continuum_temps"]
-            if !(key ∈ keys(dc))
-                error("Missing option $key in dust continuum temp options!")
-            end
-        end
-        for df_key ∈ keys(options["dust_features"])
-            for df_key2 ∈ keylist2
-                if !(df_key2 ∈ keys(options["dust_features"][df_key]))
-                    error("Missing option $df_key2 in dust feature $df_key options!")
-                end
-                if !(key ∈ keys(options["dust_features"][df_key][df_key2]))
-                    error("Missing option $key in dust features $df_key, $df_key2 options!")
-                end
-            end
-        end
-        for ex_key ∈ keylist3
-            if !(ex_key ∈ keys(options["extinction"]))
-                error("Missing option $ex_key in extinction options!")
-            end
-            if !(key ∈ keys(options["extinction"][ex_key]))
-                error("Missing option $key in $ex_key options!")
-            end
-        end
-    end
-    for key ∈ keylist5
+    for key ∈ keylist2
         if !(key ∈ keys(options["cosmology"]))
             error("Missing option $key in cosmology options!")
         end
     end
     
+    options_out[:chi2_threshold] = options["chi2_threshold"]
     options_out[:cosmology] = cosmology(h=options["cosmology"]["h"], 
                                         OmegaM=options["cosmology"]["omega_m"],
                                         OmegaK=options["cosmology"]["omega_K"],
                                         OmegaR=options["cosmology"]["omega_r"])
-    options_out[:stellar_continuum_temp] = Param.from_dict(options["stellar_continuum_temp"])
-    options_out[:dust_continuum_temps] = [Param.from_dict(options["dust_continuum_temps"][i]) for i ∈ 1:length(options["dust_continuum_temps"])]
-    options_out[:dust_features] = Dict()
-    for df ∈ keys(options["dust_features"])
-        options_out[:dust_features][df] = Dict()
-        options_out[:dust_features][df][:complex] = "complex" ∈ keys(options["dust_features"][df]) ? options["dust_features"][df]["complex"] : split(df, "_")[2]
-        options_out[:dust_features][df][:wave] = Param.from_dict_wave(options["dust_features"][df]["wave"])
-        options_out[:dust_features][df][:fwhm] = Param.from_dict_fwhm(options["dust_features"][df]["fwhm"])
-    end
-    options_out[:extinction] = Param.ParamDict()
-    options_out[:extinction][:tau_9_7] = Param.from_dict(options["extinction"]["tau_9_7"])
-    options_out[:extinction][:beta] = Param.from_dict(options["extinction"]["beta"])
-
+    
     return options_out
+end
+
+function parse_dust()
+
+    dust = TOML.parsefile(joinpath(sourcepath, "dust.toml"))
+    dust_out = Dict()
+    keylist1 = ["stellar_continuum_temp", "dust_continuum_temps", "dust_features", "extinction"]
+    keylist2 = ["wave", "fwhm"]
+    keylist3 = ["tau_9_7", "beta"]
+    keylist4 = ["val", "plim", "locked"]
+    for key ∈ keylist1
+        if !(key ∈ keys(dust))
+            error("Missing option $key in dust file!")
+        end
+    end
+    for key ∈ keylist4
+        if !(key ∈ keys(dust["stellar_continuum_temp"]))
+            error("Missing option $key in stellar continuum temp options!")
+        end
+        for dc ∈ dust["dust_continuum_temps"]
+            if !(key ∈ keys(dc))
+                error("Missing option $key in dust continuum temp options!")
+            end
+        end
+        for df_key ∈ keys(dust["dust_features"])
+            for df_key2 ∈ keylist2
+                if !(df_key2 ∈ keys(dust["dust_features"][df_key]))
+                    error("Missing option $df_key2 in dust feature $df_key options!")
+                end
+                if !(key ∈ keys(dust["dust_features"][df_key][df_key2]))
+                    error("Missing option $key in dust features $df_key, $df_key2 options!")
+                end
+            end
+        end
+        for ex_key ∈ keylist3
+            if !(ex_key ∈ keys(dust["extinction"]))
+                error("Missing option $ex_key in extinction options!")
+            end
+            if !(key ∈ keys(dust["extinction"][ex_key]))
+                error("Missing option $key in $ex_key options!")
+            end
+        end
+    end
+
+    dust_out[:stellar_continuum_temp] = Param.from_dict(dust["stellar_continuum_temp"])
+    dust_out[:dust_continuum_temps] = [Param.from_dict(dust["dust_continuum_temps"][i]) for i ∈ 1:length(dust["dust_continuum_temps"])]
+    dust_out[:dust_features] = Dict()
+    for df ∈ keys(dust["dust_features"])
+        dust_out[:dust_features][df] = Dict()
+        dust_out[:dust_features][df][:complex] = "complex" ∈ keys(dust["dust_features"][df]) ? dust["dust_features"][df]["complex"] : split(df, "_")[2]
+        dust_out[:dust_features][df][:wave] = Param.from_dict_wave(dust["dust_features"][df]["wave"])
+        dust_out[:dust_features][df][:fwhm] = Param.from_dict_fwhm(dust["dust_features"][df]["fwhm"])
+    end
+    dust_out[:extinction] = Param.ParamDict()
+    dust_out[:extinction][:tau_9_7] = Param.from_dict(dust["extinction"]["tau_9_7"])
+    dust_out[:extinction][:beta] = Param.from_dict(dust["extinction"]["beta"])
+
+    return dust_out
 end
 
 function parse_lines(channel::Int)
     lines = TOML.parsefile(joinpath(sourcepath, "lines.toml"))
     lines_out = Param.LineDict()
 
-    keylist1 = ["tie_H2_voff", "tie_IP_voff", "fwhm_init", "voff_init", "h3_init", "h4_init", 
+    keylist1 = ["tie_H2_voff", "tie_IP_voff",
         "voff_plim", "fwhm_pmax", "h3_plim", "h4_plim", "R", "flexible_wavesol", "wavesol_unc", 
         "channels", "lines"]
     for key ∈ keylist1
@@ -147,18 +163,24 @@ function parse_lines(channel::Int)
         end
     end
 
-    for line ∈ keys(lines["lines"])
+    fwhm_pmin = Util.C_KMS / lines["R"][channel]
 
-        fwhm_pmin = Util.C_KMS / lines["R"][channel]
+    # Initial values
+    fwhm_init = "fwhm_init" ∈ keys(lines) ? lines["fwhm_init"] : fwhm_pmin + 1
+    voff_init = "voff_init" ∈ keys(lines) ? lines["voff_init"] : 0.0
+    h3_init = "h3_init" ∈ keys(lines) ? lines["h3_init"] : 0.0
+    h4_init = "h4_init" ∈ keys(lines) ? lines["h4_init"] : 0.0
+
+    for line ∈ keys(lines["lines"])
 
         voff_prior = Uniform(lines["voff_plim"]...)
         voff_locked = false
-        fwhm_prior = Uniform(fwhm_pmin, lines["fwhm_pmax"])
+        fwhm_prior = Uniform(fwhm_pmin, profiles[line] == "GaussHermite" ? lines["fwhm_pmax"] * 2 : lines["fwhm_pmax"])
         fwhm_locked = false
         if profiles[line] == "GaussHermite"
-            h3_prior = Uniform(lines["h3_plim"]...)
+            h3_prior = truncated(Normal(0.0, 0.1), lines["h3_plim"]...)
             h3_locked = false
-            h4_prior = Uniform(lines["h4_plim"]...)
+            h4_prior = truncated(Normal(0.0, 0.1), lines["h4_plim"]...)
             h4_locked = false
         end
         if haskey(lines, "priors")
@@ -191,13 +213,13 @@ function parse_lines(channel::Int)
             end
         end
 
-        voff = Param.Parameter(lines["voff_init"], voff_locked, voff_prior)
-        fwhm = Param.Parameter(lines["fwhm_init"], fwhm_locked, fwhm_prior)
+        voff = Param.Parameter(voff_init, voff_locked, voff_prior)
+        fwhm = Param.Parameter(fwhm_init, fwhm_locked, fwhm_prior)
         if profiles[line] == "Gaussian"
             params = Param.ParamDict(:voff => voff, :fwhm => fwhm)
         elseif profiles[line] == "GaussHermite"
-            h3 = Param.Parameter(lines["h3_init"], h3_locked, h3_prior)
-            h4 = Param.Parameter(lines["h4_init"], h4_locked, h4_prior)
+            h3 = Param.Parameter(h3_init, h3_locked, h3_prior)
+            h4 = Param.Parameter(h4_init, h4_locked, h4_prior)
             params = Param.ParamDict(:voff => voff, :fwhm => fwhm, :h3 => h3, :h4 => h4)
         end
         lines_out[Symbol(line)] = Param.TransitionLine(lines["lines"][line], Symbol(profiles[line]), params, tied)
@@ -216,7 +238,7 @@ function parse_lines(channel::Int)
                 locked = lines["priors"][voff_tie]["locked"]
             end
         end
-        voff_tied[voff_tie] = Param.Parameter(lines["voff_init"], locked, prior)
+        voff_tied[voff_tie] = Param.Parameter(voff_init, locked, prior)
     end
 
     return lines_out, voff_tied, lines["R"], lines["flexible_wavesol"]
@@ -333,7 +355,7 @@ function cubemodel_empty(shape::Tuple{Int,Int,Int}, n_dust_cont::Int, df_names::
 end
 
 
-struct CubeFitter
+mutable struct CubeFitter
     
     cube::CubeData.DataCube
     z::Float64
@@ -373,13 +395,20 @@ struct CubeFitter
     n_params_lines::Int
     
     cosmology::Cosmology.AbstractCosmology
+    χ²_thresh::Float64
     R::Int64
     flexible_wavesol::Bool
+
+    p_best_cont::Union{Nothing,Vector{Float64}}
+    p_best_line::Union{Nothing,Vector{Float64}}
+    χ²_best::Union{Nothing,Float64}
+    best_spaxel::Union{Nothing,Tuple{Int,Int}}
 
     function CubeFitter(cube::CubeData.DataCube, z::Float64, name::String; window_size::Float64=.025, 
         plot_spaxels::Symbol=:pyplot, plot_maps::Bool=true, parallel::Bool=true, save_fits::Bool=true)
 
-        options = parse_options() 
+        dust = parse_dust() 
+        options = parse_options()
         line_list, voff_tied, R, flexible_wavesol = parse_lines(parse(Int, cube.channel))
 
         # Get shape
@@ -387,23 +416,23 @@ struct CubeFitter
         # Alias
         λ = cube.λ
 
-        T_s = options[:stellar_continuum_temp]
-        T_dc = options[:dust_continuum_temps]
-        τ_97 = options[:extinction][:tau_9_7]
-        β = options[:extinction][:beta]
+        T_s = dust[:stellar_continuum_temp]
+        T_dc = dust[:dust_continuum_temps]
+        τ_97 = dust[:extinction][:tau_9_7]
+        β = dust[:extinction][:beta]
 
         #### PREPARE OUTPUTS ####
         n_dust_cont = length(T_dc)
 
-        df_filt = [(minimum(λ)-0.5 < options[:dust_features][df][:wave].value < maximum(λ)+0.5) for df ∈ keys(options[:dust_features])]
-        df_names = Vector{String}(collect(keys(options[:dust_features]))[df_filt])
+        df_filt = [(minimum(λ)-0.5 < dust[:dust_features][df][:wave].value < maximum(λ)+0.5) for df ∈ keys(dust[:dust_features])]
+        df_names = Vector{String}(collect(keys(dust[:dust_features]))[df_filt])
         df_mean = [parse(Float64, split(df, "_")[2]) for df ∈ df_names]
         ss = sortperm(df_mean)
         df_names = df_names[ss]
-        dust_features = [options[:dust_features][df] for df ∈ df_names]
+        dust_features = [dust[:dust_features][df] for df ∈ df_names]
         n_dust_features = length(df_names)
 
-        complexes = Vector{String}(unique([options[:dust_features][n][:complex] for n ∈ df_names]))
+        complexes = Vector{String}(unique([dust[:dust_features][n][:complex] for n ∈ df_names]))
         ss = sortperm([parse(Float64, c) for c ∈ complexes])
         complexes = complexes[ss]
         n_complexes = length(complexes)
@@ -456,13 +485,14 @@ struct CubeFitter
             mkdir("output_$name")
         end
 
-        # Prepare cosmology
+        # Prepare options
+        χ²_thresh = options[:chi2_threshold]
         cosmo = options[:cosmology]
 
         return new(cube, z, name, cube_model, param_maps, window_size, plot_spaxels, plot_maps, parallel, save_fits,
             T_s, T_dc, τ_97, β, n_dust_cont, n_dust_features, df_names, dust_features, n_lines, line_names, line_profiles, 
             lines, n_voff_tied, line_tied, voff_tied_key, voff_tied, n_complexes, complexes, n_params_cont, n_params_lines, 
-            cosmo, R[parse(Int, cube.channel)], flexible_wavesol)
+            cosmo, χ²_thresh, R[parse(Int, cube.channel)], flexible_wavesol, nothing, nothing, nothing, nothing)
     end
 
 end
@@ -545,55 +575,86 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}; 
     # Add statistical uncertainties to the systematic uncertainties in quadrature
     σ_stat = std(I .- I_cubic)
     σ .= .√(σ.^2 .+ σ_stat.^2)
-
-    # Function to interpolate the data with least squares quadratic fitting
-    function interp_func(x)
-        ind = findmin(abs.(λ .- x))[2]
-        lo = ind - 1
-        hi = ind + 2
-        while lo ≤ 0
-            lo += 1
-            hi += 1
-        end
-        while hi > length(λ)
-            hi -= 1
-            lo -= 1
-        end
-        A = [λ[lo:hi].^2 λ[lo:hi] ones(4)]
-        y = I[lo:hi]
-        param = A \ y
-        return param[1].*x.^2 .+ param[2].*x .+ param[3]
-    end
-
-    # Stellar amplitude
-    A_s = clamp(interp_func(5.5) / Util.Blackbody_ν(5.5, cube_fitter.T_s.value), 0., Inf)
-
-    # Dust feature amplitudes
-    A_df = repeat([clamp(nanmedian(I)/2, 0., Inf)], cube_fitter.n_dust_feat)
-
-    # Dust continuum amplitudes
-    λ_dc = clamp.(2898 ./ [Ti.value for Ti ∈ cube_fitter.T_dc], minimum(λ), maximum(λ))
-    A_dc = clamp.(interp_func.(λ_dc) ./ [Util.Blackbody_ν(λ_dci, T_dci.value) for (λ_dci, T_dci) ∈ zip(λ_dc, cube_fitter.T_dc)] .* 
-        (λ_dc ./ 9.7).^2 ./ 5., 0., Inf)
-        
-    amp_dc_prior = amp_agn_prior = Uniform(0., 1e100)  # just set it arbitrarily large, otherwise infinity gives bad logpdfs
-    amp_df_prior = Uniform(0., maximum(I) > 0. ? maximum(I) : 1e100)
-    
+ 
     mean_df = [cdf[:wave] for cdf ∈ cube_fitter.dust_features]
     fwhm_df = [cdf[:fwhm] for cdf ∈ cube_fitter.dust_features]
 
-    stellar_pars = [A_s, cube_fitter.T_s.value]
-    stellar_priors = [amp_dc_prior, cube_fitter.T_s.prior]
+    # Check if the cube fitter has best fit parameters from a previous fit
+    if !isnothing(cube_fitter.p_best_cont)
 
-    dc_pars = vcat([[Ai, Ti.value] for (Ai, Ti) ∈ zip(A_dc, cube_fitter.T_dc)]...)
-    dc_priors = vcat([[amp_dc_prior, Ti.prior] for Ti ∈ cube_fitter.T_dc]...)
+        # Set the parameters to the best parameters
+        p₀ = cube_fitter.p_best_cont
 
-    df_pars = vcat([[Ai, mi.value, fi.value] for (Ai, mi, fi) ∈ zip(A_df, mean_df, fwhm_df)]...)
-    df_priors = vcat([[amp_df_prior, mi.prior, fi.prior] for (mi, fi) ∈ zip(mean_df, fwhm_df)]...)
+        # Scale all of the amplitudes by the ratio of the median of the datas in the two spaxels
+        scale = nanmedian(cube_fitter.cube.Iλ[spaxel..., :]) / 
+            nanmedian(cube_fitter.cube.Iλ[cube_fitter.best_spaxel..., :])
+        
+        # Stellar amplitude
+        p₀[1] *= scale
+        pᵢ = 3
 
-    # Initial parameter vector
-    p₀ = vcat(stellar_pars, dc_pars, df_pars, [cube_fitter.τ_97.value, cube_fitter.β.value])
-    priors = vcat(stellar_priors, dc_priors, df_priors, [cube_fitter.τ_97.prior, cube_fitter.β.prior])
+        # Dust continuum amplitudes
+        for i ∈ 1:cube_fitter.n_dust_cont
+            p₀[pᵢ] *= scale
+            pᵢ += 2
+        end
+
+        # Dust feature amplitudes
+        for i ∈ 1:cube_fitter.n_dust_feat
+            p₀[pᵢ] *= scale
+            pᵢ += 3
+        end
+
+    # Otherwise, we estimate the initial parameters based on the data
+    else
+
+        # Function to interpolate the data with least squares quadratic fitting
+        function interp_func(x)
+            ind = findmin(abs.(λ .- x))[2]
+            lo = ind - 1
+            hi = ind + 2
+            while lo ≤ 0
+                lo += 1
+                hi += 1
+            end
+            while hi > length(λ)
+                hi -= 1
+                lo -= 1
+            end
+            A = [λ[lo:hi].^2 λ[lo:hi] ones(4)]
+            y = I[lo:hi]
+            param = A \ y
+            return param[1].*x.^2 .+ param[2].*x .+ param[3]
+        end
+
+        # Stellar amplitude
+        A_s = clamp(interp_func(5.5) / Util.Blackbody_ν(5.5, cube_fitter.T_s.value), 0., Inf)
+
+        # Dust feature amplitudes
+        A_df = repeat([clamp(nanmedian(I)/2, 0., Inf)], cube_fitter.n_dust_feat)
+
+        # Dust continuum amplitudes
+        λ_dc = clamp.(2898 ./ [Ti.value for Ti ∈ cube_fitter.T_dc], minimum(λ), maximum(λ))
+        A_dc = clamp.(interp_func.(λ_dc) ./ [Util.Blackbody_ν(λ_dci, T_dci.value) for (λ_dci, T_dci) ∈ zip(λ_dc, cube_fitter.T_dc)] .* 
+            (λ_dc ./ 9.7).^2 ./ 5., 0., Inf)
+            
+        # amp_dc_prior = amp_agn_prior = Uniform(0., 1e100)  # just set it arbitrarily large, otherwise infinity gives bad logpdfs
+        # amp_df_prior = Uniform(0., maximum(I) > 0. ? maximum(I) : 1e100)
+
+        stellar_pars = [A_s, cube_fitter.T_s.value]
+        # stellar_priors = [amp_dc_prior, cube_fitter.T_s.prior]
+
+        dc_pars = vcat([[Ai, Ti.value] for (Ai, Ti) ∈ zip(A_dc, cube_fitter.T_dc)]...)
+        # dc_priors = vcat([[amp_dc_prior, Ti.prior] for Ti ∈ cube_fitter.T_dc]...)
+
+        df_pars = vcat([[Ai, mi.value, fi.value] for (Ai, mi, fi) ∈ zip(A_df, mean_df, fwhm_df)]...)
+        # df_priors = vcat([[amp_df_prior, mi.prior, fi.prior] for (mi, fi) ∈ zip(mean_df, fwhm_df)]...)
+
+        # Initial parameter vector
+        p₀ = vcat(stellar_pars, dc_pars, df_pars, [cube_fitter.τ_97.value, cube_fitter.β.value])
+        # priors = vcat(stellar_priors, dc_priors, df_priors, [cube_fitter.τ_97.prior, cube_fitter.β.prior])
+
+    end
 
     # Convert parameter limits into CMPFit object
     parinfo = CMPFit.Parinfo(length(p₀))
@@ -745,7 +806,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}, conti
     σ = cube_fitter.cube.σI[spaxel..., :]
 
     _, continuum, _ = continuum_cubic_spline(λ, I, σ)
-    N = abs(nanmaximum(I))
+    N = Float64(abs(nanmaximum(I)))
     N = N ≠ 0. ? N : 1.
 
     # Add statistical uncertainties to the systematic uncertainties in quadrature
@@ -756,39 +817,91 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}, conti
     Inorm = (I .- continuum) ./ N
     σnorm = σ ./ N
 
-    A_ln = ones(cube_fitter.n_lines) .* 0.5
-    # amp_ln_prior = Uniform(0., 1.)
-
     voff_ln = [ln.parameters[:voff] for ln ∈ cube_fitter.lines]
     fwhm_ln = [ln.parameters[:fwhm] for ln ∈ cube_fitter.lines]
     h3_ln = [ln.profile == :GaussHermite ? ln.parameters[:h3] : nothing for ln ∈ cube_fitter.lines]
     h4_ln = [ln.profile == :GaussHermite ? ln.parameters[:h4] : nothing for ln ∈ cube_fitter.lines]
 
-    ln_pars = Vector{Float64}()
+    # Set up the prior vector
+    amp_ln_prior = Uniform(0., 1.)
     λ0_ln = Vector{Float64}()
     prof_ln = Vector{Symbol}()
-    # ln_priors = Vector{Any}()
+    ln_priors = Vector{Any}()
     for (i, ln) ∈ enumerate(cube_fitter.lines)
         if isnothing(ln.tied) || cube_fitter.flexible_wavesol
-            append!(ln_pars, [A_ln[i], voff_ln[i].value, fwhm_ln[i].value])
-            # append!(ln_priors, [amp_ln_prior, voff_ln[i].prior, fwhm_ln[i].prior])
+            append!(ln_priors, [amp_ln_prior, voff_ln[i].prior, fwhm_ln[i].prior])
         else
-            append!(ln_pars, [A_ln[i], fwhm_ln[i].value])
-            # append!(ln_priors, [amp_ln_prior, fwhm_ln[i].prior])
+            append!(ln_priors, [amp_ln_prior, fwhm_ln[i].prior])
         end
         if ln.profile == :GaussHermite
-            append!(ln_pars, [h3_ln[i].value, h4_ln[i].value])
-            # append!(ln_priors, [h3_ln[i].prior, h4_ln[i].prior])
+            append!(ln_priors, [h3_ln[i].prior, h4_ln[i].prior])
         end
         append!(λ0_ln, [ln.λ₀])
         append!(prof_ln, [ln.profile])
     end
-    voff_tied_pars = [cube_fitter.voff_tied[i].value for i ∈ 1:cube_fitter.n_voff_tied]
-    # voff_tied_priors = [cube_fitter.voff_tied[i].prior for i ∈ 1:cube_fitter.n_voff_tied]
+    voff_tied_priors = [cube_fitter.voff_tied[i].prior for i ∈ 1:cube_fitter.n_voff_tied]
 
-    # Initial parameter vector
-    p₀ = vcat(voff_tied_pars, ln_pars)
-    # priors = vcat(voff_tied_priors, ln_priors)
+    # Initial prior vector
+    priors = vcat(voff_tied_priors, ln_priors)
+
+    # Check if there are previous best fit parameters
+    if !isnothing(cube_fitter.p_best_line)
+
+        # If so, set the parameters to the best fit ones
+        p₀ = cube_fitter.p_best_line
+        # Make sure all amplitudes are nonzero
+        pᵢ = 1 + cube_fitter.n_voff_tied
+        for i ∈ 1:cube_fitter.n_lines
+            p₀[pᵢ] = 0.5
+            if isnothing(cube_fitter.line_tied[i]) || cube_fitter.flexible_wavesol
+                pᵢ += 3
+            else
+                pᵢ += 2
+            end
+            if prof_ln[i] == :GaussHermite
+                pᵢ += 2
+            end
+        end
+
+    else
+
+        A_ln = ones(cube_fitter.n_lines) .* 0.5
+
+        ln_pars = Vector{Float64}()
+        for (i, ln) ∈ enumerate(cube_fitter.lines)
+            if isnothing(ln.tied) || cube_fitter.flexible_wavesol
+                append!(ln_pars, [A_ln[i], voff_ln[i].value, fwhm_ln[i].value])
+            else
+                append!(ln_pars, [A_ln[i], fwhm_ln[i].value])
+            end
+            if ln.profile == :GaussHermite
+                append!(ln_pars, [h3_ln[i].value, h4_ln[i].value])
+            end
+        end
+        voff_tied_pars = [cube_fitter.voff_tied[i].value for i ∈ 1:cube_fitter.n_voff_tied]
+
+        # Initial parameter vector
+        p₀ = vcat(voff_tied_pars, ln_pars)
+
+    end
+
+    function ln_prior(p)
+        logpdfs = [logpdf(priors[i], p[i]) for i ∈ 1:length(p)]
+        return sum(logpdfs)
+    end
+
+    function nln_probability(p)
+        model = Util.fit_line_residuals(λ, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
+            cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, λ0_ln, cube_fitter.flexible_wavesol)
+        return -Util.ln_likelihood(Inorm, model, σnorm) - ln_prior(p)
+    end
+
+    # First, perform a global optimization with scipy basinhopping
+    bounds = scipy_opt.Bounds(lb=minimum.(priors), ub=maximum.(priors), keep_feasible=true)
+    res = scipy_opt.basinhopping(func=nln_probability, x0=p₀, stepsize=1.0,
+        minimizer_kwargs=Dict(:method => "Nelder-Mead", :bounds => bounds, :options => Dict(:disp => false)),
+        disp=false, niter_success=10)
+    p₁ = res["x"]
 
     # Convert parameter limits into CMPFit object
     parinfo = CMPFit.Parinfo(length(p₀))
@@ -859,8 +972,9 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}, conti
     # Create a `config` structure
     config = CMPFit.Config()
 
+    # Refine the results with a local minimum Levenberg-Marquardt search
     res = cmpfit(λ, Inorm, σnorm, (x, p) -> Util.fit_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
-        cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, λ0_ln, cube_fitter.flexible_wavesol), p₀, 
+        cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, λ0_ln, cube_fitter.flexible_wavesol), p₁, 
         parinfo=parinfo, config=config)
 
     # Get best fit results
@@ -872,21 +986,6 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}, conti
             n_free += 1
         end
     end
-
-    # function ln_prior(p)
-    #     logpdfs = [logpdf(priors[i], p[i]) for i ∈ 1:length(p)]
-    #     return sum(logpdfs)
-    # end
-
-    # function nln_probability(p)
-    #     model = Util.fit_line_residuals(λ, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, cube_fitter.voff_tied_key, 
-    #         cube_fitter.line_tied, prof_ln, λ0_ln)
-    #     return -Util.ln_likelihood(Inorm, model, σnorm) - ln_prior(p)
-    # end
-
-    # res = optimize(nln_probability, minimum.(priors), maximum.(priors), p₀, Fminbox(LBFGS()))
-    # popt = res.minimizer
-    # lnP = -res.minimum
 
     # Final optimized fit
     I_model, comps = Util.fit_line_residuals(λ, popt, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
@@ -1181,14 +1280,34 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}; verbose::B
     # Reduced chi^2 of the model
     χ2red = 1 / (n_data - n_free) * sum((I .- I_model).^2 ./ σ.^2)
 
+    # Add dust complex and line parameters (intensity and SNR)
     p_complex, p_lines = calculate_extra_parameters(cube_fitter, spaxel, comps)
     p_out = [popt_c; popt_l; p_complex; p_lines]
 
+    # Plot the fit
     λ0_ln = [ln.λ₀ for ln ∈ cube_fitter.lines]
     if cube_fitter.plot_spaxels != :none
         plot_spaxel_fit(λ, I, I_model, comps, 
             cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, λ0_ln, cube_fitter.line_names,
             χ2red, cube_fitter.name, "spaxel_$(spaxel[1])_$(spaxel[2])", backend=cube_fitter.plot_spaxels)
+    end
+
+    # If the reduced chi^2 meets the threshold, set the new starting parameters for the rest of the fits
+    if isnothing(cube_fitter.best_spaxel)
+        if χ2red ≤ cube_fitter.χ²_thresh
+            cube_fitter.p_best_cont = popt_c
+            cube_fitter.p_best_line = popt_l
+            cube_fitter.χ²_best = χ2red
+            cube_fitter.best_spaxel = spaxel
+        end
+    # If they already exist, don't overwrite unless the new chi^2 is better than the old chi^2
+    else
+        if χ2red < cube_fitter.χ²_best
+            cube_fitter.p_best_cont = popt_c
+            cube_fitter.p_best_line = popt_l
+            cube_fitter.χ²_best = χ2red
+            cube_fitter.best_spaxel = spaxel
+        end
     end
 
     return p_out, I_model, comps, χ2red
@@ -1216,14 +1335,26 @@ function fit_cube(cube_fitter::CubeFitter)
         return
     end
 
+    # Sort spaxels by median brightness, so that we fit the brightest ones first
+    # (which hopefully have the best reduced chi^2s)
+    spaxels = Iterators.product(1:shape[1], 1:shape[2])
+    med_I = collect(Iterators.flatten([nanmedian(cube_fitter.cube.Iλ[spaxel..., :]) for spaxel ∈ spaxels]))
+    # replace NaNs with -1s
+    med_I[.!isfinite.(med_I)] .= -1.
+    # reverse sort
+    ss = sortperm(med_I, rev=true)
+    med_I = med_I[ss]
+    # apply sorting to spaxel indices
+    spaxels = collect(spaxels)[ss]
+
     println("Beginning Levenberg-Marquardt least squares fitting...")
     # Use multiprocessing (not threading) to iterate over multiple spaxels at once using multiple CPUs
     if cube_fitter.parallel
-        @showprogress pmap(Iterators.product(28:29, 12:13)) do (xᵢ, yᵢ)
+        @showprogress pmap(spaxels) do (xᵢ, yᵢ)
             fit_spax_i(xᵢ, yᵢ)
         end
     else
-        @showprogress for (xᵢ, yᵢ) ∈ Iterators.product(1:shape[1], 1:shape[2])
+        @showprogress for (xᵢ, yᵢ) ∈ spaxels
             fit_spax_i(xᵢ, yᵢ)
         end
     end
@@ -1278,7 +1409,11 @@ function fit_cube(cube_fitter::CubeFitter)
                     cube_fitter.param_maps.lines[ln][:voff][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+1] + out_params[xᵢ, yᵢ, vᵢ+vwhere-1]
                 end
                 # FWHM -> subtract instrumental resolution in quadrature
-                cube_fitter.param_maps.lines[ln][:fwhm][xᵢ, yᵢ] = √(out_params[xᵢ, yᵢ, pᵢ+2]^2 - fwhm_res^2)
+                if fwhm_res > out_params[xᵢ, yᵢ, pᵢ+2]
+                    cube_fitter.param_maps.lines[ln][:fwhm][xᵢ, yᵢ] = 0.
+                else
+                    cube_fitter.param_maps.lines[ln][:fwhm][xᵢ, yᵢ] = √(out_params[xᵢ, yᵢ, pᵢ+2]^2 - fwhm_res^2)
+                end
                 # Get Gauss-Hermite 3rd and 4th order moments
                 if cube_fitter.line_profiles[k] == :GaussHermite
                     cube_fitter.param_maps.lines[ln][:h3][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+3]
@@ -1288,7 +1423,11 @@ function fit_cube(cube_fitter::CubeFitter)
                 pᵢ += 3
             else
                 # FWHM -> subtract instrumental resolution in quadrature
-                cube_fitter.param_maps.lines[ln][:fwhm][xᵢ, yᵢ] = √(out_params[xᵢ, yᵢ, pᵢ+1]^2 - fwhm_res^2)
+                if fwhm_res > out_params[xᵢ, yᵢ, pᵢ+1]
+                    cube_fitter.param_maps.lines[ln][:fwhm][xᵢ, yᵢ] = 0.
+                else
+                    cube_fitter.param_maps.lines[ln][:fwhm][xᵢ, yᵢ] = √(out_params[xᵢ, yᵢ, pᵢ+1]^2 - fwhm_res^2)
+                end
                 # Get Gauss-Hermite 3rd and 4th order moments
                 if cube_fitter.line_profiles[k] == :GaussHermite
                     cube_fitter.param_maps.lines[ln][:h3][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+2]
