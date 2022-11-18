@@ -55,8 +55,8 @@ interpolate_cube!(cube_fitter.cube)
 # Fit some individual spaxels
 # x = [28, 33, 25, 13, 10, 6, 15]
 # y = [12, 4, 19, 18, 14, 17, 38]
-x = [15, 15]
-y = [16, 17]
+x = [15]
+y = [16]
 for (xi, yi) ∈ zip(x, y)
 
     λ = cube_fitter.cube.λ

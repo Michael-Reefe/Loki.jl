@@ -27,9 +27,11 @@ using PyPlot
 using PlotlyJS
 
 const py_anchored_artists = PyNULL()
+const animation = PyNULL()
 const scipy_opt = PyNULL()
 function __init__()
     copy!(py_anchored_artists, pyimport_conda("mpl_toolkits.axes_grid1.anchored_artists", "matplotlib"))
+    copy!(animation, pyimport_conda("matplotlib.animation", "matplotlib"))
     copy!(scipy_opt, pyimport_conda("scipy.optimize", "scipy"))
     plt.switch_backend("Agg")
 end
@@ -816,181 +818,371 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}, conti
     # Normalized flux and uncertainty
     Inorm = (I .- continuum) ./ N
     σnorm = σ ./ N
+    
+    A_ln = ones(cube_fitter.n_lines) .* 0.5
+    amp_ln_prior = Uniform(0., 1.)
 
     voff_ln = [ln.parameters[:voff] for ln ∈ cube_fitter.lines]
     fwhm_ln = [ln.parameters[:fwhm] for ln ∈ cube_fitter.lines]
     h3_ln = [ln.profile == :GaussHermite ? ln.parameters[:h3] : nothing for ln ∈ cube_fitter.lines]
     h4_ln = [ln.profile == :GaussHermite ? ln.parameters[:h4] : nothing for ln ∈ cube_fitter.lines]
 
-    # Set up the prior vector
-    amp_ln_prior = Uniform(0., 1.)
-    λ0_ln = Vector{Float64}()
-    prof_ln = Vector{Symbol}()
-    ln_priors = Vector{Any}()
-    for (i, ln) ∈ enumerate(cube_fitter.lines)
-        if isnothing(ln.tied) || cube_fitter.flexible_wavesol
-            append!(ln_priors, [amp_ln_prior, voff_ln[i].prior, fwhm_ln[i].prior])
-        else
-            append!(ln_priors, [amp_ln_prior, fwhm_ln[i].prior])
-        end
-        if ln.profile == :GaussHermite
-            append!(ln_priors, [h3_ln[i].prior, h4_ln[i].prior])
-        end
-        append!(λ0_ln, [ln.λ₀])
-        append!(prof_ln, [ln.profile])
-    end
-    voff_tied_priors = [cube_fitter.voff_tied[i].prior for i ∈ 1:cube_fitter.n_voff_tied]
+    tied_voffs = Vector{Union{Float64,Nothing}}(nothing, cube_fitter.n_voff_tied)
+    popt = Vector{Float64}()
+    n_free = 0
+    for k ∈ 1:length(cube_fitter.lines)
 
-    # Initial prior vector
-    priors = vcat(voff_tied_priors, ln_priors)
+        # Construct initial parameter and prior vectors
+        if isnothing(cube_fitter.line_tied[k])
+            # amp, voff_untied, fwhm
+            p₀ = [A_ln[k], voff_ln[k].value, fwhm_ln[k].value]
+            priors = [amp_ln_prior, voff_ln[k].prior, fwhm_ln[k].prior]
 
-    # Check if there are previous best fit parameters
-    if !isnothing(cube_fitter.p_best_line)
-
-        # If so, set the parameters to the best fit ones
-        p₀ = cube_fitter.p_best_line
-        # Make sure all amplitudes are nonzero
-        pᵢ = 1 + cube_fitter.n_voff_tied
-        for i ∈ 1:cube_fitter.n_lines
-            p₀[pᵢ] = 0.5
-            if isnothing(cube_fitter.line_tied[i]) || cube_fitter.flexible_wavesol
-                pᵢ += 3
+        elseif !isnothing(cube_fitter.line_tied[k]) && cube_fitter.flexible_wavesol
+            # voff_tied, amp, voff_untied, fwhm
+            vwhere = findfirst(x -> x == cube_fitter.line_tied[k], cube_fitter.voff_tied_key)
+            voff_tie = tied_voffs[vwhere]
+            if isnothing(voff_tie)
+                # if it's the first line being fit, just use one voff
+                voff_tie = cube_fitter.voff_tied[vwhere]
+                p₀ = [voff_tie.value, A_ln[k], fwhm_ln[k].value]
+                priors = [voff_tie.prior, amp_ln_prior, fwhm_ln[k].prior]
             else
-                pᵢ += 2
+                # otherwise, use the tied voff as a constant (not fit) and the individual voff
+                p₀ = [A_ln[k], voff_ln[k].value, fwhm_ln[k].value]
+                priors = [amp_ln_prior, voff_ln[k].prior, fwhm_ln[k].prior]
             end
-            if prof_ln[i] == :GaussHermite
-                pᵢ += 2
-            end
-        end
 
-    else
-
-        A_ln = ones(cube_fitter.n_lines) .* 0.5
-
-        ln_pars = Vector{Float64}()
-        for (i, ln) ∈ enumerate(cube_fitter.lines)
-            if isnothing(ln.tied) || cube_fitter.flexible_wavesol
-                append!(ln_pars, [A_ln[i], voff_ln[i].value, fwhm_ln[i].value])
-            else
-                append!(ln_pars, [A_ln[i], fwhm_ln[i].value])
-            end
-            if ln.profile == :GaussHermite
-                append!(ln_pars, [h3_ln[i].value, h4_ln[i].value])
-            end
-        end
-        voff_tied_pars = [cube_fitter.voff_tied[i].value for i ∈ 1:cube_fitter.n_voff_tied]
-
-        # Initial parameter vector
-        p₀ = vcat(voff_tied_pars, ln_pars)
-
-    end
-
-    function ln_prior(p)
-        logpdfs = [logpdf(priors[i], p[i]) for i ∈ 1:length(p)]
-        return sum(logpdfs)
-    end
-
-    function nln_probability(p)
-        model = Util.fit_line_residuals(λ, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
-            cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, λ0_ln, cube_fitter.flexible_wavesol)
-        return -Util.ln_likelihood(Inorm, model, σnorm) - ln_prior(p)
-    end
-
-    # First, perform a global optimization with scipy basinhopping
-    # res = scipy_opt.basinhopping(func=nln_probability, x0=p₀, stepsize=1.0,
-    #     minimizer_kwargs=Dict(:method => "Nelder-Mead", :options => Dict(:disp => false)),
-    #     disp=false, niter_success=10)
-    # p₁ = res["x"]
-    p₁ = p₀
-
-    # Convert parameter limits into CMPFit object
-    parinfo = CMPFit.Parinfo(length(p₀))
-
-    # Tied velocity offsets
-    pᵢ = 1
-    for i ∈ 1:cube_fitter.n_voff_tied
-        parinfo[pᵢ].fixed = cube_fitter.voff_tied[i].locked
-        if !(cube_fitter.voff_tied[i].locked)
-            parinfo[pᵢ].limited = (1,1)
-            parinfo[pᵢ].limits = (minimum(cube_fitter.voff_tied[i].prior), maximum(cube_fitter.voff_tied[i].prior))
-        end
-        pᵢ += 1
-    end
-
-    # Emission line amplitude, voff, fwhm
-    for i ∈ 1:cube_fitter.n_lines
-        parinfo[pᵢ].limited = (1,1)
-        parinfo[pᵢ].limits = (0., 1.0)
-        if isnothing(cube_fitter.line_tied[i]) || cube_fitter.flexible_wavesol
-            parinfo[pᵢ+1].fixed = voff_ln[i].locked
-            if !(voff_ln[i].locked)
-                parinfo[pᵢ+1].limited = (1,1)
-                parinfo[pᵢ+1].limits = (minimum(voff_ln[i].prior), maximum(voff_ln[i].prior))
-            end
-            parinfo[pᵢ+2].fixed = fwhm_ln[i].locked
-            if !(fwhm_ln[i].locked)
-                parinfo[pᵢ+2].limited = (1,1)
-                parinfo[pᵢ+2].limits = (minimum(fwhm_ln[i].prior), maximum(fwhm_ln[i].prior))
-            end
-            if prof_ln[i] == :GaussHermite
-                parinfo[pᵢ+3].fixed = h3_ln[i].locked
-                if !(h3_ln[i].locked)
-                    parinfo[pᵢ+3].limited = (1,1)
-                    parinfo[pᵢ+3].limits = (minimum(h3_ln[i].prior), maximum(h3_ln[i].prior))
-                end
-                parinfo[pᵢ+4].fixed = h4_ln[i].locked
-                if !(h4_ln[i].locked)
-                    parinfo[pᵢ+4].limited = (1,1)
-                    parinfo[pᵢ+4].limits = (minimum(h4_ln[i].prior), maximum(h4_ln[i].prior))
-                end
-                pᵢ += 2
-            end
-            pᵢ += 3
         else
-            parinfo[pᵢ+1].fixed = fwhm_ln[i].locked
-            if !(fwhm_ln[i].locked)
-                parinfo[pᵢ+1].limited = (1,1)
-                parinfo[pᵢ+1].limits = (minimum(fwhm_ln[i].prior), maximum(fwhm_ln[i].prior))
+            # voff_tied, amp, fwhm
+            vwhere = findfirst(x -> x == cube_fitter.line_tied[k], cube_fitter.voff_tied_key)
+            voff_tie = tied_voffs[vwhere]
+            if isnothing(voff_tie)
+                # if it's the first line being fit, just use one voff
+                voff_tie = cube_fitter.voff_tied[vwhere]
+                p₀ = [voff_tie.value, A_ln[k], fwhm_ln[k].value]
+                priors = [voff_tie.prior, amp_ln_prior, fwhm_ln[k].prior]
+            else
+                # otherwise, use the tied voff as a constant (not fit)
+                p₀ = [A_ln[k], fwhm_ln[k].value]
+                priors = [amp_ln_prior, fwhm_ln[k].prior]
             end
-            if prof_ln[i] == :GaussHermite
-                parinfo[pᵢ+2].fixed = h3_ln[i].locked
-                if !(h3_ln[i].locked)
-                    parinfo[pᵢ+2].limited = (1,1)
-                    parinfo[pᵢ+2].limits = (minimum(h3_ln[i].prior), maximum(h3_ln[i].prior))
-                end
-                parinfo[pᵢ+3].fixed = h4_ln[i].locked
-                if !(h4_ln[i].locked)
-                    parinfo[pᵢ+3].limited = (1,1)
-                    parinfo[pᵢ+3].limits = (minimum(h4_ln[i].prior), maximum(h4_ln[i].prior))
-                end
-                pᵢ += 2       
-            end
-            pᵢ += 2
         end
+        # Check for gauss-hermite moments
+        if cube_fitter.line_profiles[k] == :GaussHermite
+            p₀ = [p₀; h3_ln[k].value; h4_ln[k].value]
+            priors = [priors; h3_ln[k].prior; h4_ln[k].prior]
+        end
+
+        n_free += length(p₀)
+
+        # Constrain the fitting region
+        λmin = cube_fitter.lines[k].λ₀ + 3minimum(voff_ln[k].prior) / Util.C_KMS * cube_fitter.lines[k].λ₀
+        λmax = cube_fitter.lines[k].λ₀ + 3maximum(voff_ln[k].prior) / Util.C_KMS * cube_fitter.lines[k].λ₀
+        if !isnothing(cube_fitter.line_tied[k])
+            # if there is a tied voff, shift the fitting region to be centered around it
+            vwhere = findfirst(x -> x == cube_fitter.line_tied[k], cube_fitter.voff_tied_key)
+            voff_tie = tied_voffs[vwhere]
+            if !isnothing(voff_tie)
+                λmin += voff_tie / Util.C_KMS * cube_fitter.lines[k].λ₀ 
+                λmax += voff_tie / Util.C_KMS * cube_fitter.lines[k].λ₀
+            end
+        end
+        window = λmin .< λ .< λmax
+
+        # log prior function
+        function ln_prior(p)
+            logpdfs = [logpdf(priors[i], p[i]) for i ∈ 1:length(p)]
+            return sum(logpdfs)
+        end
+
+        # negative log probability function (to be minimized)
+        function nln_probability(param; plot_model=nothing, ax=nothing, writer=nothing, verbose=false)
+
+            if verbose
+                println(param)
+            end
+
+            if cube_fitter.line_profiles[k] == :Gaussian
+                p = param
+            elseif cube_fitter.line_profiles[k] == :GaussHermite
+                p = param[1:end-2]
+                h3, h4 = param[end-1:end]
+            else
+                error("Unrecognized line profile $(cube_fitter.line_profiles[k])!")
+            end
+
+            if isnothing(cube_fitter.line_tied[k])
+                # fitting with just an untied voff
+                A, voff, fwhm = p
+            elseif !isnothing(cube_fitter.line_tied[k]) && cube_fitter.flexible_wavesol
+                vwhere = findfirst(x -> x == cube_fitter.line_tied[k], cube_fitter.voff_tied_key)
+                voff_tie = tied_voffs[vwhere] 
+                if isnothing(voff_tie)
+                    # fitting with the tied voff
+                    voff_tie, A, fwhm = p
+                    voff = voff_tie
+                else
+                    # fitting with the untied voff + the constant tied voff
+                    A, voff_untie, fwhm = p
+                    voff = voff_tie + voff_untie
+                end
+            else
+                vwhere = findfirst(x -> x == cube_fitter.line_tied[k], cube_fitter.voff_tied_key)
+                voff_tie = tied_voffs[vwhere]
+                if isnothing(voff_tie)
+                    # fitting with the tied voff
+                    voff_tie, A, fwhm = p
+                    voff = voff_tie
+                else
+                    # fitting with the tied voff as a constant
+                    A, fwhm = p
+                    voff = voff_tie
+                end
+            end
+
+            mean_μm = Util.Doppler_shift_λ(cube_fitter.lines[k].λ₀, voff)
+            fwhm_μm = Util.Doppler_shift_λ(cube_fitter.lines[k].λ₀, fwhm) - cube_fitter.lines[k].λ₀
+
+            if cube_fitter.line_profiles[k] == :Gaussian
+                model = Util.Gaussian(λ[window], A, mean_μm, fwhm_μm)
+            elseif cube_fitter.line_profiles[k] == :GaussHermite
+                model = Util.GaussHermite(λ[window], A, mean_μm, fwhm_μm, [h3, h4])
+            end
+
+            lnP = Util.ln_likelihood(Inorm[window], model, σnorm[window]) 
+            # + ln_prior(p)
+
+            if !isnothing(plot_model) && !isnothing(ax) && !isnothing(writer)
+                plot_model.set_data(λ[window], model)
+                ax.set_title("\$\\ln\\mathcal{P} = $lnP\$")
+                writer.grab_frame()
+            end
+
+            return -lnP
+        end
+
+        println("Initial parameters:")
+        nln_probability(p₀, verbose=true)
+
+        metadata = Dict(:title => "line_$k", :fps => 30)
+        writer = animation.FFMpegWriter(fps=30, metadata=metadata)
+
+        fig, ax = plt.subplots()
+        minmarker = cube_fitter.lines[k].λ₀ + minimum(voff_ln[k].prior) / Util.C_KMS * cube_fitter.lines[k].λ₀
+        maxmarker = cube_fitter.lines[k].λ₀ + maximum(voff_ln[k].prior) / Util.C_KMS * cube_fitter.lines[k].λ₀
+        if !isnothing(cube_fitter.line_tied[k])
+            vwhere = findfirst(x -> x == cube_fitter.line_tied[k], cube_fitter.voff_tied_key)
+            voff_tie = tied_voffs[vwhere]
+            if !isnothing(voff_tie)
+                minmarker += voff_tie / Util.C_KMS * cube_fitter.lines[k].λ₀ 
+                maxmarker += voff_tie / Util.C_KMS * cube_fitter.lines[k].λ₀
+            end
+        end
+        ax.axvline(minmarker, color="k", linestyle="--", alpha=.5)
+        ax.axvline(maxmarker, color="k", linestyle="--", alpha=.5)
+        ax.set_xlabel("\$\\lambda\$ (\$\\mu\$m)")
+        ax.set_ylabel("\$I\$ (norm.)")
+
+        plot_data, = ax.plot(λ[window], Inorm[window], "k-")
+        plot_model, = ax.plot([], [], "r-")
+
+        writer.setup(fig, "output_$(cube_fitter.name)/line_$k.mp4", dpi=300)
+
+        res = optimize(p -> nln_probability(p, plot_model=plot_model, ax=ax, writer=writer), p₀, NelderMead())
+        pline = res.minimizer
+        lnP = -res.minimum
+
+        writer.finish()
+
+        println("Final parameters:")
+        lnP = -nln_probability(pline, verbose=true)
+
+        # Set the tied velocity offset if it was fit and hasn't already been fit
+        if !isnothing(cube_fitter.line_tied[k])
+
+            vwhere = findfirst(x -> x == cube_fitter.line_tied[k], cube_fitter.voff_tied_key) 
+            if isnothing(tied_voffs[vwhere])
+                # only set it if the SNR of the line is above 3
+                ref_window = (λmin .< λ .< λmin/2) .| (λmax/2 .< λ .< λmax)
+                snr = pline[2] / std(Inorm[ref_window])
+                if snr ≥ 3
+                    tied_voffs[vwhere] = pline[1]
+                    # Remove the tied velocity offset from pline
+                    # and add in individual line voff as 0 km/s
+                    pline = [pline[2:end-1]; 0.; pline[end]]
+                else
+                    # pline = [pline[2:end-1]; pline[1]; pline[end]]
+                    pline = [pline[2:end-1]; 0.; pline[end]]
+                end
+            end
+
+        end
+
+        popt = [popt; pline]
+
     end
 
-    # Create a `config` structure
-    config = CMPFit.Config()
+    popt = Vector{Float64}([tied_voffs; popt])
 
-    # Refine the results with a local minimum Levenberg-Marquardt search
-    res = cmpfit(λ, Inorm, σnorm, (x, p) -> Util.fit_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
-        cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, λ0_ln, cube_fitter.flexible_wavesol), p₁, 
-        parinfo=parinfo, config=config)
+    # # Set up the prior vector
+    # amp_ln_prior = Uniform(0., 1.)
+    # λ0_ln = Vector{Float64}()
+    # prof_ln = Vector{Symbol}()
+    # ln_priors = Vector{Any}()
+    # for (i, ln) ∈ enumerate(cube_fitter.lines)
+    #     if isnothing(ln.tied) || cube_fitter.flexible_wavesol
+    #         append!(ln_priors, [amp_ln_prior, voff_ln[i].prior, fwhm_ln[i].prior])
+    #     else
+    #         append!(ln_priors, [amp_ln_prior, fwhm_ln[i].prior])
+    #     end
+    #     if ln.profile == :GaussHermite
+    #         append!(ln_priors, [h3_ln[i].prior, h4_ln[i].prior])
+    #     end
+    #     append!(λ0_ln, [ln.λ₀])
+    #     append!(prof_ln, [ln.profile])
+    # end
+    # voff_tied_priors = [cube_fitter.voff_tied[i].prior for i ∈ 1:cube_fitter.n_voff_tied]
+
+    # # Initial prior vector
+    # priors = vcat(voff_tied_priors, ln_priors)
+
+    # # Check if there are previous best fit parameters
+    # if !isnothing(cube_fitter.p_best_line)
+
+    #     # If so, set the parameters to the best fit ones
+    #     p₀ = cube_fitter.p_best_line
+    #     # Make sure all amplitudes are nonzero
+    #     pᵢ = 1 + cube_fitter.n_voff_tied
+    #     for i ∈ 1:cube_fitter.n_lines
+    #         p₀[pᵢ] = 0.5
+    #         if isnothing(cube_fitter.line_tied[i]) || cube_fitter.flexible_wavesol
+    #             pᵢ += 3
+    #         else
+    #             pᵢ += 2
+    #         end
+    #         if prof_ln[i] == :GaussHermite
+    #             pᵢ += 2
+    #         end
+    #     end
+
+    # else
+
+    #     A_ln = ones(cube_fitter.n_lines) .* 0.5
+
+    #     ln_pars = Vector{Float64}()
+    #     for (i, ln) ∈ enumerate(cube_fitter.lines)
+    #         if isnothing(ln.tied) || cube_fitter.flexible_wavesol
+    #             append!(ln_pars, [A_ln[i], voff_ln[i].value, fwhm_ln[i].value])
+    #         else
+    #             append!(ln_pars, [A_ln[i], fwhm_ln[i].value])
+    #         end
+    #         if ln.profile == :GaussHermite
+    #             append!(ln_pars, [h3_ln[i].value, h4_ln[i].value])
+    #         end
+    #     end
+    #     voff_tied_pars = [cube_fitter.voff_tied[i].value for i ∈ 1:cube_fitter.n_voff_tied]
+
+    #     # Initial parameter vector
+    #     p₀ = vcat(voff_tied_pars, ln_pars)
+
+    # end
+
+    # # First, perform a global optimization with scipy basinhopping
+    # # res = scipy_opt.basinhopping(func=nln_probability, x0=p₀, stepsize=1.0,
+    # #     minimizer_kwargs=Dict(:method => "Nelder-Mead", :options => Dict(:disp => false)),
+    # #     disp=false, niter_success=10)
+    # # p₁ = res["x"]
+    # p₁ = p₀
+
+    # # Convert parameter limits into CMPFit object
+    # parinfo = CMPFit.Parinfo(length(p₀))
+
+    # # Tied velocity offsets
+    # pᵢ = 1
+    # for i ∈ 1:cube_fitter.n_voff_tied
+    #     parinfo[pᵢ].fixed = cube_fitter.voff_tied[i].locked
+    #     if !(cube_fitter.voff_tied[i].locked)
+    #         parinfo[pᵢ].limited = (1,1)
+    #         parinfo[pᵢ].limits = (minimum(cube_fitter.voff_tied[i].prior), maximum(cube_fitter.voff_tied[i].prior))
+    #     end
+    #     pᵢ += 1
+    # end
+
+    # # Emission line amplitude, voff, fwhm
+    # for i ∈ 1:cube_fitter.n_lines
+    #     parinfo[pᵢ].limited = (1,1)
+    #     parinfo[pᵢ].limits = (0., 1.0)
+    #     if isnothing(cube_fitter.line_tied[i]) || cube_fitter.flexible_wavesol
+    #         parinfo[pᵢ+1].fixed = voff_ln[i].locked
+    #         if !(voff_ln[i].locked)
+    #             parinfo[pᵢ+1].limited = (1,1)
+    #             parinfo[pᵢ+1].limits = (minimum(voff_ln[i].prior), maximum(voff_ln[i].prior))
+    #         end
+    #         parinfo[pᵢ+2].fixed = fwhm_ln[i].locked
+    #         if !(fwhm_ln[i].locked)
+    #             parinfo[pᵢ+2].limited = (1,1)
+    #             parinfo[pᵢ+2].limits = (minimum(fwhm_ln[i].prior), maximum(fwhm_ln[i].prior))
+    #         end
+    #         if prof_ln[i] == :GaussHermite
+    #             parinfo[pᵢ+3].fixed = h3_ln[i].locked
+    #             if !(h3_ln[i].locked)
+    #                 parinfo[pᵢ+3].limited = (1,1)
+    #                 parinfo[pᵢ+3].limits = (minimum(h3_ln[i].prior), maximum(h3_ln[i].prior))
+    #             end
+    #             parinfo[pᵢ+4].fixed = h4_ln[i].locked
+    #             if !(h4_ln[i].locked)
+    #                 parinfo[pᵢ+4].limited = (1,1)
+    #                 parinfo[pᵢ+4].limits = (minimum(h4_ln[i].prior), maximum(h4_ln[i].prior))
+    #             end
+    #             pᵢ += 2
+    #         end
+    #         pᵢ += 3
+    #     else
+    #         parinfo[pᵢ+1].fixed = fwhm_ln[i].locked
+    #         if !(fwhm_ln[i].locked)
+    #             parinfo[pᵢ+1].limited = (1,1)
+    #             parinfo[pᵢ+1].limits = (minimum(fwhm_ln[i].prior), maximum(fwhm_ln[i].prior))
+    #         end
+    #         if prof_ln[i] == :GaussHermite
+    #             parinfo[pᵢ+2].fixed = h3_ln[i].locked
+    #             if !(h3_ln[i].locked)
+    #                 parinfo[pᵢ+2].limited = (1,1)
+    #                 parinfo[pᵢ+2].limits = (minimum(h3_ln[i].prior), maximum(h3_ln[i].prior))
+    #             end
+    #             parinfo[pᵢ+3].fixed = h4_ln[i].locked
+    #             if !(h4_ln[i].locked)
+    #                 parinfo[pᵢ+3].limited = (1,1)
+    #                 parinfo[pᵢ+3].limits = (minimum(h4_ln[i].prior), maximum(h4_ln[i].prior))
+    #             end
+    #             pᵢ += 2       
+    #         end
+    #         pᵢ += 2
+    #     end
+    # end
+
+    # # Create a `config` structure
+    # config = CMPFit.Config()
+
+    # # Refine the results with a local minimum Levenberg-Marquardt search
+    # res = cmpfit(λ, Inorm, σnorm, (x, p) -> Util.fit_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
+    #     cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, λ0_ln, cube_fitter.flexible_wavesol), p₁, 
+    #     parinfo=parinfo, config=config)
 
     # Get best fit results
-    popt = res.param
+    # popt = res.param
     # Count free parameters
-    n_free = 0
-    for pᵢ ∈ 1:length(popt)
-        if iszero(parinfo[pᵢ].fixed)
-            n_free += 1
-        end
-    end
+    # n_free = 0
+    # for pᵢ ∈ 1:length(popt)
+    #     if iszero(parinfo[pᵢ].fixed)
+    #         n_free += 1
+    #     end
+    # end
 
     # Final optimized fit
     I_model, comps = Util.fit_line_residuals(λ, popt, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
-        cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, λ0_ln, cube_fitter.flexible_wavesol, 
-        return_components=true)
+        cube_fitter.voff_tied_key, cube_fitter.line_tied, cube_fitter.line_profiles, [ln.λ₀ for ln ∈ cube_fitter.lines], 
+        cube_fitter.flexible_wavesol, return_components=true)
     
     # Renormalize
     I_model = I_model .* N
@@ -1021,7 +1213,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}, conti
                     "Limits: ($(@sprintf "%.0f" minimum(voff_ln[k].prior)), $(@sprintf "%.0f" maximum(voff_ln[k].prior)))")
                 println("$(nm)_fwhm:   \t\t $(@sprintf "%.0f" popt[pᵢ+2]) km/s \t " *
                     "Limits: ($(@sprintf "%.0f" minimum(fwhm_ln[k].prior)), $(@sprintf "%.0f" maximum(fwhm_ln[k].prior)))")
-                if prof_ln[k] == :GaussHermite
+                if cube_fitter.line_profiles[k] == :GaussHermite
                     println("$(nm)_h3:    \t\t $(@sprintf "%.3f" popt[pᵢ+3])      \t " *
                         "Limits: ($(@sprintf "%.3f" minimum(h3_ln[k].prior)), $(@sprintf "%.3f" maximum(h3_ln[k].prior)))")
                     println("$(nm)_h4:    \t\t $(@sprintf "%.3f" popt[pᵢ+4])      \t " *
@@ -1032,7 +1224,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}, conti
             else
                 println("$(nm)_fwhm:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) km/s \t " *
                     "Limits: ($(@sprintf "%.0f" minimum(fwhm_ln[k].prior)), $(@sprintf "%.0f" maximum(fwhm_ln[k].prior)))")
-                if prof_ln[k] == :GaussHermite
+                if cube_fitter.line_profiles[k] == :GaussHermite
                     println("$(nm)_h3:    \t\t $(@sprintf "%.3f" popt[pᵢ+2])      \t " *
                         "Limits: ($(@sprintf "%.3f" minimum(h3_ln[k].prior)), $(@sprintf "%.3f" maximum(h3_ln[k].prior)))")
                     println("$(nm)_h4:    \t\t $(@sprintf "%.3f" popt[pᵢ+3])      \t " *
