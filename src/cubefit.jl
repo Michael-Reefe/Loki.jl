@@ -890,102 +890,108 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}, conti
         return sum(logpdfs)
     end
 
-    function nln_probability(p)
+    function negln_probability(p)
         model = Util.fit_line_residuals(λ, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
             cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, λ0_ln, cube_fitter.flexible_wavesol)
-        return -Util.ln_likelihood(Inorm, model, σnorm) - ln_prior(p)
+        lnP = Util.ln_likelihood(Inorm, model, σnorm) + ln_prior(p)
+        return -lnP 
     end
 
-    # First, perform a global optimization with scipy basinhopping
-    # res = scipy_opt.basinhopping(func=nln_probability, x0=p₀, stepsize=1.0,
-    #     minimizer_kwargs=Dict(:method => "Nelder-Mead", :options => Dict(:disp => false)),
-    #     disp=false, niter_success=10)
-    # p₁ = res["x"]
-    p₁ = p₀
+    lower_bounds = minimum.(priors)
+    upper_bounds = maximum.(priors)
+    # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous rt and max iterations
+    res = optimize(negln_probability, lower_bounds, upper_bounds, p₀, SAMIN(;rt=0.9, verbosity=0), Optim.Options(iterations=10^6))
+    # Then, refine the solution with a bounded local minimum search with L-BFGS
+    res = optimize(negln_probability, lower_bounds, upper_bounds, res.minimizer, Fminbox(LBFGS()))
+    # Get the results
+    popt = res.minimizer
+    lnP = -res.minimum
 
-    # Convert parameter limits into CMPFit object
-    parinfo = CMPFit.Parinfo(length(p₀))
+    n_free = length(p₀)
 
-    # Tied velocity offsets
-    pᵢ = 1
-    for i ∈ 1:cube_fitter.n_voff_tied
-        parinfo[pᵢ].fixed = cube_fitter.voff_tied[i].locked
-        if !(cube_fitter.voff_tied[i].locked)
-            parinfo[pᵢ].limited = (1,1)
-            parinfo[pᵢ].limits = (minimum(cube_fitter.voff_tied[i].prior), maximum(cube_fitter.voff_tied[i].prior))
-        end
-        pᵢ += 1
-    end
+    # # Convert parameter limits into CMPFit object
+    # parinfo = CMPFit.Parinfo(length(p₀))
 
-    # Emission line amplitude, voff, fwhm
-    for i ∈ 1:cube_fitter.n_lines
-        parinfo[pᵢ].limited = (1,1)
-        parinfo[pᵢ].limits = (0., 1.0)
-        if isnothing(cube_fitter.line_tied[i]) || cube_fitter.flexible_wavesol
-            parinfo[pᵢ+1].fixed = voff_ln[i].locked
-            if !(voff_ln[i].locked)
-                parinfo[pᵢ+1].limited = (1,1)
-                parinfo[pᵢ+1].limits = (minimum(voff_ln[i].prior), maximum(voff_ln[i].prior))
-            end
-            parinfo[pᵢ+2].fixed = fwhm_ln[i].locked
-            if !(fwhm_ln[i].locked)
-                parinfo[pᵢ+2].limited = (1,1)
-                parinfo[pᵢ+2].limits = (minimum(fwhm_ln[i].prior), maximum(fwhm_ln[i].prior))
-            end
-            if prof_ln[i] == :GaussHermite
-                parinfo[pᵢ+3].fixed = h3_ln[i].locked
-                if !(h3_ln[i].locked)
-                    parinfo[pᵢ+3].limited = (1,1)
-                    parinfo[pᵢ+3].limits = (minimum(h3_ln[i].prior), maximum(h3_ln[i].prior))
-                end
-                parinfo[pᵢ+4].fixed = h4_ln[i].locked
-                if !(h4_ln[i].locked)
-                    parinfo[pᵢ+4].limited = (1,1)
-                    parinfo[pᵢ+4].limits = (minimum(h4_ln[i].prior), maximum(h4_ln[i].prior))
-                end
-                pᵢ += 2
-            end
-            pᵢ += 3
-        else
-            parinfo[pᵢ+1].fixed = fwhm_ln[i].locked
-            if !(fwhm_ln[i].locked)
-                parinfo[pᵢ+1].limited = (1,1)
-                parinfo[pᵢ+1].limits = (minimum(fwhm_ln[i].prior), maximum(fwhm_ln[i].prior))
-            end
-            if prof_ln[i] == :GaussHermite
-                parinfo[pᵢ+2].fixed = h3_ln[i].locked
-                if !(h3_ln[i].locked)
-                    parinfo[pᵢ+2].limited = (1,1)
-                    parinfo[pᵢ+2].limits = (minimum(h3_ln[i].prior), maximum(h3_ln[i].prior))
-                end
-                parinfo[pᵢ+3].fixed = h4_ln[i].locked
-                if !(h4_ln[i].locked)
-                    parinfo[pᵢ+3].limited = (1,1)
-                    parinfo[pᵢ+3].limits = (minimum(h4_ln[i].prior), maximum(h4_ln[i].prior))
-                end
-                pᵢ += 2       
-            end
-            pᵢ += 2
-        end
-    end
+    # # Tied velocity offsets
+    # pᵢ = 1
+    # for i ∈ 1:cube_fitter.n_voff_tied
+    #     parinfo[pᵢ].fixed = cube_fitter.voff_tied[i].locked
+    #     if !(cube_fitter.voff_tied[i].locked)
+    #         parinfo[pᵢ].limited = (1,1)
+    #         parinfo[pᵢ].limits = (minimum(cube_fitter.voff_tied[i].prior), maximum(cube_fitter.voff_tied[i].prior))
+    #     end
+    #     pᵢ += 1
+    # end
 
-    # Create a `config` structure
-    config = CMPFit.Config()
+    # # Emission line amplitude, voff, fwhm
+    # for i ∈ 1:cube_fitter.n_lines
+    #     parinfo[pᵢ].limited = (1,1)
+    #     parinfo[pᵢ].limits = (0., 1.0)
+    #     if isnothing(cube_fitter.line_tied[i]) || cube_fitter.flexible_wavesol
+    #         parinfo[pᵢ+1].fixed = voff_ln[i].locked
+    #         if !(voff_ln[i].locked)
+    #             parinfo[pᵢ+1].limited = (1,1)
+    #             parinfo[pᵢ+1].limits = (minimum(voff_ln[i].prior), maximum(voff_ln[i].prior))
+    #         end
+    #         parinfo[pᵢ+2].fixed = fwhm_ln[i].locked
+    #         if !(fwhm_ln[i].locked)
+    #             parinfo[pᵢ+2].limited = (1,1)
+    #             parinfo[pᵢ+2].limits = (minimum(fwhm_ln[i].prior), maximum(fwhm_ln[i].prior))
+    #         end
+    #         if prof_ln[i] == :GaussHermite
+    #             parinfo[pᵢ+3].fixed = h3_ln[i].locked
+    #             if !(h3_ln[i].locked)
+    #                 parinfo[pᵢ+3].limited = (1,1)
+    #                 parinfo[pᵢ+3].limits = (minimum(h3_ln[i].prior), maximum(h3_ln[i].prior))
+    #             end
+    #             parinfo[pᵢ+4].fixed = h4_ln[i].locked
+    #             if !(h4_ln[i].locked)
+    #                 parinfo[pᵢ+4].limited = (1,1)
+    #                 parinfo[pᵢ+4].limits = (minimum(h4_ln[i].prior), maximum(h4_ln[i].prior))
+    #             end
+    #             pᵢ += 2
+    #         end
+    #         pᵢ += 3
+    #     else
+    #         parinfo[pᵢ+1].fixed = fwhm_ln[i].locked
+    #         if !(fwhm_ln[i].locked)
+    #             parinfo[pᵢ+1].limited = (1,1)
+    #             parinfo[pᵢ+1].limits = (minimum(fwhm_ln[i].prior), maximum(fwhm_ln[i].prior))
+    #         end
+    #         if prof_ln[i] == :GaussHermite
+    #             parinfo[pᵢ+2].fixed = h3_ln[i].locked
+    #             if !(h3_ln[i].locked)
+    #                 parinfo[pᵢ+2].limited = (1,1)
+    #                 parinfo[pᵢ+2].limits = (minimum(h3_ln[i].prior), maximum(h3_ln[i].prior))
+    #             end
+    #             parinfo[pᵢ+3].fixed = h4_ln[i].locked
+    #             if !(h4_ln[i].locked)
+    #                 parinfo[pᵢ+3].limited = (1,1)
+    #                 parinfo[pᵢ+3].limits = (minimum(h4_ln[i].prior), maximum(h4_ln[i].prior))
+    #             end
+    #             pᵢ += 2       
+    #         end
+    #         pᵢ += 2
+    #     end
+    # end
 
-    # Refine the results with a local minimum Levenberg-Marquardt search
-    res = cmpfit(λ, Inorm, σnorm, (x, p) -> Util.fit_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
-        cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, λ0_ln, cube_fitter.flexible_wavesol), p₁, 
-        parinfo=parinfo, config=config)
+    # # Create a `config` structure
+    # config = CMPFit.Config()
 
-    # Get best fit results
-    popt = res.param
-    # Count free parameters
-    n_free = 0
-    for pᵢ ∈ 1:length(popt)
-        if iszero(parinfo[pᵢ].fixed)
-            n_free += 1
-        end
-    end
+    # # Refine the results with a local minimum Levenberg-Marquardt search
+    # res = cmpfit(λ, Inorm, σnorm, (x, p) -> Util.fit_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
+    #     cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, λ0_ln, cube_fitter.flexible_wavesol), p₁, 
+    #     parinfo=parinfo, config=config)
+
+    # # Get best fit results
+    # popt = res.param
+    # # Count free parameters
+    # n_free = 0
+    # for pᵢ ∈ 1:length(popt)
+    #     if iszero(parinfo[pᵢ].fixed)
+    #         n_free += 1
+    #     end
+    # end
 
     # Final optimized fit
     I_model, comps = Util.fit_line_residuals(λ, popt, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
