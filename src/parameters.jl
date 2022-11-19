@@ -102,8 +102,10 @@ struct TransitionLine
     """
     λ₀::Float64
     profile::Symbol
+    flow_profile::Union{Symbol,Nothing}
     parameters::ParamDict
     tied::Union{String,Nothing}
+    flow_tied::Union{String,Nothing}
 
 end
 

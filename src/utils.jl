@@ -68,7 +68,8 @@ to_cgs(F, λ) = F .* 1e-7 .* Util.C_MS ./ λ.^2    # λ in angstroms, F (MJy/sr)
 to_MJy_sr(F, λ) = F .* 1e7 ./ Util.C_MS .* λ.^2  # λ in angstroms, F (erg/s/cm^2/A/sr) -> (MJy/sr)
 
 # Log of the likelihood for a given model
-function ln_likelihood(data::Vector{Float64}, model::Vector{Float64}, err::Vector{Float64})
+function ln_likelihood(data::Union{Vector{Float32},Vector{Float64}}, model::Union{Vector{Float32},Vector{Float64}}, 
+    err::Union{Vector{Float32},Vector{Float64}})
     return -0.5 * sum((data .- model).^2 ./ err.^2 .+ log.(2π .* err.^2))
 end
 
@@ -201,11 +202,13 @@ end
 
 function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_lines::Int64, n_voff_tied::Int64, 
     voff_tied_key::Vector{String}, line_tied::Vector{Union{String,Nothing}}, line_profiles::Vector{Symbol}, 
-    line_restwave::Vector{Float64}, flexible_wavesol::Bool; return_components::Bool=false, verbose::Bool=false)
+    n_flow_voff_tied::Int64, flow_voff_tied_key::Vector{String}, line_flow_tied::Vector{Union{String,Nothing}},
+    line_flow_profiles::Vector{Union{Symbol,Nothing}}, line_restwave::Vector{Float64}, 
+    flexible_wavesol::Bool; return_components::Bool=false, verbose::Bool=false)
 
     comps = Dict{String, Vector{Float64}}()
     contin = zeros(Float64, length(λ))
-    pᵢ = n_voff_tied + 1
+    pᵢ = n_voff_tied + n_flow_voff_tied + 1
 
     # Add emission lines
     for k ∈ 1:n_lines
@@ -221,6 +224,9 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
                 h3 = params[pᵢ+3]
                 h4 = params[pᵢ+4]
                 msg *= ", $(params[pᵢ+3]), $(params[pᵢ+4])"
+            elseif line_profiles[k] == :Voigt
+                η = params[pᵢ+3]
+                msg *= ", $(params[pᵢ]+3)"
             end
             if verbose
                 println(msg)
@@ -232,11 +238,14 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
             # Add velocity shifts of the tied lines and the individual offsets
             voff = voff_series + voff_indiv
             fwhm = params[pᵢ+2]
-            mgs = "$(params[pᵢ]), $(params[vwhere]) (tied) + $(params[pᵢ+1]) (united), $(params[pᵢ+2])"
+            msg = "$(params[pᵢ]), $(params[vwhere]) (tied) + $(params[pᵢ+1]) (united), $(params[pᵢ+2])"
             if line_profiles[k] == :GaussHermite
                 h3 = params[pᵢ+3]
                 h4 = params[pᵢ+4]
                 msg *= ", $(params[pᵢ+3]), $(params[pᵢ+4])"
+            elseif line_profiles[k] == :Voigt
+                η = params[pᵢ+3]
+                msg *= ", $(params[pᵢ+3])"
             end
             if verbose
                 println(msg)
@@ -250,6 +259,9 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
                 h3 = params[pᵢ+2]
                 h4 = params[pᵢ+3]
                 msg *= ", $(params[pᵢ+2]), $(params[pᵢ+3])"
+            elseif line_profiles[k] == :Voigt
+                η = params[pᵢ+2]
+                msg *= ", $(params[pᵢ+2])"
             end
             if verbose
                 println(msg)
@@ -264,6 +276,8 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
             comps["line_$k"] = Gaussian(λ, params[pᵢ], mean_μm, fwhm_μm)
         elseif line_profiles[k] == :GaussHermite
             comps["line_$k"] = GaussHermite(λ, params[pᵢ], mean_μm, fwhm_μm, [h3, h4])
+        elseif line_profiles[k] == :Voigt
+            comps["line_$k"] = Voigt(λ, params[pᵢ], mean_μm, fwhm_μm, η)
         else
             error("Unrecognized line profile $(line_profiles[k])!")
         end
@@ -272,6 +286,68 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
         pᵢ += isnothing(line_tied[k]) || flexible_wavesol ? 3 : 2
         if line_profiles[k] == :GaussHermite
             pᵢ += 2
+        elseif line_profiles[k] == :Voigt
+            pᵢ += 1
+        end
+
+        if !isnothing(line_flow_profiles[k])
+            if verbose
+                println("Flow component:")
+            end
+            if isnothing(line_flow_tied[k])
+                flow_voff = params[pᵢ+1]
+                flow_fwhm = params[pᵢ+2]
+                msg = "$(params[pᵢ]), $(params[pᵢ+1]) (united), $(params[pᵢ+2])"
+                if line_flow_profiles[k] == :GaussHermite
+                    flow_h3 = params[pᵢ+3]
+                    flow_h4 = params[pᵢ+4]
+                    msg *= ", $(params[pᵢ+3]), $(params[pᵢ+4])"
+                elseif line_flow_profiles[k] == :Voigt
+                    flow_η = params[pᵢ+3]
+                    msg *= ", $(params[pᵢ]+3)"
+                end
+                if verbose
+                    println(msg)
+                end 
+            else
+                vwhere = findfirst(x -> x == line_flow_tied[k], flow_voff_tied_key)
+                flow_voff = params[n_voff_tied + vwhere]
+                flow_fwhm = params[pᵢ+1]
+                msg = "$(params[pᵢ]), $(params[vwhere]) (tied), $(params[pᵢ+1])"
+                if line_flow_profiles[k] == :GaussHermite
+                    flow_h3 = params[pᵢ+2]
+                    flow_h4 = params[pᵢ+3]
+                    msg *= ", $(params[pᵢ+2]), $(params[pᵢ+3])"
+                elseif line_flow_profiles[k] == :Voigt
+                    flow_η = params[pᵢ+2]
+                    msg *= ", $(params[pᵢ+2])"
+                end
+                if verbose
+                    println(msg)
+                end
+            end
+            # Convert voff in km/s to mean wavelength in μm
+            flow_mean_μm = Doppler_shift_λ(line_restwave[k], voff+flow_voff)
+            # Convert FWHM from km/s to μm
+            flow_fwhm_μm = Doppler_shift_λ(line_restwave[k], flow_fwhm) - line_restwave[k]
+            # Evaluate line profile
+            if line_flow_profiles[k] == :Gaussian
+                comps["line_$(k)_flow"] = Gaussian(λ, params[pᵢ], flow_mean_μm, flow_fwhm_μm)
+            elseif line_profiles[k] == :GaussHermite
+                comps["line_$(k)_flow"] = GaussHermite(λ, params[pᵢ], flow_mean_μm, flow_fwhm_μm, [flow_h3, flow_h4])
+            elseif line_profiles[k] == :Voigt
+                comps["line_$(k)_flow"] = Voigt(λ, params[pᵢ], flow_mean_μm, flow_fwhm_μm, flow_η)
+            else
+                error("Unrecognized flow line profile $(line_profiles[k])!")
+            end
+
+            contin .+= comps["line_$(k)_flow"]        
+            pᵢ += isnothing(line_flow_tied[k]) ? 3 : 2
+            if line_flow_profiles[k] == :GaussHermite
+                pᵢ += 2
+            elseif line_flow_profiles[k] == :Voigt
+                pᵢ += 1
+            end
         end
 
     end
@@ -323,6 +399,31 @@ function GaussHermite(x::Vector{Float64}, A::Float64, μ::Float64, FWHM::Float64
     GH .*= A
 
     return GH
+end
+
+function Lorentzian(x::Vector{Float64}, A::Float64, μ::Float64, FWHM::Float64)
+    # Reparametrize with the half-width at half-max
+    γ = FWHM / 2
+    return @. A/π * γ / ((x-μ)^2 + γ^2)
+end
+
+function Voigt(x::Vector{Float64}, A::Float64, μ::Float64, FWHM::Float64, η::Float64)
+
+    # Reparametrize FWHM as dispersion σ
+    σ = FWHM / (2√(2log(2))) 
+    # Normalized Gaussian
+    G = @. 1/√(2π * σ^2) * exp(-(x-μ)^2 / (2σ^2))
+    # Normalized Lorentzian
+    L = @. 1/π * (FWHM/2) / ((x-μ)^2 + (FWHM/2)^2)
+
+    # Mix the two distributions with the mixing parameter η
+    pV = η .* G .+ (1 .- η) .* L
+
+    # Renormalize 
+    pV ./= maximum(pV)
+    pV .*= A
+
+    return pV
 end
 
 end

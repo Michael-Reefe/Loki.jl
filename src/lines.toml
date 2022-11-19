@@ -1,6 +1,8 @@
 # General options
-tie_H2_voff = false
+tie_H2_voff = true
+tie_H2_flow_voff = true
 tie_IP_voff = false
+tie_IP_flow_voff = false
 
 # Starting line FWHMs and voffs
 # fwhm_init = 100.0
@@ -9,17 +11,20 @@ tie_IP_voff = false
 # h4_init = 0.0
 
 # Line voff and FWHM limits
-voff_plim = [-700.0, 700.0]              # -700 to 700 km/s
+voff_plim = [-500.0, 500.0]              # -500 to 500 km/s
 fwhm_pmax = 500.0                        # 500 km/s maximum FWHM -> lower limit is filled in by the spectral resolution
 h3_plim = [-0.5, 0.5]
 h4_plim = [-0.5, 0.5]
+
+flow_voff_plim = [-500.0, 500.0]
+flow_fwhm_pmax = 1000.0
 
 # Spectral resolution (λ/Δλ)
 R = [3500, 3000, 2200, 1700]
 
 # Uncertainty in the wavelength solution of the data
 flexible_wavesol = true                   # allow tied voffs to vary slightly based on wavelength solution uncertainty
-wavesol_unc = [100, 600, 800, 100]        # wavelength solution uncertainties in each of the 4 MIRI channels (in km/s)
+wavesol_unc = [100, 300, 400, 100]        # wavelength solution uncertainties in each of the 4 MIRI channels (in km/s)
 
 [channels]
 1 = [4.9, 7.65]
@@ -372,12 +377,15 @@ H200_S0    = 28.21883
 # H265_O17   = 25.52151
 # H2109_O13  = 26.08200
 
-# optional: add [profiles] or [priors] keys to specify individual line profiles or priors that 
-# are different from the default Gaussian and Uniform
+# optional: add [priors] key to specify individual line priors that 
+# are different from the default Uniform
 
 [profiles]
-NeVI_7652 = "GaussHermite"
-SIV_10511 = "GaussHermite"
+default = "Voigt"
+
+[flows]
+NeVI_7652 = "Gaussian"
+SIV_10511 = "Gaussian"
 
 # example:
 # [priors]
