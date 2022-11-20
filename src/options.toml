@@ -1,4 +1,5 @@
 chi2_threshold = 1.5
+overwrite = false
 
 [cosmology]
 h = 0.70

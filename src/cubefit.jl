@@ -8,9 +8,7 @@ using Interpolations
 using Dierckx
 using NaNStatistics
 using Optim
-# using LsqFit
 using CMPFit
-# using NLopt
 using Distributed
 using SharedArrays
 using TOML
@@ -19,6 +17,7 @@ using DataFrames
 using NumericalIntegration
 using ProgressMeter
 using Reexport
+using Serialization
 using FITSIO
 using Cosmology
 using Printf
@@ -28,10 +27,23 @@ using PlotlyJS
 
 const py_anchored_artists = PyNULL()
 const scipy_opt = PyNULL()
+# MATPLOTLIB SETTINGS TO MAKE PLOTS LOOK PRETTY :)
+const SMALL = 12
+const MED = 14
+const BIG = 16
 function __init__()
     copy!(py_anchored_artists, pyimport_conda("mpl_toolkits.axes_grid1.anchored_artists", "matplotlib"))
     copy!(scipy_opt, pyimport_conda("scipy.optimize", "scipy"))
     plt.switch_backend("Agg")
+    plt.rc("font", size=MED)          # controls default text sizes
+    plt.rc("axes", titlesize=MED)     # fontsize of the axes title
+    plt.rc("axes", labelsize=MED)     # fontsize of the x and y labels
+    plt.rc("xtick", labelsize=SMALL)  # fontsize of the tick labels
+    plt.rc("ytick", labelsize=SMALL)  # fontsize of the tick labels
+    plt.rc("legend", fontsize=MED)    # legend fontsize
+    plt.rc("figure", titlesize=BIG)   # fontsize of the figure title
+    plt.rc("text", usetex=true)
+    plt.rc("font", family="Times New Roman")
 end
 
 include("parameters.jl")
@@ -42,27 +54,12 @@ include("cubedata.jl")
 
 const sourcepath = dirname(Base.source_path())
 
-# MATPLOTLIB SETTINGS TO MAKE PLOTS LOOK PRETTY :)
-const SMALL = 12
-const MED = 14
-const BIG = 16
-
-plt.rc("font", size=MED)          # controls default text sizes
-plt.rc("axes", titlesize=MED)     # fontsize of the axes title
-plt.rc("axes", labelsize=MED)     # fontsize of the x and y labels
-plt.rc("xtick", labelsize=SMALL)  # fontsize of the tick labels
-plt.rc("ytick", labelsize=SMALL)  # fontsize of the tick labels
-plt.rc("legend", fontsize=MED)    # legend fontsize
-plt.rc("figure", titlesize=BIG)   # fontsize of the figure title
-plt.rc("text", usetex=true)
-plt.rc("font", family="Times New Roman")
-
 
 function parse_options()
 
     options = TOML.parsefile(joinpath(sourcepath, "options.toml"))
     options_out = Dict()
-    keylist1 = ["chi2_threshold", "cosmology"]
+    keylist1 = ["chi2_threshold", "overwrite", "cosmology"]
     keylist2 = ["h", "omega_m", "omega_K", "omega_r"]
     for key ∈ keylist1 
         if !(key ∈ keys(options))
@@ -76,6 +73,7 @@ function parse_options()
     end
     
     options_out[:chi2_threshold] = options["chi2_threshold"]
+    options_out[:overwrite] = options["overwrite"]
     options_out[:cosmology] = cosmology(h=options["cosmology"]["h"], 
                                         OmegaM=options["cosmology"]["omega_m"],
                                         OmegaK=options["cosmology"]["omega_K"],
@@ -477,6 +475,7 @@ mutable struct CubeFitter
     plot_maps::Bool
     parallel::Bool
     save_fits::Bool
+    overwrite::Bool
 
     T_s::Param.Parameter
     T_dc::Vector{Param.Parameter}
@@ -617,12 +616,22 @@ mutable struct CubeFitter
         if !isdir("output_$name")
             mkdir("output_$name")
         end
+        if !isdir("output_$name/spaxel_plots")
+            mkdir("output_$name/spaxel_plots")
+        end
+        if !isdir("output_$name/spaxel_binaries")
+            mkdir("output_$name/spaxel_binaries")
+        end
+        if !isdir("output_$name/param_maps")
+            mkdir("output_$name/param_maps")
+        end
 
         # Prepare options
         χ²_thresh = options[:chi2_threshold]
+        overwrite = options[:overwrite]
         cosmo = options[:cosmology]
 
-        return new(cube, z, name, cube_model, param_maps, window_size, plot_spaxels, plot_maps, parallel, save_fits,
+        return new(cube, z, name, cube_model, param_maps, window_size, plot_spaxels, plot_maps, parallel, save_fits, overwrite,
             T_s, T_dc, τ_97, β, n_dust_cont, n_dust_features, df_names, dust_features, n_lines, line_names, line_profiles, 
             line_flow_profiles, lines, n_voff_tied, line_tied, voff_tied_key, voff_tied, n_flow_voff_tied, line_flow_tied,
             flow_voff_tied_key, flow_voff_tied, n_complexes, complexes, n_params_cont, n_params_lines, 
@@ -1080,7 +1089,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}, conti
         lnpdf = sum([logpdf(priors[i], p[i]) for i ∈ 1:length(p)])
 
         # penalize the likelihood if any in/outflow FWHMs are smaller than the corresponding narrow lines
-        # or if the voffs are too small
+        # or if the amplitudes are too large
         pᵢ = 1 + cube_fitter.n_voff_tied + cube_fitter.n_flow_voff_tied
         for i ∈ 1:cube_fitter.n_lines
             na_amp = p[pᵢ]
@@ -1132,14 +1141,182 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}, conti
     lower_bounds = minimum.(priors)
     upper_bounds = maximum.(priors)
     # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous rt and max iterations
-    res = optimize(negln_probability, lower_bounds, upper_bounds, p₀, SAMIN(;rt=0.9, verbosity=0), Optim.Options(iterations=10^6))
-    # Then, refine the solution with a bounded local minimum search with L-BFGS
-    res = optimize(negln_probability, lower_bounds, upper_bounds, res.minimizer, Fminbox(LBFGS()))
-    # Get the results
-    popt = res.minimizer
-    lnP = -res.minimum
+    res = optimize(negln_probability, lower_bounds, upper_bounds, p₀, SAMIN(;rt=0.9, nt=2, ns=2, neps=2, verbosity=1), Optim.Options(iterations=10^6))
+    p₁ = res.minimizer
 
-    n_free = length(p₀)
+    # Convert parameter limits into CMPFit object
+    parinfo = CMPFit.Parinfo(length(p₀))
+
+    # Tied velocity offsets
+    pᵢ = 1
+    for i ∈ 1:cube_fitter.n_voff_tied
+        parinfo[pᵢ].fixed = cube_fitter.voff_tied[i].locked
+        if !(cube_fitter.voff_tied[i].locked)
+            parinfo[pᵢ].limited = (1,1)
+            parinfo[pᵢ].limits = (minimum(cube_fitter.voff_tied[i].prior), maximum(cube_fitter.voff_tied[i].prior))
+        end
+        pᵢ += 1
+    end
+
+    # Tied in/outflow velocity offsets
+    for j ∈ 1:cube_fitter.n_flow_voff_tied
+        parinfo[pᵢ].fixed = cube_fitter.flow_voff_tied[j].locked
+        if !(cube_fitter.flow_voff_tied[j].locked)
+            parinfo[pᵢ].limited = (1,1)
+            parinfo[pᵢ].limits = (minimum(cube_fitter.flow_voff_tied[j].prior), maximum(cube_fitter.flow_voff_tied[j].prior))
+        end
+        pᵢ += 1
+    end
+
+    # Emission line amplitude, voff, fwhm
+    for i ∈ 1:cube_fitter.n_lines
+        parinfo[pᵢ].limited = (1,1)
+        parinfo[pᵢ].limits = (0., 1.0)
+        if isnothing(cube_fitter.line_tied[i]) || cube_fitter.flexible_wavesol
+            parinfo[pᵢ+1].fixed = voff_ln[i].locked
+            if !(voff_ln[i].locked)
+                parinfo[pᵢ+1].limited = (1,1)
+                parinfo[pᵢ+1].limits = (minimum(voff_ln[i].prior), maximum(voff_ln[i].prior))
+            end
+            parinfo[pᵢ+2].fixed = fwhm_ln[i].locked
+            if !(fwhm_ln[i].locked)
+                parinfo[pᵢ+2].limited = (1,1)
+                parinfo[pᵢ+2].limits = (minimum(fwhm_ln[i].prior), maximum(fwhm_ln[i].prior))
+            end
+            if prof_ln[i] == :GaussHermite
+                parinfo[pᵢ+3].fixed = h3_ln[i].locked
+                if !(h3_ln[i].locked)
+                    parinfo[pᵢ+3].limited = (1,1)
+                    parinfo[pᵢ+3].limits = (minimum(h3_ln[i].prior), maximum(h3_ln[i].prior))
+                end
+                parinfo[pᵢ+4].fixed = h4_ln[i].locked
+                if !(h4_ln[i].locked)
+                    parinfo[pᵢ+4].limited = (1,1)
+                    parinfo[pᵢ+4].limits = (minimum(h4_ln[i].prior), maximum(h4_ln[i].prior))
+                end
+                pᵢ += 2
+            elseif prof_ln[i] == :Voigt
+                parinfo[pᵢ+3].fixed = η_ln[i].locked
+                if !(η_ln[i].locked)
+                    parinfo[pᵢ+3].limited = (1,1)
+                    parinfo[pᵢ+3].limits = (minimum(η_ln[i].prior), maximum(η_ln[i].prior))
+                end
+                pᵢ += 1
+            end
+            pᵢ += 3
+        else
+            parinfo[pᵢ+1].fixed = fwhm_ln[i].locked
+            if !(fwhm_ln[i].locked)
+                parinfo[pᵢ+1].limited = (1,1)
+                parinfo[pᵢ+1].limits = (minimum(fwhm_ln[i].prior), maximum(fwhm_ln[i].prior))
+            end
+            if prof_ln[i] == :GaussHermite
+                parinfo[pᵢ+2].fixed = h3_ln[i].locked
+                if !(h3_ln[i].locked)
+                    parinfo[pᵢ+2].limited = (1,1)
+                    parinfo[pᵢ+2].limits = (minimum(h3_ln[i].prior), maximum(h3_ln[i].prior))
+                end
+                parinfo[pᵢ+3].fixed = h4_ln[i].locked
+                if !(h4_ln[i].locked)
+                    parinfo[pᵢ+3].limited = (1,1)
+                    parinfo[pᵢ+3].limits = (minimum(h4_ln[i].prior), maximum(h4_ln[i].prior))
+                end
+                pᵢ += 2       
+            elseif prof_ln[i] == :Voigt
+                parinfo[pᵢ+2].fixed = η_ln[i].locked
+                if !(η_ln[i].locked)
+                    parinfo[pᵢ+2].limited = (1,1)
+                    parinfo[pᵢ+2].limits = (minimum(η_ln[i].prior), maximum(η_ln[i].prior))
+                end
+                pᵢ += 1
+            end
+            pᵢ += 2
+        end
+        if !isnothing(flow_prof_ln[i])
+            parinfo[pᵢ].limited = (1,1)
+            parinfo[pᵢ].limits = (0., 1.0)
+            if isnothing(cube_fitter.line_flow_tied[i])
+                parinfo[pᵢ+1].fixed = flow_voff_ln[i].locked
+                if !(flow_voff_ln[i].locked)
+                    parinfo[pᵢ+1].limited = (1,1)
+                    parinfo[pᵢ+1].limits = (minimum(flow_voff_ln[i].prior), maximum(flow_voff_ln[i].prior))
+                end
+                parinfo[pᵢ+2].fixed = flow_fwhm_ln[i].locked
+                if !(flow_fwhm_ln[i].locked)
+                    parinfo[pᵢ+2].limited = (1,1)
+                    parinfo[pᵢ+2].limits = (minimum(flow_fwhm_ln[i].prior), maximum(flow_fwhm_ln[i].prior))
+                end
+                if flow_prof_ln[i] == :GaussHermite
+                    parinfo[pᵢ+3].fixed = flow_h3_ln[i].locked
+                    if !(flow_h3_ln[i].locked)
+                        parinfo[pᵢ+3].limited = (1,1)
+                        parinfo[pᵢ+3].limits = (minimum(flow_h3_ln[i].prior), maximum(flow_h3_ln[i].prior))
+                    end
+                    parinfo[pᵢ+4].fixed = flow_h4_ln[i].locked
+                    if !(flow_h4_ln[i].locked)
+                        parinfo[pᵢ+4].limited = (1,1)
+                        parinfo[pᵢ+4].limits = (minimum(flow_h4_ln[i].prior), maximum(flow_h4_ln[i].prior))
+                    end
+                    pᵢ += 2
+                elseif flow_prof_ln[i] == :Voigt
+                    parinfo[pᵢ+3].fixed = flow_η_ln[i].locked
+                    if !(flow_η_ln[i].locked)
+                        parinfo[pᵢ+3].limited = (1,1)
+                        parinfo[pᵢ+3].limits = (minimum(flow_η_ln[i].prior), maximum(flow_η_ln[i].prior))
+                    end
+                    pᵢ += 1
+                end
+                pᵢ += 3
+            else
+                parinfo[pᵢ+1].fixed = flow_fwhm_ln[i].locked
+                if !(flow_fwhm_ln[i].locked)
+                    parinfo[pᵢ+1].limited = (1,1)
+                    parinfo[pᵢ+1].limits = (minimum(flow_fwhm_ln[i].prior), maximum(flow_fwhm_ln[i].prior))
+                end
+                if flow_prof_ln[i] == :GaussHermite
+                    parinfo[pᵢ+2].fixed = flow_h3_ln[i].locked
+                    if !(flow_h3_ln[i].locked)
+                        parinfo[pᵢ+2].limited = (1,1)
+                        parinfo[pᵢ+2].limits = (minimum(flow_h3_ln[i].prior), maximum(flow_h3_ln[i].prior))
+                    end
+                    parinfo[pᵢ+3].fixed = flow_h4_ln[i].locked
+                    if !(flow_h4_ln[i].locked)
+                        parinfo[pᵢ+3].limited = (1,1)
+                        parinfo[pᵢ+3].limits = (minimum(flow_h4_ln[i].prior), maximum(flow_h4_ln[i].prior))
+                    end
+                    pᵢ += 2       
+                elseif flow_prof_ln[i] == :Voigt
+                    parinfo[pᵢ+2].fixed = flow_η_ln[i].locked
+                    if !(flow_η_ln[i].locked)
+                        parinfo[pᵢ+2].limited = (1,1)
+                        parinfo[pᵢ+2].limits = (minimum(flow_η_ln[i].prior), maximum(flow_η_ln[i].prior))
+                    end
+                    pᵢ += 1
+                end
+                pᵢ += 2
+            end
+        end
+    end
+
+    # Create a `config` structure
+    config = CMPFit.Config()
+
+    # Then, refine the solution with a bounded local minimum search with LevMar
+    # res = optimize(negln_probability, lower_bounds, upper_bounds, res.minimizer, Fminbox(LBFGS()))
+    res = cmpfit(λ, Inorm, σnorm, (x, p) -> Util.fit_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
+        cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, cube_fitter.n_flow_voff_tied, cube_fitter.flow_voff_tied_key,
+        cube_fitter.line_flow_tied, flow_prof_ln, λ0_ln, cube_fitter.flexible_wavesol), p₁, parinfo=parinfo, config=config)
+
+    # Get the results
+    popt = res.param
+
+    # Count free parameters
+    n_free = 0
+    for pᵢ ∈ 1:length(popt)
+        if iszero(parinfo[pᵢ].fixed)
+            n_free += 1
+        end
+    end
 
     # Final optimized fit
     I_model, comps = Util.fit_line_residuals(λ, popt, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
@@ -1259,10 +1436,6 @@ function plot_spaxel_fit(λ::Vector{Float64}, I::Vector{Float32}, I_cont::Vector
     comps::Dict{String, Vector{Float64}}, n_dust_cont::Int, n_dust_features::Int, line_wave::Vector{Float64}, 
     line_names::Vector{Symbol}, χ2red::Float64, name::String, label::String; backend::Symbol=:pyplot)
 
-    if !isdir("output_$name/spaxel_fits")
-        mkdir("output_$name/spaxel_fits")
-    end
-
     if backend == :plotly
         trace1 = PlotlyJS.scatter(x=λ, y=I, mode="lines", line=Dict(:color => "black", :width => 1), name="Data", showlegend=true)
         trace2 = PlotlyJS.scatter(x=λ, y=I_cont, mode="lines", line=Dict(:color => "red", :width => 1), name="Continuum Fit", showlegend=true)
@@ -1309,7 +1482,7 @@ function plot_spaxel_fit(λ::Vector{Float64}, I::Vector{Float32}, I_cont::Vector
             # ]
         )
         p = PlotlyJS.plot(traces, layout)
-        PlotlyJS.savefig(p, isnothing(label) ? "output_$name/spaxel_fits/levmar_fit_spaxel.html" : "output_$name/spaxel_fits/$label.html")
+        PlotlyJS.savefig(p, isnothing(label) ? "output_$name/spaxel_plots/levmar_fit_spaxel.html" : "output_$name/spaxel_plots/$label.html")
 
     elseif backend == :pyplot
         fig = plt.figure(figsize=(12,6))
@@ -1359,7 +1532,7 @@ function plot_spaxel_fit(λ::Vector{Float64}, I::Vector{Float32}, I_cont::Vector
         ax1.tick_params(axis="both", direction="in")
         ax2.tick_params(axis="both", direction="in", labelright=true, right=true)
         ax3.tick_params(axis="both", direction="in")
-        plt.savefig(isnothing(label) ? "output_$name/spaxel_fits/levmar_fit_spaxel.pdf" : "output_$name/spaxel_fits/$label.pdf", dpi=300, bbox_inches="tight")
+        plt.savefig(isnothing(label) ? "output_$name/spaxel_plots/levmar_fit_spaxel.pdf" : "output_$name/spaxel_plots/$label.pdf", dpi=300, bbox_inches="tight")
         plt.close()
     end
 end
@@ -1430,13 +1603,12 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{Int, 
         p_complex[pᵢ] = NumericalIntegration.integrate(λ, Iᵢ, SimpsonEven())
         p_complex[pᵢ] = p_complex[pᵢ] > 0. ? log10(p_complex[pᵢ]) : -Inf
         # SNR
-        # p_complex[pᵢ+1] = maximum(Iᵢ) / 
-        #     std(I[(window-2cube_fitter.window_size .< λ .< window-cube_fitter.window_size) .| 
-        #         (window+cube_fitter.window_size .< λ .< window+2cube_fitter.window_size)])
-        disp = window / cube_fitter.R
-        p_complex[pᵢ+1] = p_complex[pᵢ] / 
-            (√π * disp * std(I[(window-2cube_fitter.window_size .< λ .< window-cube_fitter.window_size) .| 
-            (window+cube_fitter.window_size .< λ .< window+2cube_fitter.window_size)]))
+        p_complex[pᵢ+1] = maximum(Iᵢ) / 
+            std(I[(window-2cube_fitter.window_size .< λ .< window-cube_fitter.window_size) .| 
+                (window+cube_fitter.window_size .< λ .< window+2cube_fitter.window_size)])
+        if p_complex[pᵢ] == -Inf
+            p_complex[pᵢ+1] = 0.
+        end
         pᵢ += 2
     end
 
@@ -1455,14 +1627,12 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{Int, 
         p_lines[pᵢ] = p_lines[pᵢ] > 0. ? log10(p_lines[pᵢ]) : -Inf
 
         # SNR
-        # p_lines[pᵢ+1] = maximum(profile) /
-        #     std(I[(window-2cube_fitter.window_size .< λ .< window-cube_fitter.window_size) .| 
-        #         (window+cube_fitter.window_size .< λ .< window+2cube_fitter.window_size)])
-        disp = window / cube_fitter.R
-        p_lines[pᵢ+1] = p_lines[pᵢ] / 
-            (√π * disp * std(I[(window-2cube_fitter.window_size .< λ .< window-cube_fitter.window_size) .| 
-            (window+cube_fitter.window_size .< λ .< window+2cube_fitter.window_size)]))
-    
+        p_lines[pᵢ+1] = maximum(profile) /
+            std(I[(window-2cube_fitter.window_size .< λ .< window-cube_fitter.window_size) .| 
+                (window+cube_fitter.window_size .< λ .< window+2cube_fitter.window_size)])
+        if p_lines[pᵢ] == -Inf
+            p_lines[pᵢ+1] = 0.
+        end
         pᵢ += 2
 
     end
@@ -1473,59 +1643,74 @@ end
 # Utility function for fitting a single spaxel
 function fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}; verbose::Bool=false)
 
-    # Skip spaxels with NaNs (post-interpolation)
-    λ = cube_fitter.cube.λ
-    I = cube_fitter.cube.Iλ[spaxel..., :]
-    if any(.!isfinite.(I) .| .!isfinite.(I))
-        return
+    # Check if the fit has already been performed
+    if !isfile("output_$(cube_fitter.name)/spaxel_binaries/spaxel_$(spaxel[1])_$(spaxel[2]).LOKI") || cube_fitter.overwrite
+
+        # Skip spaxels with NaNs (post-interpolation)
+        λ = cube_fitter.cube.λ
+        I = cube_fitter.cube.Iλ[spaxel..., :]
+
+        if any(.!isfinite.(I) .| .!isfinite.(I))
+            p_out = nothing
+
+        else
+
+            # Fit the spaxel
+            σ, popt_c, I_cont, comps_cont, n_free_c = continuum_fit_spaxel(cube_fitter, spaxel, verbose=verbose)
+            _, popt_l, I_line, comps_line, n_free_l = line_fit_spaxel(cube_fitter, spaxel, I_cont, verbose=verbose)
+
+            # Combine the continuum and line models
+            I_model = I_cont .+ I_line
+            comps = merge(comps_cont, comps_line)
+
+            # Total free parameters
+            n_free = n_free_c + n_free_l
+            n_data = length(I)
+
+            # Reduced chi^2 of the model
+            χ2red = 1 / (n_data - n_free) * sum((I .- I_model).^2 ./ σ.^2)
+
+            # Add dust complex and line parameters (intensity and SNR)
+            p_complex, p_lines = calculate_extra_parameters(cube_fitter, spaxel, comps)
+            p_out = [popt_c; popt_l; p_complex; p_lines; χ2red]
+
+            # Plot the fit
+            λ0_ln = [ln.λ₀ for ln ∈ cube_fitter.lines]
+            if cube_fitter.plot_spaxels != :none
+                plot_spaxel_fit(λ, I, I_model, σ, comps, 
+                    cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, λ0_ln, cube_fitter.line_names,
+                    χ2red, cube_fitter.name, "spaxel_$(spaxel[1])_$(spaxel[2])", backend=cube_fitter.plot_spaxels)
+            end
+
+            # If the reduced chi^2 meets the threshold, set the new starting parameters for the rest of the fits
+            # if isnothing(cube_fitter.best_spaxel)
+            #     if χ2red ≤ cube_fitter.χ²_thresh
+            #         cube_fitter.p_best_cont = popt_c
+            #         cube_fitter.p_best_line = popt_l
+            #         cube_fitter.χ²_best = χ2red
+            #         cube_fitter.best_spaxel = spaxel
+            #     end
+            # # If they already exist, don't overwrite unless the new chi^2 is better than the old chi^2
+            # else
+            #     if χ2red < cube_fitter.χ²_best
+            #         cube_fitter.p_best_cont = popt_c
+            #         cube_fitter.p_best_line = popt_l
+            #         cube_fitter.χ²_best = χ2red
+            #         cube_fitter.best_spaxel = spaxel
+            #     end
+            # end
+        end
+
+        # save output as binary file
+        serialize("output_$(cube_fitter.name)/spaxel_binaries/spaxel_$(spaxel[1])_$(spaxel[2]).LOKI", p_out)
+
+    # Otherwise, just grab the results from before
+    else
+        p_out = deserialize("output_$(cube_fitter.name)/spaxel_binaries/spaxel_$(spaxel[1])_$(spaxel[2]).LOKI")
+
     end
 
-    # Fit the spaxel
-    σ, popt_c, I_cont, comps_cont, n_free_c = continuum_fit_spaxel(cube_fitter, spaxel, verbose=verbose)
-    _, popt_l, I_line, comps_line, n_free_l = line_fit_spaxel(cube_fitter, spaxel, I_cont, verbose=verbose)
-
-    # Combine the continuum and line models
-    I_model = I_cont .+ I_line
-    comps = merge(comps_cont, comps_line)
-
-    # Total free parameters
-    n_free = n_free_c + n_free_l
-    n_data = length(I)
-
-    # Reduced chi^2 of the model
-    χ2red = 1 / (n_data - n_free) * sum((I .- I_model).^2 ./ σ.^2)
-
-    # Add dust complex and line parameters (intensity and SNR)
-    p_complex, p_lines = calculate_extra_parameters(cube_fitter, spaxel, comps)
-    p_out = [popt_c; popt_l; p_complex; p_lines]
-
-    # Plot the fit
-    λ0_ln = [ln.λ₀ for ln ∈ cube_fitter.lines]
-    if cube_fitter.plot_spaxels != :none
-        plot_spaxel_fit(λ, I, I_model, σ, comps, 
-            cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, λ0_ln, cube_fitter.line_names,
-            χ2red, cube_fitter.name, "spaxel_$(spaxel[1])_$(spaxel[2])", backend=cube_fitter.plot_spaxels)
-    end
-
-    # If the reduced chi^2 meets the threshold, set the new starting parameters for the rest of the fits
-    # if isnothing(cube_fitter.best_spaxel)
-    #     if χ2red ≤ cube_fitter.χ²_thresh
-    #         cube_fitter.p_best_cont = popt_c
-    #         cube_fitter.p_best_line = popt_l
-    #         cube_fitter.χ²_best = χ2red
-    #         cube_fitter.best_spaxel = spaxel
-    #     end
-    # # If they already exist, don't overwrite unless the new chi^2 is better than the old chi^2
-    # else
-    #     if χ2red < cube_fitter.χ²_best
-    #         cube_fitter.p_best_cont = popt_c
-    #         cube_fitter.p_best_line = popt_l
-    #         cube_fitter.χ²_best = χ2red
-    #         cube_fitter.best_spaxel = spaxel
-    #     end
-    # end
-
-    return p_out, I_model, comps, χ2red
+    return p_out
 end
 
 function fit_cube(cube_fitter::CubeFitter)
@@ -1541,10 +1726,9 @@ function fit_cube(cube_fitter::CubeFitter)
     #########################
     function fit_spax_i(xᵢ::Int, yᵢ::Int)
 
-        result = fit_spaxel(cube_fitter, (xᵢ, yᵢ))
-        if !isnothing(result)
-            p_out, _, _, χ2red = result
-            out_params[xᵢ, yᵢ, :] .= [p_out; χ2red]
+        p_out = fit_spaxel(cube_fitter, (xᵢ, yᵢ))
+        if !isnothing(p_out)
+            out_params[xᵢ, yᵢ, :] .= p_out
         end
 
         return
@@ -1712,27 +1896,42 @@ function fit_cube(cube_fitter::CubeFitter)
             cube_fitter.voff_tied_key, cube_fitter.line_tied, [ln.profile for ln ∈ cube_fitter.lines], cube_fitter.n_flow_voff_tied, cube_fitter.flow_voff_tied_key,
             cube_fitter.line_flow_tied, [ln.flow_profile for ln ∈ cube_fitter.lines], [ln.λ₀ for ln ∈ cube_fitter.lines], 
             cube_fitter.flexible_wavesol; return_components=true)
+        
 
+        # Set the 3D model cube outputs
+        N = Float64(abs(nanmaximum(cube_fitter.cube.Iλ[xᵢ, yᵢ, :])))
+        N = N ≠ 0. ? N : 1.
+        for comp ∈ keys(comps_l)
+            comps_l[comp] .*= N
+        end
+        I_line .*= N
+        
+        I_model = I_cont .+ I_line
+        comps = merge(comps_c, comps_l)
+
+        p_complex, p_lines = calculate_extra_parameters(cube_fitter, (xᵢ, yᵢ), comps)
+
+        i = 1
         for c ∈ cube_fitter.complexes
             # Dust complex intensity and SNR, from calculate_extra_parameters
-            cube_fitter.param_maps.dust_complexes[c][:intI][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? log10(out_params[xᵢ, yᵢ, pᵢ]) : -Inf
-            cube_fitter.param_maps.dust_complexes[c][:SNR][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+1]
+            cube_fitter.param_maps.dust_complexes[c][:intI][xᵢ, yᵢ] = p_complex[i] > 0. ? log10(p_complex[i]) : -Inf
+            cube_fitter.param_maps.dust_complexes[c][:SNR][xᵢ, yᵢ] = p_complex[i+1]
             pᵢ += 2
+            i += 2
         end
 
+        j = 1
         for (k, ln) ∈ enumerate(cube_fitter.line_names)
             # Line intensity and SNR, from calculate_extra_parameters
-            cube_fitter.param_maps.lines[ln][:intI][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? log10(out_params[xᵢ, yᵢ, pᵢ]) : -Inf
-            cube_fitter.param_maps.lines[ln][:SNR][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+1]
+            cube_fitter.param_maps.lines[ln][:intI][xᵢ, yᵢ] = p_lines[j] > 0. ? log10(p_lines[j]) : -Inf
+            cube_fitter.param_maps.lines[ln][:SNR][xᵢ, yᵢ] = p_lines[j+1]
             pᵢ += 2
+            j += 2
         end
 
         # Reduced χ^2
         cube_fitter.param_maps.reduced_χ2[xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ]
 
-        # Set the 3D model cube outputs
-        I_model = I_cont .+ I_line
-        comps = merge(comps_c, comps_l)
 
         cube_fitter.cube_model.model[xᵢ, yᵢ, :] .= I_model
         cube_fitter.cube_model.stellar[xᵢ, yᵢ, :] .= comps["stellar"]
@@ -1760,6 +1959,8 @@ function fit_cube(cube_fitter::CubeFitter)
     if cube_fitter.save_fits
         println("Writing FITS outputs...")
         write_fits(cube_fitter)
+        # println("Cleaning outputs...")
+        # rm("output_$(cube_fitter.name)/spaxel_binaries", recursive=true)
     end
 
     println("Done!")
@@ -1848,11 +2049,6 @@ function plot_parameter_map(data::Union{Matrix{Float64},SharedMatrix{Float64}}, 
 end
 
 function plot_parameter_maps(cube_fitter::CubeFitter; snr_thresh=3.)
-
-    # Make subdirectory
-    if !isdir("output_$(cube_fitter.name)/param_maps")
-        mkdir("output_$(cube_fitter.name)/param_maps")
-    end
 
     # Iterate over model parameters and make 2D maps
     for parameter ∈ keys(cube_fitter.param_maps.stellar_continuum)
