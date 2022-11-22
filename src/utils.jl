@@ -273,11 +273,11 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
         fwhm_μm = Doppler_shift_λ(line_restwave[k], fwhm) - line_restwave[k]
         # Evaluate line profile
         if line_profiles[k] == :Gaussian
-            comps["line_$k"] = Gaussian(λ, params[pᵢ], mean_μm, fwhm_μm)
+            comps["line_$k"] = Gaussian.(λ, params[pᵢ], mean_μm, fwhm_μm)
         elseif line_profiles[k] == :GaussHermite
-            comps["line_$k"] = GaussHermite(λ, params[pᵢ], mean_μm, fwhm_μm, [h3, h4])
+            comps["line_$k"] = GaussHermite.(λ, params[pᵢ], mean_μm, fwhm_μm, h3, h4)
         elseif line_profiles[k] == :Voigt
-            comps["line_$k"] = Voigt(λ, params[pᵢ], mean_μm, fwhm_μm, η)
+            comps["line_$k"] = Voigt.(λ, params[pᵢ], mean_μm, fwhm_μm, η)
         else
             error("Unrecognized line profile $(line_profiles[k])!")
         end
@@ -332,11 +332,11 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
             flow_fwhm_μm = Doppler_shift_λ(line_restwave[k], flow_fwhm) - line_restwave[k]
             # Evaluate line profile
             if line_flow_profiles[k] == :Gaussian
-                comps["line_$(k)_flow"] = Gaussian(λ, params[pᵢ], flow_mean_μm, flow_fwhm_μm)
+                comps["line_$(k)_flow"] = Gaussian.(λ, params[pᵢ], flow_mean_μm, flow_fwhm_μm)
             elseif line_profiles[k] == :GaussHermite
-                comps["line_$(k)_flow"] = GaussHermite(λ, params[pᵢ], flow_mean_μm, flow_fwhm_μm, [flow_h3, flow_h4])
+                comps["line_$(k)_flow"] = GaussHermite.(λ, params[pᵢ], flow_mean_μm, flow_fwhm_μm, flow_h3, flow_h4)
             elseif line_profiles[k] == :Voigt
-                comps["line_$(k)_flow"] = Voigt(λ, params[pᵢ], flow_mean_μm, flow_fwhm_μm, flow_η)
+                comps["line_$(k)_flow"] = Voigt.(λ, params[pᵢ], flow_mean_μm, flow_fwhm_μm, flow_η)
             else
                 error("Unrecognized flow line profile $(line_profiles[k])!")
             end
@@ -362,66 +362,62 @@ end
 
 # LINE PROFILES
 
-function Gaussian(x::Vector{Float64}, A::Float64, μ::Float64, FWHM::Float64)
+function Gaussian(x::Float64, A::Float64, μ::Float64, FWHM::Float64)
     """
     Gaussian profile parameterized in terms of the FWHM
     """
     # Reparametrize FWHM as dispersion σ
     σ = FWHM / (2√(2log(2)))
-    return @. A * exp(-(x-μ)^2 / (2σ^2))
+    return A * exp(-(x-μ)^2 / (2σ^2))
 end
 
-function GaussHermite(x::Vector{Float64}, A::Float64, μ::Float64, FWHM::Float64, h::Vector{Float64})
+function GaussHermite(x::Float64, A::Float64, μ::Float64, FWHM::Float64, h₃::Float64, h₄::Float64)
     """
     Gauss-Hermite line profiles 
     (see Riffel et al. 2010)
     """
+    h = [h₃, h₄]
     # Reparametrize FWHM as dispersion σ
     σ = FWHM / (2√(2log(2)))
     # Gaussian exponential argument w
-    w = @. (x - μ) / σ
+    w = (x - μ) / σ
     # Normalized Gaussian
-    α = @. 1/√(2π * σ^2) * exp(-w^2 / 2)
+    α = exp(-w^2 / 2)
 
     # Calculate coefficients for the Hermite basis
     n = 3:(length(h)+2)
     norm = .√(factorial.(n) .* 2 .^ n)
     coeff = vcat([1, 0, 0], h./norm)
     # Calculate hermite basis
-    Herm = hcat((coeff[nᵢ] .* hermite.(w, nᵢ-1) for nᵢ ∈ 1:length(coeff))...)
-    # Collapse sum along the moment axis
-    Herm = dropdims(sum(Herm, dims=2), dims=2)
+    Herm = sum([coeff[nᵢ] * hermite(w, nᵢ-1) for nᵢ ∈ 1:length(coeff)])
+
+    # Calculate peak height (i.e. value of function at w=0)
+    Herm0 = sum([coeff[nᵢ] * hermite(0., nᵢ-1) for nᵢ ∈ 1:length(coeff)])
 
     # Combine the Gaussian and Hermite profiles
-    GH = α .* Herm
-    # Renormalize
-    GH ./= maximum(GH)
-    GH .*= A
+    GH = A * α * Herm / Herm0
 
     return GH
 end
 
-function Lorentzian(x::Vector{Float64}, A::Float64, μ::Float64, FWHM::Float64)
-    # Reparametrize with the half-width at half-max
-    γ = FWHM / 2
-    return @. A/π * γ / ((x-μ)^2 + γ^2)
+function Lorentzian(x::Float64, A::Float64, μ::Float64, FWHM::Float64)
+    return A/π * (FWHM/2) / ((x-μ)^2 + (FWHM/2)^2)
 end
 
-function Voigt(x::Vector{Float64}, A::Float64, μ::Float64, FWHM::Float64, η::Float64)
+function Voigt(x::Float64, A::Float64, μ::Float64, FWHM::Float64, η::Float64)
 
     # Reparametrize FWHM as dispersion σ
     σ = FWHM / (2√(2log(2))) 
     # Normalized Gaussian
-    G = @. 1/√(2π * σ^2) * exp(-(x-μ)^2 / (2σ^2))
+    G = 1/√(2π * σ^2) * exp(-(x-μ)^2 / (2σ^2))
     # Normalized Lorentzian
-    L = @. 1/π * (FWHM/2) / ((x-μ)^2 + (FWHM/2)^2)
+    L = 1/π * (FWHM/2) / ((x-μ)^2 + (FWHM/2)^2)
+
+    # Intensity parameter given the peak height A
+    I = A * FWHM * π / (2 * (1 + (√(π*log(2)) - 1)*η))
 
     # Mix the two distributions with the mixing parameter η
-    pV = η .* G .+ (1 .- η) .* L
-
-    # Renormalize 
-    pV ./= maximum(pV)
-    pV .*= A
+    pV = I * (η * G + (1 - η) * L)
 
     return pV
 end

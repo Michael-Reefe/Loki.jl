@@ -948,12 +948,12 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}, conti
     I = cube_fitter.cube.Iλ[spaxel..., :]
     σ = cube_fitter.cube.σI[spaxel..., :]
 
-    _, continuum, _ = continuum_cubic_spline(λ, I, σ)
+    mask_lines, continuum, _ = continuum_cubic_spline(λ, I, σ)
     N = Float64(abs(nanmaximum(I)))
     N = N ≠ 0. ? N : 1.
 
     # Add statistical uncertainties to the systematic uncertainties in quadrature
-    σ_stat = std(I .- continuum)
+    σ_stat = std(I[.!mask_lines] .- continuum[.!mask_lines])
     σ .= .√(σ.^2 .+ σ_stat.^2)
 
     # Normalized flux and uncertainty
@@ -1141,7 +1141,8 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{Int, Int}, conti
     lower_bounds = minimum.(priors)
     upper_bounds = maximum.(priors)
     # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous rt and max iterations
-    res = optimize(negln_probability, lower_bounds, upper_bounds, p₀, SAMIN(;rt=0.9, nt=2, ns=2, neps=2, verbosity=1), Optim.Options(iterations=10^6))
+    res = optimize(negln_probability, lower_bounds, upper_bounds, p₀, 
+        SAMIN(;rt=0.95, nt=5, ns=5, neps=5, verbosity=1), Optim.Options(iterations=10^6))
     p₁ = res.minimizer
 
     # Convert parameter limits into CMPFit object
@@ -1588,6 +1589,8 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{Int, 
     I = cube_fitter.cube.Iλ[spaxel..., :]
     σ = cube_fitter.cube.σI[spaxel..., :]
 
+    mask_lines, continuum, _ = continuum_cubic_spline(λ, I, σ)
+
     p_complex = zeros(2cube_fitter.n_complexes)
     pᵢ = 1
     for c ∈ cube_fitter.complexes
@@ -1601,14 +1604,9 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{Int, 
         # Integrate the intensity of the combined profile
         window = parse(Float64, c)
         p_complex[pᵢ] = NumericalIntegration.integrate(λ, Iᵢ, SimpsonEven())
-        p_complex[pᵢ] = p_complex[pᵢ] > 0. ? log10(p_complex[pᵢ]) : -Inf
+
         # SNR
-        p_complex[pᵢ+1] = maximum(Iᵢ) / 
-            std(I[(window-2cube_fitter.window_size .< λ .< window-cube_fitter.window_size) .| 
-                (window+cube_fitter.window_size .< λ .< window+2cube_fitter.window_size)])
-        if p_complex[pᵢ] == -Inf
-            p_complex[pᵢ+1] = 0.
-        end
+        p_complex[pᵢ+1] = maximum(Iᵢ) / std(I[.!mask_lines] .- continuum[.!mask_lines])
         pᵢ += 2
     end
 
@@ -1624,15 +1622,9 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{Int, 
         end
         window = ln.λ₀
         p_lines[pᵢ] = NumericalIntegration.integrate(λ, profile, SimpsonEven())
-        p_lines[pᵢ] = p_lines[pᵢ] > 0. ? log10(p_lines[pᵢ]) : -Inf
 
         # SNR
-        p_lines[pᵢ+1] = maximum(profile) /
-            std(I[(window-2cube_fitter.window_size .< λ .< window-cube_fitter.window_size) .| 
-                (window+cube_fitter.window_size .< λ .< window+2cube_fitter.window_size)])
-        if p_lines[pᵢ] == -Inf
-            p_lines[pᵢ+1] = 0.
-        end
+        p_lines[pᵢ+1] = maximum(profile) / std(I[.!mask_lines] .- continuum[.!mask_lines])
         pᵢ += 2
 
     end
@@ -1897,8 +1889,7 @@ function fit_cube(cube_fitter::CubeFitter)
             cube_fitter.line_flow_tied, [ln.flow_profile for ln ∈ cube_fitter.lines], [ln.λ₀ for ln ∈ cube_fitter.lines], 
             cube_fitter.flexible_wavesol; return_components=true)
         
-
-        # Set the 3D model cube outputs
+        # Renormalize
         N = Float64(abs(nanmaximum(cube_fitter.cube.Iλ[xᵢ, yᵢ, :])))
         N = N ≠ 0. ? N : 1.
         for comp ∈ keys(comps_l)
@@ -1906,33 +1897,28 @@ function fit_cube(cube_fitter::CubeFitter)
         end
         I_line .*= N
         
+        # Combine the continuum and line models
         I_model = I_cont .+ I_line
         comps = merge(comps_c, comps_l)
 
-        p_complex, p_lines = calculate_extra_parameters(cube_fitter, (xᵢ, yᵢ), comps)
-
-        i = 1
         for c ∈ cube_fitter.complexes
             # Dust complex intensity and SNR, from calculate_extra_parameters
-            cube_fitter.param_maps.dust_complexes[c][:intI][xᵢ, yᵢ] = p_complex[i] > 0. ? log10(p_complex[i]) : -Inf
-            cube_fitter.param_maps.dust_complexes[c][:SNR][xᵢ, yᵢ] = p_complex[i+1]
+            cube_fitter.param_maps.dust_complexes[c][:intI][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? log10(out_params[xᵢ, yᵢ, pᵢ]) : -Inf
+            cube_fitter.param_maps.dust_complexes[c][:SNR][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+1]
             pᵢ += 2
-            i += 2
         end
 
-        j = 1
         for (k, ln) ∈ enumerate(cube_fitter.line_names)
             # Line intensity and SNR, from calculate_extra_parameters
-            cube_fitter.param_maps.lines[ln][:intI][xᵢ, yᵢ] = p_lines[j] > 0. ? log10(p_lines[j]) : -Inf
-            cube_fitter.param_maps.lines[ln][:SNR][xᵢ, yᵢ] = p_lines[j+1]
+            cube_fitter.param_maps.lines[ln][:intI][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? log10(out_params[xᵢ, yᵢ, pᵢ]) : -Inf
+            cube_fitter.param_maps.lines[ln][:SNR][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+1]
             pᵢ += 2
-            j += 2
         end
 
         # Reduced χ^2
         cube_fitter.param_maps.reduced_χ2[xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ]
 
-
+        # Set 3D model cube outputs
         cube_fitter.cube_model.model[xᵢ, yᵢ, :] .= I_model
         cube_fitter.cube_model.stellar[xᵢ, yᵢ, :] .= comps["stellar"]
         for i ∈ 1:cube_fitter.n_dust_cont
