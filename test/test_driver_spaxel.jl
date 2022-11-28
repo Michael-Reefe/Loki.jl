@@ -24,8 +24,8 @@ cube_fitter = CubeFitter(obs.channels[2], obs.z, "test"; parallel=false, plot_sp
 interpolate_cube!(cube_fitter.cube)
 
 # Fit some individual spaxels
-x = [28, 33, 25, 13, 10, 6, 15]
-y = [12, 4, 19, 18, 14, 17, 38]
+x = [28, 28, 33, 25, 13, 10, 6, 15]
+y = [13, 12, 4, 19, 18, 14, 17, 38]
 
 # x = [31, 15, 15]
 # y = [23, 16, 17]

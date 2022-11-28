@@ -4,6 +4,8 @@ tie_H2_flow_voff = true
 tie_IP_voff = false
 tie_IP_flow_voff = false
 
+tie_voigt_mixing = true
+
 # Starting line FWHMs and voffs
 # fwhm_init = 100.0
 # voff_init = 0.0
@@ -24,7 +26,7 @@ R = [3500, 3000, 2200, 1700]
 
 # Uncertainty in the wavelength solution of the data
 flexible_wavesol = true                   # allow tied voffs to vary slightly based on wavelength solution uncertainty
-wavesol_unc = [100, 300, 400, 100]        # wavelength solution uncertainties in each of the 4 MIRI channels (in km/s)
+wavesol_unc = [100, 600, 800, 100]        # wavelength solution uncertainties in each of the 4 MIRI channels (in km/s)
 
 [channels]
 1 = [4.9, 7.65]

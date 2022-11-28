@@ -1,3 +1,4 @@
+extinction_curve = "d+"
 chi2_threshold = 1.5
 overwrite = false
 

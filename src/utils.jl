@@ -2,6 +2,9 @@ module Util
 
 using NaNStatistics
 using Interpolations
+using Dierckx
+using CSV
+using DataFrames
 
 # CONSTANTS
 
@@ -40,6 +43,48 @@ const kvt_prof = [8.0  0.06;
                   12.4 0.06;
                   12.6 0.045;
                   12.7 0.04314]
+
+
+function read_irs_data(path::String)
+    datatable = CSV.read(path, DataFrame, comment="#", delim=' ', ignorerepeated=true, stripwhitespace=true,
+        header=["rest_wave", "flux", "e_flux", "enod", "order", "module", "nod1flux", "nod2flux", "e_nod1flux", "e_nod2flux"])
+    return datatable[!, "rest_wave"], datatable[!, "flux"], datatable[!, "e_flux"]
+end
+
+function silicate_dp()
+    # Read in IRS 08572+3915 data from 00000003_0.ideos.mrt
+    λ_irs, F_irs, σ_irs = read_irs_data(joinpath(@__DIR__, "00000003_0.ideos.mrt"))
+    # Get flux values at anchor points + endpoints
+    anchors = [4.9, 5.5, 7.8, 13.0, 14.5, 26.5, λ_irs[end]]
+    values = zeros(length(anchors))
+    for (i, anchor) ∈ enumerate(anchors)
+        _, ki = findmin(k -> abs(k - anchor), λ_irs)
+        values[i] = F_irs[ki]
+    end
+
+    # Cubic spline fit with specific anchor points
+    cubic_spline_irs = Spline1D(anchors, values; k=3)
+
+    # Get optical depth
+    τ_DS = log.(cubic_spline_irs.(λ_irs) ./ F_irs)
+    # Smooth data and remove features < ~7.5 um
+    τ_smooth = movmean(τ_DS, 10)
+    v1, p1 = findmin(τ_DS[λ_irs .< 6])
+    v2, p2 = findmin(τ_DS[7 .< λ_irs .< 8])
+    slope_beg = (v2 - v1) / (λ_irs[7 .< λ_irs .< 8][p2] - λ_irs[λ_irs .< 6][p1])
+    beg_filt = λ_irs .< λ_irs[7 .< λ_irs .< 8][p2]
+    τ_smooth[beg_filt] .= v1 .+ slope_beg .* (λ_irs[beg_filt] .- λ_irs[1])
+
+    # Normalize to value at 9.7
+    τ_97 = τ_smooth[findmin(abs.(λ_irs .- 9.7))[2]]
+    τ_λ = τ_smooth ./ τ_97
+
+    # Return the cubic spline interpolator function
+    return λ_irs, τ_λ
+end
+
+const DPlus_prof = silicate_dp()
+
 
 # UTILITY FUNCTIONS
 
@@ -129,6 +174,18 @@ function τ_kvt(λ::Float64, β::Float64)
     return (1 - β) * ext + β * (9.7/λ)^1.7
 end
 
+function τ_dp(λ::Float64, β::Float64)
+    """
+    Calculate Donnan et al. extinction curve
+    """
+    # Simple cubic spline interpolation
+    ext = Spline1D(DPlus_prof[1], DPlus_prof[2]; k=3).(λ)
+
+    # Add 1.7 power law, as in PAHFIT
+    return (1 - β) * ext + β * (9.7/λ)^1.7
+end
+
+
 function Extinction(ext::Float64, τ_97::Float64, screen::Bool=true)
     """
     Calculate the overall extinction factor
@@ -140,8 +197,8 @@ function Extinction(ext::Float64, τ_97::Float64, screen::Bool=true)
 end
 
 
-function fit_spectrum(λ::Vector{Float64}, params::Vector{Float64}, n_dust_cont::Int64, n_dust_features::Int64; 
-    return_components::Bool=false, verbose::Bool=false)
+function fit_spectrum(λ::Vector{Float64}, params::Vector{Float64}, n_dust_cont::Int64, n_dust_features::Int64,
+    extinction_curve::String; return_components::Bool=false, verbose::Bool=false)
 
     # Adapted from PAHFIT (IDL)
 
@@ -188,7 +245,13 @@ function fit_spectrum(λ::Vector{Float64}, params::Vector{Float64}, n_dust_cont:
         println("Extinction:")
         println("$(params[pᵢ]), $(params[pᵢ+1])")
     end
-    ext_curve = τ_kvt.(λ, params[pᵢ+1])
+    if extinction_curve == "d+"
+        ext_curve = τ_dp.(λ, params[pᵢ+1])
+    elseif extinction_curve == "kvt"
+        ext_curve = τ_kvt.(λ, params[pᵢ+1])
+    else
+        error("Unrecognized extinction curve: $extinction_curve")
+    end
     comps["extinction"] = Extinction.(ext_curve, params[pᵢ])
     contin .*= comps["extinction"]
     pᵢ += 2
@@ -204,11 +267,15 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
     voff_tied_key::Vector{String}, line_tied::Vector{Union{String,Nothing}}, line_profiles::Vector{Symbol}, 
     n_flow_voff_tied::Int64, flow_voff_tied_key::Vector{String}, line_flow_tied::Vector{Union{String,Nothing}},
     line_flow_profiles::Vector{Union{Symbol,Nothing}}, line_restwave::Vector{Float64}, 
-    flexible_wavesol::Bool; return_components::Bool=false, verbose::Bool=false)
+    flexible_wavesol::Bool, tie_voigt_mixing::Bool; return_components::Bool=false, verbose::Bool=false)
 
     comps = Dict{String, Vector{Float64}}()
     contin = zeros(Float64, length(λ))
     pᵢ = n_voff_tied + n_flow_voff_tied + 1
+    if tie_voigt_mixing
+        ηᵢ = pᵢ
+        pᵢ += 1
+    end
 
     # Add emission lines
     for k ∈ 1:n_lines
@@ -225,8 +292,12 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
                 h4 = params[pᵢ+4]
                 msg *= ", $(params[pᵢ+3]), $(params[pᵢ+4])"
             elseif line_profiles[k] == :Voigt
-                η = params[pᵢ+3]
-                msg *= ", $(params[pᵢ]+3)"
+                if !tie_voigt_mixing
+                    η = params[pᵢ+3]
+                else
+                    η = params[ηᵢ]
+                end
+                msg *= ", $η"
             end
             if verbose
                 println(msg)
@@ -244,8 +315,12 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
                 h4 = params[pᵢ+4]
                 msg *= ", $(params[pᵢ+3]), $(params[pᵢ+4])"
             elseif line_profiles[k] == :Voigt
-                η = params[pᵢ+3]
-                msg *= ", $(params[pᵢ+3])"
+                if !tie_voigt_mixing
+                    η = params[pᵢ+3]
+                else
+                    η = params[ηᵢ]
+                end
+                msg *= ", $η"
             end
             if verbose
                 println(msg)
@@ -260,8 +335,12 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
                 h4 = params[pᵢ+3]
                 msg *= ", $(params[pᵢ+2]), $(params[pᵢ+3])"
             elseif line_profiles[k] == :Voigt
-                η = params[pᵢ+2]
-                msg *= ", $(params[pᵢ+2])"
+                if !tie_voigt_mixing
+                    η = params[pᵢ+2]
+                else
+                    η = params[ηᵢ]
+                end
+                msg *= ", $η"
             end
             if verbose
                 println(msg)
@@ -287,7 +366,9 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
         if line_profiles[k] == :GaussHermite
             pᵢ += 2
         elseif line_profiles[k] == :Voigt
-            pᵢ += 1
+            if !tie_voigt_mixing
+                pᵢ += 1
+            end
         end
 
         if !isnothing(line_flow_profiles[k])
@@ -303,8 +384,12 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
                     flow_h4 = params[pᵢ+4]
                     msg *= ", $(params[pᵢ+3]), $(params[pᵢ+4])"
                 elseif line_flow_profiles[k] == :Voigt
-                    flow_η = params[pᵢ+3]
-                    msg *= ", $(params[pᵢ]+3)"
+                    if !tie_voigt_mixing
+                        flow_η = params[pᵢ+3]
+                    else
+                        flow_η = params[ηᵢ]
+                    end
+                    msg *= ", $flow_η"
                 end
                 if verbose
                     println(msg)
@@ -319,8 +404,12 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
                     flow_h4 = params[pᵢ+3]
                     msg *= ", $(params[pᵢ+2]), $(params[pᵢ+3])"
                 elseif line_flow_profiles[k] == :Voigt
-                    flow_η = params[pᵢ+2]
-                    msg *= ", $(params[pᵢ+2])"
+                    if !tie_voigt_mixing
+                        flow_η = params[pᵢ+2]
+                    else
+                        flow_η = params[ηᵢ]
+                    end
+                    msg *= ", $flow_η"
                 end
                 if verbose
                     println(msg)
@@ -346,7 +435,9 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
             if line_flow_profiles[k] == :GaussHermite
                 pᵢ += 2
             elseif line_flow_profiles[k] == :Voigt
-                pᵢ += 1
+                if !tie_voigt_mixing
+                    pᵢ += 1
+                end
             end
         end
 
