@@ -1,4 +1,4 @@
-extinction_curve = "d+"
+extinction_curve = "kvt"
 chi2_threshold = 1.5
 overwrite = false
 
