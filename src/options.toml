@@ -1,6 +1,8 @@
-extinction_curve = "kvt"
-chi2_threshold = 1.5
+chi2_threshold = 3.0
 overwrite = false
+
+extinction_curve = "kvt"
+extinction_screen = false
 
 [cosmology]
 h = 0.70

@@ -18,23 +18,26 @@ obs = from_fits(["data/jw01328-o015_t014_miri_ch1-mediumshortlong-_s3d.fits",
 
 obs = correct(obs)
 
+# cube_rebin!(obs, [1,2,3,4])
+
 # Create the cube fitting object
-cube_fitter = CubeFitter(obs.channels[2], obs.z, "test"; parallel=false, plot_spaxels=:plotly,
+cube_fitter = CubeFitter(obs.channels[2], obs.z, "test", 1; parallel=false, plot_spaxels=:plotly,
     plot_maps=true, save_fits=true)
-interpolate_cube!(cube_fitter.cube)
 
 # Fit some individual spaxels
-x = [28, 28, 33, 25, 13, 10, 6, 15]
-y = [13, 12, 4, 19, 18, 14, 17, 38]
+# x = [28, 28, 33, 25, 13, 10, 6, 15]
+# y = [13, 12, 4, 19, 18, 14, 17, 38]
+x = [6]
+y = [17]
 
 # x = [31, 15, 15]
 # y = [23, 16, 17]
 
-for (xi, yi) ∈ zip(x, y)
+# (19,13) roughly corresponds to (28,13)
+# x = [19]
+# y = [13]
 
-    λ = cube_fitter.cube.λ
-    I = cube_fitter.cube.Iλ[xi, yi, :]
-    σ = cube_fitter.cube.σI[xi, yi, :]
+for (xi, yi) ∈ zip(x, y)
 
     # Fit continuum and lines
     @time fit_spaxel(cube_fitter, (xi, yi), verbose=true)

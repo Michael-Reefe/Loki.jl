@@ -1,6 +1,7 @@
 using Distributed
 
-addprocs(maximum([0, Sys.CPU_THREADS - 1]))
+procs = addprocs(maximum([0, Sys.CPU_THREADS - 1]))
+n_procs = length(procs)
 @everywhere begin
     using Pkg; Pkg.activate(dirname(@__DIR__))
     Pkg.instantiate(); Pkg.precompile()
@@ -25,7 +26,7 @@ obs = from_fits(["data/jw01328-o015_t014_miri_ch1-mediumshortlong-_s3d.fits",
 obs = correct(obs)
 
 # Create the cube fitting object
-cube_fitter = CubeFitter(obs.channels[2], obs.z, obs.name * "_ch2_test_SAMIN"; parallel=true, plot_spaxels=:pyplot,
+cube_fitter = CubeFitter(obs.channels[2], obs.z, obs.name * "_ch2_test_SAMIN", n_procs; parallel=true, plot_spaxels=:pyplot,
     plot_maps=true, save_fits=true)
 
 # Perform the Levenberg-Marquardt least-squares fitting

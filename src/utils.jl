@@ -96,6 +96,7 @@ extend(array1d, shape) = repeat(reshape(array1d, (1,1,length(array1d))), outer=[
 
 # Convert wavelength to rest-frame
 rest_frame(λ, z) = @. λ / (1 + z)
+observed_frame(λ, z) = @. λ * (1 + z)
 
 # Relativistic doppler shift
 Doppler_shift_λ(λ₀, v) = λ₀ * √((1+v/C_KMS)/(1-v/C_KMS))
@@ -186,7 +187,7 @@ function τ_dp(λ::Float64, β::Float64)
 end
 
 
-function Extinction(ext::Float64, τ_97::Float64, screen::Bool=true)
+function Extinction(ext::Float64, τ_97::Float64; screen::Bool=false)
     """
     Calculate the overall extinction factor
     """
@@ -198,7 +199,7 @@ end
 
 
 function fit_spectrum(λ::Vector{Float64}, params::Vector{Float64}, n_dust_cont::Int64, n_dust_features::Int64,
-    extinction_curve::String; return_components::Bool=false, verbose::Bool=false)
+    extinction_curve::String, extinction_screen::Bool; return_components::Bool=false, verbose::Bool=false)
 
     # Adapted from PAHFIT (IDL)
 
@@ -252,7 +253,7 @@ function fit_spectrum(λ::Vector{Float64}, params::Vector{Float64}, n_dust_cont:
     else
         error("Unrecognized extinction curve: $extinction_curve")
     end
-    comps["extinction"] = Extinction.(ext_curve, params[pᵢ])
+    comps["extinction"] = Extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
     contin .*= comps["extinction"]
     pᵢ += 2
 
