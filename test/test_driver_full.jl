@@ -8,9 +8,15 @@ n_procs = length(procs)
 end
 @everywhere using Loki
 
+# using Pkg; Pkg.activate(dirname(@__DIR__))
+# Pkg.instantiate(); Pkg.precompile()
+# using Loki
+# n_procs = 1
+
 parent = joinpath(dirname(@__DIR__), "test", "data")
 
 # Load in data
+channel = 1
 obs = from_fits(["data/jw01328-o015_t014_miri_ch1-mediumshortlong-_s3d.fits", 
     "data/jw01328-o015_t014_miri_ch2-mediumshortlong-_s3d.fits", 
     "data/jw01328-o015_t014_miri_ch3-mediumshortlong-_s3d.fits", 
@@ -26,8 +32,8 @@ obs = from_fits(["data/jw01328-o015_t014_miri_ch1-mediumshortlong-_s3d.fits",
 obs = correct(obs)
 
 # Create the cube fitting object
-cube_fitter = CubeFitter(obs.channels[2], obs.z, obs.name * "_ch2_test_SAMIN", n_procs; parallel=true, plot_spaxels=:pyplot,
-    plot_maps=true, save_fits=true)
+cube_fitter = CubeFitter(obs.channels[channel], obs.z, obs.name * "_ch$(channel)_test_SAMIN", n_procs; 
+    parallel=true, plot_spaxels=:pyplot, plot_maps=true, save_fits=true)
 
 # Perform the Levenberg-Marquardt least-squares fitting
 cube_fitter = @time fit_cube(cube_fitter)

@@ -8,14 +8,14 @@ using DataFrames
 
 # CONSTANTS
 
-const C_MS = 299792458.           # Speed of light in m/s
-const C_KMS = C_MS / 1000         # Speed of light in km/s
+const C_KMS = 299792.458          # Speed of light in km/s
 const h_ERGS = 6.62607015e-27     # Planck constant in erg*s
 const kB_ERGK = 1.380649e-16      # Boltzmann constant in erg/K
 
 const Bν_1 = 3.97289e13           # First constant for Planck function, in MJy/sr/μm
 const Bν_2 = 1.4387752e4          # Second constant for Planck function, in μm*K
 
+# Saved Kemper, Vriend, & Tielens (2004) extinction profile
 const kvt_prof = [8.0  0.06;
                   8.2  0.09;
                   8.4  0.16;
@@ -45,13 +45,28 @@ const kvt_prof = [8.0  0.06;
                   12.7 0.04314]
 
 
+"""
+    read_irs_data(path)
+
+Setup function for reading in the configuration IRS spectrum of IRS 08572+3915
+
+# Arguments
+- `path::String`: The file path pointing to the IRS 08572+3915 spectrum 
+"""
 function read_irs_data(path::String)
     datatable = CSV.read(path, DataFrame, comment="#", delim=' ', ignorerepeated=true, stripwhitespace=true,
         header=["rest_wave", "flux", "e_flux", "enod", "order", "module", "nod1flux", "nod2flux", "e_nod1flux", "e_nod2flux"])
     return datatable[!, "rest_wave"], datatable[!, "flux"], datatable[!, "e_flux"]
 end
 
+
+"""
+    silicate_dp()
+
+Setup function for creating a silicate extinction profile based on Donnan et al. (2022)
+"""
 function silicate_dp()
+
     # Read in IRS 08572+3915 data from 00000003_0.ideos.mrt
     λ_irs, F_irs, σ_irs = read_irs_data(joinpath(@__DIR__, "00000003_0.ideos.mrt"))
     # Get flux values at anchor points + endpoints
@@ -79,49 +94,224 @@ function silicate_dp()
     τ_97 = τ_smooth[findmin(abs.(λ_irs .- 9.7))[2]]
     τ_λ = τ_smooth ./ τ_97
 
-    # Return the cubic spline interpolator function
     return λ_irs, τ_λ
 end
 
+# Save the Donnan et al. 2022 profile as a constant
 const DPlus_prof = silicate_dp()
 
 
-# UTILITY FUNCTIONS
+########################################### UTILITY FUNCTIONS ###############################################
 
-# Sum along specific dimensions, ignoring nans, and dropping those dimensions
+"""
+    Σ(array, dims)
+
+Sum `array` along specific dimensions `dims`, ignoring nans, and dropping those dimensions
+
+# Example
+```jldoctest
+julia> Σ([1 2; 3 NaN], 1)
+2-element Vector{Float64}:
+ 4.0
+ 2.0
+```
+"""
 Σ(array, dims) = dropdims(nansum(array, dims=dims), dims=dims)
 
-# Extend a 1D array into other dimensions
+
+"""
+    extend(array1d, shape)
+
+Extend `array1d` into other dimensions specified by `shape`
+
+# Example
+```jldoctest
+julia> extend([1,2,3], (4,5))
+4×5×3 Array{Int64, 3}:
+[:, :, 1] =
+ 1  1  1  1  1
+ 1  1  1  1  1
+ 1  1  1  1  1
+ 1  1  1  1  1
+
+[:, :, 2] =
+ 2  2  2  2  2
+ 2  2  2  2  2
+ 2  2  2  2  2
+ 2  2  2  2  2
+
+[:, :, 3] =
+ 3  3  3  3  3
+ 3  3  3  3  3
+ 3  3  3  3  3
+ 3  3  3  3  3
+```
+"""
 extend(array1d, shape) = repeat(reshape(array1d, (1,1,length(array1d))), outer=[shape...,1])
 
-# Convert wavelength to rest-frame
+
+"""
+    rest_frame(λ, z)
+
+Convert observed-frame wavelength `λ` to rest-frame specified by redshift `z`
+
+# Example
+```jldoctest
+julia> rest_frame([5, 5.1, 5.2], 0.1)
+3-element Vector{Float64}:
+ 4.545454545454545
+ 4.636363636363636
+ 4.727272727272727
+```
+"""
 rest_frame(λ, z) = @. λ / (1 + z)
+
+
+"""
+    observed_frame(λ, z)
+
+Convert rest-frame wavelength `λ` specified by redshift `z` to observed-frame
+
+# Example
+```jldoctest
+julia> observed_frame([5, 5.1, 5.2], 0.1)
+3-element Vector{Float64}:
+ 5.5
+ 5.61
+ 5.720000000000001
+```
+"""
 observed_frame(λ, z) = @. λ * (1 + z)
 
-# Relativistic doppler shift
+
+"""
+    Doppler_shift_λ(λ₀, v)
+
+Convert rest-frame wavelength `λ₀` to observed frame using the relativistic doppler shift at a 
+given velocity `v` in km/s
+
+# Examples
+```jldoctest
+julia> Doppler_shift_λ(10, 100)
+10.003336197462627
+julia> Doppler_shift_λ(10, -100)
+9.996664915187521
+julia> Doppler_shift_λ(10, 0)
+10.0
+```
+"""
 Doppler_shift_λ(λ₀, v) = λ₀ * √((1+v/C_KMS)/(1-v/C_KMS))
+
+
+"""
+    Doppler_shift_v(λ, λ₀)
+
+Calculate the velocity in km/s required for the observed shift in wavelength between
+`λ` and `λ₀`
+
+# Examples
+```jldoctest
+julia> Doppler_shift_v(10.1, 10)
+2982.9356991238064
+julia> Doppler_shift_v(9.9, 10)
+-3012.9134458865756
+julia> Doppler_shift_v(10, 10)
+0.0
+```
+"""
 Doppler_shift_v(λ, λ₀) = ((λ/λ₀)^2 - 1)/((λ/λ₀)^2 + 1) * C_KMS
 
-# Doppler shift approximation for v << c
+
+"""
+    Doppler_width_v(Δλ, λ₀)
+
+Doppler shift approximation for v << c: given a rest-frame wavelength `λ₀` and wavelength
+shift `Δλ`, calculate the required velocity difference `Δv`
+
+# Examples
+```jldoctest
+julia> Doppler_width_v(0.1, 10)
+2997.92458
+julia> Doppler_width_v(0.0, 10)
+0.0
+```
+"""
 Doppler_width_v(Δλ, λ₀) = Δλ / λ₀ * C_KMS
+
+
+"""
+    Doppler_width_λ(Δv, λ₀)
+
+Doppler shift approximation for v << c: given a rest-frame wavelength `λ₀` and velocity
+shift `Δv`, calculate the wavelength shift `Δλ`
+
+# Examples
+```jldoctest
+julia> Doppler_width_λ(3000, 10)
+0.10006922855944561
+julia> Doppler_width_λ(0, 10)
+0.0
+```
+"""
 Doppler_width_λ(Δv, λ₀) = Δv / C_KMS * λ₀
 
-# Integral of a Gaussian
+
+"""
+    ∫Gaussian(A, σ)
+
+Integral of a Gaussian with amplitude `A` and standard deviation `σ`
+
+# Examples
+```jldoctest
+julia> ∫Gaussian(1, 1)
+2.5066282746310002
+julia> ∫Gaussian(0, 1)
+0.0
+julia> ∫Gaussian(-1, 1)
+-2.5066282746310002
+```
+"""
 ∫Gaussian(A, σ) = √(2π) * A * σ
 
-# Convert units
-to_cgs(F, λ) = F .* 1e-7 .* Util.C_MS ./ λ.^2    # λ in angstroms, F (MJy/sr) -> (erg/s/cm^2/A/sr)
-to_MJy_sr(F, λ) = F .* 1e7 ./ Util.C_MS .* λ.^2  # λ in angstroms, F (erg/s/cm^2/A/sr) -> (MJy/sr)
 
-# Log of the likelihood for a given model
-function ln_likelihood(data::Union{Vector{Float32},Vector{Float64}}, model::Union{Vector{Float32},Vector{Float64}}, 
-    err::Union{Vector{Float32},Vector{Float64}})
+# Convert units
+# to_cgs(F, λ) = F .* 1e-7 .* Util.C_MS ./ λ.^2    # λ in angstroms, F (MJy/sr) -> (erg/s/cm^2/A/sr)
+# to_MJy_sr(F, λ) = F .* 1e7 ./ Util.C_MS .* λ.^2  # λ in angstroms, F (erg/s/cm^2/A/sr) -> (MJy/sr)
+
+
+"""
+    ln_likelihood(data, model, err)
+
+Natural log of the likelihood for a given `model`, `data`, and `err`
+
+# Example
+```jldoctest
+julia> ln_likelihood([1.1, 1.9, 3.2], [1., 2., 3.], [0.1, 0.1, 0.1])
+1.1509396793681144
+```
+"""
+function ln_likelihood(data::Vector{<:AbstractFloat}, model::Vector{<:AbstractFloat}, err::Vector{<:AbstractFloat})
     return -0.5 * sum((data .- model).^2 ./ err.^2 .+ log.(2π .* err.^2))
 end
 
-# Hermite polynomial of order n computed using the recurrence relations
-# (gets slow around/above order ~30)
-function hermite(x::Float64, n::Int)
+
+"""
+    hermite(x, n)
+
+Hermite polynomial of order n computed using the recurrence relations
+(gets slow around/above order ~30)
+
+# Examples
+```jldoctest
+julia> hermite(0., 1)
+0.0
+julia> hermite(1., 2)
+2.0
+julia> hermite(2., 3)
+40.0
+```
+"""
+function hermite(x::AbstractFloat, n::Integer)
     if iszero(n)
         return 1.
     elseif isone(n)
@@ -132,34 +322,54 @@ function hermite(x::Float64, n::Int)
 end
 
 
-# BLACKBODY PROFILE
+############################################### BLACKBODY PROFILE ##############################################
 
-function Blackbody_ν(λ::Float64, Temp::Float64) 
-    """
-    Return the Blackbody function Bν (per unit FREQUENCY) in MJy/sr,
-    given a wavelength in μm and a temperature in Kelvins.
-    """
+
+"""
+    Blackbody_ν(λ, Temp)
+
+Return the Blackbody function Bν (per unit FREQUENCY) in MJy/sr,
+given a wavelength in μm and a temperature in Kelvins.
+
+Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
+"""
+function Blackbody_ν(λ::AbstractFloat, Temp::Real) 
     return Bν_1/λ^3 / (exp(Bν_2/(λ*Temp))-1)
 end
 
-# PAH PROFILES
 
+################################################# PAH PROFILES ################################################
+
+
+"""
+    Drude(x, A, μ, FWHM)
+
+Calculate a Drude profile at location `x`, with amplitude `A`, central value `μ`, and full-width at half-max `FWHM`
+
+Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
+"""
 function Drude(x::Float64, A::Float64, μ::Float64, FWHM::Float64)
-    """
-    Calculate a Drude profile
-    """
     return A * (FWHM/μ)^2 / ((x/μ - μ/x)^2 + (FWHM/μ)^2)
 end
 
-# EXTINCTION
+############################################## EXTINCTION PROFILES #############################################
 
-function τ_kvt(λ::Float64, β::Float64)
-    """
-    Calculate extinction curve
-    """
+
+"""
+    τ_kvt(λ, β)
+
+Calculate the mixed silicate extinction profile based on Kemper, Vriend, & Tielens (2004) 
+
+Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
+(with modifications)
+"""
+function τ_kvt(λ::AbstractFloat, β::AbstractFloat)
+
+    # Get limits of the values that we have datapoints for via the kvt_prof constant
     mx, mn = argmax(kvt_prof[:, 1]), argmin(kvt_prof[:, 1])
     λ_mx, λ_mn = kvt_prof[mx, 1], kvt_prof[mn, 1]
 
+    # Interpolate based on the region of data 
     if λ ≤ λ_mn
         ext = kvt_prof[mn, 2] * exp(2.03 * (λ - λ_mn))
     elseif λ_mn < λ < λ_mx
@@ -170,15 +380,21 @@ function τ_kvt(λ::Float64, β::Float64)
         ext = 0.
     end
     ext = ext < 0 ? 0. : ext
+
+    # Add a drude profile around 18 microns
     ext += Drude(λ, 0.4, 18., 4.446)
 
     return (1 - β) * ext + β * (9.7/λ)^1.7
 end
 
-function τ_dp(λ::Float64, β::Float64)
-    """
-    Calculate Donnan et al. extinction curve
-    """
+
+"""
+    τ_dp(λ, β)
+
+Calculate the mixed silicate extinction profile based on Donnan et al. (2022)
+"""
+function τ_dp(λ::AbstractFloat, β::AbstractFloat)
+
     # Simple cubic spline interpolation
     ext = Spline1D(DPlus_prof[1], DPlus_prof[2]; k=3).(λ)
 
@@ -198,11 +414,36 @@ function Extinction(ext::Float64, τ_97::Float64; screen::Bool=false)
 end
 
 
-function fit_spectrum(λ::Vector{Float64}, params::Vector{Float64}, n_dust_cont::Int64, n_dust_features::Int64,
+############################################## FITTING FUNCTIONS #############################################
+
+
+"""
+    fit_spectrum(λ, params, n_dust_cont, n_dust_features, extinction_curve, extinction_screen;
+        return_components=return_components, verbose=verbose)
+
+Create a model of the continuum (including stellar+dust continuum, PAH features, and extinction, excluding emission lines)
+at the given wavelengths `λ`, given the parameter vector `params`.
+
+Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
+(with modifications)
+
+# Arguments
+- `λ::Vector{<:AbstractFloat}`: Wavelength vector of the spectrum to be fit
+- `params::Vector{<:AbstractFloat}`: Parameter vector. Parameters should be ordered as: 
+    `[stellar amp, stellar temp, (amp, temp for each dust continuum), (amp, mean, FWHM for each PAH profile), 
+    extinction τ, extinction β]`
+- `n_dust_cont::Integer`: Number of dust continuum profiles to be fit
+- `n_dust_features::Integer`: Number of PAH dust features to be fit
+- `extinction_curve::String`: The type of extinction curve to use, "kvt" or "d+"
+- `extinction_screen::Bool`: Whether or not to use a screen model for the extinction curve
+- `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
+    addition to the overall fit
+- `verbose::Bool=false`: Whether or not to print out status messages
+"""
+function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_dust_cont::Integer, n_dust_features::Integer,
     extinction_curve::String, extinction_screen::Bool; return_components::Bool=false, verbose::Bool=false)
 
-    # Adapted from PAHFIT (IDL)
-
+    # Prepare outputs
     comps = Dict{String, Vector{Float64}}()
     contin = zeros(Float64, length(λ))
 
@@ -257,6 +498,7 @@ function fit_spectrum(λ::Vector{Float64}, params::Vector{Float64}, n_dust_cont:
     contin .*= comps["extinction"]
     pᵢ += 2
 
+    # Return components if necessary
     if return_components
         return contin, comps
     end
@@ -264,15 +506,55 @@ function fit_spectrum(λ::Vector{Float64}, params::Vector{Float64}, n_dust_cont:
 
 end
 
-function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_lines::Int64, n_voff_tied::Int64, 
+
+"""
+    fit_line_residuals(λ, params, n_lines, n_voff_tied, voff_tied_key, line_tied, line_profiles,
+        n_flow_voff_tied, flow_voff_tied_key, line_flow_tied, line_flow_profiles, line_restwave,
+        flexible_wavesol, tie_voigt_mixing; return_components=return_components, verbose=verbose)
+
+Create a model of the emission lines at the given wavelengths `λ`, given the parameter vector `params`.
+
+Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
+(with modifications)
+
+# Arguments
+- `λ::Vector{<:AbstractFloat}`: Wavelength vector of the spectrum to be fit
+- `params::Vector{<:AbstractFloat}`: Parameter vector. Parameters should be ordered as: 
+    `[tied velocity offsets, tied flow velocity offsets, tied voigt mixing, 
+    (amp[, voff], FWHM[, h3, h4, η], [flow_amp, flow_voff, flow_FWHM, flow_h3, flow_h4, flow_η] for each line)]`
+- `n_lines::Integer`: Number of lines being fit
+- `n_voff_tied::Integer`: Number of tied velocity offsets
+- `voff_tied_key::Vector{String}`: Unique identifiers for each tied velocity offset parameter
+- `line_tied::Vector{Union{String,Nothing}}`: Vector, length of n_lines, giving the identifier corresponding to
+    the values in `voff_tied_key` that corresponds to which tied velocity offset should be used for a given line,
+    if any.
+- `line_profiles::Vector{Symbol}`: Vector, length of n_lines, that gives the profile type that should be used to
+    fit each line. The profiles should be one of `:Gaussian`, `:Lorentzian`, `:GaussHermite`, or `:Voigt`
+- `n_flow_voff_tied::Integer`: Same as `n_voff_tied`, but for inflow/outflow line components
+- `flow_voff_tied_key::Vector{String}`: Same as `voff_tied_key`, but for inflow/outflow line components
+- `line_flow_tied::Vector{Union{String,Nothing}}`: Same as `line_tied`, but for inflow/outflow line components
+- `line_flow_profiles::Vector{Union{Symbol,Nothing}}`: Same as `line_profiles`, but for inflow/outflow line components
+- `line_restwave::Vector{<:AbstractFloat}`: Vector, length of n_lines, giving the rest wavelengths of each line
+- `flexible_wavesol::Bool`: Whether or not to allow small variations in tied velocity offsets, to account for a poor
+    wavelength solution in the data
+- `tie_voigt_mixing::Bool`: Whether or not to tie the mixing parameters of all Voigt profiles together
+- `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
+    addition to the overall fit
+- `verbose::Bool=false`: Whether or not to print out status messages
+"""
+function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_lines::Integer, n_voff_tied::Integer, 
     voff_tied_key::Vector{String}, line_tied::Vector{Union{String,Nothing}}, line_profiles::Vector{Symbol}, 
-    n_flow_voff_tied::Int64, flow_voff_tied_key::Vector{String}, line_flow_tied::Vector{Union{String,Nothing}},
-    line_flow_profiles::Vector{Union{Symbol,Nothing}}, line_restwave::Vector{Float64}, 
+    n_flow_voff_tied::Integer, flow_voff_tied_key::Vector{String}, line_flow_tied::Vector{Union{String,Nothing}},
+    line_flow_profiles::Vector{Union{Symbol,Nothing}}, line_restwave::Vector{<:AbstractFloat}, 
     flexible_wavesol::Bool, tie_voigt_mixing::Bool; return_components::Bool=false, verbose::Bool=false)
 
+    # Prepare outputs
     comps = Dict{String, Vector{Float64}}()
     contin = zeros(Float64, length(λ))
+
+    # Skip ahead of the tied velocity offsets of the lines and flow components
     pᵢ = n_voff_tied + n_flow_voff_tied + 1
+    # If applicable, skip ahead of the tied voigt mixing
     if tie_voigt_mixing
         ηᵢ = pᵢ
         pᵢ += 1
@@ -285,14 +567,18 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
             println("Line at $(line_restwave[k]):")
         end
         if isnothing(line_tied[k])
+            # Unpack the components of the line
             voff = params[pᵢ+1]
             fwhm = params[pᵢ+2]
             msg = "$(params[pᵢ]), $(params[pᵢ+1]) (united), $(params[pᵢ+2])"
             if line_profiles[k] == :GaussHermite
+                # Get additional h3, h4 components
                 h3 = params[pᵢ+3]
                 h4 = params[pᵢ+4]
                 msg *= ", $(params[pᵢ+3]), $(params[pᵢ+4])"
             elseif line_profiles[k] == :Voigt
+                # Get additional mixing component, either from the tied position or the 
+                # individual position
                 if !tie_voigt_mixing
                     η = params[pᵢ+3]
                 else
@@ -304,18 +590,23 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
                 println(msg)
             end
         elseif !isnothing(line_tied[k]) && flexible_wavesol
+            # Find the position of the tied velocity offset that should be used
+            # based on matching the keys in line_tied and voff_tied_key
             vwhere = findfirst(x -> x == line_tied[k], voff_tied_key)
             voff_series = params[vwhere]
             voff_indiv = params[pᵢ+1]
-            # Add velocity shifts of the tied lines and the individual offsets
+            # Add velocity shifts of the tied lines and the individual offsets together
             voff = voff_series + voff_indiv
             fwhm = params[pᵢ+2]
             msg = "$(params[pᵢ]), $(params[vwhere]) (tied) + $(params[pᵢ+1]) (united), $(params[pᵢ+2])"
             if line_profiles[k] == :GaussHermite
+                # Get additional h3, h4 components
                 h3 = params[pᵢ+3]
                 h4 = params[pᵢ+4]
                 msg *= ", $(params[pᵢ+3]), $(params[pᵢ+4])"
             elseif line_profiles[k] == :Voigt
+                # Get additional mixing component, either from the tied position or the 
+                # individual position
                 if !tie_voigt_mixing
                     η = params[pᵢ+3]
                 else
@@ -327,15 +618,21 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
                 println(msg)
             end
         else
+            # Find the position of the tied velocity offset that should be used
+            # based on matching the keys in line_tied and voff_tied_key
             vwhere = findfirst(x -> x == line_tied[k], voff_tied_key)
             voff = params[vwhere]
             fwhm = params[pᵢ+1]
+            # (dont add any individual voff components)
             msg = "$(params[pᵢ]), $(params[vwhere]) (tied), $(params[pᵢ+1])"
             if line_profiles[k] == :GaussHermite
+                # Get additional h3, h4 components
                 h3 = params[pᵢ+2]
                 h4 = params[pᵢ+3]
                 msg *= ", $(params[pᵢ+2]), $(params[pᵢ+3])"
             elseif line_profiles[k] == :Voigt
+                # Get additional mixing component, either from the tied position or the 
+                # individual position
                 if !tie_voigt_mixing
                     η = params[pᵢ+2]
                 else
@@ -347,6 +644,7 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
                 println(msg)
             end
         end
+
         # Convert voff in km/s to mean wavelength in μm
         mean_μm = Doppler_shift_λ(line_restwave[k], voff)
         # Convert FWHM from km/s to μm
@@ -354,6 +652,8 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
         # Evaluate line profile
         if line_profiles[k] == :Gaussian
             comps["line_$k"] = Gaussian.(λ, params[pᵢ], mean_μm, fwhm_μm)
+        elseif line_profiles[k] == :Lorentzian
+            comps["line_$k"] = Lorentzian.(λ, params[pᵢ], mean_μm, fwhm_μm)
         elseif line_profiles[k] == :GaussHermite
             comps["line_$k"] = GaussHermite.(λ, params[pᵢ], mean_μm, fwhm_μm, h3, h4)
         elseif line_profiles[k] == :Voigt
@@ -362,16 +662,21 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
             error("Unrecognized line profile $(line_profiles[k])!")
         end
 
+        # Add the line profile into the overall model
         contin .+= comps["line_$k"]        
+        # Advance the parameter vector index -> 3 if untied (or tied + flexible_wavesol) or 2 if tied
         pᵢ += isnothing(line_tied[k]) || flexible_wavesol ? 3 : 2
         if line_profiles[k] == :GaussHermite
+            # advance and extra 2 if GaussHermite profile
             pᵢ += 2
         elseif line_profiles[k] == :Voigt
+            # advance another extra 1 if untied Voigt profile
             if !tie_voigt_mixing
                 pᵢ += 1
             end
         end
 
+        # Repeat EVERYTHING, minus the flexible_wavesol, for the inflow/outflow components
         if !isnothing(line_flow_profiles[k])
             if verbose
                 println("Flow component:")
@@ -423,6 +728,8 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
             # Evaluate line profile
             if line_flow_profiles[k] == :Gaussian
                 comps["line_$(k)_flow"] = Gaussian.(λ, params[pᵢ], flow_mean_μm, flow_fwhm_μm)
+            elseif line_flow_profiles[k] == :Lorentzian
+                comps["line_$(k)_flow"] = Lorentzian.(λ, params[pᵢ], flow_mean_μm, flow_fwhm_μm)
             elseif line_profiles[k] == :GaussHermite
                 comps["line_$(k)_flow"] = GaussHermite.(λ, params[pᵢ], flow_mean_μm, flow_fwhm_μm, flow_h3, flow_h4)
             elseif line_profiles[k] == :Voigt
@@ -431,7 +738,9 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
                 error("Unrecognized flow line profile $(line_profiles[k])!")
             end
 
-            contin .+= comps["line_$(k)_flow"]        
+            # Add the inflow/outflow component into the overall model
+            contin .+= comps["line_$(k)_flow"]
+            # Advance the parameter vector index by the appropriate amount        
             pᵢ += isnothing(line_flow_tied[k]) ? 3 : 2
             if line_flow_profiles[k] == :GaussHermite
                 pᵢ += 2
@@ -444,6 +753,7 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
 
     end
 
+    # Return components if necessary
     if return_components
         return contin, comps
     end
@@ -452,22 +762,32 @@ function fit_line_residuals(λ::Vector{Float64}, params::Vector{Float64}, n_line
 end
 
 
-# LINE PROFILES
+############################################## LINE PROFILES #############################################
 
-function Gaussian(x::Float64, A::Float64, μ::Float64, FWHM::Float64)
-    """
-    Gaussian profile parameterized in terms of the FWHM
-    """
+
+"""
+    Gaussian(x, A, μ, FWHM)
+
+Evaluate a Gaussian profile at `x`, parameterized by the amplitude `A`, mean value `μ`, and 
+full-width at half-maximum `FWHM`
+"""
+function Gaussian(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::AbstractFloat)
     # Reparametrize FWHM as dispersion σ
     σ = FWHM / (2√(2log(2)))
     return A * exp(-(x-μ)^2 / (2σ^2))
 end
 
-function GaussHermite(x::Float64, A::Float64, μ::Float64, FWHM::Float64, h₃::Float64, h₄::Float64)
-    """
-    Gauss-Hermite line profiles 
-    (see Riffel et al. 2010)
-    """
+
+"""
+    GaussHermite(x, A, μ, FWHM, h₃, h₄)
+
+Evaluate a Gauss-Hermite quadrature at `x`, parametrized by the amplitude `A`, mean value `μ`,
+full-width at half-maximum `FWHM`, 3rd moment / skewness `h₃`, and 4th moment / kurtosis `h₄`
+
+See Riffel et al. (2010)
+"""
+function GaussHermite(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::AbstractFloat, h₃::AbstractFloat, h₄::AbstractFloat)
+
     h = [h₃, h₄]
     # Reparametrize FWHM as dispersion σ
     σ = FWHM / (2√(2log(2)))
@@ -492,11 +812,25 @@ function GaussHermite(x::Float64, A::Float64, μ::Float64, FWHM::Float64, h₃::
     return GH
 end
 
-function Lorentzian(x::Float64, A::Float64, μ::Float64, FWHM::Float64)
+
+"""
+    Lorentzian(x, A, μ, FWHM)
+
+Evaluate a Lorentzian profile at `x`, parametrized by the amplitude `A`, mean value `μ`,
+and full-width at half-maximum `FWHM`
+"""
+function Lorentzian(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::AbstractFloat)
     return A/π * (FWHM/2) / ((x-μ)^2 + (FWHM/2)^2)
 end
 
-function Voigt(x::Float64, A::Float64, μ::Float64, FWHM::Float64, η::Float64)
+
+"""
+    Voigt(x, A, μ, FWHM, η)
+
+Evaluate a pseudo-Voigt profile at `x`, parametrized by the amplitude `A`, mean value `μ`,
+full-width at half-maximum `FWHM`, and mixing ratio `η`
+"""
+function Voigt(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::AbstractFloat, η::AbstractFloat)
 
     # Reparametrize FWHM as dispersion σ
     σ = FWHM / (2√(2log(2))) 

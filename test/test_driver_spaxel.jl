@@ -17,6 +17,7 @@ obs = from_fits(["data/jw01328-o015_t014_miri_ch1-mediumshortlong-_s3d.fits",
 #     0.0266)
 
 obs = correct(obs)
+interpolate_cube!(obs)
 
 # cube_rebin!(obs, [1,2,3,4])
 

@@ -6,13 +6,15 @@ export DataCube, Observation, from_fits, to_rest_frame, apply_mask, correct, int
 # Import packages
 using Statistics
 using NaNStatistics  # => statistics functions, but ignoring NaNs
-using ProgressMeter
+using ProgressMeter  # => nifty way of showing progress bars for long loops
 using Printf
 
 # Import astronomy packages
 using FITSIO
 using Cosmology
 using WCS
+
+# Interpolation packages
 using Interpolations
 using Dierckx
 
@@ -24,92 +26,89 @@ using Reexport
 # Plotting with Python
 using PyPlot
 
-# Python imports
-# ENV["PYTHON"] = "/opt/homebrew/Caskroom/miniforge/base/envs/jwst_env/bin/python3"
-# using Pkg
-# Pkg.build("PyCall")
-
+# PyCall is only needed to import an additional matplotlib package
 using PyCall
+# Importing it within the __init__ function is necessary so that it works after precompilation
 const py_anchored_artists = PyNULL()
+
+# MATPLOTLIB SETTINGS TO MAKE PLOTS LOOK PRETTY :)
+const SMALL = 12
+const MED = 14
+const BIG = 16
 function __init__()
+    # Import the anchored_artists package from matplotlib
     copy!(py_anchored_artists, pyimport_conda("mpl_toolkits.axes_grid1.anchored_artists", "matplotlib"))
-    plt.switch_backend("Agg")
+
+    plt.switch_backend("Agg")         # switch to agg backend so that nothing is displayed, just saved to files
+    plt.rc("font", size=MED)          # controls default text sizes
+    plt.rc("axes", titlesize=MED)     # fontsize of the axes title
+    plt.rc("axes", labelsize=MED)     # fontsize of the x and y labels
+    plt.rc("xtick", labelsize=SMALL)  # fontsize of the tick labels
+    plt.rc("ytick", labelsize=SMALL)  # fontsize of the tick labels
+    plt.rc("legend", fontsize=MED)    # legend fontsize
+    plt.rc("figure", titlesize=BIG)   # fontsize of the figure title
+    plt.rc("text", usetex=true)       # use LaTeX
+    plt.rc("font", family="Times New Roman")  # use Times New Roman font
 end
 
+# Import and reexport the utils functions for use all throughout the code
 include("utils.jl")
 @reexport using .Util
 
-# MATPLOTLIB SETTINGS TO MAKE PLOTS LOOK PRETTY :)
-SMALL = 12
-MED = 14
-BIG = 16
 
-plt.rc("font", size=MED)          # controls default text sizes
-plt.rc("axes", titlesize=MED)     # fontsize of the axes title
-plt.rc("axes", labelsize=MED)     # fontsize of the x and y labels
-plt.rc("xtick", labelsize=SMALL)  # fontsize of the tick labels
-plt.rc("ytick", labelsize=SMALL)  # fontsize of the tick labels
-plt.rc("legend", fontsize=MED)    # legend fontsize
-plt.rc("figure", titlesize=BIG)   # fontsize of the figure title
-plt.rc("text", usetex=true)
-plt.rc("font", family="Times New Roman")
+############################## DATACUBE STRUCTURE AND FUNCTIONS ####################################
 
 
-struct DataCube{T1<:Real,T2<:Real,S<:Int}
-    """ 
-    An object for holding 3D IFU spectroscopy data. 
+""" 
+    DataCube(λ, Iλ, σI[, mask, Ω, α, δ, wcs, channel, band, rest_frame, masked])
 
-    :param λ: array
-        1D array of wavelengths, in Angstroms
-    :param Iλ: array
-        3D array of intensity, in MJy/sr
-    :param σI: array
-        3D array of uncertainties, in MJy/sr
-    :param mask: array, optional
-        3D array of booleans acting as a mask for the flux/error data
-    :param wcs: WCS, optional
-        a World Coordinate System conversion object
-    :param Ω: float, optional
-        the solid angle subtended by each spaxel, in sr/spaxel
-    :param channel: Int, optional
-        the channel, i.e. 4
-    :param band: String, optional
-        the band, i.e. 'MULTIPLE'
-    :param rest_frame: Bool
-        whether or not the DataCubes are in the rest-frame
-    :param masked: Bool
-        whether or not the DataCubes have been masked
-    """
+An object for holding 3D IFU spectroscopy data. 
 
-    λ::Vector{T1}
-    Iλ::Array{T2,3}
-    σI::Array{T2,3}
+# Fields
+- `λ::Vector{<:AbstractFloat}`: 1D array of wavelengths, in Angstroms
+- `Iλ::Array{<:AbstractFloat,3}`: 3D array of intensity, in MJy/sr
+- `σI::Array{<:AbstractFloat,3}`: 3D array of uncertainties, in MJy/sr
+- `mask::BitArray{3}=falses(size(Iλ))`: 3D array of booleans acting as a mask for the flux/error data
+- `Ω::AbstractFloat=NaN`: the solid angle subtended by each spaxel, in steradians
+- `α::AbstractFloat=NaN`: the right ascension of the observation, in decimal degrees
+- `δ::AbstractFloat=NaN`: the declination of the observation, in decimal degrees
+- `wcs::Union{WCSTransform,Nothing}=nothing`: a World Coordinate System conversion object, optional
+- `channel::String="Generic Channel"`: the MIRI channel of the observation, from 1-4
+- `band::String="Generic Band"`: the MIRI band of the observation, i.e. 'MULTIPLE'
+- `nx::Integer=size(Iλ,1)`: the length of the x dimension of the cube
+- `ny::Integer=size(Iλ,2)`: the length of the y dimension of the cube
+- `nz::Integer=size(Iλ,3)`: the length of the z dimension of the cube
+- `rest_frame::Bool=false`: whether or not the DataCube wavelength vector is in the rest-frame
+- `masked::Bool=false`: whether or not the DataCube has been masked
+"""
+struct DataCube
+
+    λ::Vector{<:AbstractFloat}
+    Iλ::Array{<:AbstractFloat,3}
+    σI::Array{<:AbstractFloat,3}
  
     mask::BitArray{3}
 
-    Ω::T1
-
-    α::T1
-    δ::T1
+    Ω::AbstractFloat
+    α::AbstractFloat
+    δ::AbstractFloat
 
     wcs::Union{WCSTransform,Nothing}
 
     channel::String
     band::String
 
-    nx::S
-    ny::S
-    nz::S
+    nx::Integer
+    ny::Integer
+    nz::Integer
 
     rest_frame::Bool
     masked::Bool
 
-    function DataCube(λ::Vector{T1}, Iλ::Array{T2,3}, σI::Array{T2,3}, mask::Union{BitArray{3},Nothing}=nothing, 
-        Ω::T1=NaN, α::T1=NaN, δ::T1=NaN, wcs::Union{WCSTransform,Nothing}=nothing, channel::String="Generic Channel", 
-        band::String="Generic Band", rest_frame::Bool=false, masked::Bool=false) where {T1,T2}
-        """
-        A constructor for DataCube objects without keywords
-        """
+    # This is the constructor for the DataCube struct; see the DataCube docstring for details
+    function DataCube(λ::Vector{<:AbstractFloat}, Iλ::Array{<:AbstractFloat,3}, σI::Array{<:AbstractFloat,3}, mask::Union{BitArray{3},Nothing}=nothing, 
+        Ω::AbstractFloat=NaN, α::AbstractFloat=NaN, δ::AbstractFloat=NaN, wcs::Union{WCSTransform,Nothing}=nothing, channel::String="Generic Channel", 
+        band::String="Generic Band", rest_frame::Bool=false, masked::Bool=false)
 
         # Make sure inputs have the right dimensions
         @assert ndims(λ) == 1
@@ -117,21 +116,27 @@ struct DataCube{T1<:Real,T2<:Real,S<:Int}
         @assert (ndims(σI) == 3) && (size(σI)[end] == size(λ)[1])
         nx, ny, nz = size(Iλ)
 
-        # Make default mask
+        # If no mask is given, make the default mask to be all falses (i.e. don't mask out anything)
         if isnothing(mask)
-            mask = falses(shape(Iλ))
+            mask = falses(size(Iλ))
         end
 
-        return new{eltype(λ),eltype(Iλ),typeof(nx)}(λ, Iλ, σI, mask, Ω, α, δ, wcs, channel, band, nx, ny, nz, rest_frame, masked)
+        # Return a new instance of the DataCube struct
+        return new(λ, Iλ, σI, mask, Ω, α, δ, wcs, channel, band, nx, ny, nz, rest_frame, masked)
     end
 
 end
 
-# FITS Constructor 
+
+"""
+    from_fits(filename::String)
+
+Utility class-method for creating DataCube structures directly from JWST-formatted FITS files.
+
+# Arguments
+- `filename::String`: the filepath to the JWST-formatted FITS file
+"""
 function from_fits(filename::String)
-    """
-    Utility class-method for creating DataCube structures directly from JWST-formatted FITS files.
-    """
 
     # Open the fits file
     hdu = FITS(filename, "r")
@@ -139,8 +144,9 @@ function from_fits(filename::String)
         error("The FITS file must contain IFU data!")
     end
     
+    # Read the FITS header
     hdr = read_header(hdu["SCI"])
-    # Wavelength dimension
+    # Unpack data cube dimensions
     nx, ny, nz = hdr["NAXIS1"], hdr["NAXIS2"], hdr["NAXIS3"]
     # Solid angle of each spaxel
     Ω = hdr["PIXAR_SR"]
@@ -148,7 +154,7 @@ function from_fits(filename::String)
     Iλ = read(hdu["SCI"])
     σI = read(hdu["ERR"])
 
-    # Construct 2D World coordinate system
+    # Construct 3D World coordinate system to convert from pixels to (RA,Dec,wave)
     wcs = WCSTransform(3)
     wcs.cdelt = [hdr["CDELT1"], hdr["CDELT2"], hdr["CDELT3"]]
     wcs.ctype = [hdr["CTYPE1"], hdr["CTYPE2"], hdr["CTYPE3"]]
@@ -161,26 +167,31 @@ function from_fits(filename::String)
     λ = hdr["CRVAL3"] .+ hdr["CDELT3"] .* collect(0:nz-1)
     # λ = pix_to_world(wcs, Matrix(hcat(ones(nz), ones(nz), collect(1:nz))'))[3,:] ./ 1e-6
 
-    # Data quality map to mask
+    # Data quality map (i.e. the mask)
+    # dq = 0 if the data is good, > 0 if the data is bad
     dq = read(hdu["DQ"])
+    # also make sure to mask any points with Inf/NaN in the intensity or error, in case they were missed by the DQ map
     mask = (dq .≠ 0) .|| .!isfinite.(Iλ) .|| .!isfinite.(σI)
 
     # Target info from the header
     hdr0 = read_header(hdu[1])
     name = hdr0["TARGNAME"]
-    ra = hdr0["TARG_RA"]
-    dec = hdr0["TARG_DEC"]
-    channel = hdr0["CHANNEL"]
-    band = hdr0["BAND"]
+    ra = hdr0["TARG_RA"]       # right ascension in deg
+    dec = hdr0["TARG_DEC"]     # declination in deg
+    channel = hdr0["CHANNEL"]  # MIRI channel (1-4)
+    band = hdr0["BAND"]        # MIRI band (long,med,short,multiple)
 
-    # Check units
+    # Make sure intensity units are MegaJansky per steradian and wavelength units are microns
+    # (this is assumed in the fitting code)
     if hdr["BUNIT"] ≠ "MJy/sr"
         error("Unrecognized flux unit: $(hdr["BUNIT"])")
     end
     if hdr["CUNIT3"] ≠ "um"
         error("Unrecognized wavelength unit: $(hdr["CUNIT3"])")
     end
-    # # Convert units
+
+    ##################################################################################
+    # # DEPRECATED unit conversion code to go to CGS units
     # # 1 μm = 10^4 Å
     # Å = 1e4
     # λ .*= Å
@@ -195,40 +206,49 @@ function from_fits(filename::String)
     
     # Iλ = Iλ .* 1e-7 .* Util.C_MS ./ ext_λ.^2
     # σI = σI .* 1e-7 .* Util.C_MS ./ ext_λ.^2
+    ##################################################################################
 
     return DataCube(λ, Iλ, σI, mask, Ω, ra, dec, wcs, channel, band, false, false)
 end
 
-function to_rest_frame(cube::DataCube, z::Float64)
-    """
-    Convert a DataCube to a rest-frame DataCube
 
-    :param cube: DataCube
-        The DataCube to convert
-    :param z: Float
-        The redshift
+"""
+    to_rest_frame(cube::DataCube, z)
 
-    :return: new DataCube with redshift-corrected λ array
-    """
+Convert a DataCube object's wavelength vector to the rest frame
 
+# Arguments
+- `cube::DataCube`: The DataCube object to be converted
+- `z::AbstractFloat`: The redshift to be used to convert to the rest frame
+
+See also [`DataCube`](@ref), [`Util.rest_frame`](@ref)
+"""
+function to_rest_frame(cube::DataCube, z::AbstractFloat)
+
+    # Only convert using redshift if it hasn't already been converted
     if !cube.rest_frame
         new_λ = Util.rest_frame(cube.λ, z)
         return DataCube(new_λ, cube.Iλ, cube.σI, cube.mask, cube.Ω, cube.α, cube.δ, cube.wcs, cube.channel, cube.band, true, cube.masked)
     end
+
     return cube
 
 end
 
+
+"""
+    apply_mask(cube::DataCube)
+
+Apply the mask to the intensity & error arrays in the DataCube
+
+# Arguments
+- `cube::DataCube`: The DataCube to mask
+
+See also [`DataCube`](@ref)
+"""
 function apply_mask(cube::DataCube)
-    """
-    Apply the mask to the intensity & error arrays
 
-    :param cube: DataCube
-        The DataCube to convert
-    
-    :return: new DataCube with masked Iλ and σI
-    """
-
+    # Only apply the mask if it hasn't already been applied
     if !cube.masked
         Iλ = copy(cube.Iλ)
         σI = copy(cube.σI)
@@ -242,12 +262,20 @@ function apply_mask(cube::DataCube)
 
 end
 
+
+"""
+    interpolate_cube!(cube)
+
+Function to interpolate bad pixels in individual spaxels.  Does not interpolate any spaxels
+where more than 10% of the datapoints are bad.  Uses a wide cubic spline interpolation to
+get the general shape of the continuum but not fit noise or lines.
+
+# Arguments
+- `cube::DataCube`: The DataCube object to interpolate
+
+See also [`DataCube`](@ref)
+"""
 function interpolate_cube!(cube::DataCube)
-    """
-    Function to interpolate bad pixels in individual spaxels.  Does not interpolate any spaxels
-    where more than 10% of the datapoints are bad.  Uses a wide cubic spline interpolation to
-    get the general shape of the continuum but not fit noise or lines.
-    """
 
     λ = cube.λ
 
@@ -284,36 +312,37 @@ function interpolate_cube!(cube::DataCube)
     end
 end
 
-# Plotting functions
-function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=true, logᵢ::Union{Int,Nothing}=10,
-    logₑ::Union{Int,Nothing}=nothing, colormap::Symbol=:magma, name::Union{String,Nothing}=nothing, 
-    slice::Union{Int,Nothing}=nothing, z::Union{Float64,Nothing}=nothing, marker::Union{Tuple{T,T},Nothing} where {T<:Real}=nothing)
-    """
-    A plotting utility function for 2D maps of the intensity / error
+############################## PLOTTING FUNCTIONS ####################################
 
-    :param fname: String
-        The file name of the plot to be saved.
-    :param intensity: Bool
-        If true, plot the intensity.
-    :param err: Bool
-        If true, plot the error.
-    :param logᵢ: Float, optional
-        The base of the logarithm to take for intensity data. Set to None to not take the logarithm.
-    :param logₑ: Float, optional
-        The base of the logarithm to take for the error data. Set to None to not take the logarithm.
-    :param colormap: Symbol
-        Matplotlib colormap for the data.
-    :param name: String
-        Name to put in the title of the plot.
-    :param slice: Int, optional
-        Index along the wavelength axis to plot. If nothing, sums the data along the wavelength axis.
-    :param z: Float, optional
-        The redshift of the source, used to calculate the distance and thus the spatial scale in kpc.
-    :param marker: Tuple, optional
-        Position in (x,y) coordinates to place a marker.
-    
-    :return nothing:
-    """
+
+"""
+    plot_2d(data, fname; <keyword arguments>)
+
+A plotting utility function for 2D maps of the raw intensity / error
+
+# Arguments
+- `data::DataCube`: The DataCube object to plot data from
+- `fname::String`: The file name of the plot to be saved
+- `intensity::Bool=true`: If true, plot the intensity.
+- `err::Bool=true`: If true, plot the error
+- `logᵢ::Union{Integer,Nothing}=10`: The base of the logarithm to take for intensity data. 
+    Set to nothing to not take the logarithm.
+- `logₑ::Union{Integer,Nothing}=nothing`: The base of the logarithm to take for the error data. 
+    Set to nothing to not take the logarithm.
+- `colormap::Symbol=:magma`: Matplotlib colormap for the data.
+- `name::Union{String,Nothing}=nothing`: Name to put in the title of the plot.
+- `slice::Union{Integer,Nothing}=nothing`: Index along the wavelength axis to plot. 
+    If nothing, sums the data along the wavelength axis.
+- `z::Union{AbstractFloat,Nothing}=nothing`: The redshift of the source, used to calculate 
+    the distance and thus the spatial scale in kpc.
+- `marker::Union{Tuple{<:Real,<:Real},Nothing}=nothing`: Position in (x,y) coordinates to place a marker.
+
+See also [`DataCube`](@ref), [`plot_1d`](@ref)
+"""
+function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=true, logᵢ::Union{Integer,Nothing}=10,
+    logₑ::Union{Integer,Nothing}=nothing, colormap::Symbol=:magma, name::Union{String,Nothing}=nothing, 
+    slice::Union{Integer,Nothing}=nothing, z::Union{AbstractFloat,Nothing}=nothing, marker::Union{Tuple{<:Real,<:Real},Nothing}=nothing)
+
     if isnothing(slice)
         # Sum up data along wavelength dimension
         I = Util.Σ(data.Iλ, 3)
@@ -423,28 +452,30 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
 end
 
 
-function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=true, logᵢ::Union{Bool,Int}=false,
-    spaxel::Union{Tuple{Int,Int},Nothing}=nothing, linestyle::String="-", name::Union{String,Nothing}=nothing)
-    """
-    A plotting utility function for 1D spectra of individual spaxels or the full cube.
-    
-    :param fname: String
-        The file name of the plot to be saved.
-    :param intensity: Bool
-        If true, plot the intensity.
-    :param err: Bool
-        If true, plot the error.
-    :param log: Int, optional
-        The base of the logarithm to take for the flux/error data. Set to None to not take the logarithm.
-    :param spaxel: Tuple{Int,Int}, optional
-        Tuple of (x,y) spaxel coordinates to plot the 1D spectrum for; otherwise sum over all spaxels.
-    :param linestyle: String
-        The matplotlib linestyle argument.
-    :param name: String
-        Name to put in the title of the plot.
-    
-    :return nothing:
-    """
+"""
+    plot_1d(data, fname; <keyword arguments>)
+
+A plotting utility function for 1D spectra of individual spaxels or the full cube.
+
+# Arguments
+`S<:Integer`
+- `data::DataCube`: The DataCube object to plot data from
+- `fname::String`: The file name of the plot to be saved
+- `intensity::Bool=true`: If true, plot the intensity
+- `err::Bool=true`: If true, plot the error
+- `logᵢ::Integer=false`: The base of the logarithm to take for the flux/error data. 
+    Set to false to not take the logarithm.
+- `spaxel::Union{Tuple{S,S}=nothing`: Tuple of (x,y) spaxel coordinates 
+    to plot the 1D spectrum for; otherwise sum over all spaxels.
+- `linestyle::String="-"`: The matplotlib linestyle argument.
+- `name::Union{String,Nothing}=nothing`: Name to put in the title of the plot.
+
+See also [`DataCube`](@ref), [`plot_2d`](@ref)
+"""
+function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=true, logᵢ::Integer=false,
+    spaxel::Union{Tuple{S,S},Nothing}=nothing, linestyle::String="-", name::Union{String,Nothing}=nothing) where {S<:Integer}
+
+    # Alias
     λ = data.λ
     if isnothing(spaxel)
         # Sum up data along spatial dimensions
@@ -464,12 +495,14 @@ function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
         sub = "\\lambda"
     end
 
+    # If specified, take the logarithm of the data with the given base
     if logᵢ ≠ false
         σ .= σ ./ abs.(I .* log.(logᵢ)) 
         ν_Hz = (Util.C_MS .* 1e6) ./ data.λ
         I .= log.(ν_Hz .* I) / log.(logᵢ)
     end
 
+    # Formatting for x and y units on the axis labels
     xunit = "\${\\rm \\mu m}\$"
     yunit = logᵢ == false ? "MJy\$\\,\$sr\$^{-1}\$" : "MJy\$\\,\$sr\$^{-1}\\,\$Hz"
 
@@ -499,58 +532,62 @@ function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
 
 end
 
+############################## OBSERVATION STRUCTURE AND FUNCTIONS ####################################
 
+"""
+    Observation([channels, name, z, α, δ, instrument, detector, rest_frame, masked])
+
+A struct for holding DataCube objects in different channels for the same observation of some target
+
+# Fields
+- `channels::Dict{<:Integer,DataCube}=Dict{<:Integer,DataCube}()`: A dictionary containing the channel 
+    numbers (1-4) as keys and the individual DataCube observations as values.
+- `name::String="Generic Observation"`: The label for the observation/data
+- `z::AbstractFloat=NaN`: the redshift of the source
+- `α::AbstractFloat=NaN`: the right ascension of the source, in decimal degrees
+- `δ::AbstractFloat=NaN`: the declination of the source, in decimal degrees
+- `instrument::String="Generic Instrument"`: the instrument name, i.e. "MIRI"
+- `detector::String="Generic Detector"`: the detector name, i.e. "MIRIFULONG"
+- `rest_frame::Bool=false`: whether or not the individual DataCubes have been converted to the rest frame
+- `masked::Bool=false`: whether or not the individual DataCubes have been masked
+
+See also [`DataCube`](@ref)
+"""
 struct Observation
-    """
-    A struct for holding DataCube objects in different channels for the same object
 
-    :param name: String, optional
-        a label for the source / data
-    :param z: Float, optional
-        the redshift of the source
-    :param α: Float, optional
-        the right ascension of the source, in units convertible to decimal degrees
-    :param δ: Float, optional
-        the declination of the source, in units convertible to decimal degrees
-    :param instrument: String, optional
-        the instrument name, i.e. 'MIRI'
-    :param detector: String, optional
-        the detector name, i.e. 'MIRIFULONG'
-    """
-
-    channels::Dict{Int,DataCube}
+    channels::Dict{<:Integer,DataCube}
 
     name::String
-    z::Float64
-    α::Float64
-    δ::Float64
+    z::AbstractFloat
+    α::AbstractFloat
+    δ::AbstractFloat
     instrument::String
     detector::String
     rest_frame::Bool
     masked::Bool
 
-    function Observation(channels::Dict{Int,DataCube}=Dict{Int,DataCube}(), name::String="Generic Observation",
-        z::Float64=NaN, α::Float64=NaN, δ::Float64=NaN, instrument::String="Generic Instrument", detector::String="Generic Detector",
-        rest_frame::Bool=false, masked::Bool=false)
-        """
-        A constructor for Observations without keywords
-        """
+    function Observation(channels::Dict{<:Integer,DataCube}=Dict{<:Integer,DataCube}(), name::String="Generic Observation",
+        z::AbstractFloat=NaN, α::AbstractFloat=NaN, δ::AbstractFloat=NaN, instrument::String="Generic Instrument", 
+        detector::String="Generic Detector", rest_frame::Bool=false, masked::Bool=false)
 
         return new(channels, name, z, α, δ, instrument, detector, rest_frame, masked)
     end
     
 end
 
-function from_fits(filenames::Vector{String}, z::Float64)
-    """
-    Create an Observation object from a series of fits files with IFU cubes in different channels.
 
-    :param filepaths: Vector{String}
-        A vector of filepaths to the FITS files
-    :param z: Float
-        The redshift of the object.
-    """
+"""
+    from_fits(filenames::Vector{String}, z)
 
+Create an Observation object from a series of fits files with IFU cubes in different channels.
+
+# Arguments
+- `filenames::Vector{String}`: A vector of filepaths to the FITS files
+- `z::AbstractFloat`: The redshift of the object.
+"""
+function from_fits(filenames::Vector{String}, z::AbstractFloat)
+
+    # Grab object information from the FITS header of the first file
     channels = Dict{Int,DataCube}()
     hdu = FITS(filenames[1])
     hdr = read_header(hdu[1])
@@ -560,6 +597,7 @@ function from_fits(filenames::Vector{String}, z::Float64)
     inst = hdr["INSTRUME"]
     detector = hdr["DETECTOR"]
     
+    # Loop through the files and call the individual DataCube method of the from_fits function
     for (i, filepath) ∈ enumerate(filenames)
         channels[i] = from_fits(filepath)
     end
@@ -567,16 +605,19 @@ function from_fits(filenames::Vector{String}, z::Float64)
     return Observation(channels, name, z, ra, dec, inst, detector, false, false)
 end
 
-# Convert observations to rest-frame
-function to_rest_frame(obs::Observation)
-    """
-    Convert each wavelength channel into the rest-frame given by the redshift
 
-    :param obs: Observation
-        The Observation object to convert
-    """
+"""
+    to_rest_frame(obs::Observation)
+
+Convert each wavelength channel into the rest-frame given by the redshift
+
+# Arguments
+- `obs::Observation`: The Observation object to convert
+"""
+function to_rest_frame(obs::Observation)
 
     new_channels = Dict{Int,DataCube}()
+    # Loop through the channels and call the individual DataCube method of the to_rest_frame function
     for (i, chan) ∈ zip(keys(obs.channels), values(obs.channels))
         if !isnothing(chan)
             new_channels[i] = to_rest_frame(chan, obs.z)
@@ -586,15 +627,19 @@ function to_rest_frame(obs::Observation)
 
 end
 
-function apply_mask(obs::Observation)
-    """
-    Apply the mask onto each intensity/error map in the observation
 
-    :param obs: Observation
-        The Observation object to mask
-    """
+"""
+    apply_mask(obs::Observation)
+
+Apply the mask onto each intensity/error map in the observation
+
+# Arguments
+- `obs::Observation`: The Observation object to mask
+"""
+function apply_mask(obs::Observation)
 
     new_channels = Dict{Int,DataCube}()
+    # Loop through the channels and call the individual DataCube method of the apply_mask function
     for (i, chan) ∈ zip(keys(obs.channels), values(obs.channels))
         if !isnothing(chan)
             new_channels[i] = apply_mask(chan)
@@ -605,10 +650,29 @@ function apply_mask(obs::Observation)
 end
 
 
+"""
+    correct(obs::Observation)
+
+A combination of the `apply_mask` and `to_rest_frame` functions for Observation objects
+
+See [`apply_mask`](@ref) and [`to_rest_frame`](@ref)
+"""
 correct = apply_mask ∘ to_rest_frame
 
 
-function cube_rebin!(obs::Observation, channels::Union{Vector{Int},Nothing}=nothing)
+"""
+    cube_rebin!(obs[, channels])
+
+Perform a 2D rebinning of the given channels such that all spaxels lie on the same grid. The grid is chosen to be
+the highest channel given (or, if no channels are given, the highest channel in the obs object) since this will also
+be the coarsest grid.
+
+# Arguments
+`S<:Integer`
+- `obs::Observation`: The Observation object to rebin
+- `channels::Union{Vector{S},Nothing}=nothing`: The list of channels to be rebinned. If nothing, rebin all channels.
+"""
+function cube_rebin!(obs::Observation, channels::Union{Vector{S},Nothing}=nothing) where {S<:Integer}
 
     # Default channels to include
     if isnothing(channels)
@@ -648,25 +712,28 @@ function cube_rebin!(obs::Observation, channels::Union{Vector{Int},Nothing}=noth
         ch_σI = obs.channels[ch_in].σI
         ch_σI[.!isfinite.(ch_σI)] .= 0.
 
-        # 2D Cubic interpolations at each wavelength bin
         prog = Progress(wi_size, dt=0.01, desc="Interpolating channel $ch_in...", showspeed=true)
         for wi ∈ 1:wi_size
+            # 2D Cubic spline interpolations at each wavelength bin with flat boundary conditions
             interp_func_I = extrapolate(interpolate(ch_Iλ[:, :, wi], BSpline(Cubic(Interpolations.Flat(OnGrid())))), Interpolations.Flat())
             interp_func_σ = extrapolate(interpolate(ch_σI[:, :, wi], BSpline(Cubic(Interpolations.Flat(OnGrid())))), Interpolations.Flat())
-            
+            # Loop through all pairs of coordinates in the refrerence grid and set the intensity and error
+            # at that point to the interpolated values of the corresponding location in the input grid, given by
+            # the pix_transform function
             for (xᵣ, yᵣ) ∈ collect(Iterators.product(1:shape_ref[1], 1:shape_ref[2]))
                 xᵢ, yᵢ = pix_transform(xᵣ, yᵣ)
                 I_out[xᵣ, yᵣ, cumsum+wi] = interp_func_I(xᵢ, yᵢ)
                 σ_out[xᵣ, yᵣ, cumsum+wi] = interp_func_σ(xᵢ, yᵢ)
             end
-
+            # Iterate the progress bar
             next!(prog)
         end
 
         cumsum += wi_size
     end
 
-    # append the last channel in as normal with no rebinning
+    # append the last channel in as normal with no rebinning,
+    # since by definition its grid is the one we rebinned to
     wf = shape_ref[3]
     ch_Iλ = obs.channels[ch_ref].Iλ
     ch_Iλ[.!isfinite.(ch_Iλ)] .= 0.
@@ -684,6 +751,7 @@ function cube_rebin!(obs::Observation, channels::Union{Vector{Int},Nothing}=noth
 
     # apply strict masking -- only retain pixels that have data for all channels
     mask_out = falses(size(I_out))
+    # 1e-3 from empirically testing what works well
     atol = median(I_out[I_out .> 0]) * 1e-3
     for (i, j) ∈ collect(Iterators.product(1:shape_ref[1], 1:shape_ref[2]))
         # Has to have  significant number close to 0 to make sure that an entire channel has been cut out
