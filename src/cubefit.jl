@@ -2124,10 +2124,11 @@ Currently this includes the integrated intensity and signal to noise ratios of d
 `T<:AbstractFloat, S<:Integer`
 - `cube_fitter::CubeFitter`: The CubeFitter object containing the data, parameters, and options for the fit
 - `spaxel::Tuple{S,S}`: The coordinates of the spaxel to be fit
-- `comps::Dict{String, Vector{T}}`: The individual components of the best fit model for the spaxel
+- `popt_c::Vector{T}`: The best-bit parameter vector for the continuum components of the fit
+- `popt_l::Vector{T}`: The best-fit parameter vector for the line components of the fit
 """
 function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S}, 
-    popt_c::Vector{<:AbstractFloat}, popt_l::Vector{<:AbstractFloat}) where {T<:AbstractFloat,S<:Integer}
+    popt_c::Vector{T}, popt_l::Vector{T}) where {T<:AbstractFloat,S<:Integer}
 
     # Extract the wavelength, intensity, and uncertainty data
     λ = cube_fitter.cube.λ
@@ -2173,8 +2174,7 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
         peak_λ = λ_arr[peak_ind]
 
         # Integrate the intensity of the combined profile using Gauss-Kronrod quadrature
-        # Use a large order to ensure that all initial test points dont evaluate to precisely 0
-        p_complex[pₒ], _ = quadgk(profile, peak_λ-5fwhm_eff, peak_λ+5fwhm_eff, order=200)
+        p_complex[pₒ], _ = quadgk(profile, peak_λ-10fwhm_eff, peak_λ+10fwhm_eff, order=200)
 
         # SNR, calculated as (amplitude) / (RMS of the surrounding spectrum)
         p_complex[pₒ+1] = peak / std(I[.!mask_lines] .- continuum[.!mask_lines])
@@ -2368,7 +2368,6 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
         peak, peak_ind = findmax(profile.(λ_arr))
         peak_λ = λ_arr[peak_ind]
 
-        # Use a large order to ensure that all initial test points dont evaluate to precisely 0
         p_lines[pₒ], _ = quadgk(profile, peak_λ-5fwhm_eff, peak_λ+5fwhm_eff, order=200)
 
         # SNR, calculated as (amplitude) / (RMS of the surrounding spectrum)

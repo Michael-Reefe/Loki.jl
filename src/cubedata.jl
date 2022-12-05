@@ -118,6 +118,7 @@ struct DataCube
 
         # If no mask is given, make the default mask to be all falses (i.e. don't mask out anything)
         if isnothing(mask)
+            @info "DataCube initialization: No mask was given, all spaxels will be unmasked"
             mask = falses(size(Iλ))
         end
 
@@ -138,6 +139,8 @@ Utility class-method for creating DataCube structures directly from JWST-formatt
 """
 function from_fits(filename::String)::DataCube
 
+    @info "Initializing DataCube struct from $filename"
+
     # Open the fits file
     hdu = FITS(filename, "r")
     if read_header(hdu[1])["DATAMODL"] ≠ "IFUCubeModel"
@@ -153,6 +156,8 @@ function from_fits(filename::String)::DataCube
     # Intensity and error arrays
     Iλ = read(hdu["SCI"])
     σI = read(hdu["ERR"])
+
+    @debug "FITS data dimensions: ($nx, $ny, $nz), solid angle per spaxel: $Ω"
 
     # Construct 3D World coordinate system to convert from pixels to (RA,Dec,wave)
     wcs = WCSTransform(3)
@@ -181,6 +186,18 @@ function from_fits(filename::String)::DataCube
     channel = hdr0["CHANNEL"]  # MIRI channel (1-4)
     band = hdr0["BAND"]        # MIRI band (long,med,short,multiple)
 
+    @debug """
+    ##################################################################
+    #################### TARGET INFORMATION ##########################
+    ##################################################################
+    name: \t\t $name
+    RA: \t\t $ra
+    Dec: \t\t $dec
+    MIRI Channel: \t $channel
+    MIRI Band: \t $band
+    ##################################################################
+    """
+
     # Make sure intensity units are MegaJansky per steradian and wavelength units are microns
     # (this is assumed in the fitting code)
     if hdr["BUNIT"] ≠ "MJy/sr"
@@ -189,6 +206,8 @@ function from_fits(filename::String)::DataCube
     if hdr["CUNIT3"] ≠ "um"
         error("Unrecognized wavelength unit: $(hdr["CUNIT3"])")
     end
+
+    @debug "Intensity units: $(hdr["BUNIT"]), Wavelength units: $(hdr["CUNIT3"])"
 
     ##################################################################################
     # # DEPRECATED unit conversion code to go to CGS units
@@ -227,10 +246,16 @@ function to_rest_frame(cube::DataCube, z::AbstractFloat)::DataCube
 
     # Only convert using redshift if it hasn't already been converted
     if !cube.rest_frame
+        @debug "Converting the wavelength vector of cube with channel $(cube.channel), band $(cube.band)" *
+        " to the rest frame using redshift z=$z"
+
         new_λ = Util.rest_frame(cube.λ, z)
-        return DataCube(new_λ, cube.Iλ, cube.σI, cube.mask, cube.Ω, cube.α, cube.δ, cube.wcs, cube.channel, cube.band, true, cube.masked)
+        return DataCube(new_λ, cube.Iλ, cube.σI, cube.mask, cube.Ω, cube.α, cube.δ, cube.wcs, cube.channel, 
+            cube.band, true, cube.masked)
     end
 
+    @info "This cube's wavelength vector has already been converted to the rest frame. Returning" *
+        " the unmodified cube."
     return cube
 
 end
@@ -250,14 +275,20 @@ function apply_mask(cube::DataCube)::DataCube
 
     # Only apply the mask if it hasn't already been applied
     if !cube.masked
+        @debug "Masking the intensity and error maps of cube with channel $(cube.channel), band $(cube.band)"
+
         Iλ = copy(cube.Iλ)
         σI = copy(cube.σI)
 
         Iλ[cube.mask] .= NaN
         σI[cube.mask] .= NaN
 
-        return DataCube(cube.λ, Iλ, σI, cube.mask, cube.Ω, cube.α, cube.δ, cube.wcs, cube.channel, cube.band, cube.rest_frame, true)
+        return DataCube(cube.λ, Iλ, σI, cube.mask, cube.Ω, cube.α, cube.δ, cube.wcs, cube.channel, cube.band, 
+            cube.rest_frame, true)
     end
+
+    @info "This cube's intensity and error maps have already been masked. Returning the" *
+        " unmodified cube."
     return cube
 
 end
