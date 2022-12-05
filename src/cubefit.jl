@@ -2135,7 +2135,7 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
     I = cube_fitter.cube.Iλ[spaxel..., :]
     σ = cube_fitter.cube.σI[spaxel..., :]
 
-    Δλ = mean(diff(λ))
+    Δλ = mean(diff(λ)) / 10
 
     # Perform a cubic spline fit to the continuum, masking out lines
     mask_lines, continuum, _ = continuum_cubic_spline(λ, I, σ)
@@ -2146,10 +2146,6 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
     p_complex = zeros(2cube_fitter.n_complexes)
     pₒ = 1
     for c ∈ cube_fitter.complexes
-        # Integration region
-        λ_arr = (minimum(λ)-3):Δλ:(maximum(λ)+3)
-        # Effective full-width half-max parameter to help define the integration region
-        fwhm_eff = 0.
 
         # Start with a flat profile at 0
         profile = x -> 0.
@@ -2165,16 +2161,15 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
                 profile = let profile = profile
                     x -> profile(x) + Util.Drude(x, A, μ, fwhm)
                 end
-                fwhm_eff += fwhm + abs(μ - parse(Float64, c))
             end
             # increment the parameter index
             pᵢ += 3
         end
+        λ_arr = (minimum(λ)-3):Δλ:(maximum(λ)+3)
         peak, peak_ind = findmax(profile.(λ_arr))
-        peak_λ = λ_arr[peak_ind]
 
         # Integrate the intensity of the combined profile using Gauss-Kronrod quadrature
-        p_complex[pₒ], _ = quadgk(profile, peak_λ-10fwhm_eff, peak_λ+10fwhm_eff, order=200)
+        p_complex[pₒ], _ = quadgk(profile, 0, Inf, order=200)
 
         # SNR, calculated as (amplitude) / (RMS of the surrounding spectrum)
         p_complex[pₒ+1] = peak / std(I[.!mask_lines] .- continuum[.!mask_lines])
@@ -2193,11 +2188,8 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
     end
     for (k, ln) ∈ enumerate(cube_fitter.lines)
 
-        λ_arr = (minimum(λ)-0.2):Δλ:(maximum(λ)+0.2)
         # (\/ pretty much the same as the fit_line_residuals function, but outputting anonymous line profile functions)
         amp = popt_l[pᵢ]
-        # Effective fwhm for integration
-        fwhm_eff = 0.
             
         # Check if voff is tied: if so, use the tied voff parameter, otherwise, use the line's own voff parameter
         if isnothing(cube_fitter.line_tied[k])
@@ -2265,19 +2257,19 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
         mean_μm = Util.Doppler_shift_λ(ln.λ₀, voff)
         # Convert FWHM from km/s to μm
         fwhm_μm = Util.Doppler_shift_λ(ln.λ₀, fwhm) - ln.λ₀
-        # Evaluate line profile
+        # Evaluate line profiles centered at 0 (since the shift doesnt matter for integration)
+        # -> evaluating centered at 0 helps quadgk when the fwhm is small compared to the integration region
         if cube_fitter.line_profiles[k] == :Gaussian
-            profile = x -> Util.Gaussian(x, amp, mean_μm, fwhm_μm)
+            profile = x -> Util.Gaussian(x, amp, 0., fwhm_μm)
         elseif cube_fitter.line_profiles[k] == :Lorentzian
-            profile = x -> Util.Lorentzian(x, amp, mean_μm, fwhm_μm)
+            profile = x -> Util.Lorentzian(x, amp, 0., fwhm_μm)
         elseif cube_fitter.line_profiles[k] == :GaussHermite
-            profile = x -> Util.GaussHermite(x, amp, mean_μm, fwhm_μm, h3, h4)
+            profile = x -> Util.GaussHermite(x, amp, 0., fwhm_μm, h3, h4)
         elseif cube_fitter.line_profiles[k] == :Voigt
-            profile = x -> Util.Voigt(x, amp, mean_μm, fwhm_μm, η)
+            profile = x -> Util.Voigt(x, amp, 0., fwhm_μm, η)
         else
             error("Unrecognized line profile $(cube_fitter.line_profiles[k])!")
         end
-        fwhm_eff += fwhm_μm
     
         # Advance the parameter vector index -> 3 if untied (or tied + flexible_wavesol) or 2 if tied
         pᵢ += isnothing(cube_fitter.line_tied[k]) || cube_fitter.flexible_wavesol ? 3 : 2
@@ -2327,27 +2319,26 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
             flow_mean_μm = Util.Doppler_shift_λ(ln.λ₀, voff+flow_voff)
             # Convert FWHM from km/s to μm
             flow_fwhm_μm = Util.Doppler_shift_λ(ln.λ₀, flow_fwhm) - ln.λ₀
-            # Evaluate line profile
+            # Evaluate line profile, shifted by the same amount as the primary line profile
             if cube_fitter.line_flow_profiles[k] == :Gaussian
                 profile = let profile = profile
-                    x -> profile(x) + Util.Gaussian(x, flow_amp, flow_mean_μm, flow_fwhm_μm)
+                    x -> profile(x) + Util.Gaussian(x, flow_amp, flow_mean_μm-mean_μm, flow_fwhm_μm)
                 end
             elseif cube_fitter.line_flow_profiles[k] == :Lorentzian
                 profile = let profile = profile
-                    x -> profile(x) + Util.Lorentzian(x, flow_amp, flow_mean_μm, flow_fwhm_μm)
+                    x -> profile(x) + Util.Lorentzian(x, flow_amp, flow_mean_μm-mean_μm, flow_fwhm_μm)
                 end
             elseif cube_fitter.line_profiles[k] == :GaussHermite
                 profile = let profile = profile
-                    x -> profile(x) + Util.GaussHermite(x, flow_amp, flow_mean_μm, flow_fwhm_μm, flow_h3, flow_h4)
+                    x -> profile(x) + Util.GaussHermite(x, flow_amp, flow_mean_μm-mean_μm, flow_fwhm_μm, flow_h3, flow_h4)
                 end
             elseif cube_fitter.line_profiles[k] == :Voigt
                 profile = let profile = profile
-                    x -> profile(x) + Util.Voigt(x, flow_amp, flow_mean_μm, flow_fwhm_μm, flow_η)
+                    x -> profile(x) + Util.Voigt(x, flow_amp, flow_mean_μm-mean_μm, flow_fwhm_μm, flow_η)
                 end
             else
                 error("Unrecognized flow line profile $(cube_fitter.line_profiles[k])!")
             end
-            fwhm_eff += flow_fwhm_μm + abs(flow_mean_μm - mean_μm)
 
             # Advance the parameter vector index by the appropriate amount        
             pᵢ += isnothing(cube_fitter.line_flow_tied[k]) ? 3 : 2
@@ -2365,10 +2356,10 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
             x -> N * profile(x)
         end
 
+        λ_arr = (-10fwhm_μm):Δλ:(10fwhm_μm)
         peak, peak_ind = findmax(profile.(λ_arr))
-        peak_λ = λ_arr[peak_ind]
 
-        p_lines[pₒ], _ = quadgk(profile, peak_λ-5fwhm_eff, peak_λ+5fwhm_eff, order=200)
+        p_lines[pₒ], _ = quadgk(profile, -Inf, Inf, order=200)
 
         # SNR, calculated as (amplitude) / (RMS of the surrounding spectrum)
         p_lines[pₒ+1] = peak / std(I[.!mask_lines] .- continuum[.!mask_lines])
