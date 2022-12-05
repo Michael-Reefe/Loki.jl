@@ -45,7 +45,7 @@ end
 
 A constructor function for Parameter structs given a Dictionary
 """
-function from_dict(dict::Dict)
+function from_dict(dict::Dict)::Parameter
     # Unpack the dictionary into fields of the Parameter
     value = dict["val"]
     locked = dict["locked"]
@@ -71,7 +71,7 @@ A constructor function for Parameter structs given a Dictionary,
 using deltas on upper/lower limits, i.e. if val = 5 and plim = [-0.1, 0.1],
 then the true limits will be 5 .+ [-0.1, 0.1] = [4.9, 5.1]
 """
-function from_dict_wave(dict::Dict)
+function from_dict_wave(dict::Dict)::Parameter
     # Unpack the dictionary into fields of the Parameter
     value = dict["val"]
     locked = dict["locked"]
@@ -98,7 +98,7 @@ A constructor function for Parameter structs given a Dictionary,
 using fractional values on upper/lower limits, i.e. if val = 5 and
 plim = [0.5, 2], then the true limits will be 5 .* [0.5, 2] = [2.5, 10]
 """
-function from_dict_fwhm(dict::Dict)
+function from_dict_fwhm(dict::Dict)::Parameter
     # Unpack the dictionary into fields of the Parameter
     value = dict["val"]
     locked = dict["locked"]

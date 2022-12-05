@@ -8,8 +8,9 @@ using SharedArrays
 
 # Math packages
 using Distributions
+using Statistics
 using NaNStatistics
-using NumericalIntegration
+using QuadGK
 using Interpolations
 using Dierckx
 
@@ -84,7 +85,7 @@ being fit.
 # Arguments
 - `z::AbstractFloat`: The redshift of the object to be fit
 """
-function parse_resolving(z::AbstractFloat)
+function parse_resolving(z::AbstractFloat)::Dierckx.Spline1D
 
     # Read in the resolving power data
     resolve = CSV.read(joinpath(@__DIR__, "resolving_mrs.csv"), DataFrame)
@@ -125,7 +126,7 @@ end
 Read in the options.toml configuration file, checking that it is formatted correctly,
 and convert it into a julia dictionary.  This deals with general/top-level code configurations.
 """
-function parse_options()
+function parse_options()::Dict
 
     # Read in the options file
     options = TOML.parsefile(joinpath(@__DIR__, "options.toml"))
@@ -167,7 +168,7 @@ Read in the dust.toml configuration file, checking that it is formatted correctl
 and convert it into a julia dictionary with Parameter objects for dust fitting parameters.
 This deals with continuum, PAH features, and extinction options.
 """
-function parse_dust()
+function parse_dust()::Dict
 
     # Read in the dust file
     dust = TOML.parsefile(joinpath(@__DIR__, "dust.toml"))
@@ -530,7 +531,7 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, df_names::Ve
     complexes::Vector{String}, line_names::Vector{Symbol}, line_tied::Vector{Union{String,Nothing}},
     line_profiles::Vector{Symbol}, line_flow_tied::Vector{Union{String,Nothing}}, line_flow_profiles::Vector{Union{Symbol,Nothing}},
     voff_tied_key::Vector{String}, flow_voff_tied_key::Vector{String}, flexible_wavesol::Bool, 
-    tie_voigt_mixing::Bool) where {S<:Integer}
+    tie_voigt_mixing::Bool)::ParamMaps where {S<:Integer}
 
     # Initialize a default array of nans to be used as a placeholder for all the other arrays
     # until the actual fitting parameters are obtained
@@ -663,7 +664,7 @@ fit of a DataCube.
 - `floattype::DataType=Float32`: The type of float to use in the arrays.
 """
 function cubemodel_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, df_names::Vector{String}, 
-    line_names::Vector{Symbol}, floattype::DataType=Float32) where {S<:Integer}
+    line_names::Vector{Symbol}, floattype::DataType=Float32)::CubeModel where {S<:Integer}
 
     # Make sure the floattype given is actually a type of float
     @assert floattype <: AbstractFloat
@@ -1010,7 +1011,7 @@ This function has been adapted from the BADASS code (Sexton et al. 2020; https:/
 
 See also [`continuum_cubic_spline`](@ref)
 """
-function mask_emission_lines(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}, σ::Vector{<:AbstractFloat})
+function mask_emission_lines(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}, σ::Vector{<:AbstractFloat})::BitVector
 
     # Series of window sizes to perform median filtering
     window_sizes = [2, 5, 10, 50, 100, 250, 500]
@@ -2126,53 +2127,253 @@ Currently this includes the integrated intensity and signal to noise ratios of d
 - `comps::Dict{String, Vector{T}}`: The individual components of the best fit model for the spaxel
 """
 function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S}, 
-    comps::Dict{String, Vector{T}}) where {T<:AbstractFloat,S<:Integer}
+    popt_c::Vector{<:AbstractFloat}, popt_l::Vector{<:AbstractFloat}) where {T<:AbstractFloat,S<:Integer}
 
     # Extract the wavelength, intensity, and uncertainty data
     λ = cube_fitter.cube.λ
     I = cube_fitter.cube.Iλ[spaxel..., :]
     σ = cube_fitter.cube.σI[spaxel..., :]
 
+    Δλ = mean(diff(λ))
+
     # Perform a cubic spline fit to the continuum, masking out lines
     mask_lines, continuum, _ = continuum_cubic_spline(λ, I, σ)
+    N = Float64(abs(nanmaximum(I)))
+    N = N ≠ 0. ? N : 1.
 
     # Loop through dust complexes
     p_complex = zeros(2cube_fitter.n_complexes)
-    pᵢ = 1
+    pₒ = 1
     for c ∈ cube_fitter.complexes
-        Iᵢ = zeros(length(λ))
+        # Integration region
+        λ_arr = (minimum(λ)-3):Δλ:(maximum(λ)+3)
+        # Effective full-width half-max parameter to help define the integration region
+        fwhm_eff = 0.
+
+        # Start with a flat profile at 0
+        profile = x -> 0.
+        # Initial parameter vector index where dust profiles start
+        pᵢ = 3 + 2cube_fitter.n_dust_cont
+
         # Add up the dust feature profiles that belong to this complex
         for (ii, cdf) ∈ enumerate(cube_fitter.dust_features)
             if cdf[:complex] == c
-                Iᵢ .+= comps["dust_feat_$ii"]
+                # unpack the parameters
+                A, μ, fwhm = popt_c[pᵢ:pᵢ+2]
+                # add the anonymous functions recursively
+                profile = let profile = profile
+                    x -> profile(x) + Util.Drude(x, A, μ, fwhm)
+                end
+                fwhm_eff += fwhm + abs(μ - parse(Float64, c))
             end
+            # increment the parameter index
+            pᵢ += 3
         end
-        # Integrate the intensity of the combined profile
-        window = parse(Float64, c)
-        p_complex[pᵢ] = NumericalIntegration.integrate(λ, Iᵢ, SimpsonEven())
+        peak, peak_ind = findmax(profile.(λ_arr))
+        peak_λ = λ_arr[peak_ind]
+
+        # Integrate the intensity of the combined profile using Gauss-Kronrod quadrature
+        # Use a large order to ensure that all initial test points dont evaluate to precisely 0
+        p_complex[pₒ], _ = quadgk(profile, peak_λ-5fwhm_eff, peak_λ+5fwhm_eff, order=200)
 
         # SNR, calculated as (amplitude) / (RMS of the surrounding spectrum)
-        p_complex[pᵢ+1] = maximum(Iᵢ) / std(I[.!mask_lines] .- continuum[.!mask_lines])
-        pᵢ += 2
+        p_complex[pₒ+1] = peak / std(I[.!mask_lines] .- continuum[.!mask_lines])
+        pₒ += 2
     end
 
     # Loop through lines
     p_lines = zeros(2cube_fitter.n_lines)
-    pᵢ = 1
+    pₒ = 1
+    # Skip over the tied velocity offsets
+    pᵢ = cube_fitter.n_voff_tied + cube_fitter.n_flow_voff_tied + 1
+    # Skip over the tied voigt mixing parameter, saving its index
+    if cube_fitter.tie_voigt_mixing
+        ηᵢ = pᵢ
+        pᵢ += 1
+    end
     for (k, ln) ∈ enumerate(cube_fitter.lines)
 
-        # Integrated intensity
-        profile = zeros(length(λ))
-        profile .+= comps["line_$(k)"]
-        if haskey(comps, "line_$(k)_flow")
-            profile .+= comps["line_$(k)_flow"]
+        λ_arr = (minimum(λ)-0.2):Δλ:(maximum(λ)+0.2)
+        # (\/ pretty much the same as the fit_line_residuals function, but outputting anonymous line profile functions)
+        amp = popt_l[pᵢ]
+        # Effective fwhm for integration
+        fwhm_eff = 0.
+            
+        # Check if voff is tied: if so, use the tied voff parameter, otherwise, use the line's own voff parameter
+        if isnothing(cube_fitter.line_tied[k])
+            # Unpack the components of the line
+            voff = popt_l[pᵢ+1]
+            fwhm = popt_l[pᵢ+2]
+            if cube_fitter.line_profiles[k] == :GaussHermite
+                # Get additional h3, h4 components
+                h3 = popt_l[pᵢ+3]
+                h4 = popt_l[pᵢ+4]
+            elseif cube_fitter.line_profiles[k] == :Voigt
+                # Get additional mixing component, either from the tied position or the 
+                # individual position
+                if !cube_fitter.tie_voigt_mixing
+                    η = popt_l[pᵢ+3]
+                else
+                    η = popt_l[ηᵢ]
+                end
+            end
+        elseif !isnothing(cube_fitter.line_tied[k]) && cube_fitter.flexible_wavesol
+            # Find the position of the tied velocity offset that should be used
+            # based on matching the keys in line_tied and voff_tied_key
+            vwhere = findfirst(x -> x == cube_fitter.line_tied[k], cube_fitter.voff_tied_key)
+            voff_series = popt_l[vwhere]
+            voff_indiv = popt_l[pᵢ+1]
+            # Add velocity shifts of the tied lines and the individual offsets together
+            voff = voff_series + voff_indiv
+            fwhm = popt_l[pᵢ+2]
+            if cube_fitter.line_profiles[k] == :GaussHermite
+                # Get additional h3, h4 components
+                h3 = popt_l[pᵢ+3]
+                h4 = popt_l[pᵢ+4]
+            elseif cube_fitter.line_profiles[k] == :Voigt
+                # Get additional mixing component, either from the tied position or the 
+                # individual position
+                if !cube_fitter.tie_voigt_mixing
+                    η = popt_l[pᵢ+3]
+                else
+                    η = popt_l[ηᵢ]
+                end
+            end
+        else
+            # Find the position of the tied velocity offset that should be used
+            # based on matching the keys in line_tied and voff_tied_key
+            vwhere = findfirst(x -> x == cube_fitter.line_tied[k], cube_fitter.voff_tied_key)
+            voff = popt_l[vwhere]
+            fwhm = popt_l[pᵢ+1]
+            # (dont add any individual voff components)
+            if cube_fitter.line_profiles[k] == :GaussHermite
+                # Get additional h3, h4 components
+                h3 = popt_l[pᵢ+2]
+                h4 = popt_l[pᵢ+3]
+            elseif cube_fitter.line_profiles[k] == :Voigt
+                # Get additional mixing component, either from the tied position or the 
+                # individual position
+                if !cube_fitter.tie_voigt_mixing
+                    η = popt_l[pᵢ+2]
+                else
+                    η = popt_l[ηᵢ]
+                end
+            end
         end
-        window = ln.λ₀
-        p_lines[pᵢ] = NumericalIntegration.integrate(λ, profile, SimpsonEven())
+
+        # Convert voff in km/s to mean wavelength in μm
+        mean_μm = Util.Doppler_shift_λ(ln.λ₀, voff)
+        # Convert FWHM from km/s to μm
+        fwhm_μm = Util.Doppler_shift_λ(ln.λ₀, fwhm) - ln.λ₀
+        # Evaluate line profile
+        if cube_fitter.line_profiles[k] == :Gaussian
+            profile = x -> Util.Gaussian(x, amp, mean_μm, fwhm_μm)
+        elseif cube_fitter.line_profiles[k] == :Lorentzian
+            profile = x -> Util.Lorentzian(x, amp, mean_μm, fwhm_μm)
+        elseif cube_fitter.line_profiles[k] == :GaussHermite
+            profile = x -> Util.GaussHermite(x, amp, mean_μm, fwhm_μm, h3, h4)
+        elseif cube_fitter.line_profiles[k] == :Voigt
+            profile = x -> Util.Voigt(x, amp, mean_μm, fwhm_μm, η)
+        else
+            error("Unrecognized line profile $(cube_fitter.line_profiles[k])!")
+        end
+        fwhm_eff += fwhm_μm
+    
+        # Advance the parameter vector index -> 3 if untied (or tied + flexible_wavesol) or 2 if tied
+        pᵢ += isnothing(cube_fitter.line_tied[k]) || cube_fitter.flexible_wavesol ? 3 : 2
+        if cube_fitter.line_profiles[k] == :GaussHermite
+            # advance and extra 2 if GaussHermite profile
+            pᵢ += 2
+        elseif cube_fitter.line_profiles[k] == :Voigt
+            # advance another extra 1 if untied Voigt profile
+            if !cube_fitter.tie_voigt_mixing
+                pᵢ += 1
+            end
+        end
+
+        # Repeat EVERYTHING, minus the flexible_wavesol, for the inflow/outflow components
+        if !isnothing(cube_fitter.line_flow_profiles[k])
+            flow_amp = popt_l[pᵢ]
+            if isnothing(cube_fitter.line_flow_tied[k])
+                flow_voff = popt_l[pᵢ+1]
+                flow_fwhm = popt_l[pᵢ+2]
+                if cube_fitter.line_flow_profiles[k] == :GaussHermite
+                    flow_h3 = popt_l[pᵢ+3]
+                    flow_h4 = popt_l[pᵢ+4]
+                elseif cube_fitter.line_flow_profiles[k] == :Voigt
+                    if !cube_fitter.tie_voigt_mixing
+                        flow_η = popt_l[pᵢ+3]
+                    else
+                        flow_η = popt_l[ηᵢ]
+                    end
+                end
+            else
+                vwhere = findfirst(x -> x == cube_fitter.line_flow_tied[k], cube_fitter.flow_voff_tied_key)
+                flow_voff = popt_l[cube_fitter.n_voff_tied+vwhere]
+                flow_fwhm = popt_l[pᵢ+1]
+                if cube_fitter.line_flow_profiles[k] == :GaussHermite
+                    flow_h3 = popt_l[pᵢ+2]
+                    flow_h4 = popt_l[pᵢ+3]
+                elseif cube_fitter.line_flow_profiles[k] == :Voigt
+                    if !cube_fitter.tie_voigt_mixing
+                        flow_η = popt_l[pᵢ+2]
+                    else
+                        flow_η = popt_l[ηᵢ]
+                    end
+                end
+            end
+
+            # Convert voff in km/s to mean wavelength in μm
+            flow_mean_μm = Util.Doppler_shift_λ(ln.λ₀, voff+flow_voff)
+            # Convert FWHM from km/s to μm
+            flow_fwhm_μm = Util.Doppler_shift_λ(ln.λ₀, flow_fwhm) - ln.λ₀
+            # Evaluate line profile
+            if cube_fitter.line_flow_profiles[k] == :Gaussian
+                profile = let profile = profile
+                    x -> profile(x) + Util.Gaussian(x, flow_amp, flow_mean_μm, flow_fwhm_μm)
+                end
+            elseif cube_fitter.line_flow_profiles[k] == :Lorentzian
+                profile = let profile = profile
+                    x -> profile(x) + Util.Lorentzian(x, flow_amp, flow_mean_μm, flow_fwhm_μm)
+                end
+            elseif cube_fitter.line_profiles[k] == :GaussHermite
+                profile = let profile = profile
+                    x -> profile(x) + Util.GaussHermite(x, flow_amp, flow_mean_μm, flow_fwhm_μm, flow_h3, flow_h4)
+                end
+            elseif cube_fitter.line_profiles[k] == :Voigt
+                profile = let profile = profile
+                    x -> profile(x) + Util.Voigt(x, flow_amp, flow_mean_μm, flow_fwhm_μm, flow_η)
+                end
+            else
+                error("Unrecognized flow line profile $(cube_fitter.line_profiles[k])!")
+            end
+            fwhm_eff += flow_fwhm_μm + abs(flow_mean_μm - mean_μm)
+
+            # Advance the parameter vector index by the appropriate amount        
+            pᵢ += isnothing(cube_fitter.line_flow_tied[k]) ? 3 : 2
+            if cube_fitter.line_flow_profiles[k] == :GaussHermite
+                pᵢ += 2
+            elseif cube_fitter.line_flow_profiles[k] == :Voigt
+                if !cube_fitter.tie_voigt_mixing
+                    pᵢ += 1
+                end
+            end
+        end
+
+        # Add back in the normalization
+        profile = let profile = profile
+            x -> N * profile(x)
+        end
+
+        peak, peak_ind = findmax(profile.(λ_arr))
+        peak_λ = λ_arr[peak_ind]
+
+        # Use a large order to ensure that all initial test points dont evaluate to precisely 0
+        p_lines[pₒ], _ = quadgk(profile, peak_λ-5fwhm_eff, peak_λ+5fwhm_eff, order=200)
 
         # SNR, calculated as (amplitude) / (RMS of the surrounding spectrum)
-        p_lines[pᵢ+1] = maximum(profile) / std(I[.!mask_lines] .- continuum[.!mask_lines])
-        pᵢ += 2
+        p_lines[pₒ+1] = peak / std(I[.!mask_lines] .- continuum[.!mask_lines])
+        pₒ += 2
 
     end
 
@@ -2193,7 +2394,8 @@ of a crash.
 - `spaxel::Tuple{S,S}`: The coordinates of the spaxel to be fit
 - `verbose::Bool=false`: Set to true to print out the best-fit parameters
 """
-function fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}; verbose::Bool=false) where {S<:Integer}
+function fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}; 
+    verbose::Bool=false)::Union{Nothing,Vector{<:AbstractFloat}} where {S<:Integer}
 
     # Check if the fit has already been performed
     if !isfile("output_$(cube_fitter.name)/spaxel_binaries/spaxel_$(spaxel[1])_$(spaxel[2]).LOKI") || cube_fitter.overwrite
@@ -2223,7 +2425,7 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}; verbose::Bool=f
             χ2red = 1 / (n_data - n_free) * sum((I .- I_model).^2 ./ σ.^2)
 
             # Add dust complex and line parameters (intensity and SNR)
-            p_complex, p_lines = calculate_extra_parameters(cube_fitter, spaxel, comps)
+            p_complex, p_lines = calculate_extra_parameters(cube_fitter, spaxel, popt_c, popt_l)
             p_out = [popt_c; popt_l; p_complex; p_lines; χ2red]
 
             # Plot the fit
@@ -2275,7 +2477,7 @@ cube_fitter options.
 # Arguments
 - `cube_fitter::CubeFitter`: The CubeFitter object containing the data, parameters, and options for the fit
 """
-function fit_cube(cube_fitter::CubeFitter)
+function fit_cube(cube_fitter::CubeFitter)::CubeFitter
 
     shape = size(cube_fitter.cube.Iλ)
     # Interpolate NaNs in the cube
@@ -2465,10 +2667,10 @@ function fit_cube(cube_fitter::CubeFitter)
 
         # End of line parameters: recreate the line model
         I_line, comps_l = Util.fit_line_residuals(cube_fitter.cube.λ, out_params[xᵢ, yᵢ, vᵢ:pᵢ-1], cube_fitter.n_lines, cube_fitter.n_voff_tied,
-            cube_fitter.voff_tied_key, cube_fitter.line_tied, [ln.profile for ln ∈ cube_fitter.lines], cube_fitter.n_flow_voff_tied, cube_fitter.flow_voff_tied_key,
-            cube_fitter.line_flow_tied, [ln.flow_profile for ln ∈ cube_fitter.lines], [ln.λ₀ for ln ∈ cube_fitter.lines], 
+            cube_fitter.voff_tied_key, cube_fitter.line_tied, cube_fitter.line_profiles, cube_fitter.n_flow_voff_tied, cube_fitter.flow_voff_tied_key,
+            cube_fitter.line_flow_tied, cube_fitter.line_flow_profiles, [ln.λ₀ for ln ∈ cube_fitter.lines], 
             cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing; return_components=true)
-        
+
         # Renormalize
         N = Float64(abs(nanmaximum(cube_fitter.cube.Iλ[xᵢ, yᵢ, :])))
         N = N ≠ 0. ? N : 1.
@@ -2544,19 +2746,20 @@ end
 Plotting function for 2D parameter maps which are output by `fit_cube`
 
 # Arguments
-- `data::Matrix{<:AbstractFloat}`: The 2D array of data to be plotted
+`T<:AbstractFloat`
+- `data::Matrix{T}`: The 2D array of data to be plotted
 - `name::String`: The name of the object whose fitting parameter is being plotted, i.e. "NGC_7469"
 - `name_i::String`: The name of the individual parameter being plotted, i.e. "dust_features_PAH_5.24_amp"
 - `Ω::Union{AbstractFloat,Nothing}=nothing`: The solid angle subtended by each pixel, in steradians (used for angular scalebar)
 - `z::Union{AbstractFloat,Nothing}=nothing`: The redshift of the object (used for physical scalebar)
 - `cosmo::Union{Cosmology.AbstractCosmology,Nothing}=nothing`: The cosmology to use to calculate distance for the physical scalebar
-- `snr_filter::Union{Matrix{<:AbstractFloat},Nothing}=nothing`: A 2D array of S/N values to
+- `snr_filter::Union{Matrix{T},Nothing}=nothing`: A 2D array of S/N values to
     be used to filter out certain spaxels from being plotted
 - `snr_thresh::Real=3`: The S/N threshold below which to cut out any spaxels using the values in snr_filter
 """
-function plot_parameter_map(data::Matrix{<:AbstractFloat}, name::String, name_i::String;
+function plot_parameter_map(data::Matrix{T}, name::String, name_i::String;
     Ω::Union{AbstractFloat,Nothing}=nothing, z::Union{AbstractFloat,Nothing}=nothing, cosmo::Union{Cosmology.AbstractCosmology,Nothing}=nothing,
-    snr_filter::Union{Matrix{<:AbstractFloat},Nothing}=nothing, snr_thresh::Real=3)
+    snr_filter::Union{Matrix{T},Nothing}=nothing, snr_thresh::Real=3) where {T<:AbstractFloat}
 
     # 😬 I know this is ugly but I couldn't figure out a better way to do it lmao
     if occursin("amp", String(name_i))

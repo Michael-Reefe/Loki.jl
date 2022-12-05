@@ -136,7 +136,7 @@ Utility class-method for creating DataCube structures directly from JWST-formatt
 # Arguments
 - `filename::String`: the filepath to the JWST-formatted FITS file
 """
-function from_fits(filename::String)
+function from_fits(filename::String)::DataCube
 
     # Open the fits file
     hdu = FITS(filename, "r")
@@ -223,7 +223,7 @@ Convert a DataCube object's wavelength vector to the rest frame
 
 See also [`DataCube`](@ref), [`Util.rest_frame`](@ref)
 """
-function to_rest_frame(cube::DataCube, z::AbstractFloat)
+function to_rest_frame(cube::DataCube, z::AbstractFloat)::DataCube
 
     # Only convert using redshift if it hasn't already been converted
     if !cube.rest_frame
@@ -246,7 +246,7 @@ Apply the mask to the intensity & error arrays in the DataCube
 
 See also [`DataCube`](@ref)
 """
-function apply_mask(cube::DataCube)
+function apply_mask(cube::DataCube)::DataCube
 
     # Only apply the mask if it hasn't already been applied
     if !cube.masked
@@ -585,7 +585,7 @@ Create an Observation object from a series of fits files with IFU cubes in diffe
 - `filenames::Vector{String}`: A vector of filepaths to the FITS files
 - `z::AbstractFloat`: The redshift of the object.
 """
-function from_fits(filenames::Vector{String}, z::AbstractFloat)
+function from_fits(filenames::Vector{String}, z::AbstractFloat)::Observation
 
     # Grab object information from the FITS header of the first file
     channels = Dict{Int,DataCube}()
@@ -614,7 +614,7 @@ Convert each wavelength channel into the rest-frame given by the redshift
 # Arguments
 - `obs::Observation`: The Observation object to convert
 """
-function to_rest_frame(obs::Observation)
+function to_rest_frame(obs::Observation)::Observation
 
     new_channels = Dict{Int,DataCube}()
     # Loop through the channels and call the individual DataCube method of the to_rest_frame function
@@ -636,7 +636,7 @@ Apply the mask onto each intensity/error map in the observation
 # Arguments
 - `obs::Observation`: The Observation object to mask
 """
-function apply_mask(obs::Observation)
+function apply_mask(obs::Observation)::Observation
 
     new_channels = Dict{Int,DataCube}()
     # Loop through the channels and call the individual DataCube method of the apply_mask function

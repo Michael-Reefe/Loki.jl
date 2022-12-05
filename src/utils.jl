@@ -53,7 +53,7 @@ Setup function for reading in the configuration IRS spectrum of IRS 08572+3915
 # Arguments
 - `path::String`: The file path pointing to the IRS 08572+3915 spectrum 
 """
-function read_irs_data(path::String)
+function read_irs_data(path::String)::Tuple{Vector{Float64}, Vector{Float64}, Vector{Float64}}
     datatable = CSV.read(path, DataFrame, comment="#", delim=' ', ignorerepeated=true, stripwhitespace=true,
         header=["rest_wave", "flux", "e_flux", "enod", "order", "module", "nod1flux", "nod2flux", "e_nod1flux", "e_nod2flux"])
     return datatable[!, "rest_wave"], datatable[!, "flux"], datatable[!, "e_flux"]
@@ -65,7 +65,7 @@ end
 
 Setup function for creating a silicate extinction profile based on Donnan et al. (2022)
 """
-function silicate_dp()
+function silicate_dp()::Tuple{Vector{Float64}, Vector{Float64}}
 
     # Read in IRS 08572+3915 data from 00000003_0.ideos.mrt
     λ_irs, F_irs, σ_irs = read_irs_data(joinpath(@__DIR__, "00000003_0.ideos.mrt"))
@@ -290,7 +290,8 @@ julia> ln_likelihood([1.1, 1.9, 3.2], [1., 2., 3.], [0.1, 0.1, 0.1])
 1.1509396793681144
 ```
 """
-function ln_likelihood(data::Vector{<:AbstractFloat}, model::Vector{<:AbstractFloat}, err::Vector{<:AbstractFloat})
+function ln_likelihood(data::Vector{<:AbstractFloat}, model::Vector{<:AbstractFloat}, 
+    err::Vector{<:AbstractFloat})::AbstractFloat
     return -0.5 * sum((data .- model).^2 ./ err.^2 .+ log.(2π .* err.^2))
 end
 
@@ -311,7 +312,7 @@ julia> hermite(2., 3)
 40.0
 ```
 """
-function hermite(x::AbstractFloat, n::Integer)
+function hermite(x::AbstractFloat, n::Integer)::AbstractFloat
     if iszero(n)
         return 1.
     elseif isone(n)
@@ -333,7 +334,7 @@ given a wavelength in μm and a temperature in Kelvins.
 
 Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 """
-function Blackbody_ν(λ::AbstractFloat, Temp::Real) 
+function Blackbody_ν(λ::AbstractFloat, Temp::Real)::AbstractFloat
     return Bν_1/λ^3 / (exp(Bν_2/(λ*Temp))-1)
 end
 
@@ -348,7 +349,7 @@ Calculate a Drude profile at location `x`, with amplitude `A`, central value `μ
 
 Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 """
-function Drude(x::Float64, A::Float64, μ::Float64, FWHM::Float64)
+function Drude(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::AbstractFloat)::AbstractFloat
     return A * (FWHM/μ)^2 / ((x/μ - μ/x)^2 + (FWHM/μ)^2)
 end
 
@@ -363,7 +364,7 @@ Calculate the mixed silicate extinction profile based on Kemper, Vriend, & Tiele
 Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 (with modifications)
 """
-function τ_kvt(λ::AbstractFloat, β::AbstractFloat)
+function τ_kvt(λ::AbstractFloat, β::AbstractFloat)::AbstractFloat
 
     # Get limits of the values that we have datapoints for via the kvt_prof constant
     mx, mn = argmax(kvt_prof[:, 1]), argmin(kvt_prof[:, 1])
@@ -393,7 +394,7 @@ end
 
 Calculate the mixed silicate extinction profile based on Donnan et al. (2022)
 """
-function τ_dp(λ::AbstractFloat, β::AbstractFloat)
+function τ_dp(λ::AbstractFloat, β::AbstractFloat)::AbstractFloat
 
     # Simple cubic spline interpolation
     ext = Spline1D(DPlus_prof[1], DPlus_prof[2]; k=3).(λ)
@@ -403,7 +404,7 @@ function τ_dp(λ::AbstractFloat, β::AbstractFloat)
 end
 
 
-function Extinction(ext::Float64, τ_97::Float64; screen::Bool=false)
+function Extinction(ext::Float64, τ_97::Float64; screen::Bool=false)::AbstractFloat
     """
     Calculate the overall extinction factor
     """
@@ -566,6 +567,7 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
         if verbose
             println("Line at $(line_restwave[k]):")
         end
+        amp = params[pᵢ]
         if isnothing(line_tied[k])
             # Unpack the components of the line
             voff = params[pᵢ+1]
@@ -651,13 +653,13 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
         fwhm_μm = Doppler_shift_λ(line_restwave[k], fwhm) - line_restwave[k]
         # Evaluate line profile
         if line_profiles[k] == :Gaussian
-            comps["line_$k"] = Gaussian.(λ, params[pᵢ], mean_μm, fwhm_μm)
+            comps["line_$k"] = Gaussian.(λ, amp, mean_μm, fwhm_μm)
         elseif line_profiles[k] == :Lorentzian
-            comps["line_$k"] = Lorentzian.(λ, params[pᵢ], mean_μm, fwhm_μm)
+            comps["line_$k"] = Lorentzian.(λ, amp, mean_μm, fwhm_μm)
         elseif line_profiles[k] == :GaussHermite
-            comps["line_$k"] = GaussHermite.(λ, params[pᵢ], mean_μm, fwhm_μm, h3, h4)
+            comps["line_$k"] = GaussHermite.(λ, amp, mean_μm, fwhm_μm, h3, h4)
         elseif line_profiles[k] == :Voigt
-            comps["line_$k"] = Voigt.(λ, params[pᵢ], mean_μm, fwhm_μm, η)
+            comps["line_$k"] = Voigt.(λ, amp, mean_μm, fwhm_μm, η)
         else
             error("Unrecognized line profile $(line_profiles[k])!")
         end
@@ -681,6 +683,7 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
             if verbose
                 println("Flow component:")
             end
+            flow_amp = params[pᵢ]
             if isnothing(line_flow_tied[k])
                 flow_voff = params[pᵢ+1]
                 flow_fwhm = params[pᵢ+2]
@@ -727,13 +730,13 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
             flow_fwhm_μm = Doppler_shift_λ(line_restwave[k], flow_fwhm) - line_restwave[k]
             # Evaluate line profile
             if line_flow_profiles[k] == :Gaussian
-                comps["line_$(k)_flow"] = Gaussian.(λ, params[pᵢ], flow_mean_μm, flow_fwhm_μm)
+                comps["line_$(k)_flow"] = Gaussian.(λ, flow_amp, flow_mean_μm, flow_fwhm_μm)
             elseif line_flow_profiles[k] == :Lorentzian
-                comps["line_$(k)_flow"] = Lorentzian.(λ, params[pᵢ], flow_mean_μm, flow_fwhm_μm)
+                comps["line_$(k)_flow"] = Lorentzian.(λ, flow_amp, flow_mean_μm, flow_fwhm_μm)
             elseif line_profiles[k] == :GaussHermite
-                comps["line_$(k)_flow"] = GaussHermite.(λ, params[pᵢ], flow_mean_μm, flow_fwhm_μm, flow_h3, flow_h4)
+                comps["line_$(k)_flow"] = GaussHermite.(λ, flow_amp, flow_mean_μm, flow_fwhm_μm, flow_h3, flow_h4)
             elseif line_profiles[k] == :Voigt
-                comps["line_$(k)_flow"] = Voigt.(λ, params[pᵢ], flow_mean_μm, flow_fwhm_μm, flow_η)
+                comps["line_$(k)_flow"] = Voigt.(λ, flow_amp, flow_mean_μm, flow_fwhm_μm, flow_η)
             else
                 error("Unrecognized flow line profile $(line_profiles[k])!")
             end
@@ -771,7 +774,7 @@ end
 Evaluate a Gaussian profile at `x`, parameterized by the amplitude `A`, mean value `μ`, and 
 full-width at half-maximum `FWHM`
 """
-function Gaussian(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::AbstractFloat)
+function Gaussian(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::AbstractFloat)::AbstractFloat
     # Reparametrize FWHM as dispersion σ
     σ = FWHM / (2√(2log(2)))
     return A * exp(-(x-μ)^2 / (2σ^2))
@@ -786,7 +789,8 @@ full-width at half-maximum `FWHM`, 3rd moment / skewness `h₃`, and 4th moment 
 
 See Riffel et al. (2010)
 """
-function GaussHermite(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::AbstractFloat, h₃::AbstractFloat, h₄::AbstractFloat)
+function GaussHermite(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::AbstractFloat, 
+    h₃::AbstractFloat, h₄::AbstractFloat)::AbstractFloat
 
     h = [h₃, h₄]
     # Reparametrize FWHM as dispersion σ
@@ -819,7 +823,7 @@ end
 Evaluate a Lorentzian profile at `x`, parametrized by the amplitude `A`, mean value `μ`,
 and full-width at half-maximum `FWHM`
 """
-function Lorentzian(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::AbstractFloat)
+function Lorentzian(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::AbstractFloat)::AbstractFloat
     return A/π * (FWHM/2) / ((x-μ)^2 + (FWHM/2)^2)
 end
 
@@ -830,7 +834,8 @@ end
 Evaluate a pseudo-Voigt profile at `x`, parametrized by the amplitude `A`, mean value `μ`,
 full-width at half-maximum `FWHM`, and mixing ratio `η`
 """
-function Voigt(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::AbstractFloat, η::AbstractFloat)
+function Voigt(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::AbstractFloat, 
+    η::AbstractFloat)::AbstractFloat
 
     # Reparametrize FWHM as dispersion σ
     σ = FWHM / (2√(2log(2))) 
