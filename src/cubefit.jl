@@ -1511,6 +1511,44 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where
     I_model, comps = Util.fit_spectrum(λ, popt, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, 
         cube_fitter.extinction_curve, cube_fitter.extinction_screen, return_components=true)
 
+    msg = "######################################################################\n"
+    msg *= "################# SPAXEL FIT RESULTS -- CONTINUUM ####################\n"
+    msg *= "######################################################################\n"
+    msg *= "\n#> STELLAR CONTINUUM <#\n"
+    msg *= "Stellar_amp: \t\t\t $(@sprintf "%.3e" popt[1]) MJy/sr \t Limits: (0, Inf)\n"
+    msg *= "Stellar_temp: \t\t\t $(@sprintf "%.0f" popt[2]) K \t (fixed)\n"
+    pᵢ = 3
+    msg *= "\n#> DUST CONTINUUM <#\n"
+    for i ∈ 1:cube_fitter.n_dust_cont
+        msg *= "Dust_continuum_$(i)_amp: \t\t $(@sprintf "%.3e" popt[pᵢ]) MJy/sr \t Limits: (0, Inf)\n"
+        msg *= "Dust_continuum_$(i)_temp: \t\t $(@sprintf "%.0f" popt[pᵢ+1]) K \t\t\t (fixed)\n"
+        msg *= "\n"
+        pᵢ += 2
+    end
+    msg *= "\n#> DUST FEATURES <#\n"
+    for (j, df) ∈ enumerate(cube_fitter.df_names)
+        msg *= "$(df)_amp:\t\t\t $(@sprintf "%.1f" popt[pᵢ]) MJy/sr \t Limits: " *
+            "(0, $(@sprintf "%.1f" nanmaximum(I))\n"
+        msg *= "$(df)_mean:  \t\t $(@sprintf "%.3f" popt[pᵢ+1]) μm \t Limits: " *
+            "($(@sprintf "%.3f" minimum(mean_df[j].prior)), $(@sprintf "%.3f" maximum(mean_df[j].prior)))" * 
+            (mean_df[j].locked ? " (fixed)" : "") * "\n"
+        msg *= "$(df)_fwhm:  \t\t $(@sprintf "%.3f" popt[pᵢ+2]) μm \t Limits: " *
+            "($(@sprintf "%.3f" minimum(fwhm_df[j].prior)), $(@sprintf "%.3f" maximum(fwhm_df[j].prior)))" * 
+            (fwhm_df[j].locked ? " (fixed)" : "") * "\n"
+        msg *= "\n"
+        pᵢ += 3
+    end
+    msg *= "\n#> EXTINCTION <#\n"
+    msg *= "τ_9.7: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ]) [-] \t Limits: " *
+        "($(@sprintf "%.2f" minimum(cube_fitter.τ_97.prior)), $(@sprintf "%.2f" maximum(cube_fitter.τ_97.prior)))" * 
+        (cube_fitter.τ_97.locked ? " (fixed)" : "") * "\n"
+    msg *= "β: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ+1]) [-] \t Limits: " *
+        "($(@sprintf "%.2f" minimum(cube_fitter.β.prior)), $(@sprintf "%.2f" maximum(cube_fitter.β.prior)))" * 
+        (cube_fitter.β.locked ? " (fixed)" : "") * "\n"
+    msg *= "\n"
+    msg *= "######################################################################"
+    @debug msg
+
     return σ, popt, I_model, comps, n_free
 
 end
@@ -2068,6 +2106,104 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where {S<:
         comps[comp] = comps[comp] .* N
     end
 
+    msg = "######################################################################\n"
+    msg *= "############### SPAXEL FIT RESULTS -- EMISSION LINES #################\n"
+    msg *= "######################################################################\n"
+    pᵢ = 1
+    msg *= "\n#> TIED VELOCITY OFFSETS <#\n"
+    for (i, vk) ∈ enumerate(cube_fitter.voff_tied_key)
+        msg *= "$(vk)_tied_voff: \t\t\t $(@sprintf "%.0f" popt[pᵢ]) km/s \t " *
+            "Limits: ($(@sprintf "%.0f" minimum(cube_fitter.voff_tied[i].prior)), $(@sprintf "%.0f" maximum(cube_fitter.voff_tied[i].prior)))\n"
+        pᵢ += 1
+    end
+    for (j, fvk) ∈ enumerate(cube_fitter.flow_voff_tied_key)
+        msg *= "$(fvk)_flow_tied_voff:\t\t\t $(@sprintf "%.0f" popt[pᵢ]) km/s \t " *
+            "Limits: ($(@sprintf "%.0f" minimum(cube_fitter.flow_voff_tied[j].prior)), $(@sprintf "%.0f" maximum(cube_fitter.flow_voff_tied[j].prior)))\n"
+        pᵢ += 1
+    end
+    msg *= "\n#> TIED VOIGT MIXING <#\n"
+    if cube_fitter.tie_voigt_mixing
+        msg *= "tied_voigt_mixing: \t\t\t $(@sprintf "%.2f" popt[pᵢ]) [-] \t " * 
+            "Limits: ($(@sprintf "%.2f" minimum(cube_fitter.voigt_mix_tied.prior)), $(@sprintf "%.2f" maximum(cube_fitter.voigt_mix_tied.prior)))\n"
+        pᵢ += 1
+    end
+    msg *= "\n#> EMISSION LINES <#\n"
+    for (k, (ln, nm)) ∈ enumerate(zip(cube_fitter.lines, cube_fitter.line_names))
+        msg *= "$(nm)_amp:\t\t\t $(@sprintf "%.0f" popt[pᵢ]*N) MJy/sr \t Limits: (0, $(@sprintf "%.0f" nanmaximum(I)))\n"
+        if isnothing(cube_fitter.line_tied[k]) || cube_fitter.flexible_wavesol
+            msg *= "$(nm)_voff:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) km/s \t " *
+                "Limits: ($(@sprintf "%.0f" minimum(voff_ln[k].prior)), $(@sprintf "%.0f" maximum(voff_ln[k].prior)))\n"
+            msg *= "$(nm)_fwhm:   \t\t $(@sprintf "%.0f" popt[pᵢ+2]) km/s \t " *
+                "Limits: ($(@sprintf "%.0f" minimum(fwhm_ln[k].prior)), $(@sprintf "%.0f" maximum(fwhm_ln[k].prior)))\n"
+            if prof_ln[k] == :GaussHermite
+                msg *= "$(nm)_h3:    \t\t $(@sprintf "%.3f" popt[pᵢ+3])      \t " *
+                    "Limits: ($(@sprintf "%.3f" minimum(h3_ln[k].prior)), $(@sprintf "%.3f" maximum(h3_ln[k].prior)))\n"
+                msg *= "$(nm)_h4:    \t\t $(@sprintf "%.3f" popt[pᵢ+4])      \t " *
+                    "Limits: ($(@sprintf "%.3f" minimum(h4_ln[k].prior)), $(@sprintf "%.3f" maximum(h4_ln[k].prior)))\n"
+                pᵢ += 2
+            elseif prof_ln[k] == :Voigt && !cube_fitter.tie_voigt_mixing
+                msg *= "$(nm)_η:     \t\t $(@sprintf "%.3f" popt[pᵢ+3])      \t " *
+                    "Limits: ($(@sprintf "%.3f" minimum(η_ln[k].prior)), $(@sprintf "%.3f" maximum(η_ln[k].prior)))\n"
+                pᵢ += 1
+            end
+            pᵢ += 3
+        else
+            msg *= "$(nm)_fwhm:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) km/s \t " *
+                "Limits: ($(@sprintf "%.0f" minimum(fwhm_ln[k].prior)), $(@sprintf "%.0f" maximum(fwhm_ln[k].prior)))\n"
+            if prof_ln[k] == :GaussHermite
+                msg *= "$(nm)_h3:    \t\t $(@sprintf "%.3f" popt[pᵢ+2])      \t " *
+                    "Limits: ($(@sprintf "%.3f" minimum(h3_ln[k].prior)), $(@sprintf "%.3f" maximum(h3_ln[k].prior)))\n"
+                msg *= "$(nm)_h4:    \t\t $(@sprintf "%.3f" popt[pᵢ+3])      \t " *
+                    "Limits: ($(@sprintf "%.3f" minimum(h4_ln[k].prior)), $(@sprintf "%.3f" maximum(h4_ln[k].prior)))\n"
+                pᵢ += 2
+            elseif prof_ln[k] == :Voigt && !cube_fitter.tie_voigt_mixing
+                msg *= "$(nm)_η:     \t\t $(@sprintf "%.3f" popt[pᵢ+2])      \t " *
+                    "Limits: ($(@sprintf "%.3f" minimum(η_ln[k].prior)), $(@sprintf "%.3f" maximum(η_ln[k].prior)))\n"
+                pᵢ += 1
+            end
+            pᵢ += 2
+        end
+        if !isnothing(flow_prof_ln[k])
+            msg *= "\n$(nm)_flow_amp:\t\t\t $(@sprintf "%.0f" popt[pᵢ]*N) MJy/sr \t Limits: (0, $(@sprintf "%.0f" nanmaximum(I)))\n"
+            if isnothing(cube_fitter.line_flow_tied[k])
+                msg *= "$(nm)_flow_voff:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) km/s \t " *
+                    "Limits: ($(@sprintf "%.0f" minimum(voff_ln[k].prior)), $(@sprintf "%.0f" maximum(voff_ln[k].prior)))\n"
+                msg *= "$(nm)_flow_fwhm:   \t\t $(@sprintf "%.0f" popt[pᵢ+2]) km/s \t " *
+                    "Limits: ($(@sprintf "%.0f" minimum(fwhm_ln[k].prior)), $(@sprintf "%.0f" maximum(fwhm_ln[k].prior)))\n"
+                if flow_prof_ln[k] == :GaussHermite
+                    msg *= "$(nm)_flow_h3:    \t\t $(@sprintf "%.3f" popt[pᵢ+3])      \t " *
+                        "Limits: ($(@sprintf "%.3f" minimum(h3_ln[k].prior)), $(@sprintf "%.3f" maximum(h3_ln[k].prior)))\n"
+                    msg *= "$(nm)_flow_h4:    \t\t $(@sprintf "%.3f" popt[pᵢ+4])      \t " *
+                        "Limits: ($(@sprintf "%.3f" minimum(h4_ln[k].prior)), $(@sprintf "%.3f" maximum(h4_ln[k].prior)))\n"
+                    pᵢ += 2
+                elseif flow_prof_ln[k] == :Voigt && !cube_fitter.tie_voigt_mixing
+                    msg *= "$(nm)_flow_η:     \t\t $(@sprintf "%.3f" popt[pᵢ+3])      \t " *
+                        "Limits: ($(@sprintf "%.3f" minimum(η_ln[k].prior)), $(@sprintf "%.3f" maximum(η_ln[k].prior)))\n"
+                    pᵢ += 1
+                end
+                pᵢ += 3
+            else
+                msg *= "$(nm)_flow_fwhm:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) km/s \t " *
+                    "Limits: ($(@sprintf "%.0f" minimum(fwhm_ln[k].prior)), $(@sprintf "%.0f" maximum(fwhm_ln[k].prior)))\n"
+                if flow_prof_ln[k] == :GaussHermite
+                    msg *= "$(nm)_flow_h3:    \t\t $(@sprintf "%.3f" popt[pᵢ+2])      \t " *
+                        "Limits: ($(@sprintf "%.3f" minimum(h3_ln[k].prior)), $(@sprintf "%.3f" maximum(h3_ln[k].prior)))\n"
+                    msg *= "$(nm)_flow_h4:    \t\t $(@sprintf "%.3f" popt[pᵢ+3])      \t " *
+                        "Limits: ($(@sprintf "%.3f" minimum(h4_ln[k].prior)), $(@sprintf "%.3f" maximum(h4_ln[k].prior)))\n"
+                    pᵢ += 2
+                elseif flow_prof_ln[k] == :Voigt && !cube_fitter.tie_voigt_mixing
+                    msg *= "$(nm)_flow_η:     \t\t $(@sprintf "%.3f" popt[pᵢ+2])      \t " *
+                        "Limits: ($(@sprintf "%.3f" minimum(η_ln[k].prior)), $(@sprintf "%.3f" maximum(η_ln[k].prior)))\n"
+                    pᵢ += 1
+                end
+                pᵢ += 2
+            end
+        end
+        msg *= "\n"
+    end 
+    msg *= "######################################################################" 
+    @debug msg
+
     return σ, popt, I_model, comps, n_free
 
 end
@@ -2510,6 +2646,7 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S})::Union{Nothing,
             I = cube_fitter.cube.Iλ[spaxel..., :]
 
             if any(.!isfinite.(I) .| .!isfinite.(I))
+                @debug "Too many bad datapoints...skipping the fit for spaxel $spaxel"
                 p_out = nothing
 
             else
@@ -2618,8 +2755,8 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
 
     # Sort spaxels by median brightness, so that we fit the brightest ones first
     # (which hopefully have the best reduced chi^2s)
-    spaxels = Iterators.product(1:shape[1], 1:shape[2])
-    # spaxels = Iterators.product(15:16, 15:16)
+    # spaxels = Iterators.product(1:shape[1], 1:shape[2])
+    spaxels = Iterators.product(15:16, 15:16)
 
     # med_I = collect(Iterators.flatten([nanmedian(cube_fitter.cube.Iλ[spaxel..., :]) for spaxel ∈ spaxels]))
     # # replace NaNs with -1s
