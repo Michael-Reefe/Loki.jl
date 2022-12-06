@@ -54,6 +54,9 @@ Setup function for reading in the configuration IRS spectrum of IRS 08572+3915
 - `path::String`: The file path pointing to the IRS 08572+3915 spectrum 
 """
 function read_irs_data(path::String)::Tuple{Vector{Float64}, Vector{Float64}, Vector{Float64}}
+
+    @debug "Reading in IRS data from: $path"
+
     datatable = CSV.read(path, DataFrame, comment="#", delim=' ', ignorerepeated=true, stripwhitespace=true,
         header=["rest_wave", "flux", "e_flux", "enod", "order", "module", "nod1flux", "nod2flux", "e_nod1flux", "e_nod2flux"])
     return datatable[!, "rest_wave"], datatable[!, "flux"], datatable[!, "e_flux"]
@@ -66,6 +69,8 @@ end
 Setup function for creating a silicate extinction profile based on Donnan et al. (2022)
 """
 function silicate_dp()::Tuple{Vector{Float64}, Vector{Float64}}
+
+    @debug "Creating Donnan+2022 optical depth profile..."
 
     # Read in IRS 08572+3915 data from 00000003_0.ideos.mrt
     λ_irs, F_irs, σ_irs = read_irs_data(joinpath(@__DIR__, "00000003_0.ideos.mrt"))
@@ -420,7 +425,7 @@ end
 
 """
     fit_spectrum(λ, params, n_dust_cont, n_dust_features, extinction_curve, extinction_screen;
-        return_components=return_components, verbose=verbose)
+        return_components=return_components)
 
 Create a model of the continuum (including stellar+dust continuum, PAH features, and extinction, excluding emission lines)
 at the given wavelengths `λ`, given the parameter vector `params`.
@@ -439,55 +444,34 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `extinction_screen::Bool`: Whether or not to use a screen model for the extinction curve
 - `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
-- `verbose::Bool=false`: Whether or not to print out status messages
 """
 function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_dust_cont::Integer, n_dust_features::Integer,
-    extinction_curve::String, extinction_screen::Bool; return_components::Bool=false, verbose::Bool=false)
+    extinction_curve::String, extinction_screen::Bool; return_components::Bool=false)
 
     # Prepare outputs
     comps = Dict{String, Vector{Float64}}()
     contin = zeros(Float64, length(λ))
 
     # Stellar blackbody continuum (usually at 5000 K)
-    if verbose
-        println("Stellar continuum:")
-        println("$(params[1]), $(params[2])")
-    end
     comps["stellar"] = params[1] .* Blackbody_ν.(λ, params[2])
     contin .+= comps["stellar"]
     pᵢ = 3
 
     # Add dust continua at various temperatures
-    if verbose
-        println("Dust continua:")
-    end
     for i ∈ 1:n_dust_cont
-        if verbose
-            println("$(params[pᵢ]), $(params[pᵢ+1])")
-        end
         comps["dust_cont_$i"] = params[pᵢ] .* (9.7 ./ λ).^2 .* Blackbody_ν.(λ, params[pᵢ+1])
         contin .+= comps["dust_cont_$i"] 
         pᵢ += 2
     end
 
     # Add dust features with drude profiles
-    if verbose
-        println("Dust features:")
-    end
     for j ∈ 1:n_dust_features
-        if verbose
-            println("$(params[pᵢ]), $(params[pᵢ+1]), $(params[pᵢ+2])")
-        end
         comps["dust_feat_$j"] = Drude.(λ, params[pᵢ:pᵢ+2]...)
         contin .+= comps["dust_feat_$j"]
         pᵢ += 3
     end
 
     # Extinction 
-    if verbose
-        println("Extinction:")
-        println("$(params[pᵢ]), $(params[pᵢ+1])")
-    end
     if extinction_curve == "d+"
         ext_curve = τ_dp.(λ, params[pᵢ+1])
     elseif extinction_curve == "kvt"
@@ -511,7 +495,7 @@ end
 """
     fit_line_residuals(λ, params, n_lines, n_voff_tied, voff_tied_key, line_tied, line_profiles,
         n_flow_voff_tied, flow_voff_tied_key, line_flow_tied, line_flow_profiles, line_restwave,
-        flexible_wavesol, tie_voigt_mixing; return_components=return_components, verbose=verbose)
+        flexible_wavesol, tie_voigt_mixing; return_components=return_components) 
 
 Create a model of the emission lines at the given wavelengths `λ`, given the parameter vector `params`.
 
@@ -541,13 +525,12 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `tie_voigt_mixing::Bool`: Whether or not to tie the mixing parameters of all Voigt profiles together
 - `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
-- `verbose::Bool=false`: Whether or not to print out status messages
 """
 function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_lines::Integer, n_voff_tied::Integer, 
     voff_tied_key::Vector{String}, line_tied::Vector{Union{String,Nothing}}, line_profiles::Vector{Symbol}, 
     n_flow_voff_tied::Integer, flow_voff_tied_key::Vector{String}, line_flow_tied::Vector{Union{String,Nothing}},
     line_flow_profiles::Vector{Union{Symbol,Nothing}}, line_restwave::Vector{<:AbstractFloat}, 
-    flexible_wavesol::Bool, tie_voigt_mixing::Bool; return_components::Bool=false, verbose::Bool=false)
+    flexible_wavesol::Bool, tie_voigt_mixing::Bool; return_components::Bool=false)
 
     # Prepare outputs
     comps = Dict{String, Vector{Float64}}()
@@ -564,20 +547,15 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
     # Add emission lines
     for k ∈ 1:n_lines
         # Check if voff is tied: if so, use the tied voff parameter, otherwise, use the line's own voff parameter
-        if verbose
-            println("Line at $(line_restwave[k]):")
-        end
         amp = params[pᵢ]
         if isnothing(line_tied[k])
             # Unpack the components of the line
             voff = params[pᵢ+1]
             fwhm = params[pᵢ+2]
-            msg = "$(params[pᵢ]), $(params[pᵢ+1]) (united), $(params[pᵢ+2])"
             if line_profiles[k] == :GaussHermite
                 # Get additional h3, h4 components
                 h3 = params[pᵢ+3]
                 h4 = params[pᵢ+4]
-                msg *= ", $(params[pᵢ+3]), $(params[pᵢ+4])"
             elseif line_profiles[k] == :Voigt
                 # Get additional mixing component, either from the tied position or the 
                 # individual position
@@ -586,10 +564,6 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
                 else
                     η = params[ηᵢ]
                 end
-                msg *= ", $η"
-            end
-            if verbose
-                println(msg)
             end
         elseif !isnothing(line_tied[k]) && flexible_wavesol
             # Find the position of the tied velocity offset that should be used
@@ -600,12 +574,10 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
             # Add velocity shifts of the tied lines and the individual offsets together
             voff = voff_series + voff_indiv
             fwhm = params[pᵢ+2]
-            msg = "$(params[pᵢ]), $(params[vwhere]) (tied) + $(params[pᵢ+1]) (united), $(params[pᵢ+2])"
             if line_profiles[k] == :GaussHermite
                 # Get additional h3, h4 components
                 h3 = params[pᵢ+3]
                 h4 = params[pᵢ+4]
-                msg *= ", $(params[pᵢ+3]), $(params[pᵢ+4])"
             elseif line_profiles[k] == :Voigt
                 # Get additional mixing component, either from the tied position or the 
                 # individual position
@@ -614,10 +586,6 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
                 else
                     η = params[ηᵢ]
                 end
-                msg *= ", $η"
-            end
-            if verbose
-                println(msg)
             end
         else
             # Find the position of the tied velocity offset that should be used
@@ -626,12 +594,10 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
             voff = params[vwhere]
             fwhm = params[pᵢ+1]
             # (dont add any individual voff components)
-            msg = "$(params[pᵢ]), $(params[vwhere]) (tied), $(params[pᵢ+1])"
             if line_profiles[k] == :GaussHermite
                 # Get additional h3, h4 components
                 h3 = params[pᵢ+2]
                 h4 = params[pᵢ+3]
-                msg *= ", $(params[pᵢ+2]), $(params[pᵢ+3])"
             elseif line_profiles[k] == :Voigt
                 # Get additional mixing component, either from the tied position or the 
                 # individual position
@@ -640,10 +606,6 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
                 else
                     η = params[ηᵢ]
                 end
-                msg *= ", $η"
-            end
-            if verbose
-                println(msg)
             end
         end
 
@@ -680,48 +642,33 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
 
         # Repeat EVERYTHING, minus the flexible_wavesol, for the inflow/outflow components
         if !isnothing(line_flow_profiles[k])
-            if verbose
-                println("Flow component:")
-            end
             flow_amp = params[pᵢ]
             if isnothing(line_flow_tied[k])
                 flow_voff = params[pᵢ+1]
                 flow_fwhm = params[pᵢ+2]
-                msg = "$(params[pᵢ]), $(params[pᵢ+1]) (united), $(params[pᵢ+2])"
                 if line_flow_profiles[k] == :GaussHermite
                     flow_h3 = params[pᵢ+3]
                     flow_h4 = params[pᵢ+4]
-                    msg *= ", $(params[pᵢ+3]), $(params[pᵢ+4])"
                 elseif line_flow_profiles[k] == :Voigt
                     if !tie_voigt_mixing
                         flow_η = params[pᵢ+3]
                     else
                         flow_η = params[ηᵢ]
                     end
-                    msg *= ", $flow_η"
                 end
-                if verbose
-                    println(msg)
-                end 
             else
                 vwhere = findfirst(x -> x == line_flow_tied[k], flow_voff_tied_key)
                 flow_voff = params[n_voff_tied + vwhere]
                 flow_fwhm = params[pᵢ+1]
-                msg = "$(params[pᵢ]), $(params[vwhere]) (tied), $(params[pᵢ+1])"
                 if line_flow_profiles[k] == :GaussHermite
                     flow_h3 = params[pᵢ+2]
                     flow_h4 = params[pᵢ+3]
-                    msg *= ", $(params[pᵢ+2]), $(params[pᵢ+3])"
                 elseif line_flow_profiles[k] == :Voigt
                     if !tie_voigt_mixing
                         flow_η = params[pᵢ+2]
                     else
                         flow_η = params[ηᵢ]
                     end
-                    msg *= ", $flow_η"
-                end
-                if verbose
-                    println(msg)
                 end
             end
             # Convert voff in km/s to mean wavelength in μm

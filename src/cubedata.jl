@@ -186,15 +186,15 @@ function from_fits(filename::String)::DataCube
     channel = hdr0["CHANNEL"]  # MIRI channel (1-4)
     band = hdr0["BAND"]        # MIRI band (long,med,short,multiple)
 
-    @debug """
+    @debug """\n
     ##################################################################
     #################### TARGET INFORMATION ##########################
     ##################################################################
     name: \t\t $name
-    RA: \t\t $ra
-    Dec: \t\t $dec
+    RA: \t\t\t $ra
+    Dec: \t\t\t $dec
     MIRI Channel: \t $channel
-    MIRI Band: \t $band
+    MIRI Band: \t\t $band
     ##################################################################
     """
 
@@ -309,6 +309,7 @@ See also [`DataCube`](@ref)
 function interpolate_cube!(cube::DataCube)
 
     λ = cube.λ
+    @debug "Interpolating NaNs in cube with channel $(cube.channel), band $(cube.band):"
 
     for (x, y) ∈ Iterators.product(1:size(cube.Iλ, 1), 1:size(cube.Iλ, 2))
 
@@ -324,6 +325,8 @@ function interpolate_cube!(cube::DataCube)
 
         # Interpolate the NaNs
         if sum(filt) > 0
+            @debug "NaNs found in spaxel ($x, $y) -- interpolating"
+
             # Make sure the wavelength vector is linear, since it is assumed later in the function
             diffs = diff(λ)
             @assert diffs[1] ≈ diffs[end]
@@ -373,6 +376,8 @@ See also [`DataCube`](@ref), [`plot_1d`](@ref)
 function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=true, logᵢ::Union{Integer,Nothing}=10,
     logₑ::Union{Integer,Nothing}=nothing, colormap::Symbol=:magma, name::Union{String,Nothing}=nothing, 
     slice::Union{Integer,Nothing}=nothing, z::Union{AbstractFloat,Nothing}=nothing, marker::Union{Tuple{<:Real,<:Real},Nothing}=nothing)
+
+    @debug "Plotting 2D intensity/error map for cube with channel $(cube.channel), band $(cube.band)"
 
     if isnothing(slice)
         # Sum up data along wavelength dimension
@@ -476,6 +481,8 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
 
     end
 
+    @debug "Saving 2D plot to $fname"
+
     # Save and close plot
     plt.savefig(fname, dpi=300, bbox_inches=:tight)
     plt.close()
@@ -505,6 +512,8 @@ See also [`DataCube`](@ref), [`plot_2d`](@ref)
 """
 function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=true, logᵢ::Integer=false,
     spaxel::Union{Tuple{S,S},Nothing}=nothing, linestyle::String="-", name::Union{String,Nothing}=nothing) where {S<:Integer}
+
+    @debug "Plotting 1D intensity/error map for cube with channel $(cube.channel), band $(cube.band)"
 
     # Alias
     λ = data.λ
@@ -558,6 +567,9 @@ function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
     ax.set_xlim(minimum(λ), maximum(λ))
     ax.set_title(isnothing(name) ? "" * (isnothing(spaxel) ? "" : "Spaxel ($(spaxel[1]),$(spaxel[2]))") : name)
     ax.tick_params(direction="in")
+
+    @debug "Saving 1D plot to $fname"
+
     plt.savefig(fname, dpi=300, bbox_inches=:tight)
     plt.close()
 
@@ -618,6 +630,7 @@ Create an Observation object from a series of fits files with IFU cubes in diffe
 """
 function from_fits(filenames::Vector{String}, z::AbstractFloat)::Observation
 
+
     # Grab object information from the FITS header of the first file
     channels = Dict{Int,DataCube}()
     hdu = FITS(filenames[1])
@@ -627,6 +640,11 @@ function from_fits(filenames::Vector{String}, z::AbstractFloat)::Observation
     dec = hdr["TARG_DEC"]
     inst = hdr["INSTRUME"]
     detector = hdr["DETECTOR"]
+
+    @debug """\n
+    Initializing Observation struct for $name, with redshift z=$z
+    #############################################################
+    """
     
     # Loop through the files and call the individual DataCube method of the from_fits function
     for (i, filepath) ∈ enumerate(filenames)
@@ -646,6 +664,11 @@ Convert each wavelength channel into the rest-frame given by the redshift
 - `obs::Observation`: The Observation object to convert
 """
 function to_rest_frame(obs::Observation)::Observation
+
+    @debug """\n
+    Converting observation of $(obs.name) to the rest frame
+    #######################################################
+    """
 
     new_channels = Dict{Int,DataCube}()
     # Loop through the channels and call the individual DataCube method of the to_rest_frame function
@@ -668,6 +691,11 @@ Apply the mask onto each intensity/error map in the observation
 - `obs::Observation`: The Observation object to mask
 """
 function apply_mask(obs::Observation)::Observation
+
+    @debug """\n
+    Masking out bad spaxels in observation of $(obs.name)
+    #####################################################
+    """
 
     new_channels = Dict{Int,DataCube}()
     # Loop through the channels and call the individual DataCube method of the apply_mask function
@@ -727,6 +755,9 @@ function cube_rebin!(obs::Observation, channels::Union{Vector{S},Nothing}=nothin
     # Loop through all other channels
     cumsum = 0
     for ch_in ∈ channels[1:end-1]
+
+        @info "Rebinning $(obs.name) in channel $ch_in..."
+
         wi_size = size(obs.channels[ch_in].λ)[1]
 
         # Function to transform output coordinates into input coordinates
@@ -743,7 +774,7 @@ function cube_rebin!(obs::Observation, channels::Union{Vector{S},Nothing}=nothin
         ch_σI = obs.channels[ch_in].σI
         ch_σI[.!isfinite.(ch_σI)] .= 0.
 
-        prog = Progress(wi_size, dt=0.01, desc="Interpolating channel $ch_in...", showspeed=true)
+        prog = Progress(wi_size, dt=0.01, showspeed=true)
         for wi ∈ 1:wi_size
             # 2D Cubic spline interpolations at each wavelength bin with flat boundary conditions
             interp_func_I = extrapolate(interpolate(ch_Iλ[:, :, wi], BSpline(Cubic(Interpolations.Flat(OnGrid())))), Interpolations.Flat())
@@ -780,6 +811,8 @@ function cube_rebin!(obs::Observation, channels::Union{Vector{S},Nothing}=nothin
     I_out = I_out[:, :, ss]
     σ_out = σ_out[:, :, ss]
 
+    @info "Masking bins with bad data..."
+
     # apply strict masking -- only retain pixels that have data for all channels
     mask_out = falses(size(I_out))
     # 1e-3 from empirically testing what works well
@@ -799,6 +832,8 @@ function cube_rebin!(obs::Observation, channels::Union{Vector{S},Nothing}=nothin
     obs.channels[0] = DataCube(λ_out, I_out, σ_out, mask_out, 
         obs.channels[ch_ref].Ω, obs.α, obs.δ, obs.channels[ch_ref].wcs, obs.channels[ch_ref].channel, 
         obs.channels[ch_ref].band, obs.rest_frame, true)
+    
+    @info "Done!"
     
     return obs.channels[0]
 

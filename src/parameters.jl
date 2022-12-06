@@ -4,7 +4,6 @@ module Param
 using Distributions
 using JSON
 
-
 """
     Parameter(value, locked, prior)
 
@@ -41,11 +40,22 @@ end
 
 
 """
+    show([io,] p)
+
+Show the parameter object as a nicely formatted string
+"""
+function Base.show(io::IO, p::Parameter)
+    Base.show(io, "Parameter: value = $(p.value) | locked = $(p.locked) | prior = $(p.prior)")
+end
+
+
+"""
     from_dict(dict)
 
 A constructor function for Parameter structs given a Dictionary
 """
 function from_dict(dict::Dict)::Parameter
+
     # Unpack the dictionary into fields of the Parameter
     value = dict["val"]
     locked = dict["locked"]
@@ -72,6 +82,7 @@ using deltas on upper/lower limits, i.e. if val = 5 and plim = [-0.1, 0.1],
 then the true limits will be 5 .+ [-0.1, 0.1] = [4.9, 5.1]
 """
 function from_dict_wave(dict::Dict)::Parameter
+
     # Unpack the dictionary into fields of the Parameter
     value = dict["val"]
     locked = dict["locked"]
@@ -99,6 +110,7 @@ using fractional values on upper/lower limits, i.e. if val = 5 and
 plim = [0.5, 2], then the true limits will be 5 .* [0.5, 2] = [2.5, 10]
 """
 function from_dict_fwhm(dict::Dict)::Parameter
+
     # Unpack the dictionary into fields of the Parameter
     value = dict["val"]
     locked = dict["locked"]
