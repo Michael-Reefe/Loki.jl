@@ -2380,7 +2380,10 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
     pₒ = 1
     for c ∈ cube_fitter.complexes
 
-        # Start with a flat profile at 0
+        # Start with 0 intensity -> intensity holds the overall integrated intensity in CGS units
+        intensity = 0. 
+        # Start with flat profile -> profile holds the overall model as an anonymous function in units of MJy/sr
+        # this is used to calculate the S/N at the end
         profile = x -> 0.
         # Initial parameter vector index where dust profiles start
         pᵢ = 3 + 2cube_fitter.n_dust_cont
@@ -2388,9 +2391,16 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
         # Add up the dust feature profiles that belong to this complex
         for (ii, cdf) ∈ enumerate(cube_fitter.dust_features)
             if cdf[:complex] == c
+
                 # unpack the parameters
                 A, μ, fwhm = popt_c[pᵢ:pᵢ+2]
-                # add the anonymous functions recursively
+                # Convert peak intensity to CGS units (erg s^-1 cm^-2 μm^-1 sr^-1)
+                A_cgs = Util.MJysr_to_cgs(A, μ)
+                # add the integral of the individual Drude profiles using the helper function
+                # (integral = π/2 * A * fwhm)
+                intensity += Util.∫Drude(A_cgs, fwhm)
+
+                # add to profile recursively
                 profile = let profile = profile
                     x -> profile(x) + Util.Drude(x, A, μ, fwhm)
                 end
@@ -2398,15 +2408,16 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
             # increment the parameter index
             pᵢ += 3
         end
+
         λ_arr = (minimum(λ)-3):Δλ:(maximum(λ)+3)
         peak, peak_ind = findmax(profile.(λ_arr))
 
-        # Integrate the intensity of the combined profile using Gauss-Kronrod quadrature
-        p_complex[pₒ], _ = quadgk(profile, 0, Inf, order=200)
+        # intensity units: erg s^-1 cm^-2 sr^-1 (integrated over μm)
+        p_complex[pₒ] = intensity
 
         # SNR, calculated as (amplitude) / (RMS of the surrounding spectrum)
         p_complex[pₒ+1] = peak / std(I[.!mask_lines] .- continuum[.!mask_lines])
-        @debug "Dust complex $c with integrated intensity $(p_complex[pₒ]) and SNR $(p_complex[pₒ+1])"
+        @debug "Dust complex $c with integrated intensity $(p_complex[pₒ]) (erg s^-1 cm^-2 sr^-1) and SNR $(p_complex[pₒ+1])"
 
         pₒ += 2
     end
@@ -2423,7 +2434,9 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
     end
     for (k, ln) ∈ enumerate(cube_fitter.lines)
 
-        # (\/ pretty much the same as the fit_line_residuals function, but outputting anonymous line profile functions)
+        # Start with 0 intensity -> intensity holds the overall integrated intensity in CGS units
+        intensity = 0. 
+        # (\/ pretty much the same as the fit_line_residuals function, but calculating the integrated intensities)
         amp = popt_l[pᵢ]
             
         # Check if voff is tied: if so, use the tied voff parameter, otherwise, use the line's own voff parameter
@@ -2492,15 +2505,26 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
         mean_μm = Util.Doppler_shift_λ(ln.λ₀, voff)
         # Convert FWHM from km/s to μm
         fwhm_μm = Util.Doppler_shift_λ(ln.λ₀, fwhm) - ln.λ₀
-        # Evaluate line profiles centered at 0 (since the shift doesnt matter for integration)
-        # -> evaluating centered at 0 helps quadgk when the fwhm is small compared to the integration region
+
+        # Convert amplitude to erg s^-1 cm^-2 μm^-1 sr^-1, put back in the normalization
+        amp_cgs = Util.MJysr_to_cgs(amp*N, mean_μm)
+
+        # Evaluate the line profiles according to whether there is a simple analytic form
+        # otherwise, integrate numerically with quadgk
         if cube_fitter.line_profiles[k] == :Gaussian
+            intensity += Util.∫Gaussian(amp_cgs, fwhm_μm)
             profile = x -> Util.Gaussian(x, amp, 0., fwhm_μm)
         elseif cube_fitter.line_profiles[k] == :Lorentzian
+            intensity += Util.∫Lorentzian(amp_cgs)
             profile = x -> Util.Lorentzian(x, amp, 0., fwhm_μm)
         elseif cube_fitter.line_profiles[k] == :GaussHermite
+            # shift the profile to be centered at 0 since it doesnt matter for the integral, and it makes it
+            # easier for quadgk to find a solution
+            intensity += quadgk(x -> Util.GaussHermite(x, amp_cgs, 0., fwhm_μm, h3, h4), -Inf, Inf, order=200)[1]
             profile = x -> Util.GaussHermite(x, amp, 0., fwhm_μm, h3, h4)
         elseif cube_fitter.line_profiles[k] == :Voigt
+            # also use a high order to ensure that all the initial test points dont evaluate to precisely 0
+            intensity += quadgk(x -> Util.Voigt(x, amp_cgs, 0., fwhm_μm, η), -Inf, Inf, order=200)[1]
             profile = x -> Util.Voigt(x, amp, 0., fwhm_μm, η)
         else
             error("Unrecognized line profile $(cube_fitter.line_profiles[k])!")
@@ -2520,6 +2544,7 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
 
         # Repeat EVERYTHING, minus the flexible_wavesol, for the inflow/outflow components
         if !isnothing(cube_fitter.line_flow_profiles[k])
+
             flow_amp = popt_l[pᵢ]
             if isnothing(cube_fitter.line_flow_tied[k])
                 flow_voff = popt_l[pᵢ+1]
@@ -2554,20 +2579,30 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
             flow_mean_μm = Util.Doppler_shift_λ(ln.λ₀, voff+flow_voff)
             # Convert FWHM from km/s to μm
             flow_fwhm_μm = Util.Doppler_shift_λ(ln.λ₀, flow_fwhm) - ln.λ₀
+
+            # Convert amplitude to erg s^-1 cm^-2 μm^-1 sr^-1, put back in the normalization
+            flow_amp_cgs = Util.MJysr_to_cgs(flow_amp*N, flow_mean_μm)
+
             # Evaluate line profile, shifted by the same amount as the primary line profile
             if cube_fitter.line_flow_profiles[k] == :Gaussian
+                intensity += Util.∫Gaussian(flow_amp_cgs, flow_fwhm_μm)
                 profile = let profile = profile
                     x -> profile(x) + Util.Gaussian(x, flow_amp, flow_mean_μm-mean_μm, flow_fwhm_μm)
                 end
             elseif cube_fitter.line_flow_profiles[k] == :Lorentzian
+                intensity += Util.∫Lorentzian(flow_amp_cgs)
                 profile = let profile = profile
                     x -> profile(x) + Util.Lorentzian(x, flow_amp, flow_mean_μm-mean_μm, flow_fwhm_μm)
                 end
             elseif cube_fitter.line_profiles[k] == :GaussHermite
+                # same as above
+                intensity += quadgk(x -> Util.GaussHermite(x, flow_amp_cgs, 0., flow_fwhm_μm, flow_h3, flow_h4), -Inf, Inf, order=200)[1]
                 profile = let profile = profile
                     x -> profile(x) + Util.GaussHermite(x, flow_amp, flow_mean_μm-mean_μm, flow_fwhm_μm, flow_h3, flow_h4)
                 end
             elseif cube_fitter.line_profiles[k] == :Voigt
+                # same as above
+                intensity += quadgk(x -> Util.Voigt(x, flow_amp_cgs, 0., flow_fwhm_μm, flow_η), -Inf, Inf, order=200)[1]
                 profile = let profile = profile
                     x -> profile(x) + Util.Voigt(x, flow_amp, flow_mean_μm-mean_μm, flow_fwhm_μm, flow_η)
                 end
@@ -2586,7 +2621,10 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
             end
         end
 
-        # Add back in the normalization
+        # intensity in units of erg s^-1 cm^-2 sr^-1 (integrated over μm)
+        p_lines[pₒ] = intensity
+
+        # Add back in the normalization for the profile, to be used to calculate the S/N
         profile = let profile = profile
             x -> N * profile(x)
         end
@@ -2594,12 +2632,10 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
         λ_arr = (-10fwhm_μm):Δλ:(10fwhm_μm)
         peak, peak_ind = findmax(profile.(λ_arr))
 
-        p_lines[pₒ], _ = quadgk(profile, -Inf, Inf, order=200)
-
         # SNR, calculated as (amplitude) / (RMS of the surrounding spectrum)
         p_lines[pₒ+1] = peak / std(I[.!mask_lines] .- continuum[.!mask_lines])
 
-        @debug "Line $(cube_fitter.line_names[k]) with integrated intensity $(p_lines[pₒ]) and SNR $(p_lines[pₒ+1])"
+        @debug "Line $(cube_fitter.line_names[k]) with integrated intensity $(p_lines[pₒ]) (erg s^-1 cm^-2 sr^-1) and SNR $(p_lines[pₒ+1])"
 
         pₒ += 2
 
@@ -2755,8 +2791,8 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
 
     # Sort spaxels by median brightness, so that we fit the brightest ones first
     # (which hopefully have the best reduced chi^2s)
-    spaxels = Iterators.product(1:shape[1], 1:shape[2])
-    # spaxels = Iterators.product(15:16, 15:16)
+    # spaxels = Iterators.product(1:shape[1], 1:shape[2])
+    spaxels = Iterators.product(15:16, 15:16)
 
     # med_I = collect(Iterators.flatten([nanmedian(cube_fitter.cube.Iλ[spaxel..., :]) for spaxel ∈ spaxels]))
     # # replace NaNs with -1s
@@ -3039,7 +3075,7 @@ function plot_parameter_map(data::Matrix{T}, name::String, name_i::String;
     elseif occursin("tau", String(name_i))
         bunit = "\$\\tau_{9.7}\$"
     elseif occursin("intI", String(name_i))
-        bunit = "\$\\log_{10}(I /\$MJy sr\$^{-1}\$ \$\\mu\$m)"
+        bunit = "\$\\log_{10}(I /\$erg s\$^{-1}\$ cm\$^{-2}\$ sr\$^{-1}\$)"
     elseif occursin("chi2", String(name_i))
         bunit = "\$\\tilde{\\chi}^2\$"
     elseif occursin("h3", String(name_i))
@@ -3311,7 +3347,7 @@ function write_fits(cube_fitter::CubeFitter)
                 elseif occursin("fwhm", String(name_i)) || occursin("voff", String(name_i))
                     bunit = "km/s"
                 elseif occursin("intI", String(name_i))
-                    bunit = "log10(I / MJy sr^-1 um)"
+                    bunit = "log10(I / erg s^-1 cm^-2 sr^-1)"
                 elseif occursin("SNR", String(name_i)) || occursin("h3", String(name_i)) || 
                     occursin("h4", String(name_i)) || occursin("mixing", String(name_i))
                     bunit = "unitless"
@@ -3359,7 +3395,7 @@ function write_fits(cube_fitter::CubeFitter)
                 data = cube_fitter.param_maps.dust_complexes[c][parameter]
                 name_i = join(["dust_complexes", c, parameter], "_")
                 if occursin("intI", String(name_i))
-                    bunit = "log10(I / MJy sr^-1 um)"
+                    bunit = "log10(I / erg s^-1 cm^-2 sr^-1)"
                 elseif occursin("SNR", String(name_i))
                     bunit = "unitless"
                 end

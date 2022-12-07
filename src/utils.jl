@@ -262,26 +262,63 @@ Doppler_width_λ(Δv, λ₀) = Δv / C_KMS * λ₀
 
 
 """
-    ∫Gaussian(A, σ)
+    ∫Gaussian(A, FWHM)
 
-Integral of a Gaussian with amplitude `A` and standard deviation `σ`
+Integral of a Gaussian with amplitude `A` and full-width at half-max `FWHM`
 
 # Examples
 ```jldoctest
-julia> ∫Gaussian(1, 1)
-2.5066282746310002
-julia> ∫Gaussian(0, 1)
-0.0
-julia> ∫Gaussian(-1, 1)
--2.5066282746310002
+julia> ∫Gaussian(1000, 0.5)
+532.2335097156131
+julia> ∫Gaussian(600, 1.2)
+766.4162539904829
 ```
 """
-∫Gaussian(A, σ) = √(2π) * A * σ
+∫Gaussian(A, FWHM) = √(π / (4log(2))) * A * FWHM
 
 
-# Convert units
-# to_cgs(F, λ) = F .* 1e-7 .* Util.C_MS ./ λ.^2    # λ in angstroms, F (MJy/sr) -> (erg/s/cm^2/A/sr)
-# to_MJy_sr(F, λ) = F .* 1e7 ./ Util.C_MS .* λ.^2  # λ in angstroms, F (erg/s/cm^2/A/sr) -> (MJy/sr)
+"""
+    ∫Lorentzian(A)
+
+Integral of a Lorentzian with amplitude `A`
+
+# Examples
+```jldoctest
+julia> ∫Lorentzian(1000)
+1000
+julia> ∫Lorentzian(600)
+600
+"""
+∫Lorentzian(A) = A
+
+
+"""
+    ∫Drude(A, FWHM)
+
+Integral of a Drude with amplitude `A` and full-width at half-max `FWHM`
+
+# Examples
+```jldoctest
+julia> ∫Drude(1000, 0.5)
+785.3981633974482
+julia> ∫Drude(600, 1.2)
+1130.9733552923256
+
+See CAFE (Marshall et al. 2007), PAHFIT (Smith, Draine et al. 2007) 
+```
+"""
+∫Drude(A, FWHM) = π/2 * A * FWHM
+
+
+"""
+    MJysr_to_cgs(MJy, λ)
+
+Convert specific intensity in MegaJanskys per steradian to CGS units 
+-> erg s^-1 cm^-2 μm^-1 sr^-1, given the wavelength `λ` in μm
+
+This converts from intensity per unit frequency to per unit wavelength (Fλ = Fν|dλ/dν| = Fν * c/λ^2)
+"""
+MJysr_to_cgs(MJy, λ) = MJy * 1e6 * 1e-23 * (C_KMS * 1e9) / λ^2
 
 
 """
