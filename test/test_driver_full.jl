@@ -1,6 +1,6 @@
 using Distributed
 
-procs = addprocs(maximum([0, Sys.CPU_THREADS - 1]))
+procs = addprocs(maximum([0, Sys.CPU_THREADS]))
 n_procs = length(procs)
 @everywhere begin
     using Pkg; Pkg.activate(dirname(@__DIR__))
@@ -8,23 +8,12 @@ n_procs = length(procs)
 end
 @everywhere using Loki
 
-# TODO: Convert this all into a main() function in Loki.jl
+# using Pkg; Pkg.activate(dirname(@__DIR__))
+# Pkg.instantiate(); Pkg.precompile()
+# using Loki
+# n_procs = 1
 
 channel = 2
-
-# This is the logger for ONLY the main process
-using Logging, LoggingExtras
-using Dates
-const date_format = "yyyy-mm-dd HH:MM:SS"
-timestamp_logger(logger) = TransformerLogger(logger) do log
-    merge(log, (; message = "$(Dates.format(now(), date_format)) $(log.message)"))
-end
-
-logger = TeeLogger(ConsoleLogger(stdout, Logging.Info), 
-                   timestamp_logger(MinLevelLogger(FileLogger("loki.main.log"; always_flush=true), 
-                                                   Logging.Debug)))
-global_logger(logger)
-
 
 # Load in data
 obs = from_fits(["data/jw01328-o015_t014_miri_ch1-mediumshortlong-_s3d.fits", 

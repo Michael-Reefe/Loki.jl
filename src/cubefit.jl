@@ -18,11 +18,12 @@ using Dierckx
 # Optimization packages
 using Optim
 using CMPFit
-using NLSolversBase
 
 # Astronomy packages
 using FITSIO
 using Cosmology
+using Unitful
+using UnitfulAstro
 
 # File I/O
 using TOML
@@ -31,7 +32,6 @@ using DataFrames
 
 # Plotting packages
 using PlotlyJS
-using PyPlot
 
 # Misc packages/utilites
 using ProgressMeter
@@ -45,6 +45,7 @@ using Dates
 # PyCall needed for anchored_artists
 using PyCall
 # Have to import anchored_artists within the __init__ function so that it works after precompilation
+const plt = PyNULL()
 const py_anchored_artists = PyNULL()
 
 # MATPLOTLIB SETTINGS TO MAKE PLOTS LOOK PRETTY :)
@@ -52,6 +53,8 @@ const SMALL = 12
 const MED = 14
 const BIG = 16
 function __init__()
+    # Import pyplot
+    copy!(plt, pyimport_conda("matplotlib.pyplot", "matplotlib"))
     # Import matplotlib's anchored_artists package for scale bars
     copy!(py_anchored_artists, pyimport_conda("mpl_toolkits.axes_grid1.anchored_artists", "matplotlib"))
 
@@ -83,7 +86,7 @@ const date_format = "yyyy-mm-dd HH:MM:SS"
 
 
 """
-    parse_resolving(z)
+    parse_resolving(z, channel)
 
 Read in the resolving_mrs.csv configuration file to create a cubic spline interpolation of the
 MIRI MRS resolving power as a function of wavelength, redshifted to the rest frame of the object
@@ -91,39 +94,65 @@ being fit.
 
 # Arguments
 - `z::AbstractFloat`: The redshift of the object to be fit
+- `channel::Integer`: The channel of the fit
 """
-function parse_resolving(z::AbstractFloat)::Dierckx.Spline1D
+function parse_resolving(z::AbstractFloat, channel::Integer)::Dierckx.Spline1D
 
-    @debug "Parsing MRS resoling power from resolving_mrs.csv"
+    @debug "Parsing MRS resoling power from resolving_mrs.csv for channel $channel"
 
     # Read in the resolving power data
     resolve = CSV.read(joinpath(@__DIR__, "resolving_mrs.csv"), DataFrame)
 
     # Find points where wavelength jumps down (b/w channels)
     jumps = diff(resolve[!, :wave]) .< 0
+    indices = 1:length(resolve[!, :wave])
+    ind_left = indices[BitVector([0; jumps])]
+    ind_right = indices[BitVector([jumps; 0])]
+
+    # Channel 1: everything before jump 3
+    if channel == 1
+        edge_left = 1
+        edge_right = ind_right[3]
+    # Channel 2: between jumps 3 & 6
+    elseif channel == 2
+        edge_left = ind_left[3]
+        edge_right = ind_right[6]
+    # Channel 3: between jumps 6 & 9
+    elseif channel == 3
+        edge_left = ind_left[6]
+        edge_right = ind_right[9]
+    # Channel 4: everything above jump 9
+    elseif channel == 4
+        edge_left = ind_left[9]
+        edge_right = length(resolve[!, :wave])
+    end
+
+    # Filter down to the channel we want
+    wave = resolve[edge_left:edge_right, :wave]
+    R = resolve[edge_left:edge_right, :R]
+
+    # Now get the jumps within the individual channel we're interested in
+    jumps = diff(wave) .< 0
 
     # Define regions of overlapping wavelength space
-    wave_left = resolve[BitVector([0; jumps]), :wave]
-    wave_right = resolve[BitVector([jumps; 0]), :wave]
+    wave_left = wave[BitVector([0; jumps])]
+    wave_right = wave[BitVector([jumps; 0])]
+
+    # Sort the data to be monotonically increasing in wavelength
+    ss = sortperm(wave)
+    wave = wave[ss]
+    R = R[ss]
 
     # Smooth the data in overlapping regions
     for i ∈ 1:sum(jumps)
-        region = wave_left[i] .< resolve[!, :wave] .< wave_right[i]
-        resolve[region, :R] .= movmean(resolve[!, :R], 5)[region]
+        region = wave_left[i] .≤ wave .≤ wave_right[i]
+        R[region] .= movmean(R, 10)[region]
     end
-    # Sort the data to be monotonically increasing in wavelength
-    ss = sortperm(resolve[!, :wave])
-    wave = resolve[ss, :wave]
-    R = resolve[ss, :R]
-
     # Shift to the rest frame
     wave = Util.rest_frame(wave, z)
 
-    # Define coarse knots
-    knots = (wave[1]+0.25):0.25:(wave[end]-0.25)
-
-    # Create an interpolation function so we can evaluate it at the points of interest for our data
-    interp_R = Spline1D(wave, R, knots)
+    # Create a linear interpolation function so we can evaluate it at the points of interest for our data
+    interp_R = Spline1D(wave, R, k=1)
     
     return interp_R
 end
@@ -881,7 +910,7 @@ Read from the options files:
 See [`ParamMaps`](@ref), [`parammaps_empty`](@ref), [`CubeModel`](@ref), [`cubemodel_empty`](@ref), 
     [`fit_spaxel`](@ref), [`fit_cube`](@ref)
 """
-mutable struct CubeFitter{T<:AbstractFloat,S<:Integer}
+mutable struct CubeFitter{T<:AbstractFloat}
     
     # Data
     cube::CubeData.DataCube
@@ -947,14 +976,28 @@ mutable struct CubeFitter{T<:AbstractFloat,S<:Integer}
     interp_R::Union{Function,Dierckx.Spline1D}
     flexible_wavesol::Bool
 
-    p_best_cont::SharedArray{T}
-    p_best_line::SharedArray{T}
-    χ²_best::SharedVector{T}
-    best_spaxel::SharedVector{Tuple{S,S}}
+    p_init_cont::Vector{T}
+    p_init_line::Vector{T}
+    χ²_init::T
 
     # Constructor function
     function CubeFitter(cube::CubeData.DataCube, z::Float64, name::String, n_procs::Int; window_size::Float64=.025, 
         plot_spaxels::Symbol=:pyplot, plot_maps::Bool=true, parallel::Bool=true, save_fits::Bool=true)
+
+        ###### SETTING UP A GLOBAL LOGGER FOR THE CUBE FITTER ######
+
+        timestamp_logger(logger) = TransformerLogger(logger) do log
+            merge(log, (; message = "$(Dates.format(now(), date_format)) $(log.message)"))
+        end
+
+        logger = TeeLogger(ConsoleLogger(stdout, Logging.Info), 
+                           timestamp_logger(MinLevelLogger(FileLogger(joinpath("output_$(replace(name, " " => "_"))", "loki.main.log"); 
+                                                                      always_flush=true), 
+                                                                      Logging.Debug)))
+
+        global_logger(logger)
+
+        #############################################################
 
         @debug """\n
         Creating CubeFitter struct for $name
@@ -967,7 +1010,7 @@ mutable struct CubeFitter{T<:AbstractFloat,S<:Integer}
         λ = cube.λ
 
         # Parse all of the options files to create default options and parameter objects
-        interp_R = parse_resolving(z)
+        interp_R = parse_resolving(z, parse(Int, cube.channel))
         dust = parse_dust() 
         options = parse_options()
         line_list, voff_tied, flow_voff_tied, flexible_wavesol, tie_voigt_mixing, 
@@ -1147,31 +1190,26 @@ mutable struct CubeFitter{T<:AbstractFloat,S<:Integer}
         overwrite = options[:overwrite]
         cosmo = options[:cosmology]
 
-        # Prepare rolling best fit parameter options
-        rows = size(cube.Iλ, 1)
-        @debug "Preparing rolling best fit continuum array with $rows rows and $(n_params_cont-2n_complexes) columns"
-        p_best_cont = SharedArray(zeros(rows, n_params_cont-2n_complexes))
-        @debug "Preparing rolling best fit line array with $rows rows and $(n_params_lines-2n_lines) columns"
-        p_best_line = SharedArray(zeros(rows, n_params_lines-2n_lines))
-        @debug "Preparing rolling best fit chi^2 vector with $rows items"
-        χ²_best = SharedVector(zeros(rows))
-        @debug "Preparing rolling best spaxel array with $rows tuples"
-        best_spaxel = SharedVector(repeat([(0, 0)], rows))
+        # Prepare initial best fit parameter options
+        @debug "Preparing initial best fit parameter vectors with $(n_params_cont-2n_complexes) and $(n_params_lines-2n_lines) parameters"
+        p_init_cont = zeros(n_params_cont-2n_complexes)
+        p_init_line = zeros(n_params_lines-2n_lines)
+        χ²_init = 0.
+
         # If a fit has been run previously, read in the file containing the rolling best fit parameters
         # to pick up where the fitter left off seamlessly
-        if isfile(joinpath("output_$name", "spaxel_binaries", "best_fit_params.LOKI"))
-            p_best_dict = deserialize(joinpath("output_$name", "spaxel_binaries", "best_fit_params.LOKI"))
-            p_best_cont = SharedArray(p_best_dict[:p_best_cont])
-            p_best_line = SharedArray(p_best_dict[:p_best_line])
-            χ²_best = SharedVector(p_best_dict[:chi2_best])
-            best_spaxel = SharedVector(p_best_dict[:best_spaxel])
+        if isfile(joinpath("output_$name", "spaxel_binaries", "init_fit_parameters.LOKI"))
+            p_init_dict = deserialize(joinpath("output_$name", "spaxel_binaries", "init_fit_parameters.LOKI"))
+            p_init_cont = p_init_dict[:p_init_cont]
+            p_init_line = p_init_dict[:p_init_line]
+            χ²_init = p_init_dict[:chi2_init]
         end
 
-        return new{eltype(χ²_best),eltype(eltype(best_spaxel))}(cube, z, name, n_procs, cube_model, param_maps, param_errs, window_size, plot_spaxels, plot_maps, 
+        return new{eltype(χ²_init)}(cube, z, name, n_procs, cube_model, param_maps, param_errs, window_size, plot_spaxels, plot_maps, 
             parallel, save_fits, overwrite, extinction_curve, extinction_screen, T_s, T_dc, τ_97, β, n_dust_cont, n_dust_features, df_names, 
             dust_features, n_lines, line_names, line_profiles, line_flow_profiles, lines, n_voff_tied, line_tied, voff_tied_key, voff_tied, n_flow_voff_tied, 
             line_flow_tied, flow_voff_tied_key, flow_voff_tied, tie_voigt_mixing, voigt_mix_tied, n_complexes, complexes, n_params_cont, n_params_lines, 
-            cosmo, χ²_thresh, interp_R, flexible_wavesol, p_best_cont, p_best_line, χ²_best, best_spaxel)
+            cosmo, χ²_thresh, interp_R, flexible_wavesol, p_init_cont, p_init_line, χ²_init)
     end
 
 end
@@ -1277,7 +1315,7 @@ end
 
 
 """
-    continuum_fit_spaxel(cube_fitter, spaxel)
+    continuum_fit_spaxel(cube_fitter, spaxel; init=init)
 
 Fit the continuum of a given spaxel in the DataCube, masking out the emission lines, using the 
 Levenberg-Marquardt least squares fitting method with the `CMPFit` package.  
@@ -1290,8 +1328,10 @@ http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 `S<:Integer`
 - `cube_fitter::CubeFitter`: The CubeFitter object containing the data, parameters, and options for the fit
 - `spaxel::Tuple{S,S}`: The coordinates of the spaxel to be fit
+- `init::Bool=false`: Flag for the initial fit which fits the sum of all spaxels, to get an estimation for
+    the initial parameter vector for individual spaxel fits
 """
-function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where {S<:Integer}
+function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}; init::Bool=false) where {S<:Integer}
 
     @debug """\n
     #########################################################
@@ -1301,8 +1341,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where
 
     # Extract spaxel to be fit
     λ = cube_fitter.cube.λ
-    I = cube_fitter.cube.Iλ[spaxel..., :]
-    σ = cube_fitter.cube.σI[spaxel..., :]
+    I = !init ? cube_fitter.cube.Iλ[spaxel..., :] : Util.Σ(cube_fitter.cube.Iλ, (1,2))
+    σ = !init ? cube_fitter.cube.σI[spaxel..., :] : sqrt.(Util.Σ(cube_fitter.cube.σI.^2, (1,2)))
 
     # Mask out emission lines so that they aren't included in the continuum fit
     mask_lines, I_cubic, σ_cubic = continuum_cubic_spline(λ, I, σ)
@@ -1313,7 +1353,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where
     σ_stat = std(I .- I_cubic)
     σ .= .√(σ.^2 .+ σ_stat.^2)
 
-    @debug "Spaxel $spaxel - Adding statistical error of $σ_stat in quadrature"
+    @debug "Adding statistical error of $σ_stat in quadrature"
     
     # Mean and FWHM parameters for PAH profiles
     mean_df = [cdf[:wave] for cdf ∈ cube_fitter.dust_features]
@@ -1328,17 +1368,16 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where
 
     # priors = vcat(stellar_priors, dc_priors, df_priors, [cube_fitter.τ_97.prior, cube_fitter.β.prior])
 
-    # Check if the cube fitter has best fit parameters from a previous fit
-    if !all(iszero.(cube_fitter.p_best_cont[spaxel[1], :]))
+    # Check if the cube fitter has initial fit parameters 
+    if !init
 
-        @debug "Spaxel $spaxel - Using previous best fit continuum parameters..."
+        @debug "Using initial best fit continuum parameters..."
 
         # Set the parameters to the best parameters
-        p₀ = Vector{Float64}(cube_fitter.p_best_cont[spaxel[1], :])
+        p₀ = cube_fitter.p_init_cont
 
         # scale all flux amplitudes by the difference in medians between spaxels
-        scale = nanmedian(cube_fitter.cube.Iλ[spaxel..., :]) / 
-            nanmedian(cube_fitter.cube.Iλ[cube_fitter.best_spaxel[spaxel[1]]..., :])
+        scale = nanmedian(cube_fitter.cube.Iλ[spaxel..., :]) / nanmedian(Util.Σ(cube_fitter.cube.Iλ, (1,2)))
         max_amp = nanmaximum(I)
         
         # Stellar amplitude
@@ -1413,7 +1452,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where
         "extinction_tau_97, extinction_beta]"
 
     # @debug "Priors: \n $priors"
-    @debug "Spaxel $spaxel - Continuum Starting Values: \n $p₀"
+    @debug "Continuum Starting Values: \n $p₀"
 
     # Convert parameter limits into CMPFit object
     parinfo = CMPFit.Parinfo(length(p₀))
@@ -1475,16 +1514,16 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where
     # Create a `config` structure
     config = CMPFit.Config()
 
-    @debug "Spaxel $spaxel - Continuum Parameters locked? \n $([parinfo[i].fixed for i ∈ 1:length(p₀)])"
-    @debug "Spaxel $spaxel - Continuum Lower limits: \n $([parinfo[i].limits[1] for i ∈ 1:length(p₀)])"
-    @debug "Spaxel $spaxel - Continuum Upper limits: \n $([parinfo[i].limits[2] for i ∈ 1:length(p₀)])"
+    @debug "Continuum Parameters locked? \n $([parinfo[i].fixed for i ∈ 1:length(p₀)])"
+    @debug "Continuum Lower limits: \n $([parinfo[i].limits[1] for i ∈ 1:length(p₀)])"
+    @debug "Continuum Upper limits: \n $([parinfo[i].limits[2] for i ∈ 1:length(p₀)])"
 
-    @debug "Spaxel $spaxel - Beginning continuum fitting with Levenberg-Marquardt least squares (CMPFit):"
+    @debug "Beginning continuum fitting with Levenberg-Marquardt least squares (CMPFit):"
 
     res = cmpfit(λ, I, σ, (x, p) -> Util.fit_spectrum(x, p, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat,
         cube_fitter.extinction_curve, cube_fitter.extinction_screen), p₀, parinfo=parinfo, config=config)
 
-    @debug "Spaxel $spaxel - continuum CMPFit status: $(res.status)"
+    @debug "Continuum CMPFit status: $(res.status)"
 
     # Get best fit results
     popt = res.param        # Best fit parameters
@@ -1499,9 +1538,9 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where
         end
     end
 
-    @debug "Spaxel $spaxel - Best fit continuum parameters: \n $popt"
-    @debug "Spaxel $spaxel - Continuum parameter errors: \n $perr"
-    @debug "Spaxel $spaxel - Continuum covariance matrix: \n $covar"
+    @debug "Best fit continuum parameters: \n $popt"
+    @debug "Continuum parameter errors: \n $perr"
+    @debug "Continuum covariance matrix: \n $covar"
 
     # function ln_prior(p)
     #     logpdfs = [logpdf(priors[i], p[i]) for i ∈ 1:length(p)]
@@ -1582,8 +1621,10 @@ See Smith, Draine, et al. 2007; http://tir.astro.utoledo.edu/jdsmith/research/pa
 `S<:Integer`
 - `cube_fitter::CubeFitter`: The CubeFitter object containing the data, parameters, and options for the fit
 - `spaxel::Tuple{S,S}`: The coordinates of the spaxel to be fit
+- `init::Bool=false`: Flag for the initial fit which fits the sum of all spaxels, to get an estimation for
+    the initial parameter vector for individual spaxel fits
 """
-function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where {S<:Integer}
+function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}; init::Bool=false) where {S<:Integer}
 
     @debug """\n
     #########################################################
@@ -1593,21 +1634,21 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where {S<:
 
     # Extract spaxel to be fit
     λ = cube_fitter.cube.λ
-    I = cube_fitter.cube.Iλ[spaxel..., :]
-    σ = cube_fitter.cube.σI[spaxel..., :]
+    I = !init ? cube_fitter.cube.Iλ[spaxel..., :] : Util.Σ(cube_fitter.cube.Iλ, (1,2))
+    σ = !init ? cube_fitter.cube.σI[spaxel..., :] : sqrt.(Util.Σ(cube_fitter.cube.σI.^2, (1,2)))
 
     # Perform a cubic spline continuum fit
     mask_lines, continuum, _ = continuum_cubic_spline(λ, I, σ)
     N = Float64(abs(nanmaximum(I)))
     N = N ≠ 0. ? N : 1.
 
-    @debug "Spaxel $spaxel - Using normalization N=$N"
+    @debug "Using normalization N=$N"
 
     # Add statistical uncertainties to the systematic uncertainties in quadrature
     σ_stat = std(I[.!mask_lines] .- continuum[.!mask_lines])
     σ .= .√(σ.^2 .+ σ_stat.^2)
 
-    @debug "Spaxel $spaxel - Adding statistical error of $σ_stat in quadrature"
+    @debug "Adding statistical error of $σ_stat in quadrature"
 
     # Normalized flux and uncertainty by subtracting the cubic spline fit and dividing by the maximum
     Inorm = (I .- continuum) ./ N
@@ -1707,61 +1748,12 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where {S<:
     end
 
     # Check if there are previous best fit parameters
-    if !all(iszero.(cube_fitter.p_best_line[spaxel[1], :]))
+    if !init
 
-        @debug "Spaxel $spaxel - Using previous best fit line parameters..."
+        @debug "Using initial best fit line parameters..."
 
         # If so, set the parameters to the previous ones
-        p₀ = Vector{Float64}(cube_fitter.p_best_line[spaxel[1], :])
-
-        # Scale amplitudes by the ratio of the median intensities
-        scale = nanmedian(cube_fitter.cube.Iλ[spaxel..., :]) / 
-            nanmedian(cube_fitter.cube.Iλ[cube_fitter.best_spaxel[spaxel[1]]..., :])
-        
-        # Skip past the tied voff and tied flow voff parameters at the beginning
-        pᵢ = 1 + cube_fitter.n_voff_tied + cube_fitter.n_flow_voff_tied
-        # Skip past the tied voigt mixing, if present
-        if cube_fitter.tie_voigt_mixing
-            pᵢ += 1
-        end
-        for i ∈ 1:cube_fitter.n_lines
-            p₀[pᵢ] *= scale
-            # Make sure amplitude is not above the upper limit of 1 (normalized units)
-            if p₀[pᵢ] > 1
-                p₀[pᵢ] = 1
-            end
-            if isnothing(cube_fitter.line_tied[i]) || cube_fitter.flexible_wavesol
-                # 3 parameters: amplitude, voff, FWHM
-                pᵢ += 3
-            else
-                # 2 parameters: amplitude, FWHM
-                pᵢ += 2
-            end
-            if prof_ln[i] == :GaussHermite
-                # 2 extra parameters: h3 and h4
-                pᵢ += 2
-            elseif prof_ln[i] == :Voigt && !cube_fitter.tie_voigt_mixing
-                # 1 extra parameter: eta
-                pᵢ += 1
-            end
-            # Repeat for inflow/outflow components, if present
-            if !isnothing(flow_prof_ln[i])
-                p₀[pᵢ] *= scale
-                if p₀[pᵢ] > 1
-                    p₀[pᵢ] = 1
-                end
-                if isnothing(cube_fitter.line_flow_tied[i])
-                    pᵢ += 3
-                else
-                    pᵢ += 2
-                end
-                if flow_prof_ln[i] == :GaussHermite
-                    pᵢ += 2
-                elseif flow_prof_ln[i] == :Voigt && !cube_fitter.tie_voigt_mixing
-                    pᵢ += 1
-                end
-            end
-        end
+        p₀ = cube_fitter.p_init_line
 
     else
 
@@ -1822,8 +1814,8 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where {S<:
     end
 
     @debug "Line Parameter labels: \n $param_names"
-    @debug "Spaxel $spaxel - Line starting values: \n $p₀"
-    @debug "Spaxel $spaxel - Line priors: \n $priors"
+    @debug "Line starting values: \n $p₀"
+    @debug "Line priors: \n $priors"
 
     # Internal helper function to calculate the log of the prior probability for all the parameters
     # Most priors will be uniform, i.e. constant, finite prior values as long as the parameter is inbounds.
@@ -1848,10 +1840,10 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where {S<:
     lower_bounds = minimum.(priors)
     upper_bounds = maximum.(priors)
 
-    @debug "Spaxel $spaxel - Line Lower limits: \n $lower_bounds"
-    @debug "Spaxel $spaxel - Line Upper Limits: \n $upper_bounds"
+    @debug "Line Lower limits: \n $lower_bounds"
+    @debug "Line Upper Limits: \n $upper_bounds"
 
-    @debug "Spaxel $spaxel - Beginning Line fitting with Simulated Annealing:"
+    @debug "Beginning Line fitting with Simulated Annealing:"
 
     # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous rt and max iterations
     res = optimize(negln_probability, lower_bounds, upper_bounds, p₀, 
@@ -1859,7 +1851,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where {S<:
 
     p₁ = res.minimizer
 
-    @debug "Spaxel $spaxel - Refining Line best fit with Levenberg-Marquardt:"
+    @debug "Refining Line best fit with Levenberg-Marquardt:"
 
     # # Then, refine the solution with a bounded local minimum search with LBFGS
     # res = optimize(negln_probability, lower_bounds, upper_bounds, p₁, 
@@ -2064,9 +2056,9 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where {S<:
 
     ######################################################################################################################
 
-    @debug "Spaxel $spaxel - Best fit line parameters: \n $popt"
-    @debug "Spaxel $spaxel - Line parameter errors: \n $perr"
-    @debug "Spaxel $spaxel - Line covariance matrix: \n $covar"
+    @debug "Best fit line parameters: \n $popt"
+    @debug "Line parameter errors: \n $perr"
+    @debug "Line covariance matrix: \n $covar"
 
     # Final optimized fit
     I_model, comps = Util.fit_line_residuals(λ, popt, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
@@ -2335,7 +2327,7 @@ Currently this includes the integrated intensity and signal to noise ratios of d
 function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S}, 
     popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}) where {T<:AbstractFloat,S<:Integer}
 
-    @debug "Spaxel $spaxel - Calculating extra parameters"
+    @debug "Calculating extra parameters"
 
     # Extract the wavelength, intensity, and uncertainty data
     λ = cube_fitter.cube.λ
@@ -2820,29 +2812,11 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where {S<:Integ
                         χ2red, cube_fitter.name, "spaxel_$(spaxel[1])_$(spaxel[2])", backend=cube_fitter.plot_spaxels)
                 end
 
-                # Set parameters in each row based on the previous fit, given the reduced chi^2 meets a given threshold
-                row = spaxel[1]
-                if χ2red ≤ cube_fitter.χ²_thresh
-                    @debug "Spaxel $spaxel - reduced chi^2 of $χ2red is less than the threshold $(cube_fitter.χ²_thresh), " *
-                     "new rolling best fit parameters will be set"
-                    cube_fitter.p_best_cont[row, :] .= popt_c
-                    cube_fitter.p_best_line[row, :] .= popt_l
-                    cube_fitter.χ²_best[row] = χ2red
-                    cube_fitter.best_spaxel[row] = spaxel
-                end
-
             end
 
             @debug "Saving results to binary for spaxel $spaxel"
             # save output as binary file
             serialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).LOKI"), (p_out=p_out, p_err=p_err))
-            # save running best fit parameters in case the fitting is interrupted
-            serialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "best_fit_params.LOKI"),
-                Dict(:p_best_cont => Array(cube_fitter.p_best_cont),
-                     :p_best_line => Array(cube_fitter.p_best_line),
-                     :chi2_best => Vector(cube_fitter.χ²_best),
-                     :best_spaxel => Vector(cube_fitter.best_spaxel))
-                )
 
         end
 
@@ -2885,7 +2859,60 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
     out_params = SharedArray(ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 1) .* NaN)
     out_errs = SharedArray(ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 1) .* NaN)
 
-    #########################
+    ######################### DO AN INITIAL FIT WITH THE SUM OF ALL SPAXELS ###################
+
+    # Don't repeat if it's already been done
+    if iszero(cube_fitter.χ²_init)
+
+        @info "===> Performing initial fit to the sum of all spaxels... <==="
+        # Collect the data
+        λ_init = cube_fitter.cube.λ
+        I_sum_init = Util.Σ(cube_fitter.cube.Iλ, (1,2))
+
+        # Continuum and line fits
+        σ_init, popt_c_init, I_c_init, comps_c_init, n_free_c_init, _, _ = continuum_fit_spaxel(cube_fitter, (0,0); init=true)
+        _, popt_l_init, I_l_init, comps_l_init, n_free_l_init, _, _ = line_fit_spaxel(cube_fitter, (0,0); init=true)
+
+        # Get the overall models
+        I_model_init = I_c_init .+ I_l_init
+        comps_init = merge(comps_c_init, comps_l_init)
+
+        n_free_init = n_free_c_init + n_free_l_init
+        n_data_init = length(I_sum_init)
+
+        # Calculate reduce chi^2
+        χ2red_init = 1 / (n_data_init - n_free_init) * sum((I_sum_init .- I_model_init).^2 ./ σ_init.^2)
+
+        # Save the results to the cube fitter
+        cube_fitter.p_init_cont = popt_c_init
+        cube_fitter.p_init_line = popt_l_init
+        cube_fitter.χ²_init = χ2red_init
+
+        # Save the results to a file 
+        # save running best fit parameters in case the fitting is interrupted
+        serialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_parameters.LOKI"),
+            Dict(:p_init_cont => popt_c_init,
+                 :p_init_line => popt_l_init,
+                 :chi2_init => χ2red_init)
+        )
+
+        # Plot the fit
+        λ0_ln = [ln.λ₀ for ln ∈ cube_fitter.lines]
+        if cube_fitter.plot_spaxels != :none
+            @debug "Plotting spaxel sum initial fit"
+            plot_spaxel_fit(λ_init, I_sum_init, I_model_init, σ_init, comps_init, 
+                cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, λ0_ln, cube_fitter.line_names, cube_fitter.z,
+                χ2red_init, cube_fitter.name, "initial_sum_fit", backend=cube_fitter.plot_spaxels)
+        end
+
+    else
+
+        @info "===> Initial fit to the sum of all spaxels has already been performed <==="
+
+    end
+
+    ##############################################################################################
+
     function fit_spax_i(xᵢ::Int, yᵢ::Int)
 
         p_out, p_err = fit_spaxel(cube_fitter, (xᵢ, yᵢ))
@@ -2899,8 +2926,8 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
 
     # Sort spaxels by median brightness, so that we fit the brightest ones first
     # (which hopefully have the best reduced chi^2s)
-    spaxels = Iterators.product(1:shape[1], 1:shape[2])
-    # spaxels = Iterators.product(15:16, 15:16)
+    # spaxels = Iterators.product(1:shape[1], 1:shape[2])
+    spaxels = Iterators.product(15:16, 15:16)
 
     # med_I = collect(Iterators.flatten([nanmedian(cube_fitter.cube.Iλ[spaxel..., :]) for spaxel ∈ spaxels]))
     # # replace NaNs with -1s
@@ -2911,7 +2938,7 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
     # # apply sorting to spaxel indices
     # spaxels = collect(spaxels)[ss]
 
-    @info "===> Beginning spaxel fitting... <==="
+    @info "===> Beginning individual spaxel fitting... <==="
     # Use multiprocessing (not threading) to iterate over multiple spaxels at once using multiple CPUs
     if cube_fitter.parallel
         prog = Progress(length(spaxels); showspeed=true)
@@ -3291,8 +3318,12 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
     # Angular and physical scalebars
     n_pix = 1/(sqrt(Ω) * 180/π * 3600)
     @debug "Using luminosity distance $(luminosity_dist(cosmo, z))"
-    dL = luminosity_dist(cosmo, z).val * 1e6 / (180/π * 3600)  # l = d * theta (1")
-    dL = @sprintf "%.0f" dL
+    # Calculate in Mpc
+    dL = luminosity_dist(u"pc", cosmo, z) / (180/π * 3600)  # l = d * theta (1")
+    # Remove units
+    dL = uconvert(NoUnits, dL/u"pc")
+    # Round to integer
+    dL = floor(Int, dL)
     scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, "1\$\'\'\$ / $dL pc", "lower left", pad=1, color=:black, 
         frameon=false, size_vertical=0.4, label_top=false)
     ax.add_artist(scalebar)

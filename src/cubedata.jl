@@ -23,12 +23,11 @@ using ColorSchemes
 using LaTeXStrings
 using Reexport
 
-# Plotting with Python
-using PyPlot
-
+# Plotting with python
 # PyCall is only needed to import an additional matplotlib package
 using PyCall
 # Importing it within the __init__ function is necessary so that it works after precompilation
+const plt = PyNULL()
 const py_anchored_artists = PyNULL()
 
 # MATPLOTLIB SETTINGS TO MAKE PLOTS LOOK PRETTY :)
@@ -36,6 +35,8 @@ const SMALL = 12
 const MED = 14
 const BIG = 16
 function __init__()
+    # Import pyplot
+    copy!(plt, pyimport_conda("matplotlib.pyplot", "matplotlib"))
     # Import the anchored_artists package from matplotlib
     copy!(py_anchored_artists, pyimport_conda("mpl_toolkits.axes_grid1.anchored_artists", "matplotlib"))
 

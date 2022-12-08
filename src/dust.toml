@@ -433,7 +433,7 @@ plim = [0.4, 1.1]
 locked = false
 
 [extinction.tau_9_7]
-val = 0.01
+val = 1e-4
 plim = [0.0, 10.0]
 locked = false
 
