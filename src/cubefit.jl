@@ -9,6 +9,7 @@ using SharedArrays
 # Math packages
 using Distributions
 using Statistics
+using LinearAlgebra
 using NaNStatistics
 using QuadGK
 using Interpolations
@@ -17,6 +18,7 @@ using Dierckx
 # Optimization packages
 using Optim
 using CMPFit
+using NLSolversBase
 
 # Astronomy packages
 using FITSIO
@@ -366,7 +368,8 @@ function parse_lines(channel::Integer, interp_R::Dierckx.Spline1D, λ::Vector{<:
         # Set the priors for inflow/outflow FWHM, voff, h3, h4, and eta based on the values in the options file
         flow_voff_prior = Uniform(lines["flow_voff_plim"]...)
         flow_voff_locked = false
-        flow_fwhm_prior = Uniform(fwhm_pmin, lines["flow_fwhm_pmax"])
+        # lower bound 0 -> since this is ADDED to the main line FWHM
+        flow_fwhm_prior = Uniform(0., lines["flow_fwhm_pmax"])
         flow_fwhm_locked = false
         if flow_profiles[line] == "GaussHermite"
             flow_h3_prior = truncated(Normal(0.0, 0.1), lines["h3_plim"]...)
@@ -485,9 +488,9 @@ function parse_lines(channel::Integer, interp_R::Dierckx.Spline1D, λ::Vector{<:
         if !isnothing(flow_profiles[line])
             @debug "Flow profile: $(flow_profiles[line])"
 
-            flow_voff = Param.Parameter(voff_init, flow_voff_locked, flow_voff_prior)
+            flow_voff = Param.Parameter(0., flow_voff_locked, flow_voff_prior)
             @debug "Voff $flow_voff"
-            flow_fwhm = Param.Parameter(fwhm_init, flow_fwhm_locked, flow_fwhm_prior)
+            flow_fwhm = Param.Parameter(1., flow_fwhm_locked, flow_fwhm_prior)
             @debug "FWHM $flow_fwhm"
             if flow_profiles[line] ∈ ("Gaussian", "Lorentzian")
                 flow_params = Param.ParamDict(:flow_voff => flow_voff, :flow_fwhm => flow_fwhm)
@@ -889,6 +892,7 @@ mutable struct CubeFitter{T<:AbstractFloat,S<:Integer}
     n_procs::Integer
     cube_model::CubeModel
     param_maps::ParamMaps
+    param_errs::ParamMaps
     window_size::AbstractFloat
     plot_spaxels::Symbol
     plot_maps::Bool
@@ -1112,6 +1116,10 @@ mutable struct CubeFitter{T<:AbstractFloat,S<:Integer}
         param_maps = parammaps_empty(shape, n_dust_cont, df_names, complexes, line_names, line_tied,
             line_profiles, line_flow_tied, line_flow_profiles, voff_tied_key, flow_voff_tied_key, flexible_wavesol,
             tie_voigt_mixing)
+        # 2D maps of fitting parameter 1-sigma errors
+        param_errs = parammaps_empty(shape, n_dust_cont, df_names, complexes, line_names, line_tied,
+            line_profiles, line_flow_tied, line_flow_profiles, voff_tied_key, flow_voff_tied_key, flexible_wavesol,
+            tie_voigt_mixing)
 
         # Prepare output directories
         @debug "Preparing output directories"
@@ -1159,7 +1167,7 @@ mutable struct CubeFitter{T<:AbstractFloat,S<:Integer}
             best_spaxel = SharedVector(p_best_dict[:best_spaxel])
         end
 
-        return new{eltype(χ²_best),eltype(eltype(best_spaxel))}(cube, z, name, n_procs, cube_model, param_maps, window_size, plot_spaxels, plot_maps, 
+        return new{eltype(χ²_best),eltype(eltype(best_spaxel))}(cube, z, name, n_procs, cube_model, param_maps, param_errs, window_size, plot_spaxels, plot_maps, 
             parallel, save_fits, overwrite, extinction_curve, extinction_screen, T_s, T_dc, τ_97, β, n_dust_cont, n_dust_features, df_names, 
             dust_features, n_lines, line_names, line_profiles, line_flow_profiles, lines, n_voff_tied, line_tied, voff_tied_key, voff_tied, n_flow_voff_tied, 
             line_flow_tied, flow_voff_tied_key, flow_voff_tied, tie_voigt_mixing, voigt_mix_tied, n_complexes, complexes, n_params_cont, n_params_lines, 
@@ -1479,7 +1487,10 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where
     @debug "Spaxel $spaxel - continuum CMPFit status: $(res.status)"
 
     # Get best fit results
-    popt = res.param
+    popt = res.param        # Best fit parameters
+    perr = res.perror       # 1-sigma uncertainties
+    covar = res.covar       # Covariance matrix
+
     # Count free parameters
     n_free = 0
     for pᵢ ∈ 1:length(popt)
@@ -1489,6 +1500,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where
     end
 
     @debug "Spaxel $spaxel - Best fit continuum parameters: \n $popt"
+    @debug "Spaxel $spaxel - Continuum parameter errors: \n $perr"
+    @debug "Spaxel $spaxel - Continuum covariance matrix: \n $covar"
 
     # function ln_prior(p)
     #     logpdfs = [logpdf(priors[i], p[i]) for i ∈ 1:length(p)]
@@ -1515,41 +1528,41 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where
     msg *= "################# SPAXEL FIT RESULTS -- CONTINUUM ####################\n"
     msg *= "######################################################################\n"
     msg *= "\n#> STELLAR CONTINUUM <#\n"
-    msg *= "Stellar_amp: \t\t\t $(@sprintf "%.3e" popt[1]) MJy/sr \t Limits: (0, Inf)\n"
-    msg *= "Stellar_temp: \t\t\t $(@sprintf "%.0f" popt[2]) K \t (fixed)\n"
+    msg *= "Stellar_amp: \t\t\t $(@sprintf "%.3e" popt[1]) +/- $(@sprintf "%.3e" perr[1]) MJy/sr \t Limits: (0, Inf)\n"
+    msg *= "Stellar_temp: \t\t\t $(@sprintf "%.0f" popt[2]) +/- $(@sprintf "%.3e" perr[2]) K \t (fixed)\n"
     pᵢ = 3
     msg *= "\n#> DUST CONTINUUM <#\n"
     for i ∈ 1:cube_fitter.n_dust_cont
-        msg *= "Dust_continuum_$(i)_amp: \t\t $(@sprintf "%.3e" popt[pᵢ]) MJy/sr \t Limits: (0, Inf)\n"
-        msg *= "Dust_continuum_$(i)_temp: \t\t $(@sprintf "%.0f" popt[pᵢ+1]) K \t\t\t (fixed)\n"
+        msg *= "Dust_continuum_$(i)_amp: \t\t $(@sprintf "%.3e" popt[pᵢ]) +/- $(@sprintf "%.3e" perr[pᵢ]) MJy/sr \t Limits: (0, Inf)\n"
+        msg *= "Dust_continuum_$(i)_temp: \t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.3e" perr[pᵢ+1]) K \t\t\t (fixed)\n"
         msg *= "\n"
         pᵢ += 2
     end
     msg *= "\n#> DUST FEATURES <#\n"
     for (j, df) ∈ enumerate(cube_fitter.df_names)
-        msg *= "$(df)_amp:\t\t\t $(@sprintf "%.1f" popt[pᵢ]) MJy/sr \t Limits: " *
-            "(0, $(@sprintf "%.1f" nanmaximum(I))\n"
-        msg *= "$(df)_mean:  \t\t $(@sprintf "%.3f" popt[pᵢ+1]) μm \t Limits: " *
+        msg *= "$(df)_amp:\t\t\t $(@sprintf "%.1f" popt[pᵢ]) +/- $(@sprintf "%.1f" perr[pᵢ]) MJy/sr \t Limits: " *
+            "(0, $(@sprintf "%.1f" nanmaximum(I)))\n"
+        msg *= "$(df)_mean:  \t\t $(@sprintf "%.3f" popt[pᵢ+1]) +/- $(@sprintf "%.3f" perr[pᵢ+1]) μm \t Limits: " *
             "($(@sprintf "%.3f" minimum(mean_df[j].prior)), $(@sprintf "%.3f" maximum(mean_df[j].prior)))" * 
             (mean_df[j].locked ? " (fixed)" : "") * "\n"
-        msg *= "$(df)_fwhm:  \t\t $(@sprintf "%.3f" popt[pᵢ+2]) μm \t Limits: " *
+        msg *= "$(df)_fwhm:  \t\t $(@sprintf "%.3f" popt[pᵢ+2]) +/- $(@sprintf "%.3f" perr[pᵢ+2]) μm \t Limits: " *
             "($(@sprintf "%.3f" minimum(fwhm_df[j].prior)), $(@sprintf "%.3f" maximum(fwhm_df[j].prior)))" * 
             (fwhm_df[j].locked ? " (fixed)" : "") * "\n"
         msg *= "\n"
         pᵢ += 3
     end
     msg *= "\n#> EXTINCTION <#\n"
-    msg *= "τ_9.7: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ]) [-] \t Limits: " *
+    msg *= "τ_9.7: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ]) +/- $(@sprintf "%.2f" perr[pᵢ]) [-] \t Limits: " *
         "($(@sprintf "%.2f" minimum(cube_fitter.τ_97.prior)), $(@sprintf "%.2f" maximum(cube_fitter.τ_97.prior)))" * 
         (cube_fitter.τ_97.locked ? " (fixed)" : "") * "\n"
-    msg *= "β: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ+1]) [-] \t Limits: " *
+    msg *= "β: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ+1]) +/- $(@sprintf "%.2f" perr[pᵢ+1]) [-] \t Limits: " *
         "($(@sprintf "%.2f" minimum(cube_fitter.β.prior)), $(@sprintf "%.2f" maximum(cube_fitter.β.prior)))" * 
         (cube_fitter.β.locked ? " (fixed)" : "") * "\n"
     msg *= "\n"
     msg *= "######################################################################"
     @debug msg
 
-    return σ, popt, I_model, comps, n_free
+    return σ, popt, I_model, comps, n_free, perr, covar
 
 end
 
@@ -1754,9 +1767,9 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where {S<:
 
         @debug "Calculating initial starting points..."
 
-        # Start the ampltiudes at 1/2 or 1/4 (in normalized units)
+        # Start the ampltiudes at 1/2 and 1/4 (in normalized units)
         A_ln = ones(cube_fitter.n_lines) .* 0.5
-        A_fl = ones(cube_fitter.n_lines) .* 0.25
+        A_fl = ones(cube_fitter.n_lines) .* 0.5     # (flow amp is multiplied with main amp)
 
         # Initial parameter vector
         ln_pars = Vector{Float64}()
@@ -1814,57 +1827,10 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where {S<:
 
     # Internal helper function to calculate the log of the prior probability for all the parameters
     # Most priors will be uniform, i.e. constant, finite prior values as long as the parameter is inbounds.
-    # Priors will be -Inf if any parameter goes out of bounds.  There is also an additional penalty applied
-    # if any inflow/outflow amplitudes are greater than their corresponding line's amplitudes, or if their 
-    # FWHMs are smaller than their corresponding line's FWHMs.  This ensures that inflow/outflow components
-    # should always correspond to the actual flow component, instead of allowing them to swap places with
-    # the main line, which could happen with no constraints.
+    # Priors will be -Inf if any parameter goes out of bounds.  
     function ln_prior(p)
-
         # sum the log prior distribution of each parameter
         lnpdf = sum([logpdf(priors[i], p[i]) for i ∈ 1:length(p)])
-
-        pᵢ = 1 + cube_fitter.n_voff_tied + cube_fitter.n_flow_voff_tied
-        if cube_fitter.tie_voigt_mixing
-            pᵢ += 1
-        end
-        for i ∈ 1:cube_fitter.n_lines
-            na_amp = p[pᵢ]
-            if isnothing(cube_fitter.line_tied[i]) || cube_fitter.flexible_wavesol
-                na_fwhm = p[pᵢ+2]
-                pᵢ += 3
-            else
-                na_fwhm = p[pᵢ+1]
-                pᵢ += 2
-            end
-            if prof_ln[i] == :GaussHermite
-                pᵢ += 2
-            elseif prof_ln[i] == :Voigt && !cube_fitter.tie_voigt_mixing
-                pᵢ += 1
-            end
-            fwhm_res = Util.C_KMS / cube_fitter.interp_R(λ0_ln[i])
-            if !isnothing(flow_prof_ln[i])
-                flow_amp = p[pᵢ]
-                if isnothing(cube_fitter.line_flow_tied[i])
-                    flow_fwhm = p[pᵢ+2]
-                    pᵢ += 3
-                else
-                    flow_fwhm = p[pᵢ+1]
-                    pᵢ += 2
-                end
-                if flow_prof_ln[i] == :GaussHermite
-                    pᵢ += 2
-                elseif flow_prof_ln[i] == :Voigt && !cube_fitter.tie_voigt_mixing
-                    pᵢ += 1
-                end
-                # penalize the likelihood if any in/outflow FWHMs are smaller than the corresponding narrow lines
-                # or if the amplitudes are too large
-                if flow_fwhm ≤ na_fwhm || flow_amp ≥ na_amp
-                    lnpdf += -Inf
-                end
-            end
-        end 
-
         return lnpdf
     end
 
@@ -1893,206 +1859,214 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where {S<:
 
     p₁ = res.minimizer
 
-    @debug "Spaxel $spaxel - Refining Line best fit with L-BFGS:"
+    @debug "Spaxel $spaxel - Refining Line best fit with Levenberg-Marquardt:"
 
-    # Then, refine the solution with a bounded local minimum search with LBFGS
-    res = optimize(negln_probability, lower_bounds, upper_bounds, p₁, Fminbox(LBFGS()))
+    # # Then, refine the solution with a bounded local minimum search with LBFGS
+    # res = optimize(negln_probability, lower_bounds, upper_bounds, p₁, 
+    #                Fminbox(BFGS()), Optim.Options(store_trace=true, extended_trace=true))
 
-    #################################### DEPRECATED FIT WITH LEVMAR ###################################################
+    # # Get the optimized parameter vector and number of free parameters
+    # popt = res.minimizer
+    # # take the inverse of the hessian to get the covariance matrix
+    # covar = res.trace[end].metadata["~inv(H)"]
+    # perr = .√(diag(covar))
 
-    # # Convert parameter limits into CMPFit object
-    # parinfo = CMPFit.Parinfo(length(p₀))
+    # n_free = length(p₀)
 
-    # # Tied velocity offsets
-    # pᵢ = 1
-    # for i ∈ 1:cube_fitter.n_voff_tied
-    #     parinfo[pᵢ].fixed = cube_fitter.voff_tied[i].locked
-    #     if !(cube_fitter.voff_tied[i].locked)
-    #         parinfo[pᵢ].limited = (1,1)
-    #         parinfo[pᵢ].limits = (minimum(cube_fitter.voff_tied[i].prior), maximum(cube_fitter.voff_tied[i].prior))
-    #     end
-    #     pᵢ += 1
-    # end
+    ############################################# FIT WITH LEVMAR ###################################################
 
-    # # Tied in/outflow velocity offsets
-    # for j ∈ 1:cube_fitter.n_flow_voff_tied
-    #     parinfo[pᵢ].fixed = cube_fitter.flow_voff_tied[j].locked
-    #     if !(cube_fitter.flow_voff_tied[j].locked)
-    #         parinfo[pᵢ].limited = (1,1)
-    #         parinfo[pᵢ].limits = (minimum(cube_fitter.flow_voff_tied[j].prior), maximum(cube_fitter.flow_voff_tied[j].prior))
-    #     end
-    #     pᵢ += 1
-    # end
+    # Convert parameter limits into CMPFit object
+    parinfo = CMPFit.Parinfo(length(p₀))
 
-    # # Tied voigt mixing
-    # if cube_fitter.tie_voigt_mixing
-    #     parinfo[pᵢ].fixed = cube_fitter.voigt_mix_tied.locked
-    #     if !(cube_fitter.voigt_mix_tied.locked)
-    #         parinfo[pᵢ].limited = (1,1)
-    #         parinfo[pᵢ].limits = (minimum(cube_fitter.voigt_mix_tied.prior), maximum(cube_fitter.voigt_mix_tied.prior))
-    #     end
-    #     pᵢ += 1
-    # end
+    # Tied velocity offsets
+    pᵢ = 1
+    for i ∈ 1:cube_fitter.n_voff_tied
+        parinfo[pᵢ].fixed = cube_fitter.voff_tied[i].locked
+        if !(cube_fitter.voff_tied[i].locked)
+            parinfo[pᵢ].limited = (1,1)
+            parinfo[pᵢ].limits = (minimum(cube_fitter.voff_tied[i].prior), maximum(cube_fitter.voff_tied[i].prior))
+        end
+        pᵢ += 1
+    end
 
-    # # Emission line amplitude, voff, fwhm
-    # for i ∈ 1:cube_fitter.n_lines
-    #     line_amp = p₀[pᵢ]
-    #     parinfo[pᵢ].limited = (1,1)
-    #     parinfo[pᵢ].limits = (0., 1.0)
-    #     if isnothing(cube_fitter.line_tied[i]) || cube_fitter.flexible_wavesol
-    #         parinfo[pᵢ+1].fixed = voff_ln[i].locked
-    #         if !(voff_ln[i].locked)
-    #             parinfo[pᵢ+1].limited = (1,1)
-    #             parinfo[pᵢ+1].limits = (minimum(voff_ln[i].prior), maximum(voff_ln[i].prior))
-    #         end
-    #         line_fwhm = p₀[pᵢ+2]
-    #         parinfo[pᵢ+2].fixed = fwhm_ln[i].locked
-    #         if !(fwhm_ln[i].locked)
-    #             parinfo[pᵢ+2].limited = (1,1)
-    #             parinfo[pᵢ+2].limits = (minimum(fwhm_ln[i].prior), maximum(fwhm_ln[i].prior))
-    #         end
-    #         if prof_ln[i] == :GaussHermite
-    #             parinfo[pᵢ+3].fixed = h3_ln[i].locked
-    #             if !(h3_ln[i].locked)
-    #                 parinfo[pᵢ+3].limited = (1,1)
-    #                 parinfo[pᵢ+3].limits = (minimum(h3_ln[i].prior), maximum(h3_ln[i].prior))
-    #             end
-    #             parinfo[pᵢ+4].fixed = h4_ln[i].locked
-    #             if !(h4_ln[i].locked)
-    #                 parinfo[pᵢ+4].limited = (1,1)
-    #                 parinfo[pᵢ+4].limits = (minimum(h4_ln[i].prior), maximum(h4_ln[i].prior))
-    #             end
-    #             pᵢ += 2
-    #         elseif prof_ln[i] == :Voigt && !cube_fitter.tie_voigt_mixing
-    #             parinfo[pᵢ+3].fixed = η_ln[i].locked
-    #             if !(η_ln[i].locked)
-    #                 parinfo[pᵢ+3].limited = (1,1)
-    #                 parinfo[pᵢ+3].limits = (minimum(η_ln[i].prior), maximum(η_ln[i].prior))
-    #             end
-    #             pᵢ += 1
-    #         end
-    #         pᵢ += 3
-    #     else
-    #         line_fwhm = p₀[pᵢ+1]
-    #         parinfo[pᵢ+1].fixed = fwhm_ln[i].locked
-    #         if !(fwhm_ln[i].locked)
-    #             parinfo[pᵢ+1].limited = (1,1)
-    #             parinfo[pᵢ+1].limits = (minimum(fwhm_ln[i].prior), maximum(fwhm_ln[i].prior))
-    #         end
-    #         if prof_ln[i] == :GaussHermite
-    #             parinfo[pᵢ+2].fixed = h3_ln[i].locked
-    #             if !(h3_ln[i].locked)
-    #                 parinfo[pᵢ+2].limited = (1,1)
-    #                 parinfo[pᵢ+2].limits = (minimum(h3_ln[i].prior), maximum(h3_ln[i].prior))
-    #             end
-    #             parinfo[pᵢ+3].fixed = h4_ln[i].locked
-    #             if !(h4_ln[i].locked)
-    #                 parinfo[pᵢ+3].limited = (1,1)
-    #                 parinfo[pᵢ+3].limits = (minimum(h4_ln[i].prior), maximum(h4_ln[i].prior))
-    #             end
-    #             pᵢ += 2       
-    #         elseif prof_ln[i] == :Voigt && !cube_fitter.tie_voigt_mixing
-    #             parinfo[pᵢ+2].fixed = η_ln[i].locked
-    #             if !(η_ln[i].locked)
-    #                 parinfo[pᵢ+2].limited = (1,1)
-    #                 parinfo[pᵢ+2].limits = (minimum(η_ln[i].prior), maximum(η_ln[i].prior))
-    #             end
-    #             pᵢ += 1
-    #         end
-    #         pᵢ += 2
-    #     end
-    #     if !isnothing(flow_prof_ln[i])
-    #         parinfo[pᵢ].limited = (1,1)
-    #         parinfo[pᵢ].limits = (0., line_amp)
-    #         if isnothing(cube_fitter.line_flow_tied[i])
-    #             parinfo[pᵢ+1].fixed = flow_voff_ln[i].locked
-    #             if !(flow_voff_ln[i].locked)
-    #                 parinfo[pᵢ+1].limited = (1,1)
-    #                 parinfo[pᵢ+1].limits = (minimum(flow_voff_ln[i].prior), maximum(flow_voff_ln[i].prior))
-    #             end
-    #             parinfo[pᵢ+2].fixed = flow_fwhm_ln[i].locked
-    #             if !(flow_fwhm_ln[i].locked)
-    #                 parinfo[pᵢ+2].limited = (1,1)
-    #                 parinfo[pᵢ+2].limits = (line_fwhm, maximum(flow_fwhm_ln[i].prior))
-    #             end
-    #             if flow_prof_ln[i] == :GaussHermite
-    #                 parinfo[pᵢ+3].fixed = flow_h3_ln[i].locked
-    #                 if !(flow_h3_ln[i].locked)
-    #                     parinfo[pᵢ+3].limited = (1,1)
-    #                     parinfo[pᵢ+3].limits = (minimum(flow_h3_ln[i].prior), maximum(flow_h3_ln[i].prior))
-    #                 end
-    #                 parinfo[pᵢ+4].fixed = flow_h4_ln[i].locked
-    #                 if !(flow_h4_ln[i].locked)
-    #                     parinfo[pᵢ+4].limited = (1,1)
-    #                     parinfo[pᵢ+4].limits = (minimum(flow_h4_ln[i].prior), maximum(flow_h4_ln[i].prior))
-    #                 end
-    #                 pᵢ += 2
-    #             elseif flow_prof_ln[i] == :Voigt && !cube_fitter.tie_voigt_mixing
-    #                 parinfo[pᵢ+3].fixed = flow_η_ln[i].locked
-    #                 if !(flow_η_ln[i].locked)
-    #                     parinfo[pᵢ+3].limited = (1,1)
-    #                     parinfo[pᵢ+3].limits = (minimum(flow_η_ln[i].prior), maximum(flow_η_ln[i].prior))
-    #                 end
-    #                 pᵢ += 1
-    #             end
-    #             pᵢ += 3
-    #         else
-    #             parinfo[pᵢ+1].fixed = flow_fwhm_ln[i].locked
-    #             if !(flow_fwhm_ln[i].locked)
-    #                 parinfo[pᵢ+1].limited = (1,1)
-    #                 parinfo[pᵢ+1].limits = (line_fwhm, maximum(flow_fwhm_ln[i].prior))
-    #             end
-    #             if flow_prof_ln[i] == :GaussHermite
-    #                 parinfo[pᵢ+2].fixed = flow_h3_ln[i].locked
-    #                 if !(flow_h3_ln[i].locked)
-    #                     parinfo[pᵢ+2].limited = (1,1)
-    #                     parinfo[pᵢ+2].limits = (minimum(flow_h3_ln[i].prior), maximum(flow_h3_ln[i].prior))
-    #                 end
-    #                 parinfo[pᵢ+3].fixed = flow_h4_ln[i].locked
-    #                 if !(flow_h4_ln[i].locked)
-    #                     parinfo[pᵢ+3].limited = (1,1)
-    #                     parinfo[pᵢ+3].limits = (minimum(flow_h4_ln[i].prior), maximum(flow_h4_ln[i].prior))
-    #                 end
-    #                 pᵢ += 2       
-    #             elseif flow_prof_ln[i] == :Voigt && !cube_fitter.tie_voigt_mixing
-    #                 parinfo[pᵢ+2].fixed = flow_η_ln[i].locked
-    #                 if !(flow_η_ln[i].locked)
-    #                     parinfo[pᵢ+2].limited = (1,1)
-    #                     parinfo[pᵢ+2].limits = (minimum(flow_η_ln[i].prior), maximum(flow_η_ln[i].prior))
-    #                 end
-    #                 pᵢ += 1
-    #             end
-    #             pᵢ += 2
-    #         end
-    #     end
-    # end
+    # Tied in/outflow velocity offsets
+    for j ∈ 1:cube_fitter.n_flow_voff_tied
+        parinfo[pᵢ].fixed = cube_fitter.flow_voff_tied[j].locked
+        if !(cube_fitter.flow_voff_tied[j].locked)
+            parinfo[pᵢ].limited = (1,1)
+            parinfo[pᵢ].limits = (minimum(cube_fitter.flow_voff_tied[j].prior), maximum(cube_fitter.flow_voff_tied[j].prior))
+        end
+        pᵢ += 1
+    end
 
-    # # Create a `config` structure
-    # config = CMPFit.Config()
+    # Tied voigt mixing
+    if cube_fitter.tie_voigt_mixing
+        parinfo[pᵢ].fixed = cube_fitter.voigt_mix_tied.locked
+        if !(cube_fitter.voigt_mix_tied.locked)
+            parinfo[pᵢ].limited = (1,1)
+            parinfo[pᵢ].limits = (minimum(cube_fitter.voigt_mix_tied.prior), maximum(cube_fitter.voigt_mix_tied.prior))
+        end
+        pᵢ += 1
+    end
 
-    # res = cmpfit(λ, Inorm, σnorm, (x, p) -> Util.fit_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
-    #     cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, cube_fitter.n_flow_voff_tied, cube_fitter.flow_voff_tied_key,
-    #     cube_fitter.line_flow_tied, flow_prof_ln, λ0_ln, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing), p₁, 
-    #     parinfo=parinfo, config=config)
+    # Emission line amplitude, voff, fwhm
+    for i ∈ 1:cube_fitter.n_lines
+        parinfo[pᵢ].limited = (1,1)
+        parinfo[pᵢ].limits = (0., 1.)
+        if isnothing(cube_fitter.line_tied[i]) || cube_fitter.flexible_wavesol
+            parinfo[pᵢ+1].fixed = voff_ln[i].locked
+            if !(voff_ln[i].locked)
+                parinfo[pᵢ+1].limited = (1,1)
+                parinfo[pᵢ+1].limits = (minimum(voff_ln[i].prior), maximum(voff_ln[i].prior))
+            end
+            line_fwhm = p₀[pᵢ+2]
+            parinfo[pᵢ+2].fixed = fwhm_ln[i].locked
+            if !(fwhm_ln[i].locked)
+                parinfo[pᵢ+2].limited = (1,1)
+                parinfo[pᵢ+2].limits = (minimum(fwhm_ln[i].prior), maximum(fwhm_ln[i].prior))
+            end
+            if prof_ln[i] == :GaussHermite
+                parinfo[pᵢ+3].fixed = h3_ln[i].locked
+                if !(h3_ln[i].locked)
+                    parinfo[pᵢ+3].limited = (1,1)
+                    parinfo[pᵢ+3].limits = (minimum(h3_ln[i].prior), maximum(h3_ln[i].prior))
+                end
+                parinfo[pᵢ+4].fixed = h4_ln[i].locked
+                if !(h4_ln[i].locked)
+                    parinfo[pᵢ+4].limited = (1,1)
+                    parinfo[pᵢ+4].limits = (minimum(h4_ln[i].prior), maximum(h4_ln[i].prior))
+                end
+                pᵢ += 2
+            elseif prof_ln[i] == :Voigt && !cube_fitter.tie_voigt_mixing
+                parinfo[pᵢ+3].fixed = η_ln[i].locked
+                if !(η_ln[i].locked)
+                    parinfo[pᵢ+3].limited = (1,1)
+                    parinfo[pᵢ+3].limits = (minimum(η_ln[i].prior), maximum(η_ln[i].prior))
+                end
+                pᵢ += 1
+            end
+            pᵢ += 3
+        else
+            line_fwhm = p₀[pᵢ+1]
+            parinfo[pᵢ+1].fixed = fwhm_ln[i].locked
+            if !(fwhm_ln[i].locked)
+                parinfo[pᵢ+1].limited = (1,1)
+                parinfo[pᵢ+1].limits = (minimum(fwhm_ln[i].prior), maximum(fwhm_ln[i].prior))
+            end
+            if prof_ln[i] == :GaussHermite
+                parinfo[pᵢ+2].fixed = h3_ln[i].locked
+                if !(h3_ln[i].locked)
+                    parinfo[pᵢ+2].limited = (1,1)
+                    parinfo[pᵢ+2].limits = (minimum(h3_ln[i].prior), maximum(h3_ln[i].prior))
+                end
+                parinfo[pᵢ+3].fixed = h4_ln[i].locked
+                if !(h4_ln[i].locked)
+                    parinfo[pᵢ+3].limited = (1,1)
+                    parinfo[pᵢ+3].limits = (minimum(h4_ln[i].prior), maximum(h4_ln[i].prior))
+                end
+                pᵢ += 2       
+            elseif prof_ln[i] == :Voigt && !cube_fitter.tie_voigt_mixing
+                parinfo[pᵢ+2].fixed = η_ln[i].locked
+                if !(η_ln[i].locked)
+                    parinfo[pᵢ+2].limited = (1,1)
+                    parinfo[pᵢ+2].limits = (minimum(η_ln[i].prior), maximum(η_ln[i].prior))
+                end
+                pᵢ += 1
+            end
+            pᵢ += 2
+        end
+        if !isnothing(flow_prof_ln[i])
+            parinfo[pᵢ].limited = (1,1)
+            parinfo[pᵢ].limits = (0., 1.)
+            if isnothing(cube_fitter.line_flow_tied[i])
+                parinfo[pᵢ+1].fixed = flow_voff_ln[i].locked
+                if !(flow_voff_ln[i].locked)
+                    parinfo[pᵢ+1].limited = (1,1)
+                    parinfo[pᵢ+1].limits = (minimum(flow_voff_ln[i].prior), maximum(flow_voff_ln[i].prior))
+                end
+                parinfo[pᵢ+2].fixed = flow_fwhm_ln[i].locked
+                if !(flow_fwhm_ln[i].locked)
+                    parinfo[pᵢ+2].limited = (1,1)
+                    parinfo[pᵢ+2].limits = (minimum(flow_fwhm_ln[i].prior), maximum(flow_fwhm_ln[i].prior))
+                end
+                if flow_prof_ln[i] == :GaussHermite
+                    parinfo[pᵢ+3].fixed = flow_h3_ln[i].locked
+                    if !(flow_h3_ln[i].locked)
+                        parinfo[pᵢ+3].limited = (1,1)
+                        parinfo[pᵢ+3].limits = (minimum(flow_h3_ln[i].prior), maximum(flow_h3_ln[i].prior))
+                    end
+                    parinfo[pᵢ+4].fixed = flow_h4_ln[i].locked
+                    if !(flow_h4_ln[i].locked)
+                        parinfo[pᵢ+4].limited = (1,1)
+                        parinfo[pᵢ+4].limits = (minimum(flow_h4_ln[i].prior), maximum(flow_h4_ln[i].prior))
+                    end
+                    pᵢ += 2
+                elseif flow_prof_ln[i] == :Voigt && !cube_fitter.tie_voigt_mixing
+                    parinfo[pᵢ+3].fixed = flow_η_ln[i].locked
+                    if !(flow_η_ln[i].locked)
+                        parinfo[pᵢ+3].limited = (1,1)
+                        parinfo[pᵢ+3].limits = (minimum(flow_η_ln[i].prior), maximum(flow_η_ln[i].prior))
+                    end
+                    pᵢ += 1
+                end
+                pᵢ += 3
+            else
+                parinfo[pᵢ+1].fixed = flow_fwhm_ln[i].locked
+                if !(flow_fwhm_ln[i].locked)
+                    parinfo[pᵢ+1].limited = (1,1)
+                    parinfo[pᵢ+1].limits = (minimum(flow_fwhm_ln[i].prior), maximum(flow_fwhm_ln[i].prior))
+                end
+                if flow_prof_ln[i] == :GaussHermite
+                    parinfo[pᵢ+2].fixed = flow_h3_ln[i].locked
+                    if !(flow_h3_ln[i].locked)
+                        parinfo[pᵢ+2].limited = (1,1)
+                        parinfo[pᵢ+2].limits = (minimum(flow_h3_ln[i].prior), maximum(flow_h3_ln[i].prior))
+                    end
+                    parinfo[pᵢ+3].fixed = flow_h4_ln[i].locked
+                    if !(flow_h4_ln[i].locked)
+                        parinfo[pᵢ+3].limited = (1,1)
+                        parinfo[pᵢ+3].limits = (minimum(flow_h4_ln[i].prior), maximum(flow_h4_ln[i].prior))
+                    end
+                    pᵢ += 2       
+                elseif flow_prof_ln[i] == :Voigt && !cube_fitter.tie_voigt_mixing
+                    parinfo[pᵢ+2].fixed = flow_η_ln[i].locked
+                    if !(flow_η_ln[i].locked)
+                        parinfo[pᵢ+2].limited = (1,1)
+                        parinfo[pᵢ+2].limits = (minimum(flow_η_ln[i].prior), maximum(flow_η_ln[i].prior))
+                    end
+                    pᵢ += 1
+                end
+                pᵢ += 2
+            end
+        end
+    end
 
-    # # Get the results
-    # popt = res.param
+    # Create a `config` structure
+    config = CMPFit.Config()
+
+    res = cmpfit(λ, Inorm, σnorm, (x, p) -> Util.fit_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
+        cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, cube_fitter.n_flow_voff_tied, cube_fitter.flow_voff_tied_key,
+        cube_fitter.line_flow_tied, flow_prof_ln, λ0_ln, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing), p₁, 
+        parinfo=parinfo, config=config)
+
+    # Get the results
+    popt = res.param
+    perr = res.perror
+    covar = res.covar
 
     # Count free parameters
-    # n_free = 0
-    # for pᵢ ∈ 1:length(popt)
-    #     if iszero(parinfo[pᵢ].fixed)
-    #         n_free += 1
-    #     end
-    # end
+    n_free = 0
+    for pᵢ ∈ 1:length(popt)
+        if iszero(parinfo[pᵢ].fixed)
+            n_free += 1
+        end
+    end
 
     ######################################################################################################################
 
-    # Get the optimized parameter vector and number of free parameters
-    popt = res.minimizer
-    n_free = length(p₀)
-
     @debug "Spaxel $spaxel - Best fit line parameters: \n $popt"
+    @debug "Spaxel $spaxel - Line parameter errors: \n $perr"
+    @debug "Spaxel $spaxel - Line covariance matrix: \n $covar"
 
     # Final optimized fit
     I_model, comps = Util.fit_line_residuals(λ, popt, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
@@ -2112,87 +2086,87 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where {S<:
     pᵢ = 1
     msg *= "\n#> TIED VELOCITY OFFSETS <#\n"
     for (i, vk) ∈ enumerate(cube_fitter.voff_tied_key)
-        msg *= "$(vk)_tied_voff: \t\t\t $(@sprintf "%.0f" popt[pᵢ]) km/s \t " *
+        msg *= "$(vk)_tied_voff: \t\t\t $(@sprintf "%.0f" popt[pᵢ]) +/- $(@sprintf "%.0f" perr[pᵢ]) km/s \t " *
             "Limits: ($(@sprintf "%.0f" minimum(cube_fitter.voff_tied[i].prior)), $(@sprintf "%.0f" maximum(cube_fitter.voff_tied[i].prior)))\n"
         pᵢ += 1
     end
     for (j, fvk) ∈ enumerate(cube_fitter.flow_voff_tied_key)
-        msg *= "$(fvk)_flow_tied_voff:\t\t\t $(@sprintf "%.0f" popt[pᵢ]) km/s \t " *
+        msg *= "$(fvk)_flow_tied_voff:\t\t\t $(@sprintf "%.0f" popt[pᵢ]) +/- $(@sprintf "%.0f" perr[pᵢ]) km/s \t " *
             "Limits: ($(@sprintf "%.0f" minimum(cube_fitter.flow_voff_tied[j].prior)), $(@sprintf "%.0f" maximum(cube_fitter.flow_voff_tied[j].prior)))\n"
         pᵢ += 1
     end
     msg *= "\n#> TIED VOIGT MIXING <#\n"
     if cube_fitter.tie_voigt_mixing
-        msg *= "tied_voigt_mixing: \t\t\t $(@sprintf "%.2f" popt[pᵢ]) [-] \t " * 
+        msg *= "tied_voigt_mixing: \t\t\t $(@sprintf "%.2f" popt[pᵢ]) +/- $(@sprintf "%.2f" perr[pᵢ]) [-] \t " * 
             "Limits: ($(@sprintf "%.2f" minimum(cube_fitter.voigt_mix_tied.prior)), $(@sprintf "%.2f" maximum(cube_fitter.voigt_mix_tied.prior)))\n"
         pᵢ += 1
     end
     msg *= "\n#> EMISSION LINES <#\n"
     for (k, (ln, nm)) ∈ enumerate(zip(cube_fitter.lines, cube_fitter.line_names))
-        msg *= "$(nm)_amp:\t\t\t $(@sprintf "%.0f" popt[pᵢ]*N) MJy/sr \t Limits: (0, $(@sprintf "%.0f" nanmaximum(I)))\n"
+        msg *= "$(nm)_amp:\t\t\t $(@sprintf "%.3f" popt[pᵢ]) +/- $(@sprintf "%.3f" perr[pᵢ]) [x norm] \t Limits: (0, 1)\n"
         if isnothing(cube_fitter.line_tied[k]) || cube_fitter.flexible_wavesol
-            msg *= "$(nm)_voff:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) km/s \t " *
+            msg *= "$(nm)_voff:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) km/s \t " *
                 "Limits: ($(@sprintf "%.0f" minimum(voff_ln[k].prior)), $(@sprintf "%.0f" maximum(voff_ln[k].prior)))\n"
-            msg *= "$(nm)_fwhm:   \t\t $(@sprintf "%.0f" popt[pᵢ+2]) km/s \t " *
+            msg *= "$(nm)_fwhm:   \t\t $(@sprintf "%.0f" popt[pᵢ+2]) +/- $(@sprintf "%.0f" perr[pᵢ+2]) km/s \t " *
                 "Limits: ($(@sprintf "%.0f" minimum(fwhm_ln[k].prior)), $(@sprintf "%.0f" maximum(fwhm_ln[k].prior)))\n"
             if prof_ln[k] == :GaussHermite
-                msg *= "$(nm)_h3:    \t\t $(@sprintf "%.3f" popt[pᵢ+3])      \t " *
+                msg *= "$(nm)_h3:    \t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3])      \t " *
                     "Limits: ($(@sprintf "%.3f" minimum(h3_ln[k].prior)), $(@sprintf "%.3f" maximum(h3_ln[k].prior)))\n"
-                msg *= "$(nm)_h4:    \t\t $(@sprintf "%.3f" popt[pᵢ+4])      \t " *
+                msg *= "$(nm)_h4:    \t\t $(@sprintf "%.3f" popt[pᵢ+4]) +/- $(@sprintf "%.3f" perr[pᵢ+4])      \t " *
                     "Limits: ($(@sprintf "%.3f" minimum(h4_ln[k].prior)), $(@sprintf "%.3f" maximum(h4_ln[k].prior)))\n"
                 pᵢ += 2
             elseif prof_ln[k] == :Voigt && !cube_fitter.tie_voigt_mixing
-                msg *= "$(nm)_η:     \t\t $(@sprintf "%.3f" popt[pᵢ+3])      \t " *
+                msg *= "$(nm)_η:     \t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3])      \t " *
                     "Limits: ($(@sprintf "%.3f" minimum(η_ln[k].prior)), $(@sprintf "%.3f" maximum(η_ln[k].prior)))\n"
                 pᵢ += 1
             end
             pᵢ += 3
         else
-            msg *= "$(nm)_fwhm:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) km/s \t " *
+            msg *= "$(nm)_fwhm:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) km/s \t " *
                 "Limits: ($(@sprintf "%.0f" minimum(fwhm_ln[k].prior)), $(@sprintf "%.0f" maximum(fwhm_ln[k].prior)))\n"
             if prof_ln[k] == :GaussHermite
-                msg *= "$(nm)_h3:    \t\t $(@sprintf "%.3f" popt[pᵢ+2])      \t " *
+                msg *= "$(nm)_h3:    \t\t $(@sprintf "%.3f" popt[pᵢ+2]) +/- $(@sprintf "%.3f" perr[pᵢ+2])      \t " *
                     "Limits: ($(@sprintf "%.3f" minimum(h3_ln[k].prior)), $(@sprintf "%.3f" maximum(h3_ln[k].prior)))\n"
-                msg *= "$(nm)_h4:    \t\t $(@sprintf "%.3f" popt[pᵢ+3])      \t " *
+                msg *= "$(nm)_h4:    \t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3])      \t " *
                     "Limits: ($(@sprintf "%.3f" minimum(h4_ln[k].prior)), $(@sprintf "%.3f" maximum(h4_ln[k].prior)))\n"
                 pᵢ += 2
             elseif prof_ln[k] == :Voigt && !cube_fitter.tie_voigt_mixing
-                msg *= "$(nm)_η:     \t\t $(@sprintf "%.3f" popt[pᵢ+2])      \t " *
+                msg *= "$(nm)_η:     \t\t $(@sprintf "%.3f" popt[pᵢ+2]) +/- $(@sprintf "%.3f" perr[pᵢ+2])      \t " *
                     "Limits: ($(@sprintf "%.3f" minimum(η_ln[k].prior)), $(@sprintf "%.3f" maximum(η_ln[k].prior)))\n"
                 pᵢ += 1
             end
             pᵢ += 2
         end
         if !isnothing(flow_prof_ln[k])
-            msg *= "\n$(nm)_flow_amp:\t\t\t $(@sprintf "%.0f" popt[pᵢ]*N) MJy/sr \t Limits: (0, $(@sprintf "%.0f" nanmaximum(I)))\n"
+            msg *= "\n$(nm)_flow_amp:\t\t\t $(@sprintf "%.3f" popt[pᵢ]) +/- $(@sprintf "%.3f" perr[pᵢ]) [x amp] \t Limits: (0, 1)\n"
             if isnothing(cube_fitter.line_flow_tied[k])
-                msg *= "$(nm)_flow_voff:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) km/s \t " *
+                msg *= "$(nm)_flow_voff:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) [+ voff] \t " *
                     "Limits: ($(@sprintf "%.0f" minimum(voff_ln[k].prior)), $(@sprintf "%.0f" maximum(voff_ln[k].prior)))\n"
-                msg *= "$(nm)_flow_fwhm:   \t\t $(@sprintf "%.0f" popt[pᵢ+2]) km/s \t " *
+                msg *= "$(nm)_flow_fwhm:   \t\t $(@sprintf "%.3f" popt[pᵢ+2]) +/- $(@sprintf "%.3f" perr[pᵢ+2]) [x fwhm] \t " *
                     "Limits: ($(@sprintf "%.0f" minimum(fwhm_ln[k].prior)), $(@sprintf "%.0f" maximum(fwhm_ln[k].prior)))\n"
                 if flow_prof_ln[k] == :GaussHermite
-                    msg *= "$(nm)_flow_h3:    \t\t $(@sprintf "%.3f" popt[pᵢ+3])      \t " *
+                    msg *= "$(nm)_flow_h3:    \t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3])      \t " *
                         "Limits: ($(@sprintf "%.3f" minimum(h3_ln[k].prior)), $(@sprintf "%.3f" maximum(h3_ln[k].prior)))\n"
-                    msg *= "$(nm)_flow_h4:    \t\t $(@sprintf "%.3f" popt[pᵢ+4])      \t " *
+                    msg *= "$(nm)_flow_h4:    \t\t $(@sprintf "%.3f" popt[pᵢ+4]) +/- $(@sprintf "%.3f" perr[pᵢ+4])      \t " *
                         "Limits: ($(@sprintf "%.3f" minimum(h4_ln[k].prior)), $(@sprintf "%.3f" maximum(h4_ln[k].prior)))\n"
                     pᵢ += 2
                 elseif flow_prof_ln[k] == :Voigt && !cube_fitter.tie_voigt_mixing
-                    msg *= "$(nm)_flow_η:     \t\t $(@sprintf "%.3f" popt[pᵢ+3])      \t " *
+                    msg *= "$(nm)_flow_η:     \t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3])       \t " *
                         "Limits: ($(@sprintf "%.3f" minimum(η_ln[k].prior)), $(@sprintf "%.3f" maximum(η_ln[k].prior)))\n"
                     pᵢ += 1
                 end
                 pᵢ += 3
             else
-                msg *= "$(nm)_flow_fwhm:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) km/s \t " *
+                msg *= "$(nm)_flow_fwhm:   \t\t $(@sprintf "%.3f" popt[pᵢ+1]) +/- $(@sprintf "%.3f" perr[pᵢ+1]) [x fwhm] \t " *
                     "Limits: ($(@sprintf "%.0f" minimum(fwhm_ln[k].prior)), $(@sprintf "%.0f" maximum(fwhm_ln[k].prior)))\n"
                 if flow_prof_ln[k] == :GaussHermite
-                    msg *= "$(nm)_flow_h3:    \t\t $(@sprintf "%.3f" popt[pᵢ+2])      \t " *
+                    msg *= "$(nm)_flow_h3:    \t\t $(@sprintf "%.3f" popt[pᵢ+2]) +/- $(@sprintf "%.3f" perr[pᵢ+2])      \t " *
                         "Limits: ($(@sprintf "%.3f" minimum(h3_ln[k].prior)), $(@sprintf "%.3f" maximum(h3_ln[k].prior)))\n"
-                    msg *= "$(nm)_flow_h4:    \t\t $(@sprintf "%.3f" popt[pᵢ+3])      \t " *
+                    msg *= "$(nm)_flow_h4:    \t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3])      \t " *
                         "Limits: ($(@sprintf "%.3f" minimum(h4_ln[k].prior)), $(@sprintf "%.3f" maximum(h4_ln[k].prior)))\n"
                     pᵢ += 2
                 elseif flow_prof_ln[k] == :Voigt && !cube_fitter.tie_voigt_mixing
-                    msg *= "$(nm)_flow_η:     \t\t $(@sprintf "%.3f" popt[pᵢ+2])      \t " *
+                    msg *= "$(nm)_flow_η:     \t\t $(@sprintf "%.3f" popt[pᵢ+2]) +/- $(@sprintf "%.3f" perr[pᵢ+2])      \t " *
                         "Limits: ($(@sprintf "%.3f" minimum(η_ln[k].prior)), $(@sprintf "%.3f" maximum(η_ln[k].prior)))\n"
                     pᵢ += 1
                 end
@@ -2204,7 +2178,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where {S<:
     msg *= "######################################################################" 
     @debug msg
 
-    return σ, popt, I_model, comps, n_free
+    return σ, popt, I_model, comps, n_free, perr, covar
 
 end
 
@@ -2359,7 +2333,7 @@ Currently this includes the integrated intensity and signal to noise ratios of d
 - `popt_l::Vector{T}`: The best-fit parameter vector for the line components of the fit
 """
 function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S}, 
-    popt_c::Vector{T}, popt_l::Vector{T}) where {T<:AbstractFloat,S<:Integer}
+    popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}) where {T<:AbstractFloat,S<:Integer}
 
     @debug "Spaxel $spaxel - Calculating extra parameters"
 
@@ -2374,14 +2348,17 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
     mask_lines, continuum, _ = continuum_cubic_spline(λ, I, σ)
     N = Float64(abs(nanmaximum(I)))
     N = N ≠ 0. ? N : 1.
+    @debug "Normalization: $N"
 
     # Loop through dust complexes
     p_complex = zeros(2cube_fitter.n_complexes)
+    p_complex_err = zeros(2cube_fitter.n_complexes)
     pₒ = 1
     for c ∈ cube_fitter.complexes
 
         # Start with 0 intensity -> intensity holds the overall integrated intensity in CGS units
         intensity = 0. 
+        i_err = []
         # Start with flat profile -> profile holds the overall model as an anonymous function in units of MJy/sr
         # this is used to calculate the S/N at the end
         profile = x -> 0.
@@ -2394,11 +2371,22 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
 
                 # unpack the parameters
                 A, μ, fwhm = popt_c[pᵢ:pᵢ+2]
+                A_err, μ_err, fwhm_err = perr_c[pᵢ:pᵢ+2]
                 # Convert peak intensity to CGS units (erg s^-1 cm^-2 μm^-1 sr^-1)
                 A_cgs = Util.MJysr_to_cgs(A, μ)
+                # Convert the error in the intensity to CGS units
+                A_cgs_err = Util.MJysr_to_cgs_err(A, A_err, μ, μ_err)
                 # add the integral of the individual Drude profiles using the helper function
                 # (integral = π/2 * A * fwhm)
-                intensity += Util.∫Drude(A_cgs, fwhm)
+                inten_i = Util.∫Drude(A_cgs, fwhm)
+                intensity += inten_i
+                # get the error of the integrated intensity
+                frac_err2 = (A_cgs_err / A_cgs)^2 + (fwhm_err / fwhm)^2
+                err = √(frac_err2 * inten_i^2)
+                append!(i_err, [err])
+
+                @debug "Adding drude profile with ($A_cgs, $μ, $fwhm) and errors ($A_cgs_err, $μ_err, $fwhm_err)"
+                @debug "I=$inten_i, err=$err"
 
                 # add to profile recursively
                 profile = let profile = profile
@@ -2414,16 +2402,20 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
 
         # intensity units: erg s^-1 cm^-2 sr^-1 (integrated over μm)
         p_complex[pₒ] = intensity
+        # add errors in quadrature
+        p_complex_err[pₒ] = √(sum(i_err.^2))
 
         # SNR, calculated as (amplitude) / (RMS of the surrounding spectrum)
         p_complex[pₒ+1] = peak / std(I[.!mask_lines] .- continuum[.!mask_lines])
-        @debug "Dust complex $c with integrated intensity $(p_complex[pₒ]) (erg s^-1 cm^-2 sr^-1) and SNR $(p_complex[pₒ+1])"
+        @debug "Dust complex $c with integrated intensity $(p_complex[pₒ]) +/- $(p_complex_err[pₒ]) " *
+            "(erg s^-1 cm^-2 sr^-1) and SNR $(p_complex[pₒ+1])"
 
         pₒ += 2
     end
 
     # Loop through lines
     p_lines = zeros(2cube_fitter.n_lines)
+    p_lines_err = zeros(2cube_fitter.n_lines)
     pₒ = 1
     # Skip over the tied velocity offsets
     pᵢ = cube_fitter.n_voff_tied + cube_fitter.n_flow_voff_tied + 1
@@ -2436,25 +2428,33 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
 
         # Start with 0 intensity -> intensity holds the overall integrated intensity in CGS units
         intensity = 0. 
+        i_err = []
         # (\/ pretty much the same as the fit_line_residuals function, but calculating the integrated intensities)
         amp = popt_l[pᵢ]
+        amp_err = perr_l[pᵢ]
             
         # Check if voff is tied: if so, use the tied voff parameter, otherwise, use the line's own voff parameter
         if isnothing(cube_fitter.line_tied[k])
             # Unpack the components of the line
             voff = popt_l[pᵢ+1]
+            voff_err = perr_l[pᵢ+1]
             fwhm = popt_l[pᵢ+2]
+            fwhm_err = perr_l[pᵢ+2]
             if cube_fitter.line_profiles[k] == :GaussHermite
                 # Get additional h3, h4 components
                 h3 = popt_l[pᵢ+3]
+                h3_err = perr_l[pᵢ+3]
                 h4 = popt_l[pᵢ+4]
+                h4_err = perr_l[pᵢ+4]
             elseif cube_fitter.line_profiles[k] == :Voigt
                 # Get additional mixing component, either from the tied position or the 
                 # individual position
                 if !cube_fitter.tie_voigt_mixing
                     η = popt_l[pᵢ+3]
+                    η_err = perr_l[pᵢ+3]
                 else
                     η = popt_l[ηᵢ]
+                    η_err = perr_l[ηᵢ]
                 end
             end
         elseif !isnothing(cube_fitter.line_tied[k]) && cube_fitter.flexible_wavesol
@@ -2465,18 +2465,24 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
             voff_indiv = popt_l[pᵢ+1]
             # Add velocity shifts of the tied lines and the individual offsets together
             voff = voff_series + voff_indiv
+            voff_err = √(perr_l[vwhere]^2 + perr_l[pᵢ+1]^2)
             fwhm = popt_l[pᵢ+2]
+            fwhm_err = perr_l[pᵢ+2]
             if cube_fitter.line_profiles[k] == :GaussHermite
                 # Get additional h3, h4 components
                 h3 = popt_l[pᵢ+3]
+                h3_err = perr_l[pᵢ+3]
                 h4 = popt_l[pᵢ+4]
+                h4_err = perr_l[pᵢ+4]
             elseif cube_fitter.line_profiles[k] == :Voigt
                 # Get additional mixing component, either from the tied position or the 
                 # individual position
                 if !cube_fitter.tie_voigt_mixing
                     η = popt_l[pᵢ+3]
+                    η_err = perr_l[pᵢ+3]
                 else
                     η = popt_l[ηᵢ]
+                    η_err = perr_l[ηᵢ]
                 end
             end
         else
@@ -2484,52 +2490,97 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
             # based on matching the keys in line_tied and voff_tied_key
             vwhere = findfirst(x -> x == cube_fitter.line_tied[k], cube_fitter.voff_tied_key)
             voff = popt_l[vwhere]
+            voff_err = perr_l[vwhere]
             fwhm = popt_l[pᵢ+1]
+            fwhm_err = perr_l[pᵢ+1]
             # (dont add any individual voff components)
             if cube_fitter.line_profiles[k] == :GaussHermite
                 # Get additional h3, h4 components
                 h3 = popt_l[pᵢ+2]
+                h3_err = perr_l[pᵢ+2]
                 h4 = popt_l[pᵢ+3]
+                h4_err = perr_l[pᵢ+3]
             elseif cube_fitter.line_profiles[k] == :Voigt
                 # Get additional mixing component, either from the tied position or the 
                 # individual position
                 if !cube_fitter.tie_voigt_mixing
                     η = popt_l[pᵢ+2]
+                    η_err = perr_l[pᵢ+2]
                 else
                     η = popt_l[ηᵢ]
+                    η_err = perr_l[ηᵢ]
                 end
             end
         end
 
         # Convert voff in km/s to mean wavelength in μm
         mean_μm = Util.Doppler_shift_λ(ln.λ₀, voff)
+        mean_μm_err = ln.λ₀ / Util.C_KMS * voff_err
+        # WARNING:
+        # Set to 0 if using flexible tied voffs since they are highly degenerate and result in massive errors
+        # if !isnothing(cube_fitter.line_tied[k]) && cube_fitter.flexible_wavesol
+        #     mean_μm_err = 0.
+        # end
         # Convert FWHM from km/s to μm
         fwhm_μm = Util.Doppler_shift_λ(ln.λ₀, fwhm) - ln.λ₀
+        fwhm_μm_err = ln.λ₀ / Util.C_KMS * fwhm_err
 
         # Convert amplitude to erg s^-1 cm^-2 μm^-1 sr^-1, put back in the normalization
         amp_cgs = Util.MJysr_to_cgs(amp*N, mean_μm)
+        amp_cgs_err = Util.MJysr_to_cgs_err(amp*N, amp_err*N, mean_μm, mean_μm_err)
+
+        @debug "Line with ($amp_cgs, $mean_μm, $fwhm_μm) and errors ($amp_cgs_err, $mean_μm_err, $fwhm_μm_err)"
 
         # Evaluate the line profiles according to whether there is a simple analytic form
         # otherwise, integrate numerically with quadgk
         if cube_fitter.line_profiles[k] == :Gaussian
-            intensity += Util.∫Gaussian(amp_cgs, fwhm_μm)
+            ii = Util.∫Gaussian(amp_cgs, fwhm_μm)
+            intensity += ii
+            frac_err2 = (amp_cgs_err / amp_cgs)^2 + (fwhm_μm_err / fwhm_μm)^2
+            err = √(frac_err2 * ii^2)
+            append!(i_err, [err])
+            @debug "I=$ii, err=$err"
+
             profile = x -> Util.Gaussian(x, amp, 0., fwhm_μm)
         elseif cube_fitter.line_profiles[k] == :Lorentzian
-            intensity += Util.∫Lorentzian(amp_cgs)
+            ii = Util.∫Lorentzian(amp_cgs)
+            intensity += ii
+            frac_err2 = (amp_cgs_err / amp_cgs)^2
+            err = √(frac_err2 * ii^2)
+            append!(i_err, [err])
+            @debug "I=$ii, err=$err"
+
             profile = x -> Util.Lorentzian(x, amp, 0., fwhm_μm)
         elseif cube_fitter.line_profiles[k] == :GaussHermite
             # shift the profile to be centered at 0 since it doesnt matter for the integral, and it makes it
             # easier for quadgk to find a solution
-            intensity += quadgk(x -> Util.GaussHermite(x, amp_cgs, 0., fwhm_μm, h3, h4), -Inf, Inf, order=200)[1]
+            ii = quadgk(x -> Util.GaussHermite(x, amp_cgs, 0., fwhm_μm, h3, h4), -Inf, Inf, order=200)[1]
+            intensity += ii
+            # estimate error by evaluating the integral at +/- 1 sigma
+            err_l = ii - quadgk(x -> Util.GaussHermite(x, amp_cgs-amp_cgs_err, 0., fwhm_μm-fwhm_μm_err, h3-h3_err, h4-h4_err), -Inf, Inf, order=200)[1]
+            err_u = quadgk(x -> Util.GaussHermite(x, amp_cgs+amp_cgs_err, 0., fwhm_μm+fwhm_μm_err, h3+h3_err, h4+h4_err), -Inf, Inf, order=200)[1] - ii
+            err = mean([err_l, err_u])
+            append!(i_err, [err])
+            @debug "I=$ii, err_u=$err_u, err_l=$err_l, err=$err"
+
             profile = x -> Util.GaussHermite(x, amp, 0., fwhm_μm, h3, h4)
         elseif cube_fitter.line_profiles[k] == :Voigt
             # also use a high order to ensure that all the initial test points dont evaluate to precisely 0
-            intensity += quadgk(x -> Util.Voigt(x, amp_cgs, 0., fwhm_μm, η), -Inf, Inf, order=200)[1]
+            ii = quadgk(x -> Util.Voigt(x, amp_cgs, 0., fwhm_μm, η), -Inf, Inf, order=200)[1]
+            intensity += ii
+            # estimate error by evaluating the integral at +/- 1 sigma
+            err_l = ii - quadgk(x -> Util.Voigt(x, amp_cgs-amp_cgs_err, 0., fwhm_μm-fwhm_μm_err, η-η_err), -Inf, Inf, order=200)[1]
+            err_u = quadgk(x -> Util.Voigt(x, amp_cgs+amp_cgs_err, 0., fwhm_μm+fwhm_μm_err, η+η_err), -Inf, Inf, order=200)[1] - ii
+            err = mean([err_l, err_u])
+            append!(i_err, [err])
+            @debug "I=$ii, err_u=$err_u, err_l=$err_l, err=$err"
+
             profile = x -> Util.Voigt(x, amp, 0., fwhm_μm, η)
         else
             error("Unrecognized line profile $(cube_fitter.line_profiles[k])!")
         end
-    
+
+
         # Advance the parameter vector index -> 3 if untied (or tied + flexible_wavesol) or 2 if tied
         pᵢ += isnothing(cube_fitter.line_tied[k]) || cube_fitter.flexible_wavesol ? 3 : 2
         if cube_fitter.line_profiles[k] == :GaussHermite
@@ -2545,64 +2596,113 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
         # Repeat EVERYTHING, minus the flexible_wavesol, for the inflow/outflow components
         if !isnothing(cube_fitter.line_flow_profiles[k])
 
-            flow_amp = popt_l[pᵢ]
+            flow_amp = amp * popt_l[pᵢ]
+            flow_amp_err = √(flow_amp^2 * ((amp_err / amp)^2 + (perr_l[pᵢ] / flow_amp)^2))
             if isnothing(cube_fitter.line_flow_tied[k])
-                flow_voff = popt_l[pᵢ+1]
-                flow_fwhm = popt_l[pᵢ+2]
+                flow_voff = voff + popt_l[pᵢ+1]
+                flow_voff_err = √(voff_err^2 + perr_l[pᵢ+1]^2)
+                flow_fwhm = fwhm * popt_l[pᵢ+2]
+                flow_fwhm_err = √(flow_fwhm^2 * ((fwhm_err / fwhm)^2 + (perr_l[pᵢ+2] / flow_fwhm)^2))
                 if cube_fitter.line_flow_profiles[k] == :GaussHermite
                     flow_h3 = popt_l[pᵢ+3]
+                    flow_h3_err = perr_l[pᵢ+3]
                     flow_h4 = popt_l[pᵢ+4]
+                    flow_h4_err = perr_l[pᵢ+4]
                 elseif cube_fitter.line_flow_profiles[k] == :Voigt
                     if !cube_fitter.tie_voigt_mixing
                         flow_η = popt_l[pᵢ+3]
+                        flow_η_err = perr_l[pᵢ+3]
                     else
                         flow_η = popt_l[ηᵢ]
+                        flow_η_err = perr_l[ηᵢ+3]
                     end
                 end
             else
                 vwhere = findfirst(x -> x == cube_fitter.line_flow_tied[k], cube_fitter.flow_voff_tied_key)
-                flow_voff = popt_l[cube_fitter.n_voff_tied+vwhere]
-                flow_fwhm = popt_l[pᵢ+1]
+                flow_voff = voff + popt_l[cube_fitter.n_voff_tied+vwhere]
+                flow_voff_err = √(voff_err^2 + perr_l[cube_fitter.n_voff_tied+vwhere]^2)
+                flow_fwhm = fwhm * popt_l[pᵢ+1]
+                flow_fwhm_err = √(flow_fwhm^2 * ((fwhm_err / fwhm)^2 + (perr_l[pᵢ+1] / flow_fwhm)^2))
                 if cube_fitter.line_flow_profiles[k] == :GaussHermite
                     flow_h3 = popt_l[pᵢ+2]
+                    flow_h3_err = perr_l[pᵢ+2]
                     flow_h4 = popt_l[pᵢ+3]
+                    flow_h4_err = perr_l[pᵢ+3]
                 elseif cube_fitter.line_flow_profiles[k] == :Voigt
                     if !cube_fitter.tie_voigt_mixing
                         flow_η = popt_l[pᵢ+2]
+                        flow_η_err = perr_l[pᵢ+2]
                     else
                         flow_η = popt_l[ηᵢ]
+                        flow_η_err = perr_l[ηᵢ]
                     end
                 end
             end
 
             # Convert voff in km/s to mean wavelength in μm
-            flow_mean_μm = Util.Doppler_shift_λ(ln.λ₀, voff+flow_voff)
+            flow_mean_μm = Util.Doppler_shift_λ(ln.λ₀, flow_voff)
+            flow_mean_μm_err = ln.λ₀ / Util.C_KMS * flow_voff_err
             # Convert FWHM from km/s to μm
             flow_fwhm_μm = Util.Doppler_shift_λ(ln.λ₀, flow_fwhm) - ln.λ₀
+            flow_fwhm_μm_err = ln.λ₀ / Util.C_KMS * flow_fwhm_err
 
             # Convert amplitude to erg s^-1 cm^-2 μm^-1 sr^-1, put back in the normalization
             flow_amp_cgs = Util.MJysr_to_cgs(flow_amp*N, flow_mean_μm)
+            flow_amp_cgs_err = Util.MJysr_to_cgs_err(flow_amp*N, flow_amp_err*N, flow_mean_μm, flow_mean_μm_err)
+
+            @debug "Flow line with ($flow_amp_cgs, $flow_mean_μm, $flow_fwhm_μm) and errors ($flow_amp_cgs_err, $flow_mean_μm_err, $flow_fwhm_μm_err)"
 
             # Evaluate line profile, shifted by the same amount as the primary line profile
             if cube_fitter.line_flow_profiles[k] == :Gaussian
-                intensity += Util.∫Gaussian(flow_amp_cgs, flow_fwhm_μm)
+                ii = Util.∫Gaussian(flow_amp_cgs, flow_fwhm_μm)
+                intensity += ii
+                frac_err2 = (flow_amp_cgs_err / flow_amp_cgs)^2 + (flow_fwhm_μm_err / flow_fwhm_μm)^2
+                err = √(frac_err2 * ii^2)
+                # warning: flow component degeneracy with the main line components causes large errors
+                append!(i_err, [err])
+                @debug "I=$ii, err=$err"
+
                 profile = let profile = profile
                     x -> profile(x) + Util.Gaussian(x, flow_amp, flow_mean_μm-mean_μm, flow_fwhm_μm)
                 end
             elseif cube_fitter.line_flow_profiles[k] == :Lorentzian
-                intensity += Util.∫Lorentzian(flow_amp_cgs)
+                ii = Util.∫Lorentzian(flow_amp_cgs)
+                intensity += ii
+                frac_err2 = (flow_amp_cgs_err / flow_amp_cgs)^2
+                err = √(frac_err2 * ii^2)
+                append!(i_err, [err])
+                @debug "I=$ii, err=$err"
+
                 profile = let profile = profile
                     x -> profile(x) + Util.Lorentzian(x, flow_amp, flow_mean_μm-mean_μm, flow_fwhm_μm)
                 end
             elseif cube_fitter.line_profiles[k] == :GaussHermite
                 # same as above
-                intensity += quadgk(x -> Util.GaussHermite(x, flow_amp_cgs, 0., flow_fwhm_μm, flow_h3, flow_h4), -Inf, Inf, order=200)[1]
+                ii = quadgk(x -> Util.GaussHermite(x, flow_amp_cgs, 0., flow_fwhm_μm, flow_h3, flow_h4), -Inf, Inf, order=200)[1]
+                intensity += ii
+                err_l = ii - quadgk(x -> Util.GaussHermite(x, flow_amp_cgs-flow_amp_cgs_err, 0., flow_fwhm_μm-flow_fwhm_μm_err, 
+                                                      flow_h3-flow_h3_err, flow_h4-flow_h4_err), -Inf, Inf, order=200)[1]
+                err_u = quadgk(x -> Util.GaussHermite(x, flow_amp_cgs+flow_amp_cgs_err, 0., flow_fwhm_μm+flow_fwhm_μm_err,
+                                                      flow_h3+flow_h3_err, flow_h4+flow_h4_err), -Inf, Inf, order=200)[1] - ii
+                err = mean([err_l, err_u])
+                append!(i_err, [err])
+                @debug "I=$ii, err_u=$err_u, err_l=$err_l, err=$err"
+
                 profile = let profile = profile
                     x -> profile(x) + Util.GaussHermite(x, flow_amp, flow_mean_μm-mean_μm, flow_fwhm_μm, flow_h3, flow_h4)
                 end
             elseif cube_fitter.line_profiles[k] == :Voigt
                 # same as above
-                intensity += quadgk(x -> Util.Voigt(x, flow_amp_cgs, 0., flow_fwhm_μm, flow_η), -Inf, Inf, order=200)[1]
+                ii = quadgk(x -> Util.Voigt(x, flow_amp_cgs, 0., flow_fwhm_μm, flow_η), -Inf, Inf, order=200)[1]
+                intensity += ii
+                err_l = ii - quadgk(x -> Util.Voigt(x, flow_amp_cgs-flow_amp_cgs_err, 0., flow_fwhm_μm-flow_fwhm_μm_err, flow_η-flow_η_err),
+                               -Inf, Inf, order=200)[1]
+                err_u = quadgk(x -> Util.Voigt(x, flow_amp_cgs+flow_amp_cgs_err, 0., flow_fwhm_μm+flow_fwhm_μm_err, flow_η+flow_η_err),
+                               -Inf, Inf, order=200)[1] - ii
+                err = mean([err_l, err_u])
+                append!(i_err, [err])
+                @debug "I=$ii, err_u=$err_u, err_l=$err_l, err=$err"
+
                 profile = let profile = profile
                     x -> profile(x) + Util.Voigt(x, flow_amp, flow_mean_μm-mean_μm, flow_fwhm_μm, flow_η)
                 end
@@ -2623,6 +2723,7 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
 
         # intensity in units of erg s^-1 cm^-2 sr^-1 (integrated over μm)
         p_lines[pₒ] = intensity
+        p_lines_err[pₒ] = √(sum(i_err.^2))
 
         # Add back in the normalization for the profile, to be used to calculate the S/N
         profile = let profile = profile
@@ -2635,13 +2736,14 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
         # SNR, calculated as (amplitude) / (RMS of the surrounding spectrum)
         p_lines[pₒ+1] = peak / std(I[.!mask_lines] .- continuum[.!mask_lines])
 
-        @debug "Line $(cube_fitter.line_names[k]) with integrated intensity $(p_lines[pₒ]) (erg s^-1 cm^-2 sr^-1) and SNR $(p_lines[pₒ+1])"
+        @debug "Line $(cube_fitter.line_names[k]) with integrated intensity $(p_lines[pₒ]) +/- $(p_lines_err[pₒ]) " *
+            "(erg s^-1 cm^-2 sr^-1) and SNR $(p_lines[pₒ+1])"
 
         pₒ += 2
 
     end
 
-    return p_complex, p_lines
+    return p_complex, p_lines, p_complex_err, p_lines_err
 end
 
 
@@ -2657,25 +2759,25 @@ of a crash.
 - `cube_fitter::CubeFitter`: The CubeFitter object containing the data, parameters, and options for the fit
 - `spaxel::Tuple{S,S}`: The coordinates of the spaxel to be fit
 """
-function fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S})::Union{Nothing,Vector{<:AbstractFloat}} where {S<:Integer}
+function fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where {S<:Integer}
 
-    # Create a local logger for this individual spaxel
-    timestamp_logger(logger) = TransformerLogger(logger) do log
-        merge(log, (; message = "$(Dates.format(now(), date_format)) $(log.message)"))
-    end
+    global p_out
+    global p_err
 
-    # This log should be entirely handled by 1 process, since each spaxel is entirely handled by 1 process
-    # so there should be no problems with I/O race conditions
-    logger = TeeLogger(ConsoleLogger(stdout, Logging.Info), timestamp_logger(MinLevelLogger(FileLogger(
-                         joinpath("output_$(cube_fitter.name)", "logs", "loki.spaxel_$(spaxel[1])_$(spaxel[2]).log"); 
-                         always_flush=true), Logging.Debug)))
+    # Check if the fit has already been performed
+    if !isfile(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).LOKI")) || cube_fitter.overwrite
+        
+        # Create a local logger for this individual spaxel
+        timestamp_logger(logger) = TransformerLogger(logger) do log
+            merge(log, (; message = "$(Dates.format(now(), date_format)) $(log.message)"))
+        end
+        # This log should be entirely handled by 1 process, since each spaxel is entirely handled by 1 process
+        # so there should be no problems with I/O race conditions
+        logger = TeeLogger(ConsoleLogger(stdout, Logging.Info), timestamp_logger(MinLevelLogger(FileLogger(
+                             joinpath("output_$(cube_fitter.name)", "logs", "loki.spaxel_$(spaxel[1])_$(spaxel[2]).log"); 
+                             always_flush=true), Logging.Debug)))
 
-    with_logger(logger) do
-        # Define global variable
-        global p_out
-
-        # Check if the fit has already been performed
-        if !isfile(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).LOKI")) || cube_fitter.overwrite
+        with_logger(logger) do
 
             # Skip spaxels with NaNs (post-interpolation)
             λ = cube_fitter.cube.λ
@@ -2684,12 +2786,13 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S})::Union{Nothing,
             if any(.!isfinite.(I) .| .!isfinite.(I))
                 @debug "Too many bad datapoints...skipping the fit for spaxel $spaxel"
                 p_out = nothing
+                p_err = nothing
 
             else
 
                 # Fit the spaxel
-                σ, popt_c, I_cont, comps_cont, n_free_c = continuum_fit_spaxel(cube_fitter, spaxel)
-                _, popt_l, I_line, comps_line, n_free_l = line_fit_spaxel(cube_fitter, spaxel)
+                σ, popt_c, I_cont, comps_cont, n_free_c, perr_c, covar_c = continuum_fit_spaxel(cube_fitter, spaxel)
+                _, popt_l, I_line, comps_line, n_free_l, perr_l, covar_l = line_fit_spaxel(cube_fitter, spaxel)
 
                 # Combine the continuum and line models
                 I_model = I_cont .+ I_line
@@ -2703,8 +2806,10 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S})::Union{Nothing,
                 χ2red = 1 / (n_data - n_free) * sum((I .- I_model).^2 ./ σ.^2)
 
                 # Add dust complex and line parameters (intensity and SNR)
-                p_complex, p_lines = calculate_extra_parameters(cube_fitter, spaxel, popt_c, popt_l)
+                p_complex, p_lines, p_complex_err, p_lines_err = 
+                    calculate_extra_parameters(cube_fitter, spaxel, popt_c, popt_l, perr_c, perr_l)
                 p_out = [popt_c; popt_l; p_complex; p_lines; χ2red]
+                p_err = [perr_c; perr_l; p_complex_err; p_lines_err; 0.]
 
                 # Plot the fit
                 λ0_ln = [ln.λ₀ for ln ∈ cube_fitter.lines]
@@ -2730,7 +2835,7 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S})::Union{Nothing,
 
             @debug "Saving results to binary for spaxel $spaxel"
             # save output as binary file
-            serialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).LOKI"), p_out)
+            serialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).LOKI"), (p_out=p_out, p_err=p_err))
             # save running best fit parameters in case the fitting is interrupted
             serialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "best_fit_params.LOKI"),
                 Dict(:p_best_cont => Array(cube_fitter.p_best_cont),
@@ -2739,16 +2844,17 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S})::Union{Nothing,
                      :best_spaxel => Vector(cube_fitter.best_spaxel))
                 )
 
-        # Otherwise, just grab the results from before
-        else
-            @debug "Loading results from binary for spaxel $spaxel"
-            p_out = deserialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).LOKI"))
-
         end
+
+    # Otherwise, just grab the results from before
+    else
+        results = deserialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).LOKI"))
+        p_out = results.p_out
+        p_err = results.p_err
 
     end
 
-    return p_out
+    return p_out, p_err
 end
 
 
@@ -2777,13 +2883,15 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
     # Prepare output array
     @info "===> Preparing output data structures... <==="
     out_params = SharedArray(ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 1) .* NaN)
+    out_errs = SharedArray(ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 1) .* NaN)
 
     #########################
     function fit_spax_i(xᵢ::Int, yᵢ::Int)
 
-        p_out = fit_spaxel(cube_fitter, (xᵢ, yᵢ))
+        p_out, p_err = fit_spaxel(cube_fitter, (xᵢ, yᵢ))
         if !isnothing(p_out)
             out_params[xᵢ, yᵢ, :] .= p_out
+            out_errs[xᵢ, yᵢ, :] .= p_err
         end
 
         return
@@ -2791,8 +2899,8 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
 
     # Sort spaxels by median brightness, so that we fit the brightest ones first
     # (which hopefully have the best reduced chi^2s)
-    # spaxels = Iterators.product(1:shape[1], 1:shape[2])
-    spaxels = Iterators.product(15:16, 15:16)
+    spaxels = Iterators.product(1:shape[1], 1:shape[2])
+    # spaxels = Iterators.product(15:16, 15:16)
 
     # med_I = collect(Iterators.flatten([nanmedian(cube_fitter.cube.Iλ[spaxel..., :]) for spaxel ∈ spaxels]))
     # # replace NaNs with -1s
@@ -2824,24 +2932,33 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
 
         # Stellar continuum amplitude, temp
         cube_fitter.param_maps.stellar_continuum[:amp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, 1] > 0. ? log10(out_params[xᵢ, yᵢ, 1]) : -Inf 
+        cube_fitter.param_errs.stellar_continuum[:amp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, 1] > 0. ? out_errs[xᵢ, yᵢ, 1] / out_params[xᵢ, yᵢ, 1] : NaN
         cube_fitter.param_maps.stellar_continuum[:temp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, 2]
+        cube_fitter.param_errs.stellar_continuum[:temp][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, 2]
         pᵢ = 3
         # Dust continuum amplitude, temp
         for i ∈ 1:cube_fitter.n_dust_cont
             cube_fitter.param_maps.dust_continuum[i][:amp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? log10(out_params[xᵢ, yᵢ, pᵢ]) : -Inf
+            cube_fitter.param_errs.dust_continuum[i][:amp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? out_errs[xᵢ, yᵢ, pᵢ] / out_params[xᵢ, yᵢ, pᵢ] : NaN
             cube_fitter.param_maps.dust_continuum[i][:temp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+1]
+            cube_fitter.param_errs.dust_continuum[i][:temp][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, pᵢ+1]
             pᵢ += 2
         end
         # Dust feature log(amplitude), mean, FWHM
         for df ∈ cube_fitter.df_names
             cube_fitter.param_maps.dust_features[df][:amp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? log10(out_params[xᵢ, yᵢ, pᵢ]) : -Inf
+            cube_fitter.param_maps.dust_features[df][:amp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? out_errs[xᵢ, yᵢ, pᵢ] / out_params[xᵢ, yᵢ, pᵢ] : NaN
             cube_fitter.param_maps.dust_features[df][:mean][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+1]
+            cube_fitter.param_errs.dust_features[df][:mean][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, pᵢ+1]
             cube_fitter.param_maps.dust_features[df][:fwhm][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+2]
+            cube_fitter.param_errs.dust_features[df][:fwhm][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, pᵢ+2]
             pᵢ += 3
         end
         # Extinction parameters
         cube_fitter.param_maps.extinction[:tau_9_7][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ]
+        cube_fitter.param_errs.extinction[:tau_9_7][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, pᵢ]
         cube_fitter.param_maps.extinction[:beta][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+1]
+        cube_fitter.param_errs.extinction[:beta][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, pᵢ+1]
         pᵢ += 2
 
         # End of continuum parameters: recreate the continuum model
@@ -2852,102 +2969,157 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
         vᵢ = pᵢ
         for vk ∈ cube_fitter.voff_tied_key
             cube_fitter.param_maps.tied_voffs[vk][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ]
+            cube_fitter.param_errs.tied_voffs[vk][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, pᵢ]
             pᵢ += 1
         end
         # Tied flow velocity offsets
         for fvk ∈ cube_fitter.flow_voff_tied_key
             cube_fitter.param_maps.flow_tied_voffs[fvk][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ]
+            cube_fitter.param_errs.flow_tied_voffs[fvk][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, pᵢ]
             pᵢ += 1
         end
         # Tied voigt mixing
         if cube_fitter.tie_voigt_mixing
             cube_fitter.param_maps.tied_voigt_mix[xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ]
+            cube_fitter.param_errs.tied_voigt_mix[xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, pᵢ]
             pᵢ += 1
         end
         for (k, ln) ∈ enumerate(cube_fitter.line_names)
-            # Log of line amplitude
-            cube_fitter.param_maps.lines[ln][:amp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? log10(out_params[xᵢ, yᵢ, pᵢ]) : -Inf
+
+            amp = out_params[xᵢ, yᵢ, pᵢ]
+            amp_err = out_errs[xᵢ, yᵢ, pᵢ]
+            cube_fitter.param_maps.lines[ln][:amp][xᵢ, yᵢ] = amp
+            cube_fitter.param_errs.lines[ln][:amp][xᵢ, yᵢ] = amp_err
             fwhm_res = Util.C_KMS / cube_fitter.interp_R(cube_fitter.lines[k].λ₀)
 
             if isnothing(cube_fitter.line_tied[k]) || cube_fitter.flexible_wavesol
+
                 # Individual shift
-                cube_fitter.param_maps.lines[ln][:voff][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+1]
+                voff = out_params[xᵢ, yᵢ, pᵢ+1]
+                voff_err = out_errs[xᵢ, yᵢ, pᵢ+1]
                 if !isnothing(cube_fitter.line_tied[k])
                     # If velocity is tied while flexible, add the overall shift and the individual shift together
                     vwhere = findfirst(x -> x == cube_fitter.line_tied[k], cube_fitter.voff_tied_key)
-                    cube_fitter.param_maps.lines[ln][:voff][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+1] + out_params[xᵢ, yᵢ, vᵢ+vwhere-1]
+                    voff += out_params[xᵢ, yᵢ, vᵢ+vwhere-1]
+                    voff_err = √(voff_err^2 + out_errs[xᵢ, yᵢ, vᵢ+vwhere-1]^2)
                 end
+                cube_fitter.param_maps.lines[ln][:voff][xᵢ, yᵢ] = voff
+                cube_fitter.param_errs.lines[ln][:voff][xᵢ, yᵢ] = voff_err
+
                 # FWHM -> subtract instrumental resolution in quadrature
+                fwhm = out_params[xᵢ, yᵢ, pᵢ+2]
+                fwhm_err = out_errs[xᵢ, yᵢ, pᵢ+2]
                 if fwhm_res > out_params[xᵢ, yᵢ, pᵢ+2]
                     cube_fitter.param_maps.lines[ln][:fwhm][xᵢ, yᵢ] = 0.
+                    cube_fitter.param_errs.lines[ln][:fwhm][xᵢ, yᵢ] = fwhm_err
                 else
-                    cube_fitter.param_maps.lines[ln][:fwhm][xᵢ, yᵢ] = √(out_params[xᵢ, yᵢ, pᵢ+2]^2 - fwhm_res^2)
+                    cube_fitter.param_maps.lines[ln][:fwhm][xᵢ, yᵢ] = √(fwhm^2 - fwhm_res^2)
+                    cube_fitter.param_errs.lines[ln][:fwhm][xᵢ, yᵢ] = fwhm / √(fwhm^2 - fwhm_res^2) * fwhm_err
                 end
+
                 # Get Gauss-Hermite 3rd and 4th order moments
                 if cube_fitter.line_profiles[k] == :GaussHermite
                     cube_fitter.param_maps.lines[ln][:h3][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+3]
+                    cube_fitter.param_errs.lines[ln][:h3][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, pᵢ+3]
                     cube_fitter.param_maps.lines[ln][:h4][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+4]
+                    cube_fitter.param_errs.lines[ln][:h4][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, pᵢ+4]
                     pᵢ += 2
+                # Get Voigt mixing
                 elseif cube_fitter.line_profiles[k] == :Voigt && !cube_fitter.tie_voigt_mixing
                     cube_fitter.param_maps.lines[ln][:mixing][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+3]
+                    cube_fitter.param_errs.lines[ln][:mixing][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, pᵢ+3]
                     pᵢ += 1
                 end
                 pᵢ += 3
+
             else
+                # Tied shift only
+                vwhere = findfirst(x -> x == cube_fitter.line_tied[k], cube_fitter.voff_tied_key)
+                voff = out_params[xᵢ, yᵢ, vᵢ+vwhere-1]
+                voff_err = out_errs[xᵢ, yᵢ, vᵢ+vwhere-1]
+
                 # FWHM -> subtract instrumental resolution in quadrature
+                fwhm = out_params[xᵢ, yᵢ, pᵢ+1]
+                fwhm_err = out_errs[xᵢ, yᵢ, pᵢ+1]
                 if fwhm_res > out_params[xᵢ, yᵢ, pᵢ+1]
                     cube_fitter.param_maps.lines[ln][:fwhm][xᵢ, yᵢ] = 0.
+                    cube_fitter.param_errs.lines[ln][:fwhm][xᵢ, yᵢ] = fwhm_err
                 else
-                    cube_fitter.param_maps.lines[ln][:fwhm][xᵢ, yᵢ] = √(out_params[xᵢ, yᵢ, pᵢ+1]^2 - fwhm_res^2)
+                    cube_fitter.param_maps.lines[ln][:fwhm][xᵢ, yᵢ] = √(fwhm^2 - fwhm_res^2)
+                    cube_fitter.param_errs.lines[ln][:fwhm][xᵢ, yᵢ] = fwhm / √(fwhm^2 - fwhm_res^2) * fwhm_err
                 end
                 # Get Gauss-Hermite 3rd and 4th order moments
                 if cube_fitter.line_profiles[k] == :GaussHermite
                     cube_fitter.param_maps.lines[ln][:h3][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+2]
+                    cube_fitter.param_errs.lines[ln][:h3][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, pᵢ+2]
                     cube_fitter.param_maps.lines[ln][:h4][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+3]
+                    cube_fitter.param_errs.lines[ln][:h4][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, pᵢ+3]
                     pᵢ += 2
                 elseif cube_fitter.line_profiles[k] == :Voigt && !cube_fitter.tie_voigt_mixing
                     cube_fitter.param_maps.lines[k][:mixing][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+2]
+                    cube_fitter.param_errs.lines[k][:mixing][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, pᵢ+2]
                     pᵢ += 1
                 end
                 pᵢ += 2
+
             end
 
             if !isnothing(cube_fitter.line_flow_profiles[k])
-                cube_fitter.param_maps.lines[ln][:flow_amp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? log10(out_params[xᵢ, yᵢ, pᵢ]) : -Inf
+
+                cube_fitter.param_maps.lines[ln][:flow_amp][xᵢ, yᵢ] = amp * out_params[xᵢ, yᵢ, pᵢ]
+                cube_fitter.param_errs.lines[ln][:flow_amp][xᵢ, yᵢ] = 
+                    √((amp * out_params[xᵢ, yᵢ, pᵢ])^2 * ((amp_err / amp)^2 + (out_errs[xᵢ, yᵢ, pᵢ] / out_params[xᵢ, yᵢ, pᵢ])^2))
 
                 if isnothing(cube_fitter.line_flow_tied[k])
-                    # Individual shift
+                    # note of caution: the output/saved/plotted values of flow voffs are ALWAYS given relative to
+                    # the main line's voff, NOT the rest wavelength of the line; same goes for the errors (which add in quadrature)
                     cube_fitter.param_maps.lines[ln][:flow_voff][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+1]
+                    cube_fitter.param_errs.lines[ln][:flow_voff][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, pᵢ+1]
+
                     # FWHM -> subtract instrumental resolution in quadrature
-                    if fwhm_res > out_params[xᵢ, yᵢ, pᵢ+2]
+                    flow_fwhm = fwhm * out_params[xᵢ, yᵢ, pᵢ+2]
+                    flow_fwhm_err = √(flow_fwhm^2 * ((fwhm_err / fwhm)^2 + (out_errs[xᵢ, yᵢ, pᵢ+2] / out_params[xᵢ, yᵢ, pᵢ+2])^2))
+                    if fwhm_res > flow_fwhm
                         cube_fitter.param_maps.lines[ln][:flow_fwhm][xᵢ, yᵢ] = 0.
+                        cube_fitter.param_errs.lines[ln][:flow_fwhm][xᵢ, yᵢ] = flow_fwhm_err
                     else
-                        cube_fitter.param_maps.lines[ln][:flow_fwhm][xᵢ, yᵢ] = √(out_params[xᵢ, yᵢ, pᵢ+2]^2 - fwhm_res^2)
+                        cube_fitter.param_maps.lines[ln][:flow_fwhm][xᵢ, yᵢ] = √(flow_fwhm^2 - fwhm_res^2)
+                        cube_fitter.param_errs.lines[ln][:flow_fwhm][xᵢ, yᵢ] = flow_fwhm / √(flow_fwhm^2 - fwhm_res^2) * flow_fwhm_err
                     end
                     # Get Gauss-Hermite 3rd and 4th order moments
                     if cube_fitter.line_flow_profiles[k] == :GaussHermite
                         cube_fitter.param_maps.lines[ln][:flow_h3][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+3]
+                        cube_fitter.param_errs.lines[ln][:flow_h3][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, pᵢ+3]
                         cube_fitter.param_maps.lines[ln][:flow_h4][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+4]
+                        cube_fitter.param_errs.lines[ln][:flow_h4][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, pᵢ+4]
                         pᵢ += 2
                     elseif cube_fitter.line_flow_profiles[k] == :Voigt && !cube_fitter.tie_voigt_mixing
                         cube_fitter.param_maps.lines[ln][:flow_mixing][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+3]
+                        cube_fitter.param_errs.lines[ln][:flow_mixing][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, pᵢ+3]
                         pᵢ += 1
                     end
                     pᵢ += 3
                 else
+                    flow_fwhm = fwhm * out_params[xᵢ, yᵢ, pᵢ+1]
+                    flow_fwhm_err = √(flow_fwhm^2 * ((fwhm_err / fwhm)^2 + (out_errs[xᵢ, yᵢ, pᵢ+1] / out_params[xᵢ, yᵢ, pᵢ+1])^2))
                     # FWHM -> subtract instrumental resolution in quadrature
-                    if fwhm_res > out_params[xᵢ, yᵢ, pᵢ+1]
+                    if fwhm_res > flow_fwhm
                         cube_fitter.param_maps.lines[ln][:flow_fwhm][xᵢ, yᵢ] = 0.
+                        cube_fitter.param_errs.lines[ln][:flow_fwhm][xᵢ, yᵢ] = flow_fwhm
                     else
-                        cube_fitter.param_maps.lines[ln][:flow_fwhm][xᵢ, yᵢ] = √(out_params[xᵢ, yᵢ, pᵢ+1]^2 - fwhm_res^2)
+                        cube_fitter.param_maps.lines[ln][:flow_fwhm][xᵢ, yᵢ] = √(flow_fwhm^2 - fwhm_res^2)
+                        cube_fitter.param_errs.lines[ln][:flow_fwhm][xᵢ, yᵢ] = flow_fwhm / √(flow_fwhm^2 - fwhm_res^2) * flow_fwhm_err
                     end
                     # Get Gauss-Hermite 3rd and 4th order moments
                     if cube_fitter.line_flow_profiles[k] == :GaussHermite
                         cube_fitter.param_maps.lines[ln][:flow_h3][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+2]
+                        cube_fitter.param_errs.lines[ln][:flow_h3][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, pᵢ+2]
                         cube_fitter.param_maps.lines[ln][:flow_h4][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+3]
+                        cube_fitter.param_errs.lines[ln][:flow_h4][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, pᵢ+3]
                         pᵢ += 2
                     elseif cube_fitter.line_flow_profiles[k] == :Voigt && !cube_fitter.tie_voigt_mixing
                         cube_fitter.param_maps.lines[k][:flow_mixing][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+2]
+                        cube_fitter.param_errs.lines[k][:flow_mixing][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, pᵢ+2]
                         pᵢ += 1
                     end
                     pᵢ += 2
@@ -2977,13 +3149,27 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
         for c ∈ cube_fitter.complexes
             # Dust complex intensity and SNR, from calculate_extra_parameters
             cube_fitter.param_maps.dust_complexes[c][:intI][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? log10(out_params[xᵢ, yᵢ, pᵢ]) : -Inf
+            cube_fitter.param_errs.dust_complexes[c][:intI][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? out_errs[xᵢ, yᵢ, pᵢ] / out_params[xᵢ, yᵢ, pᵢ] : NaN
             cube_fitter.param_maps.dust_complexes[c][:SNR][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+1]
             pᵢ += 2
         end
 
         for (k, ln) ∈ enumerate(cube_fitter.line_names)
+            # Convert amplitudes to the correct units, then take the log
+            amp_norm = cube_fitter.param_maps.lines[ln][:amp][xᵢ, yᵢ]
+            amp_norm_err = cube_fitter.param_errs.lines[ln][:amp][xᵢ, yᵢ]
+            cube_fitter.param_maps.lines[ln][:amp][xᵢ, yᵢ] = amp_norm > 0 ? log10(amp_norm * N) : -Inf
+            cube_fitter.param_errs.lines[ln][:amp][xᵢ, yᵢ] = amp_norm > 0 ? amp_norm_err / amp_norm : NaN
+            if !isnothing(cube_fitter.line_flow_profiles[k])
+                flow_amp_norm = cube_fitter.param_maps.lines[ln][:flow_amp][xᵢ, yᵢ]
+                flow_amp_norm_err = cube_fitter.param_errs.lines[ln][:flow_amp][xᵢ, yᵢ]
+                cube_fitter.param_maps.lines[ln][:flow_amp][xᵢ, yᵢ] = flow_amp_norm > 0 ? log10(amp_norm * flow_amp_norm * N) : -Inf
+                cube_fitter.param_errs.lines[ln][:flow_amp][xᵢ, yᵢ] = flow_amp_norm > 0 ? flow_amp_norm_err / flow_amp_norm : NaN
+            end
+
             # Line intensity and SNR, from calculate_extra_parameters
             cube_fitter.param_maps.lines[ln][:intI][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? log10(out_params[xᵢ, yᵢ, pᵢ]) : -Inf
+            cube_fitter.param_errs.lines[ln][:intI][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? out_errs[xᵢ, yᵢ, pᵢ] / out_params[xᵢ, yᵢ, pᵢ] : NaN
             cube_fitter.param_maps.lines[ln][:SNR][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+1]
             pᵢ += 2
         end
@@ -3011,12 +3197,12 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
     end
 
     if cube_fitter.plot_maps
-        @info ">=== Plotting parameter maps... <==="
+        @info "===> Plotting parameter maps... <==="
         plot_parameter_maps(cube_fitter)
     end
 
     if cube_fitter.save_fits
-        @info ">=== Writing FITS outputs... <==="
+        @info "===> Writing FITS outputs... <==="
         write_fits(cube_fitter)
         # println("Cleaning outputs...")
         # rm("output_$(cube_fitter.name)/spaxel_binaries", recursive=true)
@@ -3036,26 +3222,25 @@ end
 
 
 """
-    plot_parameter_map(data, name, name_i; Ω=Ω, z=z, cosmo=cosmo, snr_filter=snr_filter, snr_thresh=snr_thresh)
+    plot_parameter_map(data, name, name_i, Ω, z, cosmo; snr_filter=snr_filter, snr_thresh=snr_thresh)
 
 Plotting function for 2D parameter maps which are output by `fit_cube`
 
 # Arguments
-`T<:AbstractFloat`
-- `data::Matrix{T}`: The 2D array of data to be plotted
+- `data::Matrix{Float64}`: The 2D array of data to be plotted
 - `name::String`: The name of the object whose fitting parameter is being plotted, i.e. "NGC_7469"
 - `name_i::String`: The name of the individual parameter being plotted, i.e. "dust_features_PAH_5.24_amp"
-- `Ω::Union{AbstractFloat,Nothing}=nothing`: The solid angle subtended by each pixel, in steradians (used for angular scalebar)
-- `z::Union{AbstractFloat,Nothing}=nothing`: The redshift of the object (used for physical scalebar)
-- `cosmo::Union{Cosmology.AbstractCosmology,Nothing}=nothing`: The cosmology to use to calculate distance for the physical scalebar
-- `snr_filter::Union{Matrix{T},Nothing}=nothing`: A 2D array of S/N values to
-    be used to filter out certain spaxels from being plotted
-- `snr_thresh::Real=3`: The S/N threshold below which to cut out any spaxels using the values in snr_filter
+- `Ω::Float64`: The solid angle subtended by each pixel, in steradians (used for angular scalebar)
+- `z::Float64`: The redshift of the object (used for physical scalebar)
+- `cosmo::Cosmology.AbstractCosmology`: The cosmology to use to calculate distance for the physical scalebar
+- `snr_filter::Matrix{Float64}=Matrix{Float64}(undef,0,0)`: A 2D array of S/N values to
+    be used to filter out certain spaxels from being plotted - must be the same size as `data` to filter
+- `snr_thresh::Float64=3.`: The S/N threshold below which to cut out any spaxels using the values in snr_filter
 """
-function plot_parameter_map(data::Matrix{T}, name::String, name_i::String;
-    Ω=nothing, z=nothing, cosmo=nothing, snr_filter=nothing, snr_thresh::Real=3) where {T<:AbstractFloat}
+function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String, Ω::Float64, z::Float64, 
+    cosmo::Cosmology.AbstractCosmology; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, snr_thresh::Float64=3.)
 
-    # 😬 I know this is ugly but I couldn't figure out a better way to do it lmao
+    # I know this is ugly but I couldn't figure out a better way to do it lmao
     if occursin("amp", String(name_i))
         bunit = "\$\\log_{10}(I /\$MJy sr\$^{-1})\$"
     elseif occursin("temp", String(name_i))
@@ -3104,14 +3289,13 @@ function plot_parameter_map(data::Matrix{T}, name::String, name_i::String;
     ax.axis(:off)
 
     # Angular and physical scalebars
-    if !isnothing(Ω) && !isnothing(z) && !isnothing(cosmo)
-        n_pix = 1/(sqrt(Ω) * 180/π * 3600)
-        dL = luminosity_dist(cosmo, z).val * 1e6 / (180/π * 3600)  # l = d * theta (1")
-        dL = @sprintf "%.0f" dL
-        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, "1\$\'\'\$ / $dL pc", "lower left", pad=1, color=:black, 
-            frameon=false, size_vertical=0.2, label_top=true)
-        ax.add_artist(scalebar)
-    end
+    n_pix = 1/(sqrt(Ω) * 180/π * 3600)
+    @debug "Using luminosity distance $(luminosity_dist(cosmo, z))"
+    dL = luminosity_dist(cosmo, z).val * 1e6 / (180/π * 3600)  # l = d * theta (1")
+    dL = @sprintf "%.0f" dL
+    scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, "1\$\'\'\$ / $dL pc", "lower left", pad=1, color=:black, 
+        frameon=false, size_vertical=0.4, label_top=false)
+    ax.add_artist(scalebar)
 
     fig.colorbar(cdata, ax=ax, label=bunit)
     plt.savefig(joinpath("output_$(name)", "param_maps", "$(name_i).pdf"), dpi=300, bbox_inches=:tight)
@@ -3133,18 +3317,19 @@ and creating 2D maps of them.
 function plot_parameter_maps(cube_fitter::CubeFitter; snr_thresh::Real=3.)
 
     # Iterate over model parameters and make 2D maps
+    @debug "Using solid angle $(cube_fitter.cube.Ω), redshift $(cube_fitter.z), cosmology $(cube_fitter.cosmology)"
 
     for parameter ∈ keys(cube_fitter.param_maps.stellar_continuum)
         data = cube_fitter.param_maps.stellar_continuum[parameter]
         name_i = join(["stellar_continuum", parameter], "_")
-        plot_parameter_map(data, cube_fitter.name, name_i, Ω=cube_fitter.cube.Ω, z=cube_fitter.z, cosmo=cube_fitter.cosmology)
+        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology)
     end
 
     for i ∈ keys(cube_fitter.param_maps.dust_continuum)
         for parameter ∈ keys(cube_fitter.param_maps.dust_continuum[i])
             data = cube_fitter.param_maps.dust_continuum[i][parameter]
             name_i = join(["dust_continuum", i, parameter], "_")
-            plot_parameter_map(data, cube_fitter.name, name_i, Ω=cube_fitter.cube.Ω, z=cube_fitter.z, cosmo=cube_fitter.cosmology)
+            plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology)
         end
     end
 
@@ -3152,14 +3337,14 @@ function plot_parameter_maps(cube_fitter::CubeFitter; snr_thresh::Real=3.)
         for parameter ∈ keys(cube_fitter.param_maps.dust_features[df])
             data = cube_fitter.param_maps.dust_features[df][parameter]
             name_i = join(["dust_features", df, parameter], "_")
-            plot_parameter_map(data, cube_fitter.name, name_i, Ω=cube_fitter.cube.Ω, z=cube_fitter.z, cosmo=cube_fitter.cosmology)
+            plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology)
         end
     end
 
     for parameter ∈ keys(cube_fitter.param_maps.extinction)
         data = cube_fitter.param_maps.extinction[parameter]
         name_i = join(["extinction", parameter], "_")
-        plot_parameter_map(data, cube_fitter.name, name_i, Ω=cube_fitter.cube.Ω, z=cube_fitter.z, cosmo=cube_fitter.cosmology)
+        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology)
     end
 
     for c ∈ keys(cube_fitter.param_maps.dust_complexes)
@@ -3167,7 +3352,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter; snr_thresh::Real=3.)
         for parameter ∈ keys(cube_fitter.param_maps.dust_complexes[c])
             data = cube_fitter.param_maps.dust_complexes[c][parameter]
             name_i = join(["dust_complexes", c, parameter], "_")
-            plot_parameter_map(data, cube_fitter.name, name_i, Ω=cube_fitter.cube.Ω, z=cube_fitter.z, cosmo=cube_fitter.cosmology,
+            plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
                 snr_filter=parameter ≠ :SNR ? snr : nothing, snr_thresh=snr_thresh)
         end
     end
@@ -3175,19 +3360,19 @@ function plot_parameter_maps(cube_fitter::CubeFitter; snr_thresh::Real=3.)
     if cube_fitter.tie_voigt_mixing
         data = cube_fitter.param_maps.tied_voigt_mix
         name_i = "tied_voigt_mixing"
-        plot_parameter_map(data, cube_fitter.name, name_i, Ω=cube_fitter.cube.Ω, z=cube_fitter.z, cosmo=cube_fitter.cosmology)
+        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology)
     end
 
     for vk ∈ cube_fitter.voff_tied_key
         data = cube_fitter.param_maps.tied_voffs[vk]
         name_i = join(["tied_voffs", vk], "_")
-        plot_parameter_map(data, cube_fitter.name, name_i, Ω=cube_fitter.cube.Ω, z=cube_fitter.z, cosmo=cube_fitter.cosmology)
+        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology)
     end
 
     for fvk ∈ cube_fitter.flow_voff_tied_key
         data = cube_fitter.param_maps.flow_tied_voffs[fvk]
         name_i = join(["flow_tied_voffs", fvk], "_")
-        plot_parameter_map(data, cube_fitter.name, name_i, Ω=cube_fitter.cube.Ω, z=cube_fitter.z, cosmo=cube_fitter.cosmology)
+        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology)
     end
 
     for line ∈ keys(cube_fitter.param_maps.lines)
@@ -3195,14 +3380,14 @@ function plot_parameter_maps(cube_fitter::CubeFitter; snr_thresh::Real=3.)
         for parameter ∈ keys(cube_fitter.param_maps.lines[line])
             data = cube_fitter.param_maps.lines[line][parameter]
             name_i = join(["lines", line, parameter], "_")
-            plot_parameter_map(data, cube_fitter.name, name_i, Ω=cube_fitter.cube.Ω, z=cube_fitter.z, cosmo=cube_fitter.cosmology,
+            plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
                 snr_filter=parameter ≠ :SNR ? snr : nothing, snr_thresh=snr_thresh)
         end
     end
 
     data = cube_fitter.param_maps.reduced_χ2
     name_i = "reduced_chi2"
-    plot_parameter_map(data, cube_fitter.name, name_i, Ω=cube_fitter.cube.Ω, z=cube_fitter.z, cosmo=cube_fitter.cosmology)
+    plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology)
 
 end
 
@@ -3309,6 +3494,17 @@ function write_fits(cube_fitter::CubeFitter)
             write(f, data; header=hdr, name=name_i)
             write_key(f[name_i], "BUNIT", bunit)
         end
+        for parameter ∈ keys(cube_fitter.param_errs.stellar_continuum)
+            data = cube_fitter.param_errs.stellar_continuum[parameter]
+            name_i = join(["stellar_continuum", parameter, "err"], "_")
+            if occursin("amp", String(name_i))
+                bunit = "dex"
+            elseif occursin("temp", String(name_i))
+                bunit = "Kelvin"
+            end
+            write(f, data; header=hdr, name=name_i)
+            write_key(f[name_i], "BUNIT", bunit)
+        end
 
         for i ∈ keys(cube_fitter.param_maps.dust_continuum)
             for parameter ∈ keys(cube_fitter.param_maps.dust_continuum[i])
@@ -3323,6 +3519,19 @@ function write_fits(cube_fitter::CubeFitter)
                 write_key(f[name_i], "BUNIT", bunit)  
             end
         end
+        for i ∈ keys(cube_fitter.param_errs.dust_continuum)
+            for parameter ∈ keys(cube_fitter.param_errs.dust_continuum[i])
+                data = cube_fitter.param_errs.dust_continuum[i][parameter]
+                name_i = join(["dust_continuum", i, parameter, "err"], "_")
+                if occursin("amp", String(name_i))
+                    bunit = "dex"
+                elseif occursin("temp", String(name_i))
+                    bunit = "Kelvin"
+                end
+                write(f, data; header=hdr, name=name_i)
+                write_key(f[name_i], "BUNIT", bunit)  
+            end
+        end
 
         for df ∈ keys(cube_fitter.param_maps.dust_features)
             for parameter ∈ keys(cube_fitter.param_maps.dust_features[df])
@@ -3330,6 +3539,19 @@ function write_fits(cube_fitter::CubeFitter)
                 name_i = join(["dust_features", df, parameter], "_")
                 if occursin("amp", String(name_i))
                     bunit = "log10(I / MJy sr^-1)"
+                elseif occursin("fwhm", String(name_i)) || occursin("mean", String(name_i))
+                    bunit = "um"
+                end
+                write(f, data; header=hdr, name=name_i)
+                write_key(f[name_i], "BUNIT", bunit)      
+            end
+        end
+        for df ∈ keys(cube_fitter.param_errs.dust_features)
+            for parameter ∈ keys(cube_fitter.param_errs.dust_features[df])
+                data = cube_fitter.param_errs.dust_features[df][parameter]
+                name_i = join(["dust_features", df, parameter, "err"], "_")
+                if occursin("amp", String(name_i))
+                    bunit = "dex"
                 elseif occursin("fwhm", String(name_i)) || occursin("mean", String(name_i))
                     bunit = "um"
                 end
@@ -3356,10 +3578,35 @@ function write_fits(cube_fitter::CubeFitter)
                 write_key(f[name_i], "BUNIT", bunit)   
             end
         end
+        for line ∈ keys(cube_fitter.param_errs.lines)
+            for parameter ∈ keys(cube_fitter.param_errs.lines[line])
+                data = cube_fitter.param_errs.lines[line][parameter]
+                name_i = join(["lines", line, parameter, "err"], "_")
+                if occursin("amp", String(name_i))
+                    bunit = "dex"
+                elseif occursin("fwhm", String(name_i)) || occursin("voff", String(name_i))
+                    bunit = "km/s"
+                elseif occursin("intI", String(name_i))
+                    bunit = "dex"
+                elseif occursin("SNR", String(name_i)) || occursin("h3", String(name_i)) || 
+                    occursin("h4", String(name_i)) || occursin("mixing", String(name_i))
+                    bunit = "unitless"
+                end
+                write(f, data; header=hdr, name=name_i)
+                write_key(f[name_i], "BUNIT", bunit)   
+            end
+        end
 
         for parameter ∈ keys(cube_fitter.param_maps.extinction)
             data = cube_fitter.param_maps.extinction[parameter]
             name_i = join(["extinction", parameter], "_")
+            bunit = "unitless"
+            write(f, data; header=hdr, name=name_i)
+            write_key(f[name_i], "BUNIT", bunit)  
+        end
+        for parameter ∈ keys(cube_fitter.param_errs.extinction)
+            data = cube_fitter.param_errs.extinction[parameter]
+            name_i = join(["extinction", parameter, "err"], "_")
             bunit = "unitless"
             write(f, data; header=hdr, name=name_i)
             write_key(f[name_i], "BUNIT", bunit)  
@@ -3372,10 +3619,24 @@ function write_fits(cube_fitter::CubeFitter)
             write(f, data; header=hdr, name=name_i)
             write_key(f[name_i], "BUNIT", bunit)
         end
+        if cube_fitter.tie_voigt_mixing
+            data = cube_fitter.param_errs.tied_voigt_mix
+            name_i = "tied_voigt_mixing_err"
+            bunit = "unitless"
+            write(f, data; header=hdr, name=name_i)
+            write_key(f[name_i], "BUNIT", bunit)
+        end
 
         for vk ∈ cube_fitter.voff_tied_key
             data = cube_fitter.param_maps.tied_voffs[vk]
             name_i = join(["tied_voffs", vk], "_")
+            bunit = "km/s"
+            write(f, data; header=hdr, name=name_i)
+            write_key(f[name_i], "BUNIT", bunit)
+        end
+        for vk ∈ cube_fitter.voff_tied_key
+            data = cube_fitter.param_errs.tied_voffs[vk]
+            name_i = join(["tied_voffs", vk, "err"], "_")
             bunit = "km/s"
             write(f, data; header=hdr, name=name_i)
             write_key(f[name_i], "BUNIT", bunit)
@@ -3388,14 +3649,33 @@ function write_fits(cube_fitter::CubeFitter)
             write(f, data; header=hdr, name=name_i)
             write_key(f[name_i], "BUNIT", bunit)
         end
+        for fvk ∈ cube_fitter.flow_voff_tied_key
+            data = cube_fitter.param_errs.flow_tied_voffs[fvk]
+            name_i = join(["flow_tied_voffs", fvk, "err"], "_")
+            bunit = "km/s"
+            write(f, data; header=hdr, name=name_i)
+            write_key(f[name_i], "BUNIT", bunit)
+        end
 
         for c ∈ keys(cube_fitter.param_maps.dust_complexes)
-            snr = cube_fitter.param_maps.dust_complexes[c][:SNR]
             for parameter ∈ keys(cube_fitter.param_maps.dust_complexes[c])
                 data = cube_fitter.param_maps.dust_complexes[c][parameter]
                 name_i = join(["dust_complexes", c, parameter], "_")
                 if occursin("intI", String(name_i))
                     bunit = "log10(I / erg s^-1 cm^-2 sr^-1)"
+                elseif occursin("SNR", String(name_i))
+                    bunit = "unitless"
+                end
+                write(f, data; header=hdr, name=name_i)
+                write_key(f[name_i], "BUNIT", bunit)
+            end
+        end
+        for c ∈ keys(cube_fitter.param_errs.dust_complexes)
+            for parameter ∈ keys(cube_fitter.param_errs.dust_complexes[c])
+                data = cube_fitter.param_errs.dust_complexes[c][parameter]
+                name_i = join(["dust_complexes", c, parameter, "err"], "_")
+                if occursin("intI", String(name_i))
+                    bunit = "dex"
                 elseif occursin("SNR", String(name_i))
                     bunit = "unitless"
                 end

@@ -322,6 +322,22 @@ MJysr_to_cgs(MJy, λ) = MJy * 1e6 * 1e-23 * (C_KMS * 1e9) / λ^2
 
 
 """
+    MJy_to_cgs_err(MJy, MJy_err, λ, λ_err)
+
+Calculate the uncertainty in intensity in CGS units (erg s^-1 cm^-2 μm^-1 sr^-1)
+given the uncertainty in intensity in MJy sr^-1 and the uncertainty in wavelength in μm
+"""
+function MJysr_to_cgs_err(MJy, MJy_err, λ, λ_err)
+    # Get the CGS value of the intensity
+    cgs = MJysr_to_cgs(MJy, λ)
+    # σ_cgs^2 / cgs^2 = σ_MJy^2 / MJy^2 + 4σ_λ^2 / λ^2
+    frac_err2 = (MJy_err / MJy)^2 + 4(λ_err / λ)^2
+    # rearrange to solve for σ_cgs
+    return √(frac_err2 * cgs^2)
+end
+
+
+"""
     ln_likelihood(data, model, err)
 
 Natural log of the likelihood for a given `model`, `data`, and `err`
@@ -679,10 +695,19 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
 
         # Repeat EVERYTHING, minus the flexible_wavesol, for the inflow/outflow components
         if !isnothing(line_flow_profiles[k])
-            flow_amp = params[pᵢ]
+            # Parametrize flow amplitude in terms of the default line amplitude times some fractional value
+            # this way, we can constrain the flow_amp parameter to be from (0,1) to ensure the flow amplitude is always
+            # less than the line amplitude
+            flow_amp = amp * params[pᵢ]
+
             if isnothing(line_flow_tied[k])
-                flow_voff = params[pᵢ+1]
-                flow_fwhm = params[pᵢ+2]
+                # Parametrize the flow voff in terms of the default line voff plus some difference value
+                # this way, we can constrain the flow component to be within +/- some range from the line itself
+                flow_voff = voff + params[pᵢ+1]
+                # Parametrize the flow FWHM in terms of the default line FWHM times some fractional value
+                # this way, we can constrain the flow_fwhm parameter to be > 0 to ensure the flow FWHM is always
+                # greater than the line FWHM
+                flow_fwhm = fwhm * params[pᵢ+2]
                 if line_flow_profiles[k] == :GaussHermite
                     flow_h3 = params[pᵢ+3]
                     flow_h4 = params[pᵢ+4]
@@ -695,8 +720,8 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
                 end
             else
                 vwhere = findfirst(x -> x == line_flow_tied[k], flow_voff_tied_key)
-                flow_voff = params[n_voff_tied + vwhere]
-                flow_fwhm = params[pᵢ+1]
+                flow_voff = voff + params[n_voff_tied + vwhere]
+                flow_fwhm = fwhm * params[pᵢ+1]
                 if line_flow_profiles[k] == :GaussHermite
                     flow_h3 = params[pᵢ+2]
                     flow_h4 = params[pᵢ+3]
@@ -708,8 +733,9 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
                     end
                 end
             end
+
             # Convert voff in km/s to mean wavelength in μm
-            flow_mean_μm = Doppler_shift_λ(line_restwave[k], voff+flow_voff)
+            flow_mean_μm = Doppler_shift_λ(line_restwave[k], flow_voff)
             # Convert FWHM from km/s to μm
             flow_fwhm_μm = Doppler_shift_λ(line_restwave[k], flow_fwhm) - line_restwave[k]
             # Evaluate line profile

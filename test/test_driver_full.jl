@@ -10,7 +10,7 @@ end
 
 # TODO: Convert this all into a main() function in Loki.jl
 
-channel = 1
+channel = 2
 
 # This is the logger for ONLY the main process
 using Logging, LoggingExtras
