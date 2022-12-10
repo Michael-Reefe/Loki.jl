@@ -2937,8 +2937,8 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
 
     # Sort spaxels by median brightness, so that we fit the brightest ones first
     # (which hopefully have the best reduced chi^2s)
-    # spaxels = Iterators.product(1:shape[1], 1:shape[2])
-    spaxels = Iterators.product(15:16, 15:16)
+    spaxels = Iterators.product(1:shape[1], 1:shape[2])
+    # spaxels = Iterators.product(15:16, 15:16)
 
     # med_I = collect(Iterators.flatten([nanmedian(cube_fitter.cube.Iλ[spaxel..., :]) for spaxel ∈ spaxels]))
     # # replace NaNs with -1s
