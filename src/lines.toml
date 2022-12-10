@@ -1,8 +1,8 @@
 # General options
 tie_H2_voff = true
 tie_H2_flow_voff = true
-tie_IP_voff = false
-tie_IP_flow_voff = false
+tie_ion_voff = true
+tie_ion_flow_voff = true
 
 tie_voigt_mixing = true
 
@@ -18,8 +18,8 @@ flow_fwhm_pmax = 10.0                    # multiplicative factor with the main l
                                          # is allowed to have a FWHM 10x larger than the main component
 
 # Uncertainty in the wavelength solution of the data
-flexible_wavesol = true                   # allow tied voffs to vary slightly based on wavelength solution uncertainty
-wavesol_unc = [100, 600, 800, 100]        # wavelength solution uncertainties in each of the 4 MIRI channels (in km/s)
+flexible_wavesol = true                  # allow tied voffs to vary slightly based on wavelength solution uncertainty
+wavesol_unc = [100, 600, 800, 100]       # wavelength solution uncertainties in each of the 4 MIRI channels (in km/s)
 
 [channels]
 1 = [4.9, 7.65]
@@ -37,16 +37,16 @@ Hu_alpha = 12.370
 Hu_beta  = 7.503
 Hu_gamma = 5.908
 
-# Atomic Argon Lines
+# Argon Lines
 ArII_6985    = 6.985
 ArV_7901     = 7.901
 ArIII_8991   = 8.991
 ArV_13102    = 13.102
 
-# Atomic Chlorine Lines
+# Chlorine Lines
 ClII_14368   = 14.368
 
-# Atomic Iron Lines
+# Iron Lines
 FeII_4889    = 4.889
 FeII_5062    = 5.062
 FeII_5340    = 5.340
@@ -58,34 +58,34 @@ FeII_17936   = 17.936
 FeIII_22925  = 22.925
 FeII_25988   = 25.988
 
-# Atomic Helium Lines
+# Helium Lines
 HeII_5228    = 5.228
 
-# Atomic Magnesium Lines
+# Magnesium Lines
 MgVII_5503   = 5.503
 MgV_5609     = 5.609
 MgV_13537    = 13.537
 
-# Atomic Sodium Lines
+# Sodium Lines
 NaIII_7318   = 7.318
 
-# Atomic Neon Lines
-NeVI_7652    = 7.652     # !!
+# Neon Lines
+NeVI_7652    = 7.652
 NeII_12813   = 12.813
 NeV_14322    = 14.322
 NeIII_15555  = 15.555
 NeV_24318    = 24.318
 
-# Atomic Nickel Lines
+# Nickel Lines
 NiII_6636    = 6.636
 
-# Atomic Oxygen Lines
+# Oxygen Lines
 OIV_25890    = 25.890
 
-# Atomic Phosphorus Lines
+# Phosphorus Lines
 PIII_17885   = 17.885
 
-# Atomic Sulfur Lines
+# Sulfur Lines
 SIV_10511    = 10.511
 SIII_18713   = 18.713
 

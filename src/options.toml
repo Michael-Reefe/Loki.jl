@@ -5,7 +5,7 @@ extinction_curve = "kvt"
 extinction_screen = false
 
 [cosmology]
-h = 0.7
+h = 1.0
 omega_m = 0.3
 omega_K = 0.0
 omega_r = 0.0

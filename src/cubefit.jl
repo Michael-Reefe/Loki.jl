@@ -330,7 +330,7 @@ function parse_lines(channel::Integer, interp_R::Dierckx.Spline1D, λ::Vector{<:
     lines = TOML.parsefile(joinpath(@__DIR__, "lines.toml"))
     lines_out = Param.LineDict()
 
-    keylist1 = ["tie_H2_voff", "tie_IP_voff", "tie_H2_flow_voff", "tie_IP_flow_voff", "tie_voigt_mixing", 
+    keylist1 = ["tie_H2_voff", "tie_ion_voff", "tie_H2_flow_voff", "tie_ion_flow_voff", "tie_voigt_mixing", 
         "voff_plim", "fwhm_pmax", "h3_plim", "h4_plim", 
         "flexible_wavesol", "wavesol_unc", "channels", "lines", "profiles", "flows"]
     # Loop through all the keys that should be in the file and confirm that they are there
@@ -483,6 +483,15 @@ function parse_lines(channel::Integer, interp_R::Dierckx.Spline1D, λ::Vector{<:
                 @debug "(Using flexible tied voff with lenience of +/-$δv km/s)"
             end
         end
+        if lines["tie_ion_voff"] && !occursin("H2", line)
+            tied = "ion"
+            @debug "Tying voff to the group: $tied"
+            if lines["flexible_wavesol"]
+                δv = lines["wavesol_unc"][channel]
+                voff_prior = Uniform(-δv, δv)
+                @debug "(Using flexible tied voff with lenience of +/-$δv km/s)"
+            end
+        end
         # Check if the outflow voff should be tied to other outflow voffs based on the line type (H2 or IP)
         flow_tied = nothing
         if lines["tie_H2_flow_voff"] && occursin("H2", line) && !isnothing(flow_profiles[line])
@@ -491,6 +500,10 @@ function parse_lines(channel::Integer, interp_R::Dierckx.Spline1D, λ::Vector{<:
             flow_tied = "H2"
             @debug "Tying flow voff to the group: $flow_tied"
             # dont allow tied inflow/outflow voffs to vary, even with flexible_wavesol
+        end
+        if lines["tie_ion_flow_voff"] && !occursin("H2", line) && !isnothing(flow_profiles[line])
+            flow_tied = "ion"
+            @debug "Tying flow voff to the group: $flow_tied"
         end
 
         @debug "Profile: $(profiles[line])"
@@ -986,12 +999,32 @@ mutable struct CubeFitter{T<:AbstractFloat}
 
         ###### SETTING UP A GLOBAL LOGGER FOR THE CUBE FITTER ######
 
+        # Prepare output directories
+        @debug "Preparing output directories"
+        name = replace(name, " " => "_")
+        if !isdir("output_$name")
+            mkdir("output_$name")
+        end
+        if !isdir(joinpath("output_$name", "spaxel_plots"))
+            mkdir(joinpath("output_$name", "spaxel_plots"))
+        end
+        if !isdir(joinpath("output_$name", "spaxel_binaries"))
+            mkdir(joinpath("output_$name", "spaxel_binaries"))
+        end
+        if !isdir(joinpath("output_$name", "param_maps"))
+            mkdir(joinpath("output_$name", "param_maps"))
+        end
+        if !isdir(joinpath("output_$name", "logs"))
+            mkdir(joinpath("output_$name", "logs"))
+        end
+
+
         timestamp_logger(logger) = TransformerLogger(logger) do log
             merge(log, (; message = "$(Dates.format(now(), date_format)) $(log.message)"))
         end
 
         logger = TeeLogger(ConsoleLogger(stdout, Logging.Info), 
-                           timestamp_logger(MinLevelLogger(FileLogger(joinpath("output_$(replace(name, " " => "_"))", "loki.main.log"); 
+                           timestamp_logger(MinLevelLogger(FileLogger(joinpath("output_$name", "loki.main.log"); 
                                                                       always_flush=true), 
                                                                       Logging.Debug)))
 
@@ -1163,25 +1196,6 @@ mutable struct CubeFitter{T<:AbstractFloat}
         param_errs = parammaps_empty(shape, n_dust_cont, df_names, complexes, line_names, line_tied,
             line_profiles, line_flow_tied, line_flow_profiles, voff_tied_key, flow_voff_tied_key, flexible_wavesol,
             tie_voigt_mixing)
-
-        # Prepare output directories
-        @debug "Preparing output directories"
-        name = replace(name, " " => "_")
-        if !isdir("output_$name")
-            mkdir("output_$name")
-        end
-        if !isdir(joinpath("output_$name", "spaxel_plots"))
-            mkdir(joinpath("output_$name", "spaxel_plots"))
-        end
-        if !isdir(joinpath("output_$name", "spaxel_binaries"))
-            mkdir(joinpath("output_$name", "spaxel_binaries"))
-        end
-        if !isdir(joinpath("output_$name", "param_maps"))
-            mkdir(joinpath("output_$name", "param_maps"))
-        end
-        if !isdir(joinpath("output_$name", "logs"))
-            mkdir(joinpath("output_$name", "logs"))
-        end
 
         # Prepare options
         extinction_curve = options[:extinction_curve]
@@ -2926,8 +2940,8 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
 
     # Sort spaxels by median brightness, so that we fit the brightest ones first
     # (which hopefully have the best reduced chi^2s)
-    # spaxels = Iterators.product(1:shape[1], 1:shape[2])
-    spaxels = Iterators.product(15:16, 15:16)
+    spaxels = Iterators.product(1:shape[1], 1:shape[2])
+    # spaxels = Iterators.product(15:16, 15:16)
 
     # med_I = collect(Iterators.flatten([nanmedian(cube_fitter.cube.Iλ[spaxel..., :]) for spaxel ∈ spaxels]))
     # # replace NaNs with -1s
@@ -2957,15 +2971,18 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
     for (xᵢ, yᵢ) ∈ Iterators.product(1:shape[1], 1:shape[2])
         # Set the 2D parameter map outputs
 
+        # Conversion factor from MJy sr^-1 to erg s^-1 cm^-2 Hz^-1 sr^-1 = 10^6 * 10^-23 = 10^-17
+        # So, log10(A * 1e-17) = log10(A) - 17
+
         # Stellar continuum amplitude, temp
-        cube_fitter.param_maps.stellar_continuum[:amp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, 1] > 0. ? log10(out_params[xᵢ, yᵢ, 1]) : -Inf 
+        cube_fitter.param_maps.stellar_continuum[:amp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, 1] > 0. ? log10(out_params[xᵢ, yᵢ, 1])-17 : -Inf 
         cube_fitter.param_errs.stellar_continuum[:amp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, 1] > 0. ? out_errs[xᵢ, yᵢ, 1] / out_params[xᵢ, yᵢ, 1] : NaN
         cube_fitter.param_maps.stellar_continuum[:temp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, 2]
         cube_fitter.param_errs.stellar_continuum[:temp][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, 2]
         pᵢ = 3
         # Dust continuum amplitude, temp
         for i ∈ 1:cube_fitter.n_dust_cont
-            cube_fitter.param_maps.dust_continuum[i][:amp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? log10(out_params[xᵢ, yᵢ, pᵢ]) : -Inf
+            cube_fitter.param_maps.dust_continuum[i][:amp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? log10(out_params[xᵢ, yᵢ, pᵢ])-17 : -Inf
             cube_fitter.param_errs.dust_continuum[i][:amp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? out_errs[xᵢ, yᵢ, pᵢ] / out_params[xᵢ, yᵢ, pᵢ] : NaN
             cube_fitter.param_maps.dust_continuum[i][:temp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+1]
             cube_fitter.param_errs.dust_continuum[i][:temp][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, pᵢ+1]
@@ -2973,7 +2990,7 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
         end
         # Dust feature log(amplitude), mean, FWHM
         for df ∈ cube_fitter.df_names
-            cube_fitter.param_maps.dust_features[df][:amp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? log10(out_params[xᵢ, yᵢ, pᵢ]) : -Inf
+            cube_fitter.param_maps.dust_features[df][:amp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? log10(out_params[xᵢ, yᵢ, pᵢ])-17 : -Inf
             cube_fitter.param_maps.dust_features[df][:amp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? out_errs[xᵢ, yᵢ, pᵢ] / out_params[xᵢ, yᵢ, pᵢ] : NaN
             cube_fitter.param_maps.dust_features[df][:mean][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+1]
             cube_fitter.param_errs.dust_features[df][:mean][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, pᵢ+1]
@@ -3185,12 +3202,12 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
             # Convert amplitudes to the correct units, then take the log
             amp_norm = cube_fitter.param_maps.lines[ln][:amp][xᵢ, yᵢ]
             amp_norm_err = cube_fitter.param_errs.lines[ln][:amp][xᵢ, yᵢ]
-            cube_fitter.param_maps.lines[ln][:amp][xᵢ, yᵢ] = amp_norm > 0 ? log10(amp_norm * N) : -Inf
+            cube_fitter.param_maps.lines[ln][:amp][xᵢ, yᵢ] = amp_norm > 0 ? log10(amp_norm * N)-17 : -Inf
             cube_fitter.param_errs.lines[ln][:amp][xᵢ, yᵢ] = amp_norm > 0 ? amp_norm_err / amp_norm : NaN
             if !isnothing(cube_fitter.line_flow_profiles[k])
                 flow_amp_norm = cube_fitter.param_maps.lines[ln][:flow_amp][xᵢ, yᵢ]
                 flow_amp_norm_err = cube_fitter.param_errs.lines[ln][:flow_amp][xᵢ, yᵢ]
-                cube_fitter.param_maps.lines[ln][:flow_amp][xᵢ, yᵢ] = flow_amp_norm > 0 ? log10(amp_norm * flow_amp_norm * N) : -Inf
+                cube_fitter.param_maps.lines[ln][:flow_amp][xᵢ, yᵢ] = flow_amp_norm > 0 ? log10(amp_norm * flow_amp_norm * N)-17 : -Inf
                 cube_fitter.param_errs.lines[ln][:flow_amp][xᵢ, yᵢ] = flow_amp_norm > 0 ? flow_amp_norm_err / flow_amp_norm : NaN
             end
 
@@ -3269,7 +3286,7 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
 
     # I know this is ugly but I couldn't figure out a better way to do it lmao
     if occursin("amp", String(name_i))
-        bunit = "\$\\log_{10}(I /\$MJy sr\$^{-1})\$"
+        bunit = "\$\\log_{10}(I / \$ erg s\$^{-1}\$ cm\$^{-2}\$ Hz\$^{-1}\$ sr\$^{-1})\$"
     elseif occursin("temp", String(name_i))
         bunit = "\$T\$ (K)"
     elseif occursin("fwhm", String(name_i)) && occursin("PAH", String(name_i))
@@ -3287,7 +3304,7 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
     elseif occursin("tau", String(name_i))
         bunit = "\$\\tau_{9.7}\$"
     elseif occursin("intI", String(name_i))
-        bunit = "\$\\log_{10}(I /\$erg s\$^{-1}\$ cm\$^{-2}\$ sr\$^{-1}\$)"
+        bunit = "\$\\log_{10}(I /\$ erg s\$^{-1}\$ cm\$^{-2}\$ sr\$^{-1}\$)"
     elseif occursin("chi2", String(name_i))
         bunit = "\$\\tilde{\\chi}^2\$"
     elseif occursin("h3", String(name_i))
@@ -3317,15 +3334,20 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
 
     # Angular and physical scalebars
     n_pix = 1/(sqrt(Ω) * 180/π * 3600)
-    @debug "Using luminosity distance $(luminosity_dist(cosmo, z))"
+    @debug "Using angular diameter distance $(angular_diameter_dist(cosmo, z))"
     # Calculate in Mpc
-    dL = luminosity_dist(u"pc", cosmo, z) / (180/π * 3600)  # l = d * theta (1")
+    dL = angular_diameter_dist(u"pc", cosmo, z) / (180/π * 3600)  # l = d * theta (1")
     # Remove units
     dL = uconvert(NoUnits, dL/u"pc")
     # Round to integer
     dL = floor(Int, dL)
-    scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, "1\$\'\'\$ / $dL pc", "lower left", pad=1, color=:black, 
-        frameon=false, size_vertical=0.4, label_top=false)
+    if cosmo.h == 1.0
+        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, "1\$\'\'\$ / $dL\$h^{-1}\$ pc", "lower left", pad=1, color=:black, 
+            frameon=false, size_vertical=0.4, label_top=false)
+    else
+        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, "1\$\'\'\$ / $dL pc", "lower left", pad=1, color=:black,
+            frameon=false, size_vertical=0.4, label_top=false)
+    end
     ax.add_artist(scalebar)
 
     fig.colorbar(cdata, ax=ax, label=bunit)
@@ -3518,7 +3540,7 @@ function write_fits(cube_fitter::CubeFitter)
             data = cube_fitter.param_maps.stellar_continuum[parameter]
             name_i = join(["stellar_continuum", parameter], "_")
             if occursin("amp", String(name_i))
-                bunit = "log10(I / MJy sr^-1)"
+                bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
             elseif occursin("temp", String(name_i))
                 bunit = "Kelvin"
             end
@@ -3542,7 +3564,7 @@ function write_fits(cube_fitter::CubeFitter)
                 data = cube_fitter.param_maps.dust_continuum[i][parameter]
                 name_i = join(["dust_continuum", i, parameter], "_")
                 if occursin("amp", String(name_i))
-                    bunit = "log10(I / MJy sr^-1)"
+                    bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
                 elseif occursin("temp", String(name_i))
                     bunit = "Kelvin"
                 end
@@ -3569,7 +3591,7 @@ function write_fits(cube_fitter::CubeFitter)
                 data = cube_fitter.param_maps.dust_features[df][parameter]
                 name_i = join(["dust_features", df, parameter], "_")
                 if occursin("amp", String(name_i))
-                    bunit = "log10(I / MJy sr^-1)"
+                    bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
                 elseif occursin("fwhm", String(name_i)) || occursin("mean", String(name_i))
                     bunit = "um"
                 end
@@ -3596,7 +3618,7 @@ function write_fits(cube_fitter::CubeFitter)
                 data = cube_fitter.param_maps.lines[line][parameter]
                 name_i = join(["lines", line, parameter], "_")
                 if occursin("amp", String(name_i))
-                    bunit = "log10(I / MJy sr^-1)"
+                    bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
                 elseif occursin("fwhm", String(name_i)) || occursin("voff", String(name_i))
                     bunit = "km/s"
                 elseif occursin("intI", String(name_i))
