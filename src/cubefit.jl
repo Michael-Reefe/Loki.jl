@@ -47,6 +47,7 @@ using PyCall
 # Have to import anchored_artists within the __init__ function so that it works after precompilation
 const plt = PyNULL()
 const py_anchored_artists = PyNULL()
+const py_ticker = PyNULL()
 
 # MATPLOTLIB SETTINGS TO MAKE PLOTS LOOK PRETTY :)
 const SMALL = 12
@@ -57,6 +58,7 @@ function __init__()
     copy!(plt, pyimport_conda("matplotlib.pyplot", "matplotlib"))
     # Import matplotlib's anchored_artists package for scale bars
     copy!(py_anchored_artists, pyimport_conda("mpl_toolkits.axes_grid1.anchored_artists", "matplotlib"))
+    copy!(py_ticker, pyimport_conda("matplotlib.ticker", "matplotlib"))
 
     plt.switch_backend("Agg")
     plt.rc("font", size=MED)          # controls default text sizes
@@ -64,7 +66,7 @@ function __init__()
     plt.rc("axes", labelsize=MED)     # fontsize of the x and y labels
     plt.rc("xtick", labelsize=SMALL)  # fontsize of the tick labels
     plt.rc("ytick", labelsize=SMALL)  # fontsize of the tick labels
-    plt.rc("legend", fontsize=MED)    # legend fontsize
+    plt.rc("legend", fontsize=SMALL)    # legend fontsize
     plt.rc("figure", titlesize=BIG)   # fontsize of the figure title
     plt.rc("text", usetex=true)       # use LaTeX
     plt.rc("font", family="Times New Roman")   # use Times New Roman font
@@ -286,8 +288,6 @@ function parse_dust()::Dict
     msg = "Dust features:"
     for df ∈ keys(dust["dust_features"])
         dust_out[:dust_features][df] = Dict()
-        dust_out[:dust_features][df][:complex] = "complex" ∈ keys(dust["dust_features"][df]) ? dust["dust_features"][df]["complex"] : split(df, "_")[2]
-        msg *= "\nComplex - $(dust_out[:dust_features][df][:complex])"
         dust_out[:dust_features][df][:wave] = Param.from_dict_wave(dust["dust_features"][df]["wave"])
         msg *= "\nWave $(dust_out[:dust_features][df][:wave])"
         dust_out[:dust_features][df][:fwhm] = Param.from_dict_fwhm(dust["dust_features"][df]["fwhm"])
@@ -620,7 +620,7 @@ end
 
 """
     ParamMaps(stellar_continuum, dust_continuum, dust_features, lines, tied_voffs, flow_tied_voffs,
-        tied_voigt_mix, extinction, dust_complexes, reduced_χ2)
+        tied_voigt_mix, extinction, reduced_χ2)
 
 A structure for holding 2D maps of fitting parameters generated when fitting a cube.
 
@@ -636,13 +636,12 @@ struct ParamMaps
     flow_tied_voffs::Dict{String, Array{Float64, 2}}
     tied_voigt_mix::Union{Array{Float64, 2}, Nothing}
     extinction::Dict{Symbol, Array{Float64, 2}}
-    dust_complexes::Dict{String, Dict{Symbol, Array{Float64, 2}}}
     reduced_χ2::Array{Float64, 2}
 
 end
 
 """
-    parammaps_empty(shape, n_dust_cont, df_names, complexes, line_names, line_tied, line_profiles,
+    parammaps_empty(shape, n_dust_cont, df_names, line_names, line_tied, line_profiles,
         line_flow_tied, line_flow_profiles, voff_tied_key, flow_voff_tied_key, flexible_wavesol, 
         tie_voigt_mixing)
 
@@ -655,7 +654,6 @@ fit of a DataCube.
 - `n_dust_cont::Integer`: The number of dust continuum components in the fit (usually given by the number of temperatures 
     specified in the dust.toml file)
 - `df_names::Vector{String}`: List of names of PAH features being fit, i.e. "PAH_12.62", ...
-- `complexes::Vector{String}`: List of names of dust complexes being fit; similar to PAH features, but some of them may 
     contain multiple PAH features combined close together, while others may be isolated, i.e. "12.7", ...
 - `line_names::Vector{Symbol}`: List of names of lines being fit, i.e. "NeVI_7652", ...
 - `line_tied::Vector{Union{String,Nothing}}`: List of line tie keys which specify whether the voff of the given line should be
@@ -673,8 +671,8 @@ fit of a DataCube.
 - `tie_voigt_mixing::Bool`: Whether or not to tie the mixing parameters of any Voigt line profiles
 """
 function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, df_names::Vector{String}, 
-    complexes::Vector{String}, line_names::Vector{Symbol}, line_tied::Vector{Union{String,Nothing}},
-    line_profiles::Vector{Symbol}, line_flow_tied::Vector{Union{String,Nothing}}, line_flow_profiles::Vector{Union{Symbol,Nothing}},
+    line_names::Vector{Symbol}, line_tied::Vector{Union{String,Nothing}}, line_profiles::Vector{Symbol},
+    line_flow_tied::Vector{Union{String,Nothing}}, line_flow_profiles::Vector{Union{Symbol,Nothing}},
     voff_tied_key::Vector{String}, flow_voff_tied_key::Vector{String}, flexible_wavesol::Bool, 
     tie_voigt_mixing::Bool)::ParamMaps where {S<:Integer}
 
@@ -709,6 +707,8 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, df_names::Ve
         dust_features[n][:amp] = copy(nan_arr)
         dust_features[n][:mean] = copy(nan_arr)
         dust_features[n][:fwhm] = copy(nan_arr)
+        dust_features[n][:intI] = copy(nan_arr)
+        dust_features[n][:SNR] = copy(nan_arr)
         @debug "dust feature $n maps with keys $(keys(dust_features[n]))"
     end
 
@@ -770,22 +770,12 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, df_names::Ve
     extinction[:beta] = copy(nan_arr)
     @debug "extinction maps with keys $(keys(extinction))"
 
-    # Add dusts complexes with extrapolated parameters
-    dust_complexes = Dict{String, Dict{Symbol, Array{Float64, 2}}}()
-    for c ∈ complexes
-        dust_complexes[c] = Dict{Symbol, Array{Float64, 2}}()
-        # Again, intensity and S/N are not fitted parameters, but are of interest to save
-        dust_complexes[c][:intI] = copy(nan_arr)
-        dust_complexes[c][:SNR] = copy(nan_arr)
-        @debug "dust complex maps $c with keys $(keys(dust_complexes[c]))"
-    end
-
     # Reduced chi^2 of the fits
     reduced_χ2 = copy(nan_arr)
     @debug "reduced chi^2 map"
 
     return ParamMaps(stellar_continuum, dust_continuum, dust_features, lines, tied_voffs, flow_tied_voffs,
-        tied_voigt_mix, extinction, dust_complexes, reduced_χ2)
+        tied_voigt_mix, extinction, reduced_χ2)
 end
 
 
@@ -901,8 +891,6 @@ Read from the options files:
 - `flow_voff_tied::Vector{Param.Parameter}`: Same as `voff_tied`, but for inflow/outflow components
 - `tie_voigt_mixing::Bool`: Whether or not the Voigt mixing parameter is tied between all the lines with Voigt profiles
 - `voigt_mix_tied::Param.Parameter`: The actual tied Voigt mixing parameter object, given `tie_voigt_mixing` is true
-- `n_complexes::Integer`: The number of PAH complexes in the fitting region
-- `complexes::Vector{String}`: The list of names of the PAH complexes in the fitting region
 - `n_params_cont::Integer`: The total number of free fitting parameters for the continuum fit (not including emission lines)
 - `n_params_lines::Integer`: The total number of free fitting parameters for the emission line fit (not including the continuum)
 - `cosmology::Cosmology.AbstractCosmology`: The Cosmology, used solely to create physical scale bars on the 2D parameter plots
@@ -977,9 +965,7 @@ mutable struct CubeFitter{T<:AbstractFloat}
     tie_voigt_mixing::Bool
     voigt_mix_tied::Param.Parameter
 
-    # Dust complexes
-    n_complexes::Integer
-    complexes::Vector{String}
+    # Number of parameters
     n_params_cont::Integer
     n_params_lines::Integer
     
@@ -1085,18 +1071,6 @@ mutable struct CubeFitter{T<:AbstractFloat}
         end
         @debug msg
 
-        # Get all the complexes for the PAH features being used
-        complexes = Vector{String}(unique([dust[:dust_features][n][:complex] for n ∈ df_names]))
-        # Also sort the complexes by the wavelength values
-        ss = sortperm([parse(Float64, c) for c ∈ complexes])
-        complexes = complexes[ss]
-        n_complexes = length(complexes)
-        msg = "### These constitute $n_complexes dust feature (PAH) complexes ###"
-        for cx ∈ complexes
-            msg *= "\n### at lambda = $cx um ###"
-        end
-        @debug msg
-
         # Only use lines within the wavelength range being fit
         line_wave = [line_list[line].λ₀ for line ∈ keys(line_list)]
         ln_filt = [minimum(λ) < lw < maximum(λ) for lw ∈ line_wave]
@@ -1140,7 +1114,7 @@ mutable struct CubeFitter{T<:AbstractFloat}
         @debug msg
 
         # Total number of parameters for the continuum and line fits
-        n_params_cont = (2+2) + 2n_dust_cont + 3n_dust_features + 2n_complexes
+        n_params_cont = (2+2) + 2n_dust_cont + 5n_dust_features
         n_params_lines = n_voff_tied + n_flow_voff_tied
         # One η for all voigt profiles
         if (any(line_profiles .== :Voigt) || any(line_flow_profiles .== :Voigt)) && tie_voigt_mixing
@@ -1183,17 +1157,17 @@ mutable struct CubeFitter{T<:AbstractFloat}
             # the ParamMaps object
             n_params_lines += 2
         end
-        @debug "### This totals to $(n_params_cont-2n_complexes) free continuum parameters ###"
-        @debug "### This totals to $(n_params_lines-2n_lines) free emission line parameters ###"
+        @debug "### This totals to $(n_params_cont-2n_dust_features) continuum parameters ###"
+        @debug "### This totals to $(n_params_lines-2n_lines) emission line parameters ###"
 
         # Full 3D intensity model array
         cube_model = cubemodel_empty(shape, n_dust_cont, df_names, line_names)
         # 2D maps of fitting parameters
-        param_maps = parammaps_empty(shape, n_dust_cont, df_names, complexes, line_names, line_tied,
+        param_maps = parammaps_empty(shape, n_dust_cont, df_names, line_names, line_tied,
             line_profiles, line_flow_tied, line_flow_profiles, voff_tied_key, flow_voff_tied_key, flexible_wavesol,
             tie_voigt_mixing)
         # 2D maps of fitting parameter 1-sigma errors
-        param_errs = parammaps_empty(shape, n_dust_cont, df_names, complexes, line_names, line_tied,
+        param_errs = parammaps_empty(shape, n_dust_cont, df_names, line_names, line_tied,
             line_profiles, line_flow_tied, line_flow_profiles, voff_tied_key, flow_voff_tied_key, flexible_wavesol,
             tie_voigt_mixing)
 
@@ -1205,8 +1179,8 @@ mutable struct CubeFitter{T<:AbstractFloat}
         cosmo = options[:cosmology]
 
         # Prepare initial best fit parameter options
-        @debug "Preparing initial best fit parameter vectors with $(n_params_cont-2n_complexes) and $(n_params_lines-2n_lines) parameters"
-        p_init_cont = zeros(n_params_cont-2n_complexes)
+        @debug "Preparing initial best fit parameter vectors with $(n_params_cont-2n_dust_features) and $(n_params_lines-2n_lines) parameters"
+        p_init_cont = zeros(n_params_cont-2n_dust_features)
         p_init_line = zeros(n_params_lines-2n_lines)
         χ²_init = 0.
 
@@ -1222,7 +1196,7 @@ mutable struct CubeFitter{T<:AbstractFloat}
         return new{eltype(χ²_init)}(cube, z, name, n_procs, cube_model, param_maps, param_errs, window_size, plot_spaxels, plot_maps, 
             parallel, save_fits, overwrite, extinction_curve, extinction_screen, T_s, T_dc, τ_97, β, n_dust_cont, n_dust_features, df_names, 
             dust_features, n_lines, line_names, line_profiles, line_flow_profiles, lines, n_voff_tied, line_tied, voff_tied_key, voff_tied, n_flow_voff_tied, 
-            line_flow_tied, flow_voff_tied_key, flow_voff_tied, tie_voigt_mixing, voigt_mix_tied, n_complexes, complexes, n_params_cont, n_params_lines, 
+            line_flow_tied, flow_voff_tied_key, flow_voff_tied, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, 
             cosmo, χ²_thresh, interp_R, flexible_wavesol, p_init_cont, p_init_line, χ²_init)
     end
 
@@ -2190,7 +2164,7 @@ end
 
 
 """
-    plot_spaxel_fit(λ, I, I_cont, σ, comps, n_dust_cont, n_dust_features, line_wave, line_names, z, χ2red, 
+    plot_spaxel_fit(λ, I, I_cont, σ, comps, n_dust_cont, n_dust_features, line_wave, line_names, screen, z, χ2red, 
         name, label; backend=backend)
 
 Plot the fit for an individual spaxel, `I_cont`, and its individual components `comps`, using the given 
@@ -2207,6 +2181,7 @@ backend (`:pyplot` or `:plotly`).
 - `n_dust_features::Integer`: The number of PAH features in the fit
 - `line_wave::Vector{<:AbstractFloat}`: List of nominal central wavelengths for each line in the fit
 - `line_names::Vector{Symbol}`: List of names for each line in the fit
+- `screen::Bool`: The type of model used for extinction screening
 - `z::AbstractFloat`: The redshift of the object being fit
 - `χ2red::AbstractFloat`: The reduced χ^2 value of the fit
 - `name::String`: The name of the object being fit
@@ -2215,8 +2190,8 @@ backend (`:pyplot` or `:plotly`).
 """
 function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}, I_cont::Vector{<:AbstractFloat}, 
     σ::Vector{<:AbstractFloat}, comps::Dict{String, Vector{T}}, n_dust_cont::Integer, n_dust_features::Integer, 
-    line_wave::Vector{<:AbstractFloat}, line_names::Vector{Symbol}, z::AbstractFloat, χ2red::AbstractFloat, name::String, 
-    label::String; backend::Symbol=:pyplot) where {T<:AbstractFloat}
+    line_wave::Vector{<:AbstractFloat}, line_names::Vector{Symbol}, screen::Bool, z::AbstractFloat, χ2red::AbstractFloat, 
+    name::String, label::String; backend::Symbol=:pyplot) where {T<:AbstractFloat}
 
     if backend == :plotly
         trace1 = PlotlyJS.scatter(x=λ, y=I, mode="lines", line=Dict(:color => "black", :width => 1), name="Data", showlegend=true)
@@ -2268,56 +2243,96 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
             joinpath("output_$name", "spaxel_plots", "$label.html"))
 
     elseif backend == :pyplot
+
+        # Normalize if above 10^4
+        power = floor(Int, log10(maximum(I)))
+        if power ≥ 4
+            norm = 10^power
+        else
+            norm = 1
+        end
+
+        # Set up subplots with gridspec
         fig = plt.figure(figsize=(12,6))
         gs = fig.add_gridspec(nrows=4, ncols=1, hspace=0.)
+        # main plot
         ax1 = fig.add_subplot(py"$(gs)[:-1, :]")
+        # residuals plot
         ax2 = fig.add_subplot(py"$(gs)[-1, :]")
-        ax1.plot(λ, I, "k-", label="Data")
-        ax1.plot(λ, I_cont, "r-", label="Model")
-        ax2.plot(λ, I.-I_cont, "k-")
-        ax2.plot(λ, ones(length(λ)), "r-", label="\$\\tilde{\\chi}^2 = $(@sprintf "%.3f" χ2red)\$")
-        ax2.fill_between(λ, σ, .-σ, color="k", alpha=0.5)
+        ax1.plot(λ, I ./ norm, "k-", label="Data")
+        ax1.plot(λ, I_cont ./ norm, "r-", label="Model")
+        ax2.plot(λ, (I.-I_cont) ./ norm, "k-")
+        ax2.plot(λ, zeros(length(λ)), "r-", label="\$\\tilde{\\chi}^2 = $(@sprintf "%.3f" χ2red)\$")
+        ax2.fill_between(λ, σ./norm, .-σ./norm, color="k", alpha=0.5)
+        # twin axes with different labels
         ax3 = ax1.twinx()
         ax4 = ax1.twiny()
+        # plot individual model components
         for comp ∈ keys(comps)
             if comp == "extinction"
                 ax3.plot(λ, comps[comp], "k--", alpha=0.5)
             elseif comp == "stellar"
-                ax1.plot(λ, comps[comp] .* comps["extinction"], "r--", alpha=0.5)
+                ax1.plot(λ, comps[comp] .* comps["extinction"] ./ norm, "r--", alpha=0.5)
             elseif occursin("dust_cont", comp)
-                ax1.plot(λ, comps[comp] .* comps["extinction"], "g--", alpha=0.5)
+                ax1.plot(λ, comps[comp] .* comps["extinction"] ./ norm, "g--", alpha=0.5)
             elseif occursin("dust_feat", comp)
-                ax1.plot(λ, comps[comp] .* comps["extinction"], "b-", alpha=0.5)
+                ax1.plot(λ, comps[comp] .* comps["extinction"] ./ norm, "b-", alpha=0.5)
             elseif occursin("line", comp)
                 if occursin("flow", comp)
-                    ax1.plot(λ, comps[comp] .* comps["extinction"], "-", color="#F574F9", alpha=0.5)
+                    ax1.plot(λ, comps[comp] .* comps["extinction"] ./ norm, "-", color="#F574F9", alpha=0.5)
                 else
-                    ax1.plot(λ, comps[comp] .* comps["extinction"], "-", color=:rebeccapurple, alpha=0.5)
+                    ax1.plot(λ, comps[comp] .* comps["extinction"] ./ norm, "-", color=:rebeccapurple, alpha=0.5)
                 end
             end
         end
+        # plot vertical dashed lines for emission line wavelengths
         for (lw, ln) ∈ zip(line_wave, line_names)
             ax1.axvline(lw, linestyle="--", 
                 color=occursin("H2", String(ln)) ? :red : (any(occursin.(["alpha", "beta", "gamma", "delta"], String(ln))) ? "#ff7f0e" : :rebeccapurple), lw=0.5, alpha=0.5)
             ax2.axvline(lw, linestyle="--", 
                 color=occursin("H2", String(ln)) ? :red : (any(occursin.(["alpha", "beta", "gamma", "delta"], String(ln))) ? "#ff7f0e" : :rebeccapurple), lw=0.5, alpha=0.5)
         end
-        ax1.plot(λ, comps["extinction"] .* (sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] .+ comps["stellar"]), "g-")
+        # full continuum
+        ax1.plot(λ, comps["extinction"] .* (sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] .+ comps["stellar"]) ./ norm, "g-")
+        # set axes limits and labels
         ax1.set_xlim(minimum(λ), maximum(λ))
         ax2.set_xlim(minimum(λ), maximum(λ))
+        ax2.set_ylim(-1.1maximum((I.-I_cont) ./ norm), 1.1maximum((I.-I_cont) ./ norm))
         ax3.set_ylim(0., 1.1)
-        ax3.set_ylabel("Extinction")
+        if screen
+            ax3.set_ylabel("\$ e^{-\\tau_{\\lambda}} \$")
+        else
+            ax3.set_ylabel("\$ (1-e^{-\\tau_{\\lambda}}) / \\tau_{\\lambda} \$")
+        end
         ax4.set_xlim(minimum(Util.observed_frame(λ, z)), maximum(Util.observed_frame(λ, z)))
-        ax1.set_ylabel("\$ I_{\\nu} \$ (MJy sr\$^{-1}\$)")
+        if power ≥ 4
+            ax1.set_ylabel("\$ I_{\\nu} \$ (\$10^{$power}\$ MJy sr\$^{-1}\$)")
+        else
+            ax1.set_ylabel("\$ I_{\\nu} \$ (MJy sr\$^{-1}\$)")
+        end
         ax1.set_ylim(bottom=0.)
-        ax2.set_ylabel("Residuals")
+        ax2.set_ylabel("\$ O-C \$")
         ax2.set_xlabel("\$ \\lambda_{\\rm rest} \$ (\$\\mu\$m)")
         ax4.set_xlabel("\$ \\lambda_{\\rm obs} \$ (\$\\mu\$m)")
         ax2.legend(loc="upper left")
-        # ax1.set_title("\$\\tilde{\\chi}^2 = $(@sprintf "%.3f" χ2red)\$")
-        ax1.tick_params(axis="both", direction="in")
-        ax2.tick_params(axis="both", direction="in", labelright=true, right=true)
-        ax3.tick_params(axis="both", direction="in")
+
+        # Set minor ticks as multiples of 0.1 μm and auto for y axis
+        ax1.xaxis.set_minor_locator(py_ticker.MultipleLocator(0.1))
+        ax1.yaxis.set_minor_locator(py_ticker.AutoMinorLocator())
+        ax2.xaxis.set_minor_locator(py_ticker.MultipleLocator(0.1))
+        ax2.yaxis.set_minor_locator(py_ticker.AutoMinorLocator())
+        ax3.yaxis.set_minor_locator(py_ticker.MultipleLocator(0.1))
+        ax4.xaxis.set_minor_locator(py_ticker.MultipleLocator(0.1))
+
+        # Set major ticks and formats
+        ax1.set_xticklabels([]) # ---> will be covered up by the residuals plot
+        ax2.set_yticks([-round(maximum((I.-I_cont) ./ norm) / 2, sigdigits=1), 0.0, round(maximum((I.-I_cont) ./ norm) / 2, sigdigits=1)])
+        ax1.tick_params(which="both", axis="both", direction="in")
+        ax2.tick_params(which="both", axis="both", direction="in", labelright=true, right=true, top=true)
+        ax3.tick_params(which="both", axis="both", direction="in")
+        ax4.tick_params(which="both", axis="both", direction="in")
+        
+        # Save figure as PDF
         plt.savefig(isnothing(label) ? joinpath("output_$name", "spaxel_plots", "levmar_fit_spaxel.pdf") : 
             joinpath("output_$name", "spaxel_plots", "$label.pdf"), dpi=300, bbox_inches="tight")
         plt.close()
@@ -2329,7 +2344,7 @@ end
     calculate_extra_parameters(cube_fitter, spaxel, comps)
 
 Calculate extra parameters that are not fit, but are nevertheless important to know, for a given spaxel.
-Currently this includes the integrated intensity and signal to noise ratios of dust complexes and emission lines.
+Currently this includes the integrated intensity and signal to noise ratios of dust features and emission lines.
 
 # Arguments
 `T<:AbstractFloat, S<:Integer`
@@ -2356,65 +2371,47 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
     N = N ≠ 0. ? N : 1.
     @debug "Normalization: $N"
 
-    # Loop through dust complexes
-    p_complex = zeros(2cube_fitter.n_complexes)
-    p_complex_err = zeros(2cube_fitter.n_complexes)
+    # Loop through dust features
+    p_dust = zeros(2cube_fitter.n_dust_feat)
+    p_dust_err = zeros(2cube_fitter.n_dust_feat)
     pₒ = 1
-    for c ∈ cube_fitter.complexes
+    # Initial parameter vector index where dust profiles start
+    pᵢ = 3 + 2cube_fitter.n_dust_cont
 
-        # Start with 0 intensity -> intensity holds the overall integrated intensity in CGS units
-        intensity = 0. 
-        i_err = []
-        # Start with flat profile -> profile holds the overall model as an anonymous function in units of MJy/sr
-        # this is used to calculate the S/N at the end
-        profile = x -> 0.
-        # Initial parameter vector index where dust profiles start
-        pᵢ = 3 + 2cube_fitter.n_dust_cont
+    for (ii, df) ∈ enumerate(cube_fitter.dust_features)
 
-        # Add up the dust feature profiles that belong to this complex
-        for (ii, cdf) ∈ enumerate(cube_fitter.dust_features)
-            if cdf[:complex] == c
+        # unpack the parameters
+        A, μ, fwhm = popt_c[pᵢ:pᵢ+2]
+        A_err, μ_err, fwhm_err = perr_c[pᵢ:pᵢ+2]
+        # Convert peak intensity to CGS units (erg s^-1 cm^-2 μm^-1 sr^-1)
+        A_cgs = Util.MJysr_to_cgs(A, μ)
+        # Convert the error in the intensity to CGS units
+        A_cgs_err = Util.MJysr_to_cgs_err(A, A_err, μ, μ_err)
+        # add the integral of the individual Drude profiles using the helper function
+        # (integral = π/2 * A * fwhm)
+        intensity = Util.∫Drude(A_cgs, fwhm)
+        # get the error of the integrated intensity
+        frac_err2 = (A_cgs_err / A_cgs)^2 + (fwhm_err / fwhm)^2
+        i_err = √(frac_err2 * intensity^2)
 
-                # unpack the parameters
-                A, μ, fwhm = popt_c[pᵢ:pᵢ+2]
-                A_err, μ_err, fwhm_err = perr_c[pᵢ:pᵢ+2]
-                # Convert peak intensity to CGS units (erg s^-1 cm^-2 μm^-1 sr^-1)
-                A_cgs = Util.MJysr_to_cgs(A, μ)
-                # Convert the error in the intensity to CGS units
-                A_cgs_err = Util.MJysr_to_cgs_err(A, A_err, μ, μ_err)
-                # add the integral of the individual Drude profiles using the helper function
-                # (integral = π/2 * A * fwhm)
-                inten_i = Util.∫Drude(A_cgs, fwhm)
-                intensity += inten_i
-                # get the error of the integrated intensity
-                frac_err2 = (A_cgs_err / A_cgs)^2 + (fwhm_err / fwhm)^2
-                err = √(frac_err2 * inten_i^2)
-                append!(i_err, [err])
+        @debug "Drude profile with ($A_cgs, $μ, $fwhm) and errors ($A_cgs_err, $μ_err, $fwhm_err)"
+        @debug "I=$intensity, err=$i_err"
 
-                @debug "Adding drude profile with ($A_cgs, $μ, $fwhm) and errors ($A_cgs_err, $μ_err, $fwhm_err)"
-                @debug "I=$inten_i, err=$err"
+        # add to profile recursively
+        # profile = x -> Util.Drude(x, A, μ, fwhm)
 
-                # add to profile recursively
-                profile = let profile = profile
-                    x -> profile(x) + Util.Drude(x, A, μ, fwhm)
-                end
-            end
-            # increment the parameter index
-            pᵢ += 3
-        end
-
-        λ_arr = (minimum(λ)-3):Δλ:(maximum(λ)+3)
-        peak, peak_ind = findmax(profile.(λ_arr))
+        # increment the parameter index
+        pᵢ += 3
 
         # intensity units: erg s^-1 cm^-2 sr^-1 (integrated over μm)
-        p_complex[pₒ] = intensity
+        p_dust[pₒ] = intensity
         # add errors in quadrature
-        p_complex_err[pₒ] = √(sum(i_err.^2))
+        p_dust_err[pₒ] = √(sum(i_err.^2))
 
         # SNR, calculated as (amplitude) / (RMS of the surrounding spectrum)
-        p_complex[pₒ+1] = peak / std(I[.!mask_lines] .- continuum[.!mask_lines])
-        @debug "Dust complex $c with integrated intensity $(p_complex[pₒ]) +/- $(p_complex_err[pₒ]) " *
-            "(erg s^-1 cm^-2 sr^-1) and SNR $(p_complex[pₒ+1])"
+        p_dust[pₒ+1] = A / std(I[.!mask_lines] .- continuum[.!mask_lines])
+        @debug "Dust feature $df with integrated intensity $(p_dust[pₒ]) +/- $(p_dust_err[pₒ]) " *
+            "(erg s^-1 cm^-2 sr^-1) and SNR $(p_dust[pₒ+1])"
 
         pₒ += 2
     end
@@ -2749,7 +2746,7 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
 
     end
 
-    return p_complex, p_lines, p_complex_err, p_lines_err
+    return p_dust, p_lines, p_dust_err, p_lines_err
 end
 
 
@@ -2811,19 +2808,19 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where {S<:Integ
                 # Reduced chi^2 of the model
                 χ2red = 1 / (n_data - n_free) * sum((I .- I_model).^2 ./ σ.^2)
 
-                # Add dust complex and line parameters (intensity and SNR)
-                p_complex, p_lines, p_complex_err, p_lines_err = 
+                # Add dust feature and line parameters (intensity and SNR)
+                p_dust, p_lines, p_dust_err, p_lines_err = 
                     calculate_extra_parameters(cube_fitter, spaxel, popt_c, popt_l, perr_c, perr_l)
-                p_out = [popt_c; popt_l; p_complex; p_lines; χ2red]
-                p_err = [perr_c; perr_l; p_complex_err; p_lines_err; 0.]
+                p_out = [popt_c; popt_l; p_dust; p_lines; χ2red]
+                p_err = [perr_c; perr_l; p_dust_err; p_lines_err; 0.]
 
                 # Plot the fit
                 λ0_ln = [ln.λ₀ for ln ∈ cube_fitter.lines]
                 if cube_fitter.plot_spaxels != :none
                     @debug "Plotting spaxel $spaxel best fit"
                     plot_spaxel_fit(λ, I, I_model, σ, comps, 
-                        cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, λ0_ln, cube_fitter.line_names, cube_fitter.z,
-                        χ2red, cube_fitter.name, "spaxel_$(spaxel[1])_$(spaxel[2])", backend=cube_fitter.plot_spaxels)
+                        cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, λ0_ln, cube_fitter.line_names, cube_fitter.extinction_screen, 
+                        cube_fitter.z, χ2red, cube_fitter.name, "spaxel_$(spaxel[1])_$(spaxel[2])", backend=cube_fitter.plot_spaxels)
                 end
 
             end
@@ -2915,8 +2912,8 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
         if cube_fitter.plot_spaxels != :none
             @debug "Plotting spaxel sum initial fit"
             plot_spaxel_fit(λ_init, I_sum_init, I_model_init, σ_init, comps_init, 
-                cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, λ0_ln, cube_fitter.line_names, cube_fitter.z,
-                χ2red_init, cube_fitter.name, "initial_sum_fit", backend=cube_fitter.plot_spaxels)
+                cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, λ0_ln, cube_fitter.line_names, cube_fitter.extinction_screen, 
+                cube_fitter.z, χ2red_init, cube_fitter.name, "initial_sum_fit", backend=cube_fitter.plot_spaxels)
         end
 
     else
@@ -2940,8 +2937,8 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
 
     # Sort spaxels by median brightness, so that we fit the brightest ones first
     # (which hopefully have the best reduced chi^2s)
-    spaxels = Iterators.product(1:shape[1], 1:shape[2])
-    # spaxels = Iterators.product(15:16, 15:16)
+    # spaxels = Iterators.product(1:shape[1], 1:shape[2])
+    spaxels = Iterators.product(15:16, 15:16)
 
     # med_I = collect(Iterators.flatten([nanmedian(cube_fitter.cube.Iλ[spaxel..., :]) for spaxel ∈ spaxels]))
     # # replace NaNs with -1s
@@ -2991,7 +2988,7 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
         # Dust feature log(amplitude), mean, FWHM
         for df ∈ cube_fitter.df_names
             cube_fitter.param_maps.dust_features[df][:amp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? log10(out_params[xᵢ, yᵢ, pᵢ])-17 : -Inf
-            cube_fitter.param_maps.dust_features[df][:amp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? out_errs[xᵢ, yᵢ, pᵢ] / out_params[xᵢ, yᵢ, pᵢ] : NaN
+            cube_fitter.param_errs.dust_features[df][:amp][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? out_errs[xᵢ, yᵢ, pᵢ] / out_params[xᵢ, yᵢ, pᵢ] : NaN
             cube_fitter.param_maps.dust_features[df][:mean][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+1]
             cube_fitter.param_errs.dust_features[df][:mean][xᵢ, yᵢ] = out_errs[xᵢ, yᵢ, pᵢ+1]
             cube_fitter.param_maps.dust_features[df][:fwhm][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+2]
@@ -3190,11 +3187,11 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
         I_model = I_cont .+ I_line
         comps = merge(comps_c, comps_l)
 
-        for c ∈ cube_fitter.complexes
-            # Dust complex intensity and SNR, from calculate_extra_parameters
-            cube_fitter.param_maps.dust_complexes[c][:intI][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? log10(out_params[xᵢ, yᵢ, pᵢ]) : -Inf
-            cube_fitter.param_errs.dust_complexes[c][:intI][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? out_errs[xᵢ, yᵢ, pᵢ] / out_params[xᵢ, yᵢ, pᵢ] : NaN
-            cube_fitter.param_maps.dust_complexes[c][:SNR][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+1]
+        # Dust feature intensity and SNR, from calculate_extra_parameters
+        for df ∈ cube_fitter.df_names
+            cube_fitter.param_maps.dust_features[df][:intI][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? log10(out_params[xᵢ, yᵢ, pᵢ]) : -Inf
+            cube_fitter.param_errs.dust_features[df][:intI][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ] > 0. ? out_errs[xᵢ, yᵢ, pᵢ] / out_params[xᵢ, yᵢ, pᵢ] : NaN
+            cube_fitter.param_maps.dust_features[df][:SNR][xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ+1]
             pᵢ += 2
         end
 
@@ -3387,10 +3384,12 @@ function plot_parameter_maps(cube_fitter::CubeFitter; snr_thresh::Real=3.)
     end
 
     for df ∈ keys(cube_fitter.param_maps.dust_features)
+        snr = cube_fitter.param_maps.dust_features[df][:SNR]
         for parameter ∈ keys(cube_fitter.param_maps.dust_features[df])
             data = cube_fitter.param_maps.dust_features[df][parameter]
             name_i = join(["dust_features", df, parameter], "_")
-            plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology)
+            plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
+                snr_filter=parameter ≠ :SNR ? snr : nothing, snr_thresh=snr_thresh)
         end
     end
 
@@ -3398,16 +3397,6 @@ function plot_parameter_maps(cube_fitter::CubeFitter; snr_thresh::Real=3.)
         data = cube_fitter.param_maps.extinction[parameter]
         name_i = join(["extinction", parameter], "_")
         plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology)
-    end
-
-    for c ∈ keys(cube_fitter.param_maps.dust_complexes)
-        snr = cube_fitter.param_maps.dust_complexes[c][:SNR]
-        for parameter ∈ keys(cube_fitter.param_maps.dust_complexes[c])
-            data = cube_fitter.param_maps.dust_complexes[c][parameter]
-            name_i = join(["dust_complexes", c, parameter], "_")
-            plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
-                snr_filter=parameter ≠ :SNR ? snr : nothing, snr_thresh=snr_thresh)
-        end
     end
 
     if cube_fitter.tie_voigt_mixing
@@ -3465,10 +3454,10 @@ function write_fits(cube_fitter::CubeFitter)
 
         # Check if the redshift correction is right for the third WCS axis?
         [cube_fitter.name, cube_fitter.z, cube_fitter.cube.channel, cube_fitter.cube.band, cube_fitter.cube.Ω, cube_fitter.cube.α, cube_fitter.cube.δ, 
-         cube_fitter.cube.wcs.naxis, cube_fitter.cube.wcs.cdelt[1], cube_fitter.cube.wcs.cdelt[2], cube_fitter.cube.wcs.cdelt[3]/(1+cube_fitter.z), 
+         cube_fitter.cube.wcs.naxis, cube_fitter.cube.wcs.cdelt[1], cube_fitter.cube.wcs.cdelt[2], cube_fitter.cube.wcs.cdelt[3], 
          cube_fitter.cube.wcs.ctype[1], cube_fitter.cube.wcs.ctype[2], cube_fitter.cube.wcs.ctype[3], cube_fitter.cube.wcs.crpix[1], 
          cube_fitter.cube.wcs.crpix[2], cube_fitter.cube.wcs.crpix[3], cube_fitter.cube.wcs.crval[1], cube_fitter.cube.wcs.crval[2], 
-         cube_fitter.cube.wcs.crval[3]/(1+cube_fitter.z), cube_fitter.cube.wcs.cunit[1], cube_fitter.cube.wcs.cunit[2], cube_fitter.cube.wcs.cunit[3], 
+         cube_fitter.cube.wcs.crval[3], cube_fitter.cube.wcs.cunit[1], cube_fitter.cube.wcs.cunit[2], cube_fitter.cube.wcs.cunit[3], 
          cube_fitter.cube.wcs.pc[1,1], cube_fitter.cube.wcs.pc[1,2], cube_fitter.cube.wcs.pc[1,3], cube_fitter.cube.wcs.pc[2,1], cube_fitter.cube.wcs.pc[2,2], 
          cube_fitter.cube.wcs.pc[2,3], cube_fitter.cube.wcs.pc[3,1], cube_fitter.cube.wcs.pc[3,2], cube_fitter.cube.wcs.pc[3,3]],
 
@@ -3594,6 +3583,10 @@ function write_fits(cube_fitter::CubeFitter)
                     bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
                 elseif occursin("fwhm", String(name_i)) || occursin("mean", String(name_i))
                     bunit = "um"
+                elseif occursin("intI", String(name_i))
+                    bunit = "log10(I / erg s^-1 cm^-2 sr^-1)"
+                elseif occursin("SNR", String(name_i))
+                    bunit = "unitless"
                 end
                 write(f, data; header=hdr, name=name_i)
                 write_key(f[name_i], "BUNIT", bunit)      
@@ -3607,6 +3600,10 @@ function write_fits(cube_fitter::CubeFitter)
                     bunit = "dex"
                 elseif occursin("fwhm", String(name_i)) || occursin("mean", String(name_i))
                     bunit = "um"
+                elseif occursin("intI", String(name_i))
+                    bunit = "dex"
+                elseif occursin("SNR", String(name_i))
+                    bunit = "unitless"
                 end
                 write(f, data; header=hdr, name=name_i)
                 write_key(f[name_i], "BUNIT", bunit)      
@@ -3708,33 +3705,6 @@ function write_fits(cube_fitter::CubeFitter)
             bunit = "km/s"
             write(f, data; header=hdr, name=name_i)
             write_key(f[name_i], "BUNIT", bunit)
-        end
-
-        for c ∈ keys(cube_fitter.param_maps.dust_complexes)
-            for parameter ∈ keys(cube_fitter.param_maps.dust_complexes[c])
-                data = cube_fitter.param_maps.dust_complexes[c][parameter]
-                name_i = join(["dust_complexes", c, parameter], "_")
-                if occursin("intI", String(name_i))
-                    bunit = "log10(I / erg s^-1 cm^-2 sr^-1)"
-                elseif occursin("SNR", String(name_i))
-                    bunit = "unitless"
-                end
-                write(f, data; header=hdr, name=name_i)
-                write_key(f[name_i], "BUNIT", bunit)
-            end
-        end
-        for c ∈ keys(cube_fitter.param_errs.dust_complexes)
-            for parameter ∈ keys(cube_fitter.param_errs.dust_complexes[c])
-                data = cube_fitter.param_errs.dust_complexes[c][parameter]
-                name_i = join(["dust_complexes", c, parameter, "err"], "_")
-                if occursin("intI", String(name_i))
-                    bunit = "dex"
-                elseif occursin("SNR", String(name_i))
-                    bunit = "unitless"
-                end
-                write(f, data; header=hdr, name=name_i)
-                write_key(f[name_i], "BUNIT", bunit)
-            end
         end
 
         data = cube_fitter.param_maps.reduced_χ2
