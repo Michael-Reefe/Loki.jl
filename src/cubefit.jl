@@ -2391,8 +2391,12 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
         # (integral = π/2 * A * fwhm)
         intensity = Util.∫Drude(A_cgs, fwhm)
         # get the error of the integrated intensity
-        frac_err2 = (A_cgs_err / A_cgs)^2 + (fwhm_err / fwhm)^2
-        i_err = √(frac_err2 * intensity^2)
+        if A_cgs == 0.
+            i_err = π/2 * fwhm * A_cgs_err
+        else
+            frac_err2 = (A_cgs_err / A_cgs)^2 + (fwhm_err / fwhm)^2
+            i_err = √(frac_err2 * intensity^2)
+        end
 
         @debug "Drude profile with ($A_cgs, $μ, $fwhm) and errors ($A_cgs_err, $μ_err, $fwhm_err)"
         @debug "I=$intensity, err=$i_err"
@@ -2562,7 +2566,7 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
             # estimate error by evaluating the integral at +/- 1 sigma
             err_l = ii - quadgk(x -> Util.GaussHermite(x, amp_cgs-amp_cgs_err, 0., fwhm_μm-fwhm_μm_err, h3-h3_err, h4-h4_err), -Inf, Inf, order=200)[1]
             err_u = quadgk(x -> Util.GaussHermite(x, amp_cgs+amp_cgs_err, 0., fwhm_μm+fwhm_μm_err, h3+h3_err, h4+h4_err), -Inf, Inf, order=200)[1] - ii
-            err = mean([err_l, err_u])
+            err = mean([err_l ≥ 0 ? err_l : 0., err_u])
             append!(i_err, [err])
             @debug "I=$ii, err_u=$err_u, err_l=$err_l, err=$err"
 
@@ -2574,7 +2578,7 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
             # estimate error by evaluating the integral at +/- 1 sigma
             err_l = ii - quadgk(x -> Util.Voigt(x, amp_cgs-amp_cgs_err, 0., fwhm_μm-fwhm_μm_err, η-η_err), -Inf, Inf, order=200)[1]
             err_u = quadgk(x -> Util.Voigt(x, amp_cgs+amp_cgs_err, 0., fwhm_μm+fwhm_μm_err, η+η_err), -Inf, Inf, order=200)[1] - ii
-            err = mean([err_l, err_u])
+            err = mean([err_l ≥ 0 ? err_l : 0., err_u])
             append!(i_err, [err])
             @debug "I=$ii, err_u=$err_u, err_l=$err_l, err=$err"
 
@@ -2687,7 +2691,7 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
                                                       flow_h3-flow_h3_err, flow_h4-flow_h4_err), -Inf, Inf, order=200)[1]
                 err_u = quadgk(x -> Util.GaussHermite(x, flow_amp_cgs+flow_amp_cgs_err, 0., flow_fwhm_μm+flow_fwhm_μm_err,
                                                       flow_h3+flow_h3_err, flow_h4+flow_h4_err), -Inf, Inf, order=200)[1] - ii
-                err = mean([err_l, err_u])
+                err = mean([err_l ≥ 0 ? err_l : 0., err_u])
                 append!(i_err, [err])
                 @debug "I=$ii, err_u=$err_u, err_l=$err_l, err=$err"
 
@@ -2702,7 +2706,7 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::Tuple{S,S},
                                -Inf, Inf, order=200)[1]
                 err_u = quadgk(x -> Util.Voigt(x, flow_amp_cgs+flow_amp_cgs_err, 0., flow_fwhm_μm+flow_fwhm_μm_err, flow_η+flow_η_err),
                                -Inf, Inf, order=200)[1] - ii
-                err = mean([err_l, err_u])
+                err = mean([err_l ≥ 0 ? err_l : 0., err_u])
                 append!(i_err, [err])
                 @debug "I=$ii, err_u=$err_u, err_l=$err_l, err=$err"
 

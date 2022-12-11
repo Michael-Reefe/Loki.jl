@@ -328,6 +328,10 @@ Calculate the uncertainty in intensity in CGS units (erg s^-1 cm^-2 μm^-1 sr^-1
 given the uncertainty in intensity in MJy sr^-1 and the uncertainty in wavelength in μm
 """
 function MJysr_to_cgs_err(MJy, MJy_err, λ, λ_err)
+    if MJy == 0.
+        cgs = 0.
+        return 1e6 * 1e-23 * (C_KMS * 1e9) / λ^2 * MJy_err
+    end
     # Get the CGS value of the intensity
     cgs = MJysr_to_cgs(MJy, λ)
     # σ_cgs^2 / cgs^2 = σ_MJy^2 / MJy^2 + 4σ_λ^2 / λ^2
