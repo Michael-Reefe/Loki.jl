@@ -2768,8 +2768,8 @@ of a crash.
 """
 function fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where {S<:Integer}
 
-    global p_out
-    global p_err
+    local p_out
+    local p_err
 
     # Check if the fit has already been performed
     if !isfile(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).LOKI")) || cube_fitter.overwrite
@@ -2935,6 +2935,9 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
             out_params[xᵢ, yᵢ, :] .= p_out
             out_errs[xᵢ, yᵢ, :] .= p_err
         end
+
+        # Garbage collection
+        GC.gc()
 
         return
     end
