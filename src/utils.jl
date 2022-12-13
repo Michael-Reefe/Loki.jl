@@ -466,7 +466,7 @@ function τ_dp(λ::AbstractFloat, β::AbstractFloat)::AbstractFloat
 end
 
 
-function Extinction(ext::Float64, τ_97::Float64; screen::Bool=false)::AbstractFloat
+function Extinction(ext::AbstractFloat, τ_97::AbstractFloat; screen::Bool=false)::AbstractFloat
     """
     Calculate the overall extinction factor
     """

@@ -911,7 +911,7 @@ Read from the options files:
 See [`ParamMaps`](@ref), [`parammaps_empty`](@ref), [`CubeModel`](@ref), [`cubemodel_empty`](@ref), 
     [`fit_spaxel`](@ref), [`fit_cube`](@ref)
 """
-mutable struct CubeFitter{T<:AbstractFloat}
+struct CubeFitter{T<:AbstractFloat}
     
     # Data
     cube::CubeData.DataCube
@@ -977,7 +977,7 @@ mutable struct CubeFitter{T<:AbstractFloat}
 
     p_init_cont::Vector{T}
     p_init_line::Vector{T}
-    χ²_init::T
+    χ²_init::Vector{T}
 
     # Constructor function
     function CubeFitter(cube::CubeData.DataCube, z::Float64, name::String, n_procs::Int; window_size::Float64=.025, 
@@ -1183,7 +1183,7 @@ mutable struct CubeFitter{T<:AbstractFloat}
         @debug "Preparing initial best fit parameter vectors with $(n_params_cont-2n_dust_features) and $(n_params_lines-2n_lines) parameters"
         p_init_cont = zeros(n_params_cont-2n_dust_features)
         p_init_line = zeros(n_params_lines-2n_lines)
-        χ²_init = 0.
+        χ²_init = [0.]
 
         # If a fit has been run previously, read in the file containing the rolling best fit parameters
         # to pick up where the fitter left off seamlessly
@@ -2881,7 +2881,7 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
     ######################### DO AN INITIAL FIT WITH THE SUM OF ALL SPAXELS ###################
 
     # Don't repeat if it's already been done
-    if iszero(cube_fitter.χ²_init)
+    if iszero(cube_fitter.χ²_init[1])
 
         @info "===> Performing initial fit to the sum of all spaxels... <==="
         # Collect the data
@@ -2903,9 +2903,9 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
         χ2red_init = 1 / (n_data_init - n_free_init) * sum((I_sum_init .- I_model_init).^2 ./ σ_init.^2)
 
         # Save the results to the cube fitter
-        cube_fitter.p_init_cont = popt_c_init
-        cube_fitter.p_init_line = popt_l_init
-        cube_fitter.χ²_init = χ2red_init
+        cube_fitter.p_init_cont[:] .= popt_c_init
+        cube_fitter.p_init_line[:] .= popt_l_init
+        cube_fitter.χ²_init[1] = χ2red_init
 
         # Save the results to a file 
         # save running best fit parameters in case the fitting is interrupted
@@ -2971,6 +2971,8 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
         for (xᵢ, yᵢ) ∈ spaxels
             fit_spax_i(xᵢ, yᵢ)
             next!(prog)
+            # Garbage collection
+            GC.gc()
         end
     end
 
