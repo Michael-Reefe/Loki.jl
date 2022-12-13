@@ -986,7 +986,7 @@ mutable struct CubeFitter{T<:AbstractFloat}
         ###### SETTING UP A GLOBAL LOGGER FOR THE CUBE FITTER ######
 
         # Prepare output directories
-        @debug "Preparing output directories"
+        @info "Preparing output directories"
         name = replace(name, " " => "_")
         if !isdir("output_$name")
             mkdir("output_$name")
@@ -1003,6 +1003,7 @@ mutable struct CubeFitter{T<:AbstractFloat}
         if !isdir(joinpath("output_$name", "logs"))
             mkdir(joinpath("output_$name", "logs"))
         end
+        @info "Preparing logger"
 
 
         timestamp_logger(logger) = TransformerLogger(logger) do log
@@ -2784,7 +2785,10 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where {S<:Integ
                              joinpath("output_$(cube_fitter.name)", "logs", "loki.spaxel_$(spaxel[1])_$(spaxel[2]).log"); 
                              always_flush=true), Logging.Debug)))
 
+
         with_logger(logger) do
+
+            @debug "PROCESS ID: $(getpid())"
 
             # Skip spaxels with NaNs (post-interpolation)
             λ = cube_fitter.cube.λ
@@ -2936,9 +2940,6 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
             out_errs[xᵢ, yᵢ, :] .= p_err
         end
 
-        # Garbage collection
-        GC.gc()
-
         return
     end
 
@@ -2962,6 +2963,8 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
         prog = Progress(length(spaxels); showspeed=true)
         progress_pmap(spaxels, progress=prog) do (xᵢ, yᵢ)
             fit_spax_i(xᵢ, yᵢ)
+            # Garbage collection
+            GC.gc()
         end
     else
         prog = Progress(length(spaxels); showspeed=true)
