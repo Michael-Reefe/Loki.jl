@@ -2,7 +2,7 @@
 
 julia_version = "1.8.3"
 manifest_format = "2.0"
-project_hash = "fca8e8b2479a6cae6683960583b77c6d64ea7434"
+project_hash = "33b10c82451fb14899535cc3634e24065a20e606"
 
 [[deps.Adapt]]
 deps = ["LinearAlgebra"]
@@ -713,6 +713,10 @@ version = "2.2.2"
 [[deps.Printf]]
 deps = ["Unicode"]
 uuid = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+
+[[deps.Profile]]
+deps = ["Printf"]
+uuid = "9abbd945-dff8-562f-b5e8-e1ebf5ef1b79"
 
 [[deps.ProgressMeter]]
 deps = ["Distributed", "Printf"]

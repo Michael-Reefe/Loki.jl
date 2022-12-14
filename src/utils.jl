@@ -8,41 +8,41 @@ using DataFrames
 
 # CONSTANTS
 
-const C_KMS = 299792.458          # Speed of light in km/s
-const h_ERGS = 6.62607015e-27     # Planck constant in erg*s
-const kB_ERGK = 1.380649e-16      # Boltzmann constant in erg/K
+const C_KMS::Float64 = 299792.458          # Speed of light in km/s
+const h_ERGS::Float64 = 6.62607015e-27     # Planck constant in erg*s
+const kB_ERGK::Float64 = 1.380649e-16      # Boltzmann constant in erg/K
 
-const Bν_1 = 3.97289e13           # First constant for Planck function, in MJy/sr/μm
-const Bν_2 = 1.4387752e4          # Second constant for Planck function, in μm*K
+const Bν_1::Float64 = 3.97289e13           # First constant for Planck function, in MJy/sr/μm
+const Bν_2::Float64 = 1.4387752e4          # Second constant for Planck function, in μm*K
 
 # Saved Kemper, Vriend, & Tielens (2004) extinction profile
-const kvt_prof = [8.0  0.06;
-                  8.2  0.09;
-                  8.4  0.16;
-                  8.6  0.275;
-                  8.8  0.415;
-                  9.0  0.575;
-                  9.2  0.755;
-                  9.4  0.895;
-                  9.6  0.98;
-                  9.7  0.99;
-                  9.75 1.00;
-                  9.8  0.99;
-                  10.0 0.94;
-                  10.2 0.83;
-                  10.4 0.745;
-                  10.6 0.655;
-                  10.8 0.58;
-                  11.0 0.525;
-                  11.2 0.43;
-                  11.4 0.35;
-                  11.6 0.27;
-                  11.8 0.20;
-                  12.0 0.13;
-                  12.2 0.09;
-                  12.4 0.06;
-                  12.6 0.045;
-                  12.7 0.04314]
+const kvt_prof::Matrix{Float64} =  [8.0  0.06;
+                                    8.2  0.09;
+                                    8.4  0.16;
+                                    8.6  0.275;
+                                    8.8  0.415;
+                                    9.0  0.575;
+                                    9.2  0.755;
+                                    9.4  0.895;
+                                    9.6  0.98;
+                                    9.7  0.99;
+                                    9.75 1.00;
+                                    9.8  0.99;
+                                    10.0 0.94;
+                                    10.2 0.83;
+                                    10.4 0.745;
+                                    10.6 0.655;
+                                    10.8 0.58;
+                                    11.0 0.525;
+                                    11.2 0.43;
+                                    11.4 0.35;
+                                    11.6 0.27;
+                                    11.8 0.20;
+                                    12.0 0.13;
+                                    12.2 0.09;
+                                    12.4 0.06;
+                                    12.6 0.045;
+                                    12.7 0.04314]
 
 
 """

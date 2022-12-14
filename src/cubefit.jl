@@ -36,7 +36,7 @@ using PlotlyJS
 # Misc packages/utilites
 using ProgressMeter
 using Reexport
-using Serialization
+# using Serialization
 using Printf
 using Logging
 using LoggingExtras
@@ -45,14 +45,15 @@ using Dates
 # PyCall needed for anchored_artists
 using PyCall
 # Have to import anchored_artists within the __init__ function so that it works after precompilation
-const plt = PyNULL()
-const py_anchored_artists = PyNULL()
-const py_ticker = PyNULL()
+const plt::PyObject = PyNULL()
+const py_anchored_artists::PyObject = PyNULL()
+const py_ticker::PyObject = PyNULL()
 
 # MATPLOTLIB SETTINGS TO MAKE PLOTS LOOK PRETTY :)
-const SMALL = 12
-const MED = 14
-const BIG = 16
+const SMALL::Int8 = 12
+const MED::Int8 = 14
+const BIG::Int8 = 16
+
 function __init__()
     # Import pyplot
     copy!(plt, pyimport_conda("matplotlib.pyplot", "matplotlib"))
@@ -84,7 +85,7 @@ include("cubedata.jl")
 
 ############################## OPTIONS/SETUP/PARSING FUNCTIONS ####################################
 
-const date_format = "yyyy-mm-dd HH:MM:SS"
+const date_format::String = "yyyy-mm-dd HH:MM:SS"
 
 
 """
@@ -911,19 +912,19 @@ Read from the options files:
 See [`ParamMaps`](@ref), [`parammaps_empty`](@ref), [`CubeModel`](@ref), [`cubemodel_empty`](@ref), 
     [`fit_spaxel`](@ref), [`fit_cube`](@ref)
 """
-struct CubeFitter{T<:AbstractFloat}
+struct CubeFitter{T<:AbstractFloat,S<:Integer}
     
     # Data
     cube::CubeData.DataCube
-    z::AbstractFloat
+    z::T
     name::String
 
     # Basic fitting options
-    n_procs::Integer
-    cube_model::CubeModel
+    n_procs::S
+    # cube_model::CubeModel
     param_maps::ParamMaps
     param_errs::ParamMaps
-    window_size::AbstractFloat
+    window_size::T
     plot_spaxels::Symbol
     plot_maps::Bool
     parallel::Bool
@@ -937,26 +938,26 @@ struct CubeFitter{T<:AbstractFloat}
     T_dc::Vector{Param.Parameter}
     τ_97::Param.Parameter
     β::Param.Parameter
-    n_dust_cont::Integer
-    n_dust_feat::Integer
+    n_dust_cont::S
+    n_dust_feat::S
     df_names::Vector{String}
     dust_features::Vector{Dict}
 
     # Line parameters
-    n_lines::Integer
+    n_lines::S
     line_names::Vector{Symbol}
     line_profiles::Vector{Symbol}
     line_flow_profiles::Vector{Union{Nothing,Symbol}}
     lines::Vector{Param.TransitionLine}
 
     # Tied voffs
-    n_voff_tied::Integer
+    n_voff_tied::S
     line_tied::Vector{Union{String,Nothing}}
     voff_tied_key::Vector{String}
     voff_tied::Vector{Param.Parameter}
 
     # Tied inflow/outflow voffs
-    n_flow_voff_tied::Integer
+    n_flow_voff_tied::S
     line_flow_tied::Vector{Union{String,Nothing}}
     flow_voff_tied_key::Vector{String}
     flow_voff_tied::Vector{Param.Parameter}
@@ -966,18 +967,17 @@ struct CubeFitter{T<:AbstractFloat}
     voigt_mix_tied::Param.Parameter
 
     # Number of parameters
-    n_params_cont::Integer
-    n_params_lines::Integer
+    n_params_cont::S
+    n_params_lines::S
     
     # Rolling best fit options
     cosmology::Cosmology.AbstractCosmology
-    χ²_thresh::AbstractFloat
+    χ²_thresh::T
     interp_R::Union{Function,Dierckx.Spline1D}
     flexible_wavesol::Bool
 
     p_init_cont::Vector{T}
     p_init_line::Vector{T}
-    χ²_init::Vector{T}
 
     # Constructor function
     function CubeFitter(cube::CubeData.DataCube, z::Float64, name::String, n_procs::Int; window_size::Float64=.025, 
@@ -1162,7 +1162,7 @@ struct CubeFitter{T<:AbstractFloat}
         @debug "### This totals to $(n_params_lines-2n_lines) emission line parameters ###"
 
         # Full 3D intensity model array
-        cube_model = cubemodel_empty(shape, n_dust_cont, df_names, line_names)
+        # cube_model = cubemodel_empty(shape, n_dust_cont, df_names, line_names)
         # 2D maps of fitting parameters
         param_maps = parammaps_empty(shape, n_dust_cont, df_names, line_names, line_tied,
             line_profiles, line_flow_tied, line_flow_profiles, voff_tied_key, flow_voff_tied_key, flexible_wavesol,
@@ -1183,22 +1183,26 @@ struct CubeFitter{T<:AbstractFloat}
         @debug "Preparing initial best fit parameter vectors with $(n_params_cont-2n_dust_features) and $(n_params_lines-2n_lines) parameters"
         p_init_cont = zeros(n_params_cont-2n_dust_features)
         p_init_line = zeros(n_params_lines-2n_lines)
-        χ²_init = [0.]
 
         # If a fit has been run previously, read in the file containing the rolling best fit parameters
         # to pick up where the fitter left off seamlessly
-        if isfile(joinpath("output_$name", "spaxel_binaries", "init_fit_parameters.LOKI"))
-            p_init_dict = deserialize(joinpath("output_$name", "spaxel_binaries", "init_fit_parameters.LOKI"))
-            p_init_cont = p_init_dict[:p_init_cont]
-            p_init_line = p_init_dict[:p_init_line]
-            χ²_init = p_init_dict[:chi2_init]
+        if isfile(joinpath("output_$name", "spaxel_binaries", "init_fit_cont.csv")) && isfile(joinpath("output_$name", "spaxel_binaries", "init_fit_line.csv"))
+            p_init_cont = CSV.read(joinpath("output_$name", "spaxel_binaries", "init_fit_cont.csv"), DataFrame)[!, :p]
+            p_init_line = CSV.read(joinpath("output_$name", "spaxel_binaries", "init_fit_line.csv"), DataFrame)[!, :p]
         end
 
-        return new{eltype(χ²_init)}(cube, z, name, n_procs, cube_model, param_maps, param_errs, window_size, plot_spaxels, plot_maps, 
+        # if isfile(joinpath("output_$name", "spaxel_binaries", "init_fit_parameters.LOKI"))
+        #     p_init_dict = deserialize(joinpath("output_$name", "spaxel_binaries", "init_fit_parameters.LOKI"))
+        #     p_init_cont = p_init_dict[:p_init_cont]
+        #     p_init_line = p_init_dict[:p_init_line]
+        #     χ²_init = [p_init_dict[:chi2_init]]
+        # end
+
+        return new{typeof(z), typeof(n_procs)}(cube, z, name, n_procs, param_maps, param_errs, window_size, plot_spaxels, plot_maps, 
             parallel, save_fits, overwrite, extinction_curve, extinction_screen, T_s, T_dc, τ_97, β, n_dust_cont, n_dust_features, df_names, 
             dust_features, n_lines, line_names, line_profiles, line_flow_profiles, lines, n_voff_tied, line_tied, voff_tied_key, voff_tied, n_flow_voff_tied, 
             line_flow_tied, flow_voff_tied_key, flow_voff_tied, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, 
-            cosmo, χ²_thresh, interp_R, flexible_wavesol, p_init_cont, p_init_line, χ²_init)
+            cosmo, χ²_thresh, interp_R, flexible_wavesol, p_init_cont, p_init_line)
     end
 
 end
@@ -2772,8 +2776,17 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where {S<:Integ
     local p_out
     local p_err
 
+    # Skip spaxels with NaNs (post-interpolation)
+    λ = cube_fitter.cube.λ
+    I = cube_fitter.cube.Iλ[spaxel..., :]
+
+    if any(.!isfinite.(I))
+        # @debug "Too many bad datapoints...skipping the fit for spaxel $spaxel"
+        return nothing, nothing
+    end
+
     # Check if the fit has already been performed
-    if !isfile(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).LOKI")) || cube_fitter.overwrite
+    if !isfile(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).csv")) || cube_fitter.overwrite
         
         # Create a local logger for this individual spaxel
         timestamp_logger(logger) = TransformerLogger(logger) do log
@@ -2788,66 +2801,66 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::Tuple{S,S}) where {S<:Integ
 
         with_logger(logger) do
 
-            @debug "PROCESS ID: $(getpid())"
+            @debug """
+            ### PROCESS ID: $(getpid()) ###
+            Memory usage stats:
 
-            # Skip spaxels with NaNs (post-interpolation)
-            λ = cube_fitter.cube.λ
-            I = cube_fitter.cube.Iλ[spaxel..., :]
+            CubeFitter - $(Base.summarysize(cube_fitter) ÷ 10^6) MB
+              Cube - $(Base.summarysize(cube_fitter.cube) ÷ 10^6) MB 
+              ParamMaps - $(Base.summarysize(cube_fitter.param_maps) ÷ 10^6) MB
+              ParamErrs - $(Base.summarysize(cube_fitter.param_errs) ÷ 10^6) MB
+            """
 
-            if any(.!isfinite.(I) .| .!isfinite.(I))
-                @debug "Too many bad datapoints...skipping the fit for spaxel $spaxel"
-                p_out = nothing
-                p_err = nothing
+            # Fit the spaxel
+            σ, popt_c, I_cont, comps_cont, n_free_c, perr_c, covar_c = continuum_fit_spaxel(cube_fitter, spaxel)
+            _, popt_l, I_line, comps_line, n_free_l, perr_l, covar_l = line_fit_spaxel(cube_fitter, spaxel)
 
-            else
+            # Combine the continuum and line models
+            I_model = I_cont .+ I_line
+            comps = merge(comps_cont, comps_line)
 
-                # Fit the spaxel
-                σ, popt_c, I_cont, comps_cont, n_free_c, perr_c, covar_c = continuum_fit_spaxel(cube_fitter, spaxel)
-                _, popt_l, I_line, comps_line, n_free_l, perr_l, covar_l = line_fit_spaxel(cube_fitter, spaxel)
+            # Total free parameters
+            n_free = n_free_c + n_free_l
+            n_data = length(I)
 
-                # Combine the continuum and line models
-                I_model = I_cont .+ I_line
-                comps = merge(comps_cont, comps_line)
+            # Reduced chi^2 of the model
+            χ2red = 1 / (n_data - n_free) * sum((I .- I_model).^2 ./ σ.^2)
 
-                # Total free parameters
-                n_free = n_free_c + n_free_l
-                n_data = length(I)
+            # Add dust feature and line parameters (intensity and SNR)
+            p_dust, p_lines, p_dust_err, p_lines_err = 
+                calculate_extra_parameters(cube_fitter, spaxel, popt_c, popt_l, perr_c, perr_l)
+            p_out = [popt_c; popt_l; p_dust; p_lines; χ2red]
+            p_err = [perr_c; perr_l; p_dust_err; p_lines_err; 0.]
 
-                # Reduced chi^2 of the model
-                χ2red = 1 / (n_data - n_free) * sum((I .- I_model).^2 ./ σ.^2)
-
-                # Add dust feature and line parameters (intensity and SNR)
-                p_dust, p_lines, p_dust_err, p_lines_err = 
-                    calculate_extra_parameters(cube_fitter, spaxel, popt_c, popt_l, perr_c, perr_l)
-                p_out = [popt_c; popt_l; p_dust; p_lines; χ2red]
-                p_err = [perr_c; perr_l; p_dust_err; p_lines_err; 0.]
-
-                # Plot the fit
-                λ0_ln = [ln.λ₀ for ln ∈ cube_fitter.lines]
-                if cube_fitter.plot_spaxels != :none
-                    @debug "Plotting spaxel $spaxel best fit"
-                    plot_spaxel_fit(λ, I, I_model, σ, comps, 
-                        cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, λ0_ln, cube_fitter.line_names, cube_fitter.extinction_screen, 
-                        cube_fitter.z, χ2red, cube_fitter.name, "spaxel_$(spaxel[1])_$(spaxel[2])", backend=cube_fitter.plot_spaxels)
-                end
-
+            # Plot the fit
+            λ0_ln = [ln.λ₀ for ln ∈ cube_fitter.lines]
+            if cube_fitter.plot_spaxels != :none
+                @debug "Plotting spaxel $spaxel best fit"
+                plot_spaxel_fit(λ, I, I_model, σ, comps, 
+                    cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, λ0_ln, cube_fitter.line_names, cube_fitter.extinction_screen, 
+                    cube_fitter.z, χ2red, cube_fitter.name, "spaxel_$(spaxel[1])_$(spaxel[2])", backend=cube_fitter.plot_spaxels)
             end
 
             @debug "Saving results to binary for spaxel $spaxel"
-            # save output as binary file
-            serialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).LOKI"), (p_out=p_out, p_err=p_err))
+            # serialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).LOKI"), (p_out=p_out, p_err=p_err))
+            # save output as csv file
+            CSV.write(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).csv"), DataFrame(p_out=p_out, p_err=p_err))
+
 
         end
 
-    # Otherwise, just grab the results from before
-    else
-        results = deserialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).LOKI"))
-        p_out = results.p_out
-        p_err = results.p_err
+        return p_out, p_err
 
     end
 
+    # Otherwise, just grab the results from before
+    # results = deserialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).LOKI"))
+    results = CSV.read(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).csv"), DataFrame)
+    p_out = results[!, :p_out]
+    p_err = results[!, :p_err]
+
     return p_out, p_err
+
 end
 
 
@@ -2881,7 +2894,7 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
     ######################### DO AN INITIAL FIT WITH THE SUM OF ALL SPAXELS ###################
 
     # Don't repeat if it's already been done
-    if iszero(cube_fitter.χ²_init[1])
+    if all(iszero.(cube_fitter.p_init_cont))
 
         @info "===> Performing initial fit to the sum of all spaxels... <==="
         # Collect the data
@@ -2905,15 +2918,17 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
         # Save the results to the cube fitter
         cube_fitter.p_init_cont[:] .= popt_c_init
         cube_fitter.p_init_line[:] .= popt_l_init
-        cube_fitter.χ²_init[1] = χ2red_init
 
         # Save the results to a file 
         # save running best fit parameters in case the fitting is interrupted
-        serialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_parameters.LOKI"),
-            Dict(:p_init_cont => popt_c_init,
-                 :p_init_line => popt_l_init,
-                 :chi2_init => χ2red_init)
-        )
+        CSV.write(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_cont.csv"), DataFrame(p=popt_c_init))
+        CSV.write(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_line.csv"), DataFrame(p=popt_l_init))
+
+        # serialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_parameters.LOKI"),
+        #     Dict(:p_init_cont => popt_c_init,
+        #          :p_init_line => popt_l_init,
+        #          :chi2_init => χ2red_init)
+        # )
 
         # Plot the fit
         λ0_ln = [ln.λ₀ for ln ∈ cube_fitter.lines]
@@ -3231,21 +3246,21 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
         cube_fitter.param_maps.reduced_χ2[xᵢ, yᵢ] = out_params[xᵢ, yᵢ, pᵢ]
 
         # Set 3D model cube outputs
-        cube_fitter.cube_model.model[xᵢ, yᵢ, :] .= I_model
-        cube_fitter.cube_model.stellar[xᵢ, yᵢ, :] .= comps["stellar"]
-        for i ∈ 1:cube_fitter.n_dust_cont
-            cube_fitter.cube_model.dust_continuum[xᵢ, yᵢ, :, i] .= comps["dust_cont_$i"]
-        end
-        for j ∈ 1:cube_fitter.n_dust_feat
-            cube_fitter.cube_model.dust_features[xᵢ, yᵢ, :, j] .= comps["dust_feat_$j"]
-        end
-        for k ∈ 1:cube_fitter.n_lines
-            cube_fitter.cube_model.lines[xᵢ, yᵢ, :, k] .= comps["line_$k"]
-            if haskey(comps, "line_$(k)_flow")
-                cube_fitter.cube_model.lines[xᵢ, yᵢ, :, k] .+= comps["line_$(k)_flow"]
-            end
-        end
-        cube_fitter.cube_model.extinction[xᵢ, yᵢ, :] .= comps["extinction"]
+        # cube_fitter.cube_model.model[xᵢ, yᵢ, :] .= I_model
+        # cube_fitter.cube_model.stellar[xᵢ, yᵢ, :] .= comps["stellar"]
+        # for i ∈ 1:cube_fitter.n_dust_cont
+        #     cube_fitter.cube_model.dust_continuum[xᵢ, yᵢ, :, i] .= comps["dust_cont_$i"]
+        # end
+        # for j ∈ 1:cube_fitter.n_dust_feat
+        #     cube_fitter.cube_model.dust_features[xᵢ, yᵢ, :, j] .= comps["dust_feat_$j"]
+        # end
+        # for k ∈ 1:cube_fitter.n_lines
+        #     cube_fitter.cube_model.lines[xᵢ, yᵢ, :, k] .= comps["line_$k"]
+        #     if haskey(comps, "line_$(k)_flow")
+        #         cube_fitter.cube_model.lines[xᵢ, yᵢ, :, k] .+= comps["line_$(k)_flow"]
+        #     end
+        # end
+        # cube_fitter.cube_model.extinction[xᵢ, yᵢ, :] .= comps["extinction"]
 
     end
 
@@ -3487,47 +3502,47 @@ function write_fits(cube_fitter::CubeFitter)
     )
 
     # Create the 3D intensity model FITS file
-    FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_3D_model.fits"), "w") do f
+    # FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_3D_model.fits"), "w") do f
 
-        @debug "Writing 3D model FITS HDUs"
+    #     @debug "Writing 3D model FITS HDUs"
 
-        write(f, Vector{Int}())                                                                                 # Primary HDU (empty)
-        write(f, cube_fitter.cube.Iλ; header=hdr, name="DATA")                                                  # Raw data with nans inserted
-        write(f, cube_fitter.cube_model.model; header=hdr, name="MODEL")                                        # Full intensity model
-        write(f, cube_fitter.cube.Iλ .- cube_fitter.cube_model.model; header=hdr, name="RESIDUALS")             # Residuals (data - model)
-        write(f, cube_fitter.cube_model.stellar; header=hdr, name="STELLAR_CONTINUUM")                          # Stellar continuum model
-        for i ∈ 1:size(cube_fitter.cube_model.dust_continuum, 4)
-            write(f, cube_fitter.cube_model.dust_continuum[:, :, :, i]; header=hdr, name="DUST_CONTINUUM_$i")   # Dust continuum models
-        end
-        for (j, df) ∈ enumerate(cube_fitter.df_names)
-            write(f, cube_fitter.cube_model.dust_features[:, :, :, j]; header=hdr, name="$df")                  # Dust feature profiles
-        end
-        for (k, line) ∈ enumerate(cube_fitter.line_names)
-            write(f, cube_fitter.cube_model.lines[:, :, :, k]; header=hdr, name="$line")                        # Emission line profiles
-        end
-        write(f, cube_fitter.cube_model.extinction; header=hdr, name="EXTINCTION")                              # Extinction model
+    #     write(f, Vector{Int}())                                                                                 # Primary HDU (empty)
+    #     write(f, cube_fitter.cube.Iλ; header=hdr, name="DATA")                                                  # Raw data with nans inserted
+    #     write(f, cube_fitter.cube_model.model; header=hdr, name="MODEL")                                        # Full intensity model
+    #     write(f, cube_fitter.cube.Iλ .- cube_fitter.cube_model.model; header=hdr, name="RESIDUALS")             # Residuals (data - model)
+    #     write(f, cube_fitter.cube_model.stellar; header=hdr, name="STELLAR_CONTINUUM")                          # Stellar continuum model
+    #     for i ∈ 1:size(cube_fitter.cube_model.dust_continuum, 4)
+    #         write(f, cube_fitter.cube_model.dust_continuum[:, :, :, i]; header=hdr, name="DUST_CONTINUUM_$i")   # Dust continuum models
+    #     end
+    #     for (j, df) ∈ enumerate(cube_fitter.df_names)
+    #         write(f, cube_fitter.cube_model.dust_features[:, :, :, j]; header=hdr, name="$df")                  # Dust feature profiles
+    #     end
+    #     for (k, line) ∈ enumerate(cube_fitter.line_names)
+    #         write(f, cube_fitter.cube_model.lines[:, :, :, k]; header=hdr, name="$line")                        # Emission line profiles
+    #     end
+    #     write(f, cube_fitter.cube_model.extinction; header=hdr, name="EXTINCTION")                              # Extinction model
         
-        write(f, ["wave_rest", "wave_obs"],                                                                     # 1D Rest frame and observed frame
-                 [cube_fitter.cube.λ, Util.observed_frame(cube_fitter.cube.λ, cube_fitter.z)],                  # wavelength vectors
-              hdutype=TableHDU, name="WAVELENGTH", units=Dict(:wave_rest => "um", :wave_obs => "um"))
+    #     write(f, ["wave_rest", "wave_obs"],                                                                     # 1D Rest frame and observed frame
+    #              [cube_fitter.cube.λ, Util.observed_frame(cube_fitter.cube.λ, cube_fitter.z)],                  # wavelength vectors
+    #           hdutype=TableHDU, name="WAVELENGTH", units=Dict(:wave_rest => "um", :wave_obs => "um"))
 
-        # Insert physical units into the headers of each HDU -> MegaJansky per steradian for all except
-        # the extinction profile, which is a multiplicative constant
-        write_key(f["DATA"], "BUNIT", "MJy/sr")
-        write_key(f["MODEL"], "BUNIT", "MJy/sr")
-        write_key(f["RESIDUALS"], "BUNIT", "MJy/sr")
-        write_key(f["STELLAR_CONTINUUM"], "BUNIT", "MJy/sr")
-        for i ∈ 1:size(cube_fitter.cube_model.dust_continuum, 4)
-            write_key(f["DUST_CONTINUUM_$i"], "BUNIT", "MJy/sr")
-        end
-        for df ∈ cube_fitter.df_names
-            write_key(f["$df"], "BUNIT", "MJy/sr")
-        end
-        for line ∈ cube_fitter.line_names
-            write_key(f["$line"], "BUNIT", "MJy/sr")
-        end
-        write_key(f["EXTINCTION"], "BUNIT", "unitless")
-    end
+    #     # Insert physical units into the headers of each HDU -> MegaJansky per steradian for all except
+    #     # the extinction profile, which is a multiplicative constant
+    #     write_key(f["DATA"], "BUNIT", "MJy/sr")
+    #     write_key(f["MODEL"], "BUNIT", "MJy/sr")
+    #     write_key(f["RESIDUALS"], "BUNIT", "MJy/sr")
+    #     write_key(f["STELLAR_CONTINUUM"], "BUNIT", "MJy/sr")
+    #     for i ∈ 1:size(cube_fitter.cube_model.dust_continuum, 4)
+    #         write_key(f["DUST_CONTINUUM_$i"], "BUNIT", "MJy/sr")
+    #     end
+    #     for df ∈ cube_fitter.df_names
+    #         write_key(f["$df"], "BUNIT", "MJy/sr")
+    #     end
+    #     for line ∈ cube_fitter.line_names
+    #         write_key(f["$line"], "BUNIT", "MJy/sr")
+    #     end
+    #     write_key(f["EXTINCTION"], "BUNIT", "unitless")
+    # end
 
     # Create the 2D parameter map FITS file
     FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_parameter_maps.fits"), "w") do f
