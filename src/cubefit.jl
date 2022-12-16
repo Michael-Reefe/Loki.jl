@@ -1592,7 +1592,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
 
     # Final optimized fit
     I_model, comps = Util.fit_spectrum(λ, popt, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, 
-        cube_fitter.extinction_curve, cube_fitter.extinction_screen, return_components=true)
+        cube_fitter.extinction_curve, cube_fitter.extinction_screen, true)
 
     msg = "######################################################################\n"
     msg *= "################# SPAXEL FIT RESULTS -- CONTINUUM ####################\n"
@@ -1889,9 +1889,9 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; init::
 
     @debug "Beginning Line fitting with Simulated Annealing:"
 
-    # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous rt and max iterations
+    # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations
     res = optimize(p -> _negln_probability(p, λ, Inorm, σnorm, cube_fitter, λ0_ln, priors), 
-       lower_bounds, upper_bounds, p₀, SAMIN(;rt=0.9, nt=5, ns=5, neps=5, verbosity=0), 
+       lower_bounds, upper_bounds, p₀, SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=1e-3/σ_stat^2, x_tol=0.01/σ_stat^2, verbosity=0), 
        Optim.Options(iterations=10^6))
     p₁ = res.minimizer
 
@@ -2122,7 +2122,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; init::
     I_model, comps = Util.fit_line_residuals(λ, popt, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
         cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, cube_fitter.n_flow_voff_tied,
         cube_fitter.flow_voff_tied_key, cube_fitter.line_flow_tied, flow_prof_ln, λ0_ln, 
-        cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, return_components=true)
+        cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, true)
     
     # Renormalize
     I_model = I_model .* N
@@ -3066,16 +3066,12 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
         prog = Progress(length(spaxels); showspeed=true)
         progress_pmap(spaxels, progress=prog) do index
             fit_spax_i(index)
-            # Garbage collection
-            GC.gc()
         end
     else
         prog = Progress(length(spaxels); showspeed=true)
         for index ∈ spaxels
             fit_spax_i(index)
             next!(prog)
-            # Garbage collection
-            GC.gc()
         end
     end
 
@@ -3123,7 +3119,7 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
 
         # End of continuum parameters: recreate the continuum model
         I_cont, comps_c = Util.fit_spectrum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], cube_fitter.n_dust_cont, cube_fitter.n_dust_feat,
-            cube_fitter.extinction_curve, cube_fitter.extinction_screen; return_components=true)
+            cube_fitter.extinction_curve, cube_fitter.extinction_screen, true)
 
         # Tied line velocity offsets
         vᵢ = pᵢ
@@ -3292,7 +3288,7 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
         I_line, comps_l = Util.fit_line_residuals(cube_fitter.cube.λ, out_params[index, vᵢ:pᵢ-1], cube_fitter.n_lines, cube_fitter.n_voff_tied,
             cube_fitter.voff_tied_key, cube_fitter.line_tied, cube_fitter.line_profiles, cube_fitter.n_flow_voff_tied, cube_fitter.flow_voff_tied_key,
             cube_fitter.line_flow_tied, cube_fitter.line_flow_profiles, [ln.λ₀ for ln ∈ cube_fitter.lines], 
-            cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing; return_components=true)
+            cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, true)
 
         # Renormalize
         N = Float64(abs(nanmaximum(cube_fitter.cube.Iλ[index, :])))

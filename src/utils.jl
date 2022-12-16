@@ -521,7 +521,7 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
     addition to the overall fit
 """
 function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_dust_cont::Integer, n_dust_features::Integer,
-    extinction_curve::String, extinction_screen::Bool; return_components::Bool=false)
+    extinction_curve::String, extinction_screen::Bool, return_components::Bool=false)
 
     # Prepare outputs
     comps = Dict{String, Vector{Float64}}()
@@ -567,6 +567,45 @@ function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloa
 end
 
 
+# Multiple dispatch for more efficiency
+function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_dust_cont::Integer, n_dust_features::Integer,
+    extinction_curve::String, extinction_screen::Bool)
+
+    # Prepare outputs
+    contin = zeros(Float64, length(λ))
+
+    # Stellar blackbody continuum (usually at 5000 K)
+    contin .+= params[1] .* Blackbody_ν.(λ, params[2])
+    pᵢ = 3
+
+    # Add dust continua at various temperatures
+    for i ∈ 1:n_dust_cont
+        contin .+= params[pᵢ] .* (9.7 ./ λ).^2 .* Blackbody_ν.(λ, params[pᵢ+1])
+        pᵢ += 2
+    end
+
+    # Add dust features with drude profiles
+    for j ∈ 1:n_dust_features
+        contin .+= Drude.(λ, params[pᵢ:pᵢ+2]...)
+        pᵢ += 3
+    end
+
+    # Extinction 
+    if extinction_curve == "d+"
+        ext_curve = τ_dp.(λ, params[pᵢ+1])
+    elseif extinction_curve == "kvt"
+        ext_curve = τ_kvt.(λ, params[pᵢ+1])
+    else
+        error("Unrecognized extinction curve: $extinction_curve")
+    end
+    contin .*= Extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
+    pᵢ += 2
+
+    return contin
+
+end
+
+
 """
     fit_line_residuals(λ, params, n_lines, n_voff_tied, voff_tied_key, line_tied, line_profiles,
         n_flow_voff_tied, flow_voff_tied_key, line_flow_tied, line_flow_profiles, line_restwave,
@@ -605,7 +644,7 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
     voff_tied_key::Vector{String}, line_tied::Vector{Union{String,Nothing}}, line_profiles::Vector{Symbol}, 
     n_flow_voff_tied::Integer, flow_voff_tied_key::Vector{String}, line_flow_tied::Vector{Union{String,Nothing}},
     line_flow_profiles::Vector{Union{Symbol,Nothing}}, line_restwave::Vector{<:AbstractFloat}, 
-    flexible_wavesol::Bool, tie_voigt_mixing::Bool; return_components::Bool=false)
+    flexible_wavesol::Bool, tie_voigt_mixing::Bool, return_components::Bool=false)
 
     # Prepare outputs
     comps = Dict{String, Vector{Float64}}()
@@ -792,6 +831,194 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
     if return_components
         return contin, comps
     end
+    return contin
+
+end
+
+
+# Multiple dispatch for more efficiency
+function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_lines::Integer, n_voff_tied::Integer, 
+    voff_tied_key::Vector{String}, line_tied::Vector{Union{String,Nothing}}, line_profiles::Vector{Symbol}, 
+    n_flow_voff_tied::Integer, flow_voff_tied_key::Vector{String}, line_flow_tied::Vector{Union{String,Nothing}},
+    line_flow_profiles::Vector{Union{Symbol,Nothing}}, line_restwave::Vector{<:AbstractFloat}, 
+    flexible_wavesol::Bool, tie_voigt_mixing::Bool)
+
+    # Prepare outputs
+    contin = zeros(Float64, length(λ))
+
+    # Skip ahead of the tied velocity offsets of the lines and flow components
+    pᵢ = n_voff_tied + n_flow_voff_tied + 1
+    # If applicable, skip ahead of the tied voigt mixing
+    if tie_voigt_mixing
+        ηᵢ = pᵢ
+        pᵢ += 1
+    end
+
+    # Add emission lines
+    for k ∈ 1:n_lines
+        # Check if voff is tied: if so, use the tied voff parameter, otherwise, use the line's own voff parameter
+        amp = params[pᵢ]
+        if isnothing(line_tied[k])
+            # Unpack the components of the line
+            voff = params[pᵢ+1]
+            fwhm = params[pᵢ+2]
+            if line_profiles[k] == :GaussHermite
+                # Get additional h3, h4 components
+                h3 = params[pᵢ+3]
+                h4 = params[pᵢ+4]
+            elseif line_profiles[k] == :Voigt
+                # Get additional mixing component, either from the tied position or the 
+                # individual position
+                if !tie_voigt_mixing
+                    η = params[pᵢ+3]
+                else
+                    η = params[ηᵢ]
+                end
+            end
+        elseif !isnothing(line_tied[k]) && flexible_wavesol
+            # Find the position of the tied velocity offset that should be used
+            # based on matching the keys in line_tied and voff_tied_key
+            vwhere = findfirst(x -> x == line_tied[k], voff_tied_key)
+            voff_series = params[vwhere]
+            voff_indiv = params[pᵢ+1]
+            # Add velocity shifts of the tied lines and the individual offsets together
+            voff = voff_series + voff_indiv
+            fwhm = params[pᵢ+2]
+            if line_profiles[k] == :GaussHermite
+                # Get additional h3, h4 components
+                h3 = params[pᵢ+3]
+                h4 = params[pᵢ+4]
+            elseif line_profiles[k] == :Voigt
+                # Get additional mixing component, either from the tied position or the 
+                # individual position
+                if !tie_voigt_mixing
+                    η = params[pᵢ+3]
+                else
+                    η = params[ηᵢ]
+                end
+            end
+        else
+            # Find the position of the tied velocity offset that should be used
+            # based on matching the keys in line_tied and voff_tied_key
+            vwhere = findfirst(x -> x == line_tied[k], voff_tied_key)
+            voff = params[vwhere]
+            fwhm = params[pᵢ+1]
+            # (dont add any individual voff components)
+            if line_profiles[k] == :GaussHermite
+                # Get additional h3, h4 components
+                h3 = params[pᵢ+2]
+                h4 = params[pᵢ+3]
+            elseif line_profiles[k] == :Voigt
+                # Get additional mixing component, either from the tied position or the 
+                # individual position
+                if !tie_voigt_mixing
+                    η = params[pᵢ+2]
+                else
+                    η = params[ηᵢ]
+                end
+            end
+        end
+
+        # Convert voff in km/s to mean wavelength in μm
+        mean_μm = Doppler_shift_λ(line_restwave[k], voff)
+        # Convert FWHM from km/s to μm
+        fwhm_μm = Doppler_shift_λ(line_restwave[k], fwhm) - line_restwave[k]
+        # Evaluate line profile
+        if line_profiles[k] == :Gaussian
+            contin .+= Gaussian.(λ, amp, mean_μm, fwhm_μm)
+        elseif line_profiles[k] == :Lorentzian
+            contin .+= Lorentzian.(λ, amp, mean_μm, fwhm_μm)
+        elseif line_profiles[k] == :GaussHermite
+            contin .+= GaussHermite.(λ, amp, mean_μm, fwhm_μm, h3, h4)
+        elseif line_profiles[k] == :Voigt
+            contin .+= Voigt.(λ, amp, mean_μm, fwhm_μm, η)
+        else
+            error("Unrecognized line profile $(line_profiles[k])!")
+        end
+
+        # Advance the parameter vector index -> 3 if untied (or tied + flexible_wavesol) or 2 if tied
+        pᵢ += isnothing(line_tied[k]) || flexible_wavesol ? 3 : 2
+        if line_profiles[k] == :GaussHermite
+            # advance and extra 2 if GaussHermite profile
+            pᵢ += 2
+        elseif line_profiles[k] == :Voigt
+            # advance another extra 1 if untied Voigt profile
+            if !tie_voigt_mixing
+                pᵢ += 1
+            end
+        end
+
+        # Repeat EVERYTHING, minus the flexible_wavesol, for the inflow/outflow components
+        if !isnothing(line_flow_profiles[k])
+            # Parametrize flow amplitude in terms of the default line amplitude times some fractional value
+            # this way, we can constrain the flow_amp parameter to be from (0,1) to ensure the flow amplitude is always
+            # less than the line amplitude
+            flow_amp = amp * params[pᵢ]
+
+            if isnothing(line_flow_tied[k])
+                # Parametrize the flow voff in terms of the default line voff plus some difference value
+                # this way, we can constrain the flow component to be within +/- some range from the line itself
+                flow_voff = voff + params[pᵢ+1]
+                # Parametrize the flow FWHM in terms of the default line FWHM times some fractional value
+                # this way, we can constrain the flow_fwhm parameter to be > 0 to ensure the flow FWHM is always
+                # greater than the line FWHM
+                flow_fwhm = fwhm * params[pᵢ+2]
+                if line_flow_profiles[k] == :GaussHermite
+                    flow_h3 = params[pᵢ+3]
+                    flow_h4 = params[pᵢ+4]
+                elseif line_flow_profiles[k] == :Voigt
+                    if !tie_voigt_mixing
+                        flow_η = params[pᵢ+3]
+                    else
+                        flow_η = params[ηᵢ]
+                    end
+                end
+            else
+                vwhere = findfirst(x -> x == line_flow_tied[k], flow_voff_tied_key)
+                flow_voff = voff + params[n_voff_tied + vwhere]
+                flow_fwhm = fwhm * params[pᵢ+1]
+                if line_flow_profiles[k] == :GaussHermite
+                    flow_h3 = params[pᵢ+2]
+                    flow_h4 = params[pᵢ+3]
+                elseif line_flow_profiles[k] == :Voigt
+                    if !tie_voigt_mixing
+                        flow_η = params[pᵢ+2]
+                    else
+                        flow_η = params[ηᵢ]
+                    end
+                end
+            end
+
+            # Convert voff in km/s to mean wavelength in μm
+            flow_mean_μm = Doppler_shift_λ(line_restwave[k], flow_voff)
+            # Convert FWHM from km/s to μm
+            flow_fwhm_μm = Doppler_shift_λ(line_restwave[k], flow_fwhm) - line_restwave[k]
+            # Evaluate line profile
+            if line_flow_profiles[k] == :Gaussian
+                contin .+= Gaussian.(λ, flow_amp, flow_mean_μm, flow_fwhm_μm)
+            elseif line_flow_profiles[k] == :Lorentzian
+                contin .+= Lorentzian.(λ, flow_amp, flow_mean_μm, flow_fwhm_μm)
+            elseif line_profiles[k] == :GaussHermite
+                contin .+= GaussHermite.(λ, flow_amp, flow_mean_μm, flow_fwhm_μm, flow_h3, flow_h4)
+            elseif line_profiles[k] == :Voigt
+                contin .+= Voigt.(λ, flow_amp, flow_mean_μm, flow_fwhm_μm, flow_η)
+            else
+                error("Unrecognized flow line profile $(line_profiles[k])!")
+            end
+
+            # Advance the parameter vector index by the appropriate amount        
+            pᵢ += isnothing(line_flow_tied[k]) ? 3 : 2
+            if line_flow_profiles[k] == :GaussHermite
+                pᵢ += 2
+            elseif line_flow_profiles[k] == :Voigt
+                if !tie_voigt_mixing
+                    pᵢ += 1
+                end
+            end
+        end
+
+    end
+
     return contin
 
 end
