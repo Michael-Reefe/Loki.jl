@@ -15,6 +15,8 @@ const kB_ERGK::Float64 = 1.380649e-16      # Boltzmann constant in erg/K
 const Bν_1::Float64 = 3.97289e13           # First constant for Planck function, in MJy/sr/μm
 const Bν_2::Float64 = 1.4387752e4          # Second constant for Planck function, in μm*K
 
+const b_Wein::Float64 = 2897.771955        # Wein's law constant of proportionality in μm*K
+
 # Saved Kemper, Vriend, & Tielens (2004) extinction profile
 const kvt_prof::Matrix{Float64} =  [8.0  0.06;
                                     8.2  0.09;
@@ -403,6 +405,17 @@ Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.uto
 """
 function Blackbody_ν(λ::AbstractFloat, Temp::Real)::AbstractFloat
     return Bν_1/λ^3 / (exp(Bν_2/(λ*Temp))-1)
+end
+
+
+"""
+    Wein(Temp)
+
+Return the peak wavelength (in μm) of a Blackbody spectrum at a given temperature `Temp`,
+using Wein's Displacement Law.
+"""
+function Wein(Temp::AbstractFloat)::AbstractFloat
+    return b_Wein / Temp
 end
 
 

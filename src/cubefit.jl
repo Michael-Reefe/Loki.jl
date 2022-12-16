@@ -1,6 +1,6 @@
 module CubeFit
 
-export CubeFitter, fit_cube, continuum_fit_spaxel, line_fit_spaxel, fit_spaxel, plot_parameter_maps, write_fits
+export CubeFitter, fit_cube, continuum_fit_spaxel, line_fit_spaxel, fit_spaxel, fit_stack!, plot_parameter_maps, write_fits
 
 # Parallel computing packages
 using Distributed
@@ -180,7 +180,7 @@ function parse_options()::Dict
     # Read in the options file
     options = TOML.parsefile(joinpath(@__DIR__, "options.toml"))
     options_out = Dict()
-    keylist1 = ["extinction_curve", "extinction_screen", "chi2_threshold", "overwrite", "cosmology"]
+    keylist1 = ["extinction_curve", "extinction_screen", "chi2_threshold", "overwrite", "track_memory", "cosmology"]
     keylist2 = ["h", "omega_m", "omega_K", "omega_r"]
     # Loop through the keys that should be in the file and confirm that they are there
     for key ∈ keylist1 
@@ -203,6 +203,8 @@ function parse_options()::Dict
     @debug "Reduced chi^2 threshold - $(options["chi2_threshold"])"
     options_out[:overwrite] = options["overwrite"]
     @debug "Overwrite old fits? - $(options["overwrite"])"
+    options_out[:track_memory] = options["track_memory"]
+    @debug "Track memory allocations? - $(options["track_memory"])"
 
     # Convert cosmology keys into a proper cosmology object
     options_out[:cosmology] = cosmology(h=options["cosmology"]["h"], 
@@ -933,6 +935,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
     parallel::Bool
     save_fits::Bool
     overwrite::Bool
+    track_memory::Bool
     extinction_curve::String
     extinction_screen::Bool
 
@@ -1169,6 +1172,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
         extinction_screen = options[:extinction_screen]
         χ²_thresh = options[:chi2_threshold]
         overwrite = options[:overwrite]
+        track_memory = options[:track_memory]
         cosmo = options[:cosmology]
 
         # Prepare initial best fit parameter options
@@ -1179,8 +1183,8 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
         # If a fit has been run previously, read in the file containing the rolling best fit parameters
         # to pick up where the fitter left off seamlessly
         if isfile(joinpath("output_$name", "spaxel_binaries", "init_fit_cont.csv")) && isfile(joinpath("output_$name", "spaxel_binaries", "init_fit_line.csv"))
-            p_init_cont = readdlm(joinpath("output_$name", "spaxel_binaries", "init_fit_cont.csv"), ',', Float64, '\n')
-            p_init_line = readdlm(joinpath("output_$name", "spaxel_binaries", "init_fit_line.csv"), ',', Float64, '\n')
+            p_init_cont = readdlm(joinpath("output_$name", "spaxel_binaries", "init_fit_cont.csv"), ',', Float64, '\n')[:, 1]
+            p_init_line = readdlm(joinpath("output_$name", "spaxel_binaries", "init_fit_line.csv"), ',', Float64, '\n')[:, 1]
         end
 
         # if isfile(joinpath("output_$name", "spaxel_binaries", "init_fit_parameters.LOKI"))
@@ -1191,7 +1195,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
         # end
 
         return new{typeof(z), typeof(n_procs)}(cube, z, name, n_procs, window_size, plot_spaxels, plot_maps, 
-            parallel, save_fits, overwrite, extinction_curve, extinction_screen, T_s, T_dc, τ_97, β, n_dust_cont, n_dust_features, df_names, 
+            parallel, save_fits, overwrite, track_memory, extinction_curve, extinction_screen, T_s, T_dc, τ_97, β, n_dust_cont, n_dust_features, df_names, 
             dust_features, n_lines, line_names, line_profiles, line_flow_profiles, lines, n_voff_tied, line_tied, voff_tied_key, voff_tied, n_flow_voff_tied, 
             line_flow_tied, flow_voff_tied_key, flow_voff_tied, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, 
             cosmo, χ²_thresh, interp_R, flexible_wavesol, p_init_cont, p_init_line)
@@ -1317,20 +1321,18 @@ function continuum_cubic_spline(λ::Vector{<:AbstractFloat}, I::Vector{<:Abstrac
     σ_out[mask_lines] .= NaN 
 
     # Interpolate the NaNs
-    if sum(mask_lines) > 0
-        # Make sure the wavelength vector is linear, since it is assumed later in the function
-        diffs = diff(λ)
-        # @assert diffs[1] ≈ diffs[end]
-        Δλ = diffs[1]
+    # Make sure the wavelength vector is linear, since it is assumed later in the function
+    diffs = diff(λ)
+    # @assert diffs[1] ≈ diffs[end]
+    Δλ = diffs[1]
 
-        # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
-        λknots = λ[51]:Δλ*50:λ[end-51]
-        @debug "Performing cubic spline continuum fit with knots at $λknots"
+    # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
+    λknots = λ[51]:Δλ*50:λ[end-51]
+    @debug "Performing cubic spline continuum fit with knots at $λknots"
 
-        # Do a full cubic spline remapping of the data
-        I_out = Spline1D(λ[isfinite.(I_out)], I_out[isfinite.(I_out)], λknots, k=3, bc="extrapolate").(λ)
-        σ_out = Spline1D(λ[isfinite.(σ_out)], σ_out[isfinite.(σ_out)], λknots, k=3, bc="extrapolate").(λ)
-    end  
+    # Do a full cubic spline remapping of the data
+    I_out = Spline1D(λ[isfinite.(I_out)], I_out[isfinite.(I_out)], λknots, k=3, bc="extrapolate").(λ)
+    σ_out = Spline1D(λ[isfinite.(σ_out)], σ_out[isfinite.(σ_out)], λknots, k=3, bc="extrapolate").(λ)
 
     return mask_lines, I_out, σ_out
 end
@@ -1420,7 +1422,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
         @debug "Using initial best fit continuum parameters..."
 
         # Set the parameters to the best parameters
-        p₀ = cube_fitter.p_init_cont
+        p₀ = copy(cube_fitter.p_init_cont)
 
         # scale all flux amplitudes by the difference in medians between spaxels
         scale = nanmedian(I) / nanmedian(Util.Σ(cube_fitter.cube.Iλ, (1,2)))
@@ -1438,11 +1440,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
 
         # Dust feature amplitudes
         for i ∈ 1:cube_fitter.n_dust_feat
-            p₀[pᵢ] *= scale
-            # Make sure the amplitude doesn't exceed the maximum for the given spaxel
-            if p₀[pᵢ] > max_amp
-                p₀[pᵢ] = max_amp
-            end
+            p₀[pᵢ] = clamp(nanmedian(I)/2, 0., Inf)
             pᵢ += 3
         end
 
@@ -1458,7 +1456,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
         A_df = repeat([clamp(nanmedian(I)/2, 0., Inf)], cube_fitter.n_dust_feat)
 
         # Dust continuum amplitudes
-        λ_dc = clamp.(2898 ./ [Ti.value for Ti ∈ cube_fitter.T_dc], minimum(λ), maximum(λ))
+        λ_dc = clamp.([Util.Wein(Ti.value) for Ti ∈ cube_fitter.T_dc], minimum(λ), maximum(λ))
         A_dc = clamp.([_interp_func(λ_dci, λ, I) / Util.Blackbody_ν(λ_dci, T_dci.value) for (λ_dci, T_dci) ∈ zip(λ_dc, cube_fitter.T_dc)] .* 
             (λ_dc ./ 9.7).^2 ./ 5., 0., Inf)
 
@@ -1813,7 +1811,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; init::
         @debug "Using initial best fit line parameters..."
 
         # If so, set the parameters to the previous ones
-        p₀ = cube_fitter.p_init_line
+        p₀ = copy(cube_fitter.p_init_line)
 
     else
 
@@ -1876,8 +1874,6 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; init::
     @debug "Line Parameter labels: \n $param_names"
     @debug "Line starting values: \n $p₀"
     @debug "Line priors: \n $priors"
-
-
 
     lower_bounds = minimum.(priors)
     upper_bounds = maximum.(priors)
@@ -2887,26 +2883,23 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex)
                 @timeit timer_output "writedlm" writedlm(f, [p_out p_err], ',')
             end
 
-            # # save memory allocations & other logistic data to a separate log file
-            # open(joinpath("output_$(cube_fitter.name)", "logs", "mem.spaxel_$(spaxel[1])_$(spaxel[2]).log"), "w") do f
+            if cube_fitter.track_memory
+                # save memory allocations & other logistic data to a separate log file
+                open(joinpath("output_$(cube_fitter.name)", "logs", "mem.spaxel_$(spaxel[1])_$(spaxel[2]).log"), "w") do f
 
-            #     print(f, """
-            #     ### PROCESS ID: $(getpid()) ###
-            #     Memory usage stats:
-            #     CubeFitter - $(Base.summarysize(cube_fitter) ÷ 10^6) MB
-            #       Cube - $(Base.summarysize(cube_fitter.cube) ÷ 10^6) MB 
-            #     """)
+                    print(f, """
+                    ### PROCESS ID: $(getpid()) ###
+                    Memory usage stats:
+                    CubeFitter - $(Base.summarysize(cube_fitter) ÷ 10^6) MB
+                      Cube - $(Base.summarysize(cube_fitter.cube) ÷ 10^6) MB 
+                    """)
 
-            #     print(f, """
-            #     $(InteractiveUtils.varinfo(all=true, imported=true, recursive=true))
-            #     """)
+                    print(f, """
+                    $(InteractiveUtils.varinfo(all=true, imported=true, recursive=true))
+                    """)
 
-            #     print_timer(f, timer_output, sortby=:name)
-            # end
-            # reset_timer!(timer_output)
-
-            if myid() == 2
-                print_timer(timer_output, sortby=:name)
+                    print_timer(f, timer_output, sortby=:name)
+                end
             end
 
         end
@@ -2923,6 +2916,59 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex)
     p_err = results[:, 2]
 
     return p_out, p_err
+
+end
+
+
+"""
+    fit_stack!(cube_fitter)
+
+Perform an initial fit to the sum of all spaxels (the stack) to get an estimate for the initial parameter
+vector to use with all of the individual spaxel fits.  The only input is the CubeFitter object, which is
+modified with the resultant fit parameters.  There is no output.
+"""
+function fit_stack!(cube_fitter::CubeFitter)
+
+    @info "===> Performing initial fit to the sum of all spaxels... <==="
+    # Collect the data
+    λ_init = cube_fitter.cube.λ
+    I_sum_init = Util.Σ(cube_fitter.cube.Iλ, (1,2))
+
+    # Continuum and line fits
+    σ_init, popt_c_init, I_c_init, comps_c_init, n_free_c_init, _, _ = continuum_fit_spaxel(cube_fitter, CartesianIndex(0,0); init=true)
+    _, popt_l_init, I_l_init, comps_l_init, n_free_l_init, _, _ = line_fit_spaxel(cube_fitter, CartesianIndex(0,0); init=true)
+
+    # Get the overall models
+    I_model_init = I_c_init .+ I_l_init
+    comps_init = merge(comps_c_init, comps_l_init)
+
+    n_free_init = n_free_c_init + n_free_l_init
+    n_data_init = length(I_sum_init)
+
+    # Calculate reduce chi^2
+    χ2red_init = 1 / (n_data_init - n_free_init) * sum((I_sum_init .- I_model_init).^2 ./ σ_init.^2)
+
+    # Save the results to the cube fitter
+    cube_fitter.p_init_cont[:] .= popt_c_init
+    cube_fitter.p_init_line[:] .= popt_l_init
+
+    # Save the results to a file 
+    # save running best fit parameters in case the fitting is interrupted
+    open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_cont.csv"), "w") do f
+        writedlm(f, popt_c_init, ',')
+    end
+    open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_line.csv"), "w") do f
+        writedlm(f, popt_l_init, ',')
+    end
+
+    # Plot the fit
+    λ0_ln = [ln.λ₀ for ln ∈ cube_fitter.lines]
+    if cube_fitter.plot_spaxels != :none
+        @debug "Plotting spaxel sum initial fit"
+        plot_spaxel_fit(λ_init, I_sum_init, I_model_init, σ_init, comps_init, 
+            cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, λ0_ln, cube_fitter.line_names, cube_fitter.extinction_screen, 
+            cube_fitter.z, χ2red_init, cube_fitter.name, "initial_sum_fit", backend=cube_fitter.plot_spaxels)
+    end
 
 end
 
@@ -2962,58 +3008,9 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
 
     # Don't repeat if it's already been done
     if all(iszero.(cube_fitter.p_init_cont))
-
-        @info "===> Performing initial fit to the sum of all spaxels... <==="
-        # Collect the data
-        λ_init = cube_fitter.cube.λ
-        I_sum_init = Util.Σ(cube_fitter.cube.Iλ, (1,2))
-
-        # Continuum and line fits
-        σ_init, popt_c_init, I_c_init, comps_c_init, n_free_c_init, _, _ = continuum_fit_spaxel(cube_fitter, CartesianIndex(0,0); init=true)
-        _, popt_l_init, I_l_init, comps_l_init, n_free_l_init, _, _ = line_fit_spaxel(cube_fitter, CartesianIndex(0,0); init=true)
-
-        # Get the overall models
-        I_model_init = I_c_init .+ I_l_init
-        comps_init = merge(comps_c_init, comps_l_init)
-
-        n_free_init = n_free_c_init + n_free_l_init
-        n_data_init = length(I_sum_init)
-
-        # Calculate reduce chi^2
-        χ2red_init = 1 / (n_data_init - n_free_init) * sum((I_sum_init .- I_model_init).^2 ./ σ_init.^2)
-
-        # Save the results to the cube fitter
-        cube_fitter.p_init_cont[:] .= popt_c_init
-        cube_fitter.p_init_line[:] .= popt_l_init
-
-        # Save the results to a file 
-        # save running best fit parameters in case the fitting is interrupted
-        open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_cont.csv"), "w") do f
-            writedlm(f, popt_c_init, ',')
-        end
-        open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_line.csv"), "w") do f
-            writedlm(f, popt_l_init, ',')
-        end
-
-        # serialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_parameters.LOKI"),
-        #     Dict(:p_init_cont => popt_c_init,
-        #          :p_init_line => popt_l_init,
-        #          :chi2_init => χ2red_init)
-        # )
-
-        # Plot the fit
-        λ0_ln = [ln.λ₀ for ln ∈ cube_fitter.lines]
-        if cube_fitter.plot_spaxels != :none
-            @debug "Plotting spaxel sum initial fit"
-            plot_spaxel_fit(λ_init, I_sum_init, I_model_init, σ_init, comps_init, 
-                cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, λ0_ln, cube_fitter.line_names, cube_fitter.extinction_screen, 
-                cube_fitter.z, χ2red_init, cube_fitter.name, "initial_sum_fit", backend=cube_fitter.plot_spaxels)
-        end
-
+        fit_stack!(cube_fitter)
     else
-
         @info "===> Initial fit to the sum of all spaxels has already been performed <==="
-
     end
 
     ##############################################################################################
@@ -3428,7 +3425,7 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
     flatdata = filtered[isfinite.(filtered)]
     vmin = length(flatdata) > 0 ? quantile(flatdata, 0.01) : 0.0
     vmax = length(flatdata) > 0 ? quantile(flatdata, 0.99) : 0.0
-    cdata = ax.imshow(filtered', origin=:lower, cmap=:magma, vmin=vmin, vmax=vmax)
+    cdata = ax.imshow(filtered', origin=:lower, cmap=:cubehelix, vmin=vmin, vmax=vmax)
     ax.axis(:off)
 
     # Angular and physical scalebars

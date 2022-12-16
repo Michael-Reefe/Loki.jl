@@ -1,4 +1,5 @@
 using Distributed
+using TimerOutputs
 
 procs = addprocs(maximum([0, Sys.CPU_THREADS]))
 n_procs = length(procs)
@@ -13,6 +14,7 @@ end
 # using Loki
 # n_procs = 1
 
+to = TimerOutput()
 channel = 2
 
 # Load in data
@@ -35,4 +37,4 @@ cube_fitter = CubeFitter(obs.channels[channel], obs.z, obs.name * "_ch$(channel)
     parallel=true, plot_spaxels=:pyplot, plot_maps=true, save_fits=true)
 
 # Perform the Levenberg-Marquardt least-squares fitting
-cube_fitter = @time fit_cube(cube_fitter)
+cube_fitter = @timeit to "Full Fitting Procedure for Channel $channel" fit_cube(cube_fitter)

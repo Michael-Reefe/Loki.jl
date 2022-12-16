@@ -364,7 +364,7 @@ A plotting utility function for 2D maps of the raw intensity / error
     Set to nothing to not take the logarithm.
 - `logₑ::Union{Integer,Nothing}=nothing`: The base of the logarithm to take for the error data. 
     Set to nothing to not take the logarithm.
-- `colormap::Symbol=:magma`: Matplotlib colormap for the data.
+- `colormap::Symbol=:cubehelix`: Matplotlib colormap for the data.
 - `name::Union{String,Nothing}=nothing`: Name to put in the title of the plot.
 - `slice::Union{Integer,Nothing}=nothing`: Index along the wavelength axis to plot. 
     If nothing, sums the data along the wavelength axis.
@@ -375,7 +375,7 @@ A plotting utility function for 2D maps of the raw intensity / error
 See also [`DataCube`](@ref), [`plot_1d`](@ref)
 """
 function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=true, logᵢ::Union{Integer,Nothing}=10,
-    logₑ::Union{Integer,Nothing}=nothing, colormap::Symbol=:magma, name::Union{String,Nothing}=nothing, 
+    logₑ::Union{Integer,Nothing}=nothing, colormap::Symbol=:cubehelix, name::Union{String,Nothing}=nothing, 
     slice::Union{Integer,Nothing}=nothing, z::Union{AbstractFloat,Nothing}=nothing, marker::Union{Tuple{<:Real,<:Real},Nothing}=nothing)
 
     @debug "Plotting 2D intensity/error map for cube with channel $(cube.channel), band $(cube.band)"
