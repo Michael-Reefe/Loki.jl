@@ -2093,19 +2093,16 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; init::
     # Create a `config` structure
     config = CMPFit.Config()
 
-    # res = cmpfit(λ, Inorm, σnorm, (x, p) -> Util.fit_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
-    #     cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, cube_fitter.n_flow_voff_tied, cube_fitter.flow_voff_tied_key,
-    #     cube_fitter.line_flow_tied, flow_prof_ln, λ0_ln, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing), p₁, 
-    #     parinfo=parinfo, config=config)
+    res = cmpfit(λ, Inorm, σnorm, (x, p) -> Util.fit_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
+        cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, cube_fitter.n_flow_voff_tied, cube_fitter.flow_voff_tied_key,
+        cube_fitter.line_flow_tied, flow_prof_ln, λ0_ln, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing), p₁, 
+        parinfo=parinfo, config=config)
 
 
     # Get the results
-    # popt = res.param
-    # perr = res.perror
-    # covar = res.covar
-    popt = p₁
-    perr = zeros(length(p₁))
-    covar = zeros(length(p₁), length(p₁))
+    popt = res.param
+    perr = res.perror
+    covar = res.covar
 
     # Count free parameters
     n_free = 0
