@@ -1,6 +1,7 @@
 test/**
 !test/test_driver*.jl
 src/idl_data*
+Manifest.toml
 
 # vscode
 .vscode/*

@@ -87,6 +87,7 @@ include("cubedata.jl")
 
 const date_format = "yyyy-mm-dd HH:MM:SS"
 const timer_output = TimerOutput()
+const file_lock = ReentrantLock()
 
 
 """
@@ -180,7 +181,7 @@ function parse_options()::Dict
     # Read in the options file
     options = TOML.parsefile(joinpath(@__DIR__, "options.toml"))
     options_out = Dict()
-    keylist1 = ["extinction_curve", "extinction_screen", "chi2_threshold", "overwrite", "track_memory", "cosmology"]
+    keylist1 = ["extinction_curve", "extinction_screen", "chi2_threshold", "overwrite", "track_memory", "track_convergence", "cosmology"]
     keylist2 = ["h", "omega_m", "omega_K", "omega_r"]
     # Loop through the keys that should be in the file and confirm that they are there
     for key ∈ keylist1 
@@ -205,6 +206,8 @@ function parse_options()::Dict
     @debug "Overwrite old fits? - $(options["overwrite"])"
     options_out[:track_memory] = options["track_memory"]
     @debug "Track memory allocations? - $(options["track_memory"])"
+    options_out[:track_convergence] = options["track_convergence"]
+    @debug "Track SAMIN convergence? - $(options["track_convergence"])"
 
     # Convert cosmology keys into a proper cosmology object
     options_out[:cosmology] = cosmology(h=options["cosmology"]["h"], 
@@ -936,6 +939,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
     save_fits::Bool
     overwrite::Bool
     track_memory::Bool
+    track_convergence::Bool
     extinction_curve::String
     extinction_screen::Bool
 
@@ -1173,6 +1177,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
         χ²_thresh = options[:chi2_threshold]
         overwrite = options[:overwrite]
         track_memory = options[:track_memory]
+        track_convergence = options[:track_convergence]
         cosmo = options[:cosmology]
 
         # Prepare initial best fit parameter options
@@ -1195,8 +1200,9 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
         # end
 
         return new{typeof(z), typeof(n_procs)}(cube, z, name, n_procs, window_size, plot_spaxels, plot_maps, 
-            parallel, save_fits, overwrite, track_memory, extinction_curve, extinction_screen, T_s, T_dc, τ_97, β, n_dust_cont, n_dust_features, df_names, 
-            dust_features, n_lines, line_names, line_profiles, line_flow_profiles, lines, n_voff_tied, line_tied, voff_tied_key, voff_tied, n_flow_voff_tied, 
+            parallel, save_fits, overwrite, track_memory, track_convergence, extinction_curve, extinction_screen, 
+            T_s, T_dc, τ_97, β, n_dust_cont, n_dust_features, df_names, dust_features, n_lines, line_names, line_profiles, 
+            line_flow_profiles, lines, n_voff_tied, line_tied, voff_tied_key, voff_tied, n_flow_voff_tied, 
             line_flow_tied, flow_voff_tied_key, flow_voff_tied, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, 
             cosmo, χ²_thresh, interp_R, flexible_wavesol, p_init_cont, p_init_line)
     end
@@ -1885,9 +1891,22 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; init::
 
     # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous rt and max iterations
     res = optimize(p -> _negln_probability(p, λ, Inorm, σnorm, cube_fitter, λ0_ln, priors), 
-                   lower_bounds, upper_bounds, p₀, SAMIN(;rt=0.9, nt=5, ns=5, neps=5, verbosity=0))
-
+       lower_bounds, upper_bounds, p₀, SAMIN(;rt=0.9, nt=5, ns=5, neps=5, verbosity=0), 
+       Optim.Options(iterations=10^6))
     p₁ = res.minimizer
+
+    if cube_fitter.track_convergence
+        global file_lock
+        lock(file_lock) do 
+            open(joinpath("output_$(cube_fitter.name)", "loki.convergence.log"), "a") do conv
+                redirect_stdout(conv) do
+                    println("Spaxel ($(spaxel[1]),$(spaxel[2])) on worker $(myid()):")
+                    println(res)
+                    println("-------------------------------------------------------")
+                end
+            end
+        end
+    end
 
     @debug "Refining Line best fit with Levenberg-Marquardt:"
 
@@ -2074,15 +2093,19 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; init::
     # Create a `config` structure
     config = CMPFit.Config()
 
-    res = cmpfit(λ, Inorm, σnorm, (x, p) -> Util.fit_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
-        cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, cube_fitter.n_flow_voff_tied, cube_fitter.flow_voff_tied_key,
-        cube_fitter.line_flow_tied, flow_prof_ln, λ0_ln, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing), p₁, 
-        parinfo=parinfo, config=config)
+    # res = cmpfit(λ, Inorm, σnorm, (x, p) -> Util.fit_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
+    #     cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, cube_fitter.n_flow_voff_tied, cube_fitter.flow_voff_tied_key,
+    #     cube_fitter.line_flow_tied, flow_prof_ln, λ0_ln, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing), p₁, 
+    #     parinfo=parinfo, config=config)
+
 
     # Get the results
-    popt = res.param
-    perr = res.perror
-    covar = res.covar
+    # popt = res.param
+    # perr = res.perror
+    # covar = res.covar
+    popt = p₁
+    perr = zeros(length(p₁))
+    covar = zeros(length(p₁), length(p₁))
 
     # Count free parameters
     n_free = 0
@@ -3422,9 +3445,9 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
     fig = plt.figure()
     ax = plt.subplot()
     # Need to filter out any NaNs in order to use quantile
-    flatdata = filtered[isfinite.(filtered)]
-    vmin = length(flatdata) > 0 ? quantile(flatdata, 0.01) : 0.0
-    vmax = length(flatdata) > 0 ? quantile(flatdata, 0.99) : 0.0
+    # flatdata = filtered[isfinite.(filtered)]
+    vmin = sum(isfinite.(filtered)) > 0 ? nanminimum(filtered) : 0.0
+    vmax = sum(isfinite.(filtered)) > 0 ? nanmaximum(filtered) : 0.0
     cdata = ax.imshow(filtered', origin=:lower, cmap=:cubehelix, vmin=vmin, vmax=vmax)
     ax.axis(:off)
 
