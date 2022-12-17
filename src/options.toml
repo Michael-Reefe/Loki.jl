@@ -2,6 +2,7 @@ chi2_threshold = 3.0
 overwrite = false
 track_memory = false
 track_convergence = true
+make_movies = true
 
 extinction_curve = "kvt"
 extinction_screen = false

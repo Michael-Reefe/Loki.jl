@@ -48,8 +48,8 @@ using PyCall
 const plt::PyObject = PyNULL()
 const py_anchored_artists::PyObject = PyNULL()
 const py_ticker::PyObject = PyNULL()
+const py_animation::PyObject = PyNULL()
 
-# MATPLOTLIB SETTINGS TO MAKE PLOTS LOOK PRETTY :)
 const SMALL::UInt8 = 12
 const MED::UInt8 = 14
 const BIG::UInt8 = 16
@@ -57,10 +57,11 @@ const BIG::UInt8 = 16
 function __init__()
     # Import pyplot
     copy!(plt, pyimport_conda("matplotlib.pyplot", "matplotlib"))
-    # Import matplotlib's anchored_artists package for scale bars
+    # Import matplotlib submodules for nice plots
     copy!(py_anchored_artists, pyimport_conda("mpl_toolkits.axes_grid1.anchored_artists", "matplotlib"))
     copy!(py_ticker, pyimport_conda("matplotlib.ticker", "matplotlib"))
-
+    copy!(py_animation, pyimport_conda("matplotlib.animation", "matplotlib"))
+    # Matplotlib settings to make plots look pretty :)
     plt.switch_backend("Agg")
     plt.rc("font", size=MED)          # controls default text sizes
     plt.rc("axes", titlesize=MED)     # fontsize of the axes title
@@ -101,7 +102,7 @@ being fit.
 - `z::AbstractFloat`: The redshift of the object to be fit
 - `channel::Integer`: The channel of the fit
 """
-function parse_resolving(z::AbstractFloat, channel::Integer)::Dierckx.Spline1D
+function parse_resolving(z::AbstractFloat, channel::Integer)::Function
 
     @debug "Parsing MRS resoling power from resolving_mrs.csv for channel $channel"
 
@@ -155,11 +156,10 @@ function parse_resolving(z::AbstractFloat, channel::Integer)::Dierckx.Spline1D
         region = wave_left[i] .≤ wave .≤ wave_right[i]
         R[region] .= movmean(R, 10)[region]
     end
-    # Shift to the rest frame
-    wave = Util.rest_frame(wave, z)
 
-    # Create a linear interpolation function so we can evaluate it at the points of interest for our data
-    interp_R = Spline1D(wave, R, k=1)
+    # Create a linear interpolation function so we can evaluate it at the points of interest for our data,
+    # corrected to be in the rest frame
+    interp_R = wi -> Spline1D(wave, R, k=1)(Util.observed_frame(wi, z))
     
     return interp_R
 end
@@ -181,7 +181,8 @@ function parse_options()::Dict
     # Read in the options file
     options = TOML.parsefile(joinpath(@__DIR__, "options.toml"))
     options_out = Dict()
-    keylist1 = ["extinction_curve", "extinction_screen", "chi2_threshold", "overwrite", "track_memory", "track_convergence", "cosmology"]
+    keylist1 = ["extinction_curve", "extinction_screen", "chi2_threshold", "overwrite", "track_memory", "track_convergence", 
+                "make_movies", "cosmology"]
     keylist2 = ["h", "omega_m", "omega_K", "omega_r"]
     # Loop through the keys that should be in the file and confirm that they are there
     for key ∈ keylist1 
@@ -208,6 +209,8 @@ function parse_options()::Dict
     @debug "Track memory allocations? - $(options["track_memory"])"
     options_out[:track_convergence] = options["track_convergence"]
     @debug "Track SAMIN convergence? - $(options["track_convergence"])"
+    options_out[:make_movies] = options["make_movies"]
+    @debug "Make movies? - $(options["make_movies"])"
 
     # Convert cosmology keys into a proper cosmology object
     options_out[:cosmology] = cosmology(h=options["cosmology"]["h"], 
@@ -325,10 +328,10 @@ This deals purely with emission line options.
 
 # Arguments
 - `channel::Integer`: The MIRI channel that is being fit
-- `interp_R::Dierckx.Spline1D`: The MRS resolving power interpolation function, as a function of rest frame wavelength
+- `interp_R::Function`: The MRS resolving power interpolation function, as a function of rest frame wavelength
 - `λ::Vector{<:AbstractFloat}`: The rest frame wavelength vector of the spectrum being fit
 """
-function parse_lines(channel::Integer, interp_R::Dierckx.Spline1D, λ::Vector{<:AbstractFloat})
+function parse_lines(channel::Integer, interp_R::Function, λ::Vector{<:AbstractFloat})
 
     @debug """\n
     Parsing lines file
@@ -874,6 +877,9 @@ The actual fitting functions (`fit_spaxel` and `fit_cube`) require an instance o
 - `save_fits::Bool=true`: Whether or not to save the final best-fit models and parameters as FITS files
 Read from the options files:
 - `overwrite::Bool`: Whether or not to overwrite old fits of spaxels when rerunning
+- `track_memory::Bool`: Whether or not to save diagnostic files showing memory usage of the program
+- `track_convergence::Bool`: Whether or not to save diagnostic files showing convergence of line fitting for each spaxel
+- `make_movies::Bool`: Whether or not to save mp4 files of the final model
 - `extinction_curve::String`: The type of extinction curve being used, either `"kvt"` or `"d+"`
 - `extinction_screen::Bool`: Whether or not the extinction is modeled as a screen
 - `T_s::Param.Parameter`: The stellar temperature parameter
@@ -905,7 +911,7 @@ Read from the options files:
 - `cosmology::Cosmology.AbstractCosmology`: The Cosmology, used solely to create physical scale bars on the 2D parameter plots
 - `χ²_thresh::AbstractFloat`: The threshold for reduced χ² values, below which the best fit parameters for a given
     row will be set
-- `interp_R::Union{Function,Dierckx.Spline1D}`: Interpolation function for the instrumental resolution as a function of wavelength
+- `interp_R::Function`: Interpolation function for the instrumental resolution as a function of wavelength
 - `flexible_wavesol::Bool`: Whether or not to allow small variations in the velocity offsets even when tied, to account
     for a bad wavelength solution
 - `p_best_cont::SharedArray{T}`: A rolling collection of best fit continuum parameters for the best fitting spaxels
@@ -940,6 +946,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
     overwrite::Bool
     track_memory::Bool
     track_convergence::Bool
+    make_movies::Bool
     extinction_curve::String
     extinction_screen::Bool
 
@@ -983,7 +990,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
     # Rolling best fit options
     cosmology::Cosmology.AbstractCosmology
     χ²_thresh::T
-    interp_R::Union{Function,Dierckx.Spline1D}
+    interp_R::Function
     flexible_wavesol::Bool
 
     p_init_cont::Vector{T}
@@ -1178,6 +1185,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
         overwrite = options[:overwrite]
         track_memory = options[:track_memory]
         track_convergence = options[:track_convergence]
+        make_movies = options[:make_movies]
         cosmo = options[:cosmology]
 
         # Prepare initial best fit parameter options
@@ -1200,7 +1208,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
         # end
 
         return new{typeof(z), typeof(n_procs)}(cube, z, name, n_procs, window_size, plot_spaxels, plot_maps, 
-            parallel, save_fits, overwrite, track_memory, track_convergence, extinction_curve, extinction_screen, 
+            parallel, save_fits, overwrite, track_memory, track_convergence, make_movies, extinction_curve, extinction_screen, 
             T_s, T_dc, τ_97, β, n_dust_cont, n_dust_features, df_names, dust_features, n_lines, line_names, line_profiles, 
             line_flow_profiles, lines, n_voff_tied, line_tied, voff_tied_key, voff_tied, n_flow_voff_tied, 
             line_flow_tied, flow_voff_tied_key, flow_voff_tied, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, 
@@ -3369,6 +3377,11 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
         # rm("output_$(cube_fitter.name)/spaxel_binaries", recursive=true)
     end
 
+    if cube_fitter.make_movies
+        @info "===> Writing MP4 movies... <==="
+        make_movie(cube_fitter, cube_model)
+    end
+
     @info """\n
     #############################################################################
     ################################### Done!! ##################################
@@ -3383,7 +3396,8 @@ end
 
 
 """
-    plot_parameter_map(data, name, name_i, Ω, z, cosmo; snr_filter=snr_filter, snr_thresh=snr_thresh)
+    plot_parameter_map(data, name, name_i, Ω, z, cosmo; snr_filter=snr_filter, snr_thresh=snr_thresh,
+        cmap=cmap)
 
 Plotting function for 2D parameter maps which are output by `fit_cube`
 
@@ -3397,39 +3411,55 @@ Plotting function for 2D parameter maps which are output by `fit_cube`
 - `snr_filter::Matrix{Float64}=Matrix{Float64}(undef,0,0)`: A 2D array of S/N values to
     be used to filter out certain spaxels from being plotted - must be the same size as `data` to filter
 - `snr_thresh::Float64=3.`: The S/N threshold below which to cut out any spaxels using the values in snr_filter
+- `cmap::Symbol=:cubehelix`: The colormap used in the plot, defaults to the cubehelix map
 """
 function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String, Ω::Float64, z::Float64, 
-    cosmo::Cosmology.AbstractCosmology; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, snr_thresh::Float64=3.)
+    cosmo::Cosmology.AbstractCosmology; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, snr_thresh::Float64=1.,
+    cmap::Symbol=:cubehelix)
 
     # I know this is ugly but I couldn't figure out a better way to do it lmao
     if occursin("amp", String(name_i))
         bunit = "\$\\log_{10}(I / \$ erg s\$^{-1}\$ cm\$^{-2}\$ Hz\$^{-1}\$ sr\$^{-1})\$"
+        small = 0.5
     elseif occursin("temp", String(name_i))
         bunit = "\$T\$ (K)"
+        small = 5
     elseif occursin("fwhm", String(name_i)) && occursin("PAH", String(name_i))
         bunit = "FWHM (\$\\mu\$m)"
+        small = 0.01
     elseif occursin("fwhm", String(name_i)) && !occursin("PAH", String(name_i))
         bunit = "FWHM (km s\$^{-1}\$)"
+        small = 10
     elseif occursin("mean", String(name_i))
         bunit = "\$\\mu\$ (\$\\mu\$m)"
+        small = 0.01
     elseif occursin("voff", String(name_i))
         bunit = "\$v_{\\rm off}\$ (km s\$^{-1}\$)"
+        small = 10
     elseif occursin("SNR", String(name_i))
         bunit = "\$S/N\$"
+        small = 1
     elseif occursin("beta", String(name_i))
         bunit = "\$\\beta\$"
+        small = 0
     elseif occursin("tau", String(name_i))
         bunit = "\$\\tau_{9.7}\$"
+        small = 0
     elseif occursin("intI", String(name_i))
         bunit = "\$\\log_{10}(I /\$ erg s\$^{-1}\$ cm\$^{-2}\$ sr\$^{-1}\$)"
+        small = 0.5
     elseif occursin("chi2", String(name_i))
         bunit = "\$\\tilde{\\chi}^2\$"
+        small = 0.1
     elseif occursin("h3", String(name_i))
         bunit = "\$h_3\$"
+        small = 0.01
     elseif occursin("h4", String(name_i))
         bunit = "\$h_4\$"
+        small = 0.01
     elseif occursin("mixing", String(name_i))
         bunit = "\$\\eta\$"
+        small = 0
     end
 
     @debug "Plotting 2D map of $name_i with units $bunit"
@@ -3443,10 +3473,10 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
     fig = plt.figure()
     ax = plt.subplot()
     # Need to filter out any NaNs in order to use quantile
-    # flatdata = filtered[isfinite.(filtered)]
-    vmin = sum(isfinite.(filtered)) > 0 ? nanminimum(filtered) : 0.0
-    vmax = sum(isfinite.(filtered)) > 0 ? nanmaximum(filtered) : 0.0
-    cdata = ax.imshow(filtered', origin=:lower, cmap=:cubehelix, vmin=vmin, vmax=vmax)
+    flatdata = filtered[isfinite.(filtered)]
+    vmin = length(flatdata) > 0 ? quantile(flatdata, 0.01) - small : 0.0
+    vmax = length(flatdata) > 0 ? quantile(flatdata, 0.99) + small : 0.0
+    cdata = ax.imshow(filtered', origin=:lower, cmap=cmap, vmin=vmin, vmax=vmax)
     ax.axis(:off)
 
     # Angular and physical scalebars
@@ -3485,7 +3515,7 @@ and creating 2D maps of them.
 - `param_maps::ParamMaps`: The ParamMaps object containing the parameter values
 - `snr_thresh::Real`: The S/N threshold to be used when filtering the parameter maps by S/N, for those applicable
 """
-function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr_thresh::Real=3.)
+function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr_thresh::Real=1.)
 
     # Iterate over model parameters and make 2D maps
     @debug "Using solid angle $(cube_fitter.cube.Ω), redshift $(cube_fitter.z), cosmology $(cube_fitter.cosmology)"
@@ -3551,6 +3581,75 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
     data = param_maps.reduced_χ2
     name_i = "reduced_chi2"
     plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology)
+
+end
+
+
+function make_movie(cube_fitter::CubeFitter, cube_model::CubeModel; cmap::Symbol=:cubehelix)
+
+    # Import astropy's WCS module to work with matplotlib
+    py_wcs = pyimport_conda("astropy.wcs", "astropy")
+
+    # Get WCS transformation as a python object
+    cube_wcs = py_wcs.WCS(naxis=2)
+    cube_wcs.wcs.cdelt = cube_fitter.cube.wcs.cdelt[1:2]
+    cube_wcs.wcs.ctype = cube_fitter.cube.wcs.ctype[1:2]
+    cube_wcs.wcs.crpix = cube_fitter.cube.wcs.crpix[1:2]
+    cube_wcs.wcs.crval = cube_fitter.cube.wcs.crval[1:2]
+    cube_wcs.wcs.cunit = cube_fitter.cube.wcs.cunit[1:2]
+    cube_wcs.wcs.pc = cube_fitter.cube.wcs.pc[1:2, 1:2]
+
+    for (full_data, title) ∈ zip([cube_fitter.cube.Iλ, cube_model.model], ["DATA", "MODEL"])
+
+        # Writer using FFMpeg to create an mp4 file
+        metadata = Dict(:title => title, :artist => "LOKI", :fps => 24)
+        writer = py_animation.FFMpegWriter(fps=24, metadata=metadata)
+
+        fig = plt.figure()
+        gs = fig.add_gridspec(ncols=20,  nrows=10)
+        ax1 = fig.add_subplot(py"$(gs)[0:8, 0:18]", projection=cube_wcs)
+        ax2 = fig.add_subplot(py"$(gs)[9:10, :]")
+        ax3 = fig.add_subplot(py"$(gs)[0:8, 18:19]")
+
+        # First wavelength slice of the model
+        wave_rest = cube_fitter.cube.λ
+        data = full_data[:, :, 1]
+
+        # Get average along the wavelength dimension
+        datasum = Util.Σ(full_data, 3)
+        dataavg = datasum ./ size(full_data, 3)
+        flatavg = dataavg[isfinite.(dataavg)]
+
+        # Plot the first slice
+        image = ax1.imshow(data', origin=:lower, cmap=cmap, vmin=quantile(flatavg, 0.01), vmax=quantile(flatavg, 0.99))
+        ax1.set_xlabel(" ")
+        ax1.set_ylabel(" ")
+        # Add colorbar on the side
+        plt.colorbar(image, cax=ax3, label="\$I_{\\nu}\$ (MJy sr\$^{-1}\$)")
+        # Prepare the bottom 1D plot that slides along the wavelength 
+        ax2.hlines(10, wave_rest[1], wave_rest[end], color="k")
+        ln, = ax2.plot(wave_rest[1], 24, "|", ms=20, color="y")
+        ax2.axis(:off)
+        ax2.set_ylim(-10, 24)
+        ax2.text(wave_rest[length(wave_rest) ÷ 2], -8, "\$\\lambda_{\\rm rest}\$ (\$\\AA\$)", ha="center", va="center")
+        # Annotate with wavelength value at the current time
+        time_text = ax2.text(wave_rest[length(wave_rest) ÷ 2], 20, (@sprintf "%.3f" wave_rest[1]), ha="center", va="center")
+        ax2.text(wave_rest[1], -8, (@sprintf "%.3f" wave_rest[1]), ha="center", va="center")
+        ax2.text(wave_rest[end], -8, (@sprintf "%.3f" wave_rest[end]), ha="center", va="center")
+
+        output_file = joinpath("output_$(cube_fitter.name)", "$title.mp4")
+        writer.setup(fig, output_file, dpi=300)
+        for i ∈ 1:(size(full_data, 3) ÷ 5)
+            data_i = full_data[:, :, 5i] 
+            image.set_array(data_i')
+            ln.set_data(wave_rest[5i], 24)
+            time_text.set_text(@sprintf "%.3f" wave_rest[5i])
+            writer.grab_frame()
+        end
+        writer.finish()
+        plt.close()
+
+    end
 
 end
 
