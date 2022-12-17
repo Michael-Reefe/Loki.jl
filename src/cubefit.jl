@@ -3378,7 +3378,7 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
     end
 
     if cube_fitter.make_movies
-        @info "===> Writing MP4 movies... <==="
+        @info "===> Writing MP4 movies... (this may take a while) <==="
         make_movie(cube_fitter, cube_model)
     end
 
@@ -3602,8 +3602,8 @@ function make_movie(cube_fitter::CubeFitter, cube_model::CubeModel; cmap::Symbol
     for (full_data, title) ∈ zip([cube_fitter.cube.Iλ, cube_model.model], ["DATA", "MODEL"])
 
         # Writer using FFMpeg to create an mp4 file
-        metadata = Dict(:title => title, :artist => "LOKI", :fps => 24)
-        writer = py_animation.FFMpegWriter(fps=24, metadata=metadata)
+        metadata = Dict(:title => title, :artist => "LOKI", :fps => 60)
+        writer = py_animation.FFMpegWriter(fps=60, metadata=metadata)
 
         fig = plt.figure()
         gs = fig.add_gridspec(ncols=20,  nrows=10)
@@ -3639,11 +3639,11 @@ function make_movie(cube_fitter::CubeFitter, cube_model::CubeModel; cmap::Symbol
 
         output_file = joinpath("output_$(cube_fitter.name)", "$title.mp4")
         writer.setup(fig, output_file, dpi=300)
-        for i ∈ 1:(size(full_data, 3) ÷ 5)
-            data_i = full_data[:, :, 5i] 
+        for i ∈ 1:size(full_data, 3)
+            data_i = full_data[:, :, i] 
             image.set_array(data_i')
-            ln.set_data(wave_rest[5i], 24)
-            time_text.set_text(@sprintf "%.3f" wave_rest[5i])
+            ln.set_data(wave_rest[i], 24)
+            time_text.set_text(@sprintf "%.3f" wave_rest[i])
             writer.grab_frame()
         end
         writer.finish()
