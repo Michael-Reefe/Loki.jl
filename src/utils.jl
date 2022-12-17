@@ -361,7 +361,7 @@ julia> ln_likelihood([1.1, 1.9, 3.2], [1., 2., 3.], [0.1, 0.1, 0.1])
 """
 function ln_likelihood(data::Vector{<:AbstractFloat}, model::Vector{<:AbstractFloat}, 
     err::Vector{<:AbstractFloat})::AbstractFloat
-    return -0.5 * sum((data .- model).^2 ./ err.^2 .+ log.(2π .* err.^2))
+    return -0.5 * sum(@. (data - model)^2 / err^2 + log(2π * err^2))
 end
 
 
@@ -521,7 +521,7 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
     addition to the overall fit
 """
 function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_dust_cont::Integer, n_dust_features::Integer,
-    extinction_curve::String, extinction_screen::Bool, return_components::Bool=false)
+    extinction_curve::String, extinction_screen::Bool, return_components::Bool)
 
     # Prepare outputs
     comps = Dict{String, Vector{Float64}}()
@@ -644,7 +644,7 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
     voff_tied_key::Vector{String}, line_tied::Vector{Union{String,Nothing}}, line_profiles::Vector{Symbol}, 
     n_flow_voff_tied::Integer, flow_voff_tied_key::Vector{String}, line_flow_tied::Vector{Union{String,Nothing}},
     line_flow_profiles::Vector{Union{Symbol,Nothing}}, line_restwave::Vector{<:AbstractFloat}, 
-    flexible_wavesol::Bool, tie_voigt_mixing::Bool, return_components::Bool=false)
+    flexible_wavesol::Bool, tie_voigt_mixing::Bool, return_components::Bool)
 
     # Prepare outputs
     comps = Dict{String, Vector{Float64}}()

@@ -1890,8 +1890,11 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; init::
     @debug "Beginning Line fitting with Simulated Annealing:"
 
     # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations
-    res = optimize(p -> _negln_probability(p, λ, Inorm, σnorm, cube_fitter, λ0_ln, priors), 
-       lower_bounds, upper_bounds, p₀, SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=1e-3/σ_stat^2, x_tol=0.01/σ_stat^2, verbosity=0), 
+    x_tol = 1e-5
+    f_tol = 0.01abs(_negln_probability(p₀, λ, Inorm, σnorm, cube_fitter, λ0_ln, priors) - 
+                _negln_probability(clamp.(p₀ .- x_tol, lower_bounds, upper_bounds), λ, Inorm, σnorm, cube_fitter, λ0_ln, priors))
+    res = optimize(p -> _negln_probability(p, λ, Inorm, σnorm, cube_fitter, λ0_ln, priors), lower_bounds, upper_bounds, p₀, 
+       SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), 
        Optim.Options(iterations=10^6))
     p₁ = res.minimizer
 
@@ -3066,12 +3069,14 @@ function fit_cube(cube_fitter::CubeFitter)::CubeFitter
         prog = Progress(length(spaxels); showspeed=true)
         progress_pmap(spaxels, progress=prog) do index
             fit_spax_i(index)
+            GC.gc()
         end
     else
         prog = Progress(length(spaxels); showspeed=true)
         for index ∈ spaxels
             fit_spax_i(index)
             next!(prog)
+            GC.gc()
         end
     end
 
