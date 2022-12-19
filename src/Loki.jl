@@ -5,6 +5,13 @@ using Reexport
 include("cubefit.jl")
 @reexport using .CubeFit
 
+#####################
+#= WELCOME TO LOKI =#
+#####################
+
+# This file doesn't contain anything important, it just
+# includes and reexports the other modules!
+
 # Namespace:
 # CubeData => cubedata.jl
 # CubeFit => cubefit.jl
@@ -16,7 +23,7 @@ include("cubefit.jl")
 # additional items that are not exported which are intended only for use internally.
 
 # Functions and structs from Util and Param are similarly not exported 
-# (i.e. must be prefixed by "Util." or "Param."), since again they are mostly intended
+# (i.e. must be prefixed by "Util" or "Param"), since again they are mostly intended
 # only for use internally in the code.
 
 end

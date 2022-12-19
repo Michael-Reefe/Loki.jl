@@ -1,5 +1,19 @@
+#=
+THE CUBEDATA MODULE
+------------------
+
+This is the module that handles loading in and preparing 3D IFU cube data to be fit. It contains
+structs for holding the 3D IFU cubes, and functions that apply certain corrections to the data, such
+as shifting the wavelength to the rest frame, and masking out bad spaxels.  The first step in any
+fitting sequence should be loading in the data, likely with the "from_fits" function to load from a 
+Flexible Image Transfer System (FITS) file, followed by applying the two aforementioned corrections
+using the "correct" function.  The data should then be handed off to the structs/functions in the 
+"CubeFit" module, which handles actually fitting the cubes.
+=#
+
 module CubeData
 
+# Export only the functions that the user may want to call
 export DataCube, Observation, from_fits, to_rest_frame, apply_mask, correct, interpolate_cube!, 
     plot_2d, plot_1d, cube_rebin!
 

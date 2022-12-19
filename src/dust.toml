@@ -1,8 +1,21 @@
+# dust.toml: This file contains options pertaining to fitting the 
+# continuum model of spectra, including stellar & dust components.
+
+# Each value has a "val" key which specifies the starting value,
+# "plim" specifies the lower and upper limits on the parameter, and
+# "locked" specifies whether the parameter should be fixed or allowed
+# to vary during the fit.
+
+# stellar_continuum_temp: the blackbody temperature of the stellar
+# continuum component of the model. Default: 5000 K.
 [stellar_continuum_temp]
 val = 5000.0
 plim = [4999.9, 5000.1]
 locked = true
 
+# dust_continuum_temps: the blackbody temperatures of the dust
+# continuum components of the model. Defaults: 500, 300, 200, 135,
+# 90, 65, 50, 40, and 35 K.
 [[dust_continuum_temps]]
 val = 500.0
 plim = [499.9, 500.1]
@@ -39,6 +52,14 @@ locked = true
 val = 35.0
 plim = [34.9, 35.1]
 locked = true
+
+# dust_features: each of these specifies a Polycyclic Aromatic 
+# Hydrocarbon (PAH) profile to include in the model. Each of these
+# profiles has an associated "wave", or central wavelength in microns,
+# and "fwhm", or full-width at half-maximum, also in microns. They
+# are modeled using Drude profiles.  The names should follow the
+# general format of "PAH_X.XX", filling in X with the central wavelength
+# up to 2 decimal places (or more if necessary).
 
 [dust_features."PAH_5.24".wave]
 val = 5.24
@@ -390,11 +411,17 @@ val = 1.655
 plim = [0.4, 1.1]
 locked = false
 
+
+# extinction.tau_9_7: the optical depth at 9.7 microns.
+# Default: 10^-4
 [extinction.tau_9_7]
 val = 1e-4
 plim = [0.0, 10.0]
 locked = false
 
+# extinction.beta: the mixing ratio for the extinction profile,
+# between the profile specified in options.toml and a -1.7 index
+# power law on the wavelength, relative to 9.7 microns.
 [extinction.beta]
 val = 0.1
 plim = [0.0, 1.0]

@@ -1,3 +1,15 @@
+#=
+THE PARAM MODULE
+----------------
+
+This module, like Util, is not intended to be directly accessed by the 
+user when fitting IFU cubes. Rather, it contains "Parameter" structures
+which are useful containers holding a parameter's value, prior, locked status,
+and MCMC search scale.  Nothing in this module is exported, but the module
+itself IS exported in CubeFit and Loki, and may be accessed with the "Param"
+prefix.
+=#
+
 module Param
 
 # Import packages
@@ -155,7 +167,7 @@ and fitting parameters
 - `flow_tied::Union{String,Nothing}`: Same as `tied`, but for an inflow/outflow voff component
 """
 struct TransitionLine
-    
+
     λ₀::AbstractFloat
     profile::Symbol
     flow_profile::Union{Symbol,Nothing}

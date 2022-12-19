@@ -1,3 +1,15 @@
+#=
+THE CUBEFIT MODULE
+------------------
+
+This is the main module for actually fitting IFU cubes.  It contains structs for holding
+fitting options and output arrays, as well as all the functions for actually performing the
+fitting across a single spaxel or an entire cube. The main calling sequence one will want to 
+perform is first loading in the data, presumably from some FITS files, with the CubeData module,
+then creating a CubeFitter struct from the CubeData struct, followed by calling fit_cube! on the
+CubeFitter. An example of this is provided in the test driver files in the test directory.
+=#
+
 module CubeFit
 
 # Export only the functions that the user may want to call
@@ -45,12 +57,14 @@ using TimerOutputs
 # PyCall needed for some matplotlib modules
 using PyCall
 
-# Have to import certain python modules within the __init__ function so that it works after precompilation
+# Have to import certain python modules within the __init__ function so that it works after precompilation,
+# so these constants are just placeholders before that happens
 const plt::PyObject = PyNULL()
 const py_anchored_artists::PyObject = PyNULL()
 const py_ticker::PyObject = PyNULL()
 const py_animation::PyObject = PyNULL()
 
+# Some constants for setting matplotlib font sizes
 const SMALL::UInt8 = 12
 const MED::UInt8 = 14
 const BIG::UInt8 = 16
@@ -59,23 +73,27 @@ function __init__()
 
     # Import pyplot
     copy!(plt, pyimport_conda("matplotlib.pyplot", "matplotlib"))
+
     # Import matplotlib submodules for nice plots
+    # anchored_artists --> used for scale bars
     copy!(py_anchored_artists, pyimport_conda("mpl_toolkits.axes_grid1.anchored_artists", "matplotlib"))
+    # ticker --> used for formatting axis ticks and tick labels
     copy!(py_ticker, pyimport_conda("matplotlib.ticker", "matplotlib"))
+    # animation --> used for making mp4 movie files (optional)
     copy!(py_animation, pyimport_conda("matplotlib.animation", "matplotlib"))
 
     # Matplotlib settings to make plots look pretty :)
-    plt.switch_backend("Agg")
-    plt.rc("font", size=MED)          # controls default text sizes
-    plt.rc("axes", titlesize=MED)     # fontsize of the axes title
-    plt.rc("axes", labelsize=MED)     # fontsize of the x and y labels
-    plt.rc("xtick", labelsize=SMALL)  # fontsize of the tick labels
-    plt.rc("ytick", labelsize=SMALL)  # fontsize of the tick labels
-    plt.rc("legend", fontsize=SMALL)  # legend fontsize
-    plt.rc("figure", titlesize=BIG)   # fontsize of the figure title
-    plt.rc("text", usetex=true)       # use LaTeX
+    plt.switch_backend("Agg")                  # agg backend just saves to file, no GUI display
+    plt.rc("font", size=MED)                   # controls default text sizes
+    plt.rc("axes", titlesize=MED)              # fontsize of the axes title
+    plt.rc("axes", labelsize=MED)              # fontsize of the x and y labels
+    plt.rc("xtick", labelsize=SMALL)           # fontsize of the x tick labels
+    plt.rc("ytick", labelsize=SMALL)           # fontsize of the y tick labels
+    plt.rc("legend", fontsize=SMALL)           # legend fontsize
+    plt.rc("figure", titlesize=BIG)            # fontsize of the figure title
+    plt.rc("text", usetex=true)                # use LaTeX for things like axis offsets
     plt.rc("font", family="Times New Roman")   # use Times New Roman font
-    
+
 end
 
 # Import and reexport the parameters functions for use all throughout the code
@@ -90,8 +108,14 @@ include("cubedata.jl")
 
 ############################## OPTIONS/SETUP/PARSING FUNCTIONS ####################################
 
+# Date format for the log files
 const date_format::String = "yyyy-mm-dd HH:MM:SS"
+
+# Timer object for logging the performance of the code, if the settings are enabled
 const timer_output::TimerOutput = TimerOutput()
+
+# This lock is used to control write access to the convergence log file, since
+# multiple parallel processes may try to write to it at once.
 const file_lock::ReentrantLock = ReentrantLock()
 
 
@@ -185,9 +209,10 @@ function parse_options()::Dict
     # Read in the options file
     options = TOML.parsefile(joinpath(@__DIR__, "options.toml"))
     options_out = Dict()
-    keylist1 = ["extinction_curve", "extinction_screen", "chi2_threshold", "overwrite", "track_memory", "track_convergence", 
+    keylist1 = ["extinction_curve", "extinction_screen", "overwrite", "track_memory", "track_convergence", 
                 "make_movies", "cosmology"]
     keylist2 = ["h", "omega_m", "omega_K", "omega_r"]
+
     # Loop through the keys that should be in the file and confirm that they are there
     for key ∈ keylist1 
         if !(key ∈ keys(options))
@@ -205,8 +230,6 @@ function parse_options()::Dict
     @debug "Extinction model - $(options["extinction_curve"])"
     options_out[:extinction_screen] = options["extinction_screen"]
     @debug "Extinction screening? - $(options["extinction_screen"])"
-    options_out[:chi2_threshold] = options["chi2_threshold"]
-    @debug "Reduced chi^2 threshold - $(options["chi2_threshold"])"
     options_out[:overwrite] = options["overwrite"]
     @debug "Overwrite old fits? - $(options["overwrite"])"
     options_out[:track_memory] = options["track_memory"]
@@ -254,7 +277,8 @@ function parse_dust()::Dict
     keylist2 = ["wave", "fwhm"]
     keylist3 = ["tau_9_7", "beta"]
     keylist4 = ["val", "plim", "locked"]
-    # Loop through all of the keys that should be in the file and confirm that they are there
+
+    # Loop through all of the required keys that should be in the file and confirm that they are there
     for key ∈ keylist1
         if !(key ∈ keys(dust))
             error("Missing option $key in dust file!")
@@ -290,9 +314,12 @@ function parse_dust()::Dict
     end
 
     # Convert the options into Parameter objects, and set them to the output dictionary
+
+    # Stellar continuum temperature
     dust_out[:stellar_continuum_temp] = Param.from_dict(dust["stellar_continuum_temp"])
     @debug "Stellar continuum:\nTemp $(dust_out[:stellar_continuum_temp])"
 
+    # Dust continuum temperatures
     dust_out[:dust_continuum_temps] = [Param.from_dict(dust["dust_continuum_temps"][i]) for i ∈ 1:length(dust["dust_continuum_temps"])]
     msg = "Dust continuum:"
     for dc ∈ dust_out[:dust_continuum_temps]
@@ -300,6 +327,7 @@ function parse_dust()::Dict
     end
     @debug msg
     
+    # Dust feature central wavelengths and FWHMs
     dust_out[:dust_features] = Dict()
     msg = "Dust features:"
     for df ∈ keys(dust["dust_features"])
@@ -311,6 +339,7 @@ function parse_dust()::Dict
     end
     @debug msg
 
+    # Extinction parameters, optical depth and mixing ratio
     dust_out[:extinction] = Param.ParamDict()
     msg = "Extinction:"
     dust_out[:extinction][:tau_9_7] = Param.from_dict(dust["extinction"]["tau_9_7"])
@@ -347,9 +376,10 @@ function parse_lines(channel::Integer, interp_R::Function, λ::Vector{<:Abstract
     lines_out = Param.LineDict()
 
     keylist1 = ["tie_H2_voff", "tie_ion_voff", "tie_H2_flow_voff", "tie_ion_flow_voff", "tie_voigt_mixing", 
-        "voff_plim", "fwhm_pmax", "h3_plim", "h4_plim", 
-        "flexible_wavesol", "wavesol_unc", "channels", "lines", "profiles", "flows"]
-    # Loop through all the keys that should be in the file and confirm that they are there
+        "voff_plim", "fwhm_pmax", "h3_plim", "h4_plim", "flow_voff_plim", "flow_fwhm_plim", 
+        "flexible_wavesol", "wavesol_unc", "lines", "profiles", "flows"]
+
+    # Loop through all the required keys that should be in the file and confirm that they are there
     for key ∈ keylist1
         if !haskey(lines, key)
             error("$key not found in line options!")
@@ -376,16 +406,16 @@ function parse_lines(channel::Integer, interp_R::Function, λ::Vector{<:Abstract
     end
 
     # Minimum possible FWHM of a narrow line given the instrumental resolution of MIRI 
-    # in the given wavelength range
+    # in the given wavelength range: Δλ/λ = Δv/c ---> Δv = c/(λ/Δλ) = c/R
     fwhm_pmin = Util.C_KMS / maximum(interp_R.(λ))
     @debug "Setting minimum FWHM to $fwhm_pmin km/s"
 
     # Define the initial values of line parameters given the values in the options file (if present)
     fwhm_init = "fwhm_init" ∈ keys(lines) ? lines["fwhm_init"] : maximum([fwhm_pmin + 1, 100])
     voff_init = "voff_init" ∈ keys(lines) ? lines["voff_init"] : 0.0
-    h3_init = "h3_init" ∈ keys(lines) ? lines["h3_init"] : 0.0    # gauss-hermite series start fully gaussian,
-    h4_init = "h4_init" ∈ keys(lines) ? lines["h4_init"] : 0.0    # with both h3 and h4 moments starting at 0
-    η_init = "η_init" ∈ keys(lines) ? lines["eta_init"] : 1.0     # Voigts start fully gaussian
+    h3_init = "h3_init" ∈ keys(lines) ? lines["h3_init"] : 0.0        # gauss-hermite series start fully gaussian,
+    h4_init = "h4_init" ∈ keys(lines) ? lines["h4_init"] : 0.0        # with both h3 and h4 moments starting at 0
+    η_init = "eta_init" ∈ keys(lines) ? lines["eta_init"] : 1.0       # Voigts start fully gaussian
 
     # Loop through all the lines
     for line ∈ keys(lines["lines"])
@@ -398,12 +428,13 @@ function parse_lines(channel::Integer, interp_R::Function, λ::Vector{<:Abstract
         # Set the priors for FWHM, voff, h3, h4, and eta based on the values in the options file
         voff_prior = Uniform(lines["voff_plim"]...)
         voff_locked = false
-        fwhm_prior = Uniform(fwhm_pmin, profiles[line] == "GaussHermite" ? lines["fwhm_pmax"] * 2 : lines["fwhm_pmax"])
+        fwhm_prior = Uniform(fwhm_pmin, profiles[line] == "GaussHermite" ? 
+                             lines["fwhm_pmax"] * 2 #= allow GH prof. to be wide =# : lines["fwhm_pmax"])
         fwhm_locked = false
         if profiles[line] == "GaussHermite"
-            h3_prior = truncated(Normal(0.0, 0.1), lines["h3_plim"]...)
+            h3_prior = truncated(Normal(0.0, 0.1), lines["h3_plim"]... #= normal profile, but truncated with hard limits =#)
             h3_locked = false
-            h4_prior = truncated(Normal(0.0, 0.1), lines["h4_plim"]...)
+            h4_prior = truncated(Normal(0.0, 0.1), lines["h4_plim"]... #= normal profile, but truncated with hard limits =#)
             h4_locked = false
         elseif profiles[line] == "Voigt"
             η_prior = Uniform(0.0, 1.0)
@@ -413,8 +444,7 @@ function parse_lines(channel::Integer, interp_R::Function, λ::Vector{<:Abstract
         # Set the priors for inflow/outflow FWHM, voff, h3, h4, and eta based on the values in the options file
         flow_voff_prior = Uniform(lines["flow_voff_plim"]...)
         flow_voff_locked = false
-        # lower bound 0 -> since this is ADDED to the main line FWHM
-        flow_fwhm_prior = Uniform(0., lines["flow_fwhm_pmax"])
+        flow_fwhm_prior = Uniform(lines["flow_fwhm_plim"]...)
         flow_fwhm_locked = false
         if flow_profiles[line] == "GaussHermite"
             flow_h3_prior = truncated(Normal(0.0, 0.1), lines["h3_plim"]...)
@@ -598,7 +628,7 @@ function parse_lines(channel::Integer, interp_R::Function, λ::Vector{<:Abstract
     end
     @debug msg
 
-    # ^^^ do the same for the inflow/outflow tied velocities \/\/\/
+    # ^^^ do the same for the inflow/outflow tied velocities 
     flow_voff_tied_key = unique([lines_out[line].flow_tied for line ∈ keys(lines_out)])
     flow_voff_tied_key = flow_voff_tied_key[.!isnothing.(flow_voff_tied_key)]
     @debug "flow_voff_tied_key: $flow_voff_tied_key"
@@ -632,13 +662,32 @@ function parse_lines(channel::Integer, interp_R::Function, λ::Vector{<:Abstract
     lines_out, voff_tied, flow_voff_tied, lines["flexible_wavesol"], lines["tie_voigt_mixing"], voigt_mix_tied
 end
 
+
 ############################## PARAMETER / MODEL STRUCTURES ####################################
+
 
 """
     ParamMaps(stellar_continuum, dust_continuum, dust_features, lines, tied_voffs, flow_tied_voffs,
         tied_voigt_mix, extinction, reduced_χ2)
 
-A structure for holding 2D maps of fitting parameters generated when fitting a cube.
+A structure for holding 2D maps of fitting parameters generated after fitting a cube.  Each parameter
+that is fit (i.e. stellar continuum temperature, optical depth, line ampltidue, etc.) corresponds to one 
+2D map with the value of that parameter, with each spaxel's fit value located at the corresponding location
+in the parameter map.
+
+# Fields
+- `stellar_continuum::Dict{Symbol, Array{Float64, 2}}`: The stellar continuum parameters: amplitude and temperature
+- `dust_continuum::Dict{Int, Dict{Symbol, Array{Float64, 2}}}`: The dust continuum parameters: amplitude and temperature for each
+    dust continuum component
+- `dust_features::Dict{String, Dict{Symbol, Array{Float64, 2}}}`: The dust feature parameters: amplitude, central wavelength, and FWHM
+    for each PAH feature
+- `lines::Dict{Symbol, Dict{Symbol, Array{Float64, 2}}}`: The emission line parameters: amplitude, voff, FWHM, and any additional 
+    line profile parameters for each line
+- `tied_voffs::Dict{String, Array{Float64, 2}}`: Tied line velocity offsets
+- `flow_tied_voffs::Dict{String, Array{Float64, 2}}`: Inflow/outflow component tied velocity offsets
+- `tied_voigt_mix::Union{Array{Float64, 2}, Nothing}`: Tied Voigt mixing parameter
+- `extinction::Dict{Symbol, Array{Float64, 2}}`: Extinction parameters: optical depth at 9.7 μm and mixing ratio
+- `reduced_χ2::Array{Float64, 2}`: The reduced chi^2 value of each fit
 
 See ['parammaps_empty`](@ref) for a default constructor function.
 """
@@ -655,6 +704,7 @@ struct ParamMaps
     reduced_χ2::Array{Float64, 2}
 
 end
+
 
 """
     parammaps_empty(shape, n_dust_cont, df_names, line_names, line_tied, line_profiles,
@@ -798,7 +848,18 @@ end
 """
     CubeModel(model, stellar, dust_continuum, dust_features, extinction, lines)
 
-A structure for holding 3D models of intensity, split up into model components, generated when fitting a cube
+A structure for holding 3D models of intensity, split up into model components, generated when fitting a cube.
+This will be the same shape as the input data, and preferably the same datatype too (i.e., JWST files have flux
+and error in Float32 format, so we should also output in Float32 format).  This is useful as a way to quickly
+compare the full model, or model components, to the data.
+
+# Fields
+- `model::Array{T, 3}`: The full 3D model.
+- `stellar::Array{T, 3}`: The stellar component of the continuum.
+- `dust_continuum::Array{T, 4}`: The dust components of the continuum. The 4th axis runs over each individual dust component.
+- `dust_features::Array{T, 4}`: The dust (PAH) feature profiles. The 4th axis runs over each individual dust profile.
+- `extinction::Array{T, 3}`: The extinction profile.
+- `lines::Array{T, 4}`: The line profiles. The 4th axis runs over each individual line.
 
 See [`cubemodel_empty`](@ref) for a default constructor method.
 """
@@ -827,7 +888,8 @@ fit of a DataCube.
     specified in the dust.toml file)
 - `df_names::Vector{String}`: List of names of PAH features being fit, i.e. "PAH_12.62", ...
 - `line_names::Vector{Symbol}`: List of names of lines being fit, i.e. "NeVI_7652", ...
-- `floattype::DataType=Float32`: The type of float to use in the arrays.
+- `floattype::DataType=Float32`: The type of float to use in the arrays. Should ideally be the same as the input data,
+    which for JWST is Float32.
 """
 function cubemodel_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, df_names::Vector{String}, 
     line_names::Vector{Symbol}, floattype::DataType=Float32)::CubeModel where {S<:Integer}
@@ -863,8 +925,9 @@ end
         plot_maps=plot_maps, parallel=parallel, save_fits=save_fits)
 
 This is the main structure used for fitting IFU cubes, containing all of the necessary data, metadata,
-fitting options, and its own instances of ParamMaps and CubeModel structures to handle the outputs of all the fits.  
-The actual fitting functions (`fit_spaxel` and `fit_cube!`) require an instance of this structure.
+fitting options, and associated functions for generating ParamMaps and CubeModel structures to handle the outputs 
+of all the fits.  This is essentially the "configuration object" that tells the rest of the fitting code how
+to run. The actual fitting functions (`fit_spaxel` and `fit_cube!`) require an instance of this structure.
 
 # Fields
 `T<:AbstractFloat, S<:Integer`
@@ -928,6 +991,8 @@ See [`ParamMaps`](@ref), [`parammaps_empty`](@ref), [`CubeModel`](@ref), [`cubem
     [`fit_spaxel`](@ref), [`fit_cube!`](@ref)
 """
 struct CubeFitter{T<:AbstractFloat,S<:Integer}
+
+    # See explanations for each field in the docstring!
     
     # Data
     cube::CubeData.DataCube
@@ -986,49 +1051,57 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
     
     # Rolling best fit options
     cosmology::Cosmology.AbstractCosmology
-    χ²_thresh::T
     interp_R::Function
     flexible_wavesol::Bool
 
     p_init_cont::Vector{T}
     p_init_line::Vector{T}
 
-    # Constructor function
-    function CubeFitter(cube::CubeData.DataCube, z::Float64, name::String, n_procs::Int; 
+    #= Constructor function --> the inputs taken map directly to fields in the CubeFitter object,
+    the rest of the fields are generated in the function from these inputs =#
+    function CubeFitter(cube::CubeData.DataCube, z::AbstractFloat, name::String, n_procs::Integer; 
         plot_spaxels::Symbol=:pyplot, plot_maps::Bool=true, parallel::Bool=true, save_fits::Bool=true)
 
-        ###### SETTING UP A GLOBAL LOGGER FOR THE CUBE FITTER ######
 
         # Prepare output directories
         @info "Preparing output directories"
-        name = replace(name, " " => "_")
+        name = replace(name, #= no spaces! =# " " => "_")
+
+        # Top-level output directory
         if !isdir("output_$name")
             mkdir("output_$name")
         end
+        # Sub-folder for 1D plots of spaxel fits
         if !isdir(joinpath("output_$name", "spaxel_plots"))
             mkdir(joinpath("output_$name", "spaxel_plots"))
         end
+        # Sub-folder for data files saving the results of individual spaxel fits
         if !isdir(joinpath("output_$name", "spaxel_binaries"))
             mkdir(joinpath("output_$name", "spaxel_binaries"))
         end
+        # Sub-folder for 2D parameter maps 
         if !isdir(joinpath("output_$name", "param_maps"))
             mkdir(joinpath("output_$name", "param_maps"))
         end
+        # Sub-folder for log files
         if !isdir(joinpath("output_$name", "logs"))
             mkdir(joinpath("output_$name", "logs"))
         end
+
+        ###### SETTING UP A GLOBAL LOGGER FOR THE CUBE FITTER ######
+        
         @info "Preparing logger"
 
-
+        # Append timestamps to all logging messages
         timestamp_logger(logger) = TransformerLogger(logger) do log
             merge(log, (; message = "$(Dates.format(now(), date_format)) $(log.message)"))
         end
-
+        # Create a tee logger that writes both to the stdout and to a log file
         logger = TeeLogger(ConsoleLogger(stdout, Logging.Info), 
                            timestamp_logger(MinLevelLogger(FileLogger(joinpath("output_$name", "loki.main.log"); 
                                                                       always_flush=true), 
                                                                       Logging.Debug)))
-
+        # Initialize our logger as the global logger
         global_logger(logger)
 
         #############################################################
@@ -1055,6 +1128,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
             error("Number of processes ($n_procs) must be ≤ the size of the first cube dimension ($(shape[1]))!")
         end
 
+        # Get dust options from the dictionary
         T_s = dust[:stellar_continuum_temp]
         T_dc = dust[:dust_continuum_temps]
         τ_97 = dust[:extinction][:tau_9_7]
@@ -1178,7 +1252,6 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
         # Prepare options
         extinction_curve = options[:extinction_curve]
         extinction_screen = options[:extinction_screen]
-        χ²_thresh = options[:chi2_threshold]
         overwrite = options[:overwrite]
         track_memory = options[:track_memory]
         track_convergence = options[:track_convergence]
@@ -1202,7 +1275,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
             T_s, T_dc, τ_97, β, n_dust_cont, n_dust_features, df_names, dust_features, n_lines, line_names, line_profiles, 
             line_flow_profiles, lines, n_voff_tied, line_tied, voff_tied_key, voff_tied, n_flow_voff_tied, 
             line_flow_tied, flow_voff_tied_key, flow_voff_tied, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, 
-            cosmo, χ²_thresh, interp_R, flexible_wavesol, p_init_cont, p_init_line)
+            cosmo, interp_R, flexible_wavesol, p_init_cont, p_init_line)
     end
 
 end
@@ -1216,7 +1289,7 @@ Generate a CubeModel object corresponding to the options given by the CubeFitter
 function generate_cubemodel(cube_fitter::CubeFitter)::CubeModel
     shape = size(cube_fitter.cube.Iλ)
     # Full 3D intensity model array
-    @debug "Generateing full 3D cube models"
+    @debug "Generating full 3D cube models"
     cubemodel_empty(shape, cube_fitter.n_dust_cont, cube_fitter.df_names, cube_fitter.line_names)
 end
 
@@ -1328,8 +1401,9 @@ function continuum_cubic_spline(λ::Vector{<:AbstractFloat}, I::Vector{<:Abstrac
     diffs = diff(λ)
     Δλ = mean(diffs)
 
+    scale = length(λ) ÷ 40
     # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
-    λknots = λ[51]:Δλ*50:λ[end-51]
+    λknots = λ[scale+1]:Δλ*scale:λ[end-scale-1]
     @debug "Performing cubic spline continuum fit with knots at $λknots"
 
     # Do a full cubic spline remapping of the data
@@ -1341,27 +1415,39 @@ end
 
 
 """
-    _interp_func(x, λ)
+    _interp_func(x, λ, I)
 
 Function to interpolate the data with least squares quadratic fitting
+
+# Arguments
+- `x::Real`: The wavelength position to interpolate the intensity at
+- `λ::Vector{<:Real}`: The wavelength vector
+- `I::Vector{<:Real}`: The intensity vector
 """
-function _interp_func(x, λ, I)
+function _interp_func(x::Real, λ::Vector{<:Real}, I::Vector{<:Real})::Real
+    # Get the index of the value in the wavelength vector closest to x
     ind = findmin(abs.(λ .- x))[2]
+    # Get the indices one before / after
     lo = ind - 1
     hi = ind + 2
+    # Edge case for the left edge
     while lo ≤ 0
         lo += 1
         hi += 1
     end
+    # Edge case for the right edge
     while hi > length(λ)
         hi -= 1
         lo -= 1
     end
+    # A matrix with λ^2, λ, 1
     A = [λ[lo:hi].^2 λ[lo:hi] ones(4)]
+    # y vector
     y = I[lo:hi]
+    # Solve the least squares problem
     param = A \ y
 
-    @. param[1]*x^2 + param[2]*x + param[3]
+    param[1]*x^2 + param[2]*x + param[3]
 end
 
 
@@ -1391,6 +1477,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
 
     # Extract spaxel to be fit
     λ = cube_fitter.cube.λ
+    # Get the data to fit -- either one spaxel, or if "init" is set, the sum of all spaxels
     I = !init ? cube_fitter.cube.Iλ[spaxel, :] : Util.Σ(cube_fitter.cube.Iλ, (1,2))
     σ = !init ? cube_fitter.cube.σI[spaxel, :] : sqrt.(Util.Σ(cube_fitter.cube.σI.^2, (1,2)))
 
@@ -1400,7 +1487,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
     I[mask_lines] .= I_cubic[mask_lines]
     σ[mask_lines] .= σ_cubic[mask_lines]
     # Add statistical uncertainties to the systematic uncertainties in quadrature
-    σ_stat = std(I .- I_cubic)
+    σ_stat = std(I[.!mask_lines] .- I_cubic[.!mask_lines])
     σ .= .√(σ.^2 .+ σ_stat.^2)
 
     @debug "Adding statistical error of $σ_stat in quadrature"
@@ -1735,41 +1822,56 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; init::
     param_names = Vector{String}()
     # Loop through each line and append the new components
     for (i, ln) ∈ enumerate(cube_fitter.lines)
+        # name
         ln_name = cube_fitter.line_names[i]
+        # check if voff should be tied or untied
         if isnothing(ln.tied) || cube_fitter.flexible_wavesol
+            # amplitude, voff, FWHM
             append!(ln_priors, [amp_ln_prior, voff_ln[i].prior, fwhm_ln[i].prior])
             append!(param_names, ["$(ln_name)_amp", "$(ln_name)_voff", "$(ln_name)_fwhm"])
         else
+            # just amplitude & FWHM (since voff is tied)
             append!(ln_priors, [amp_ln_prior, fwhm_ln[i].prior])
             append!(param_names, ["$(ln_name)_amp", "$(ln_name)_fwhm"])
         end
+        # check for additional profile parameters
         if ln.profile == :GaussHermite
+            # add h3 and h4 moments
             append!(ln_priors, [h3_ln[i].prior, h4_ln[i].prior])
             append!(param_names, ["$(ln_name)_h3", "$(ln_name)_h4"])
         elseif ln.profile == :Voigt
+            # add voigt mixing parameter, but only if it's not tied
             if !cube_fitter.tie_voigt_mixing
                 append!(ln_priors, [η_ln[i].prior])
                 append!(param_names, ["$(ln_name)_eta"])
             end
         end
+        # repeat the above for the flow components
         if !isnothing(ln.flow_profile)
+            # check tied or untied (but no flexible wavesol)
             if isnothing(ln.flow_tied)
+                # amplitude, voff, FWHM
                 append!(ln_priors, [amp_flow_prior, flow_voff_ln[i].prior, flow_fwhm_ln[i].prior])
                 append!(param_names, ["$(ln_name)_flow_amp", "$(ln_name)_flow_voff", "$(ln_name)_flow_fwhm"])
             else
+                # just amplitude & FWHM (voff tied)
                 append!(ln_priors, [amp_flow_prior, flow_fwhm_ln[i].prior])
                 append!(param_names, ["$(ln_name)_flow_amp", "$(ln_name)_flow_fwhm"])
             end
+            # check for additional profile parameters
             if ln.flow_profile == :GaussHermite
+                # h3 and h4 moments
                 append!(ln_priors, [flow_h3_ln[i].prior, flow_h4_ln[i].prior])
                 append!(param_names, ["$(ln_name)_flow_h3", "$(ln_name)_flow_h4"])
             elseif ln.flow_profile == :Voigt
+                # voigt mixing parameter, only if untied
                 if !cube_fitter.tie_voigt_mixing
                     append!(ln_prior, [flow_η_ln[i].prior])
                     append!(param_names, ["$(ln_name)_flow_eta"])
                 end
             end
         end
+        # add central wavelength, profile, and flow profile
         append!(λ0_ln, [ln.λ₀])
         append!(prof_ln, [ln.profile])
         append!(flow_prof_ln, [ln.flow_profile])
@@ -1861,6 +1963,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; init::
     @debug "Line starting values: \n $p₀"
     @debug "Line priors: \n $priors"
 
+    # Lower and upper limits on each parameter, to be fed into the Simulated Annealing (SAMIN) algorithm
     lower_bounds = minimum.(priors)
     upper_bounds = maximum.(priors)
 
@@ -1869,17 +1972,23 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; init::
 
     @debug "Beginning Line fitting with Simulated Annealing:"
 
-    # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations
+    # Parameter and function tolerance levels for convergence with SAMIN,
+    # these are a bit loose since we're mainly just looking to get into the right global minimum region with SAMIN
+    # before refining the fit later with a LevMar local minimum routine
     x_tol = 1e-5
     f_tol = 0.01abs(_negln_probability(p₀, λ, Inorm, σnorm, cube_fitter, λ0_ln, priors) - 
                 _negln_probability(clamp.(p₀ .- x_tol, lower_bounds, upper_bounds), λ, Inorm, σnorm, cube_fitter, λ0_ln, priors))
+
+    # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
     res = optimize(p -> _negln_probability(p, λ, Inorm, σnorm, cube_fitter, λ0_ln, priors), lower_bounds, upper_bounds, p₀, 
        SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), 
        Optim.Options(iterations=10^6))
     p₁ = res.minimizer
 
+    # Write convergence results to file, if specified
     if cube_fitter.track_convergence
         global file_lock
+        # use the ReentrantLock to prevent multiple processes from trying to write to the same file at once
         lock(file_lock) do 
             open(joinpath("output_$(cube_fitter.name)", "loki.convergence.log"), "a") do conv
                 redirect_stdout(conv) do
@@ -2064,11 +2173,11 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; init::
     # Create a `config` structure
     config = CMPFit.Config()
 
+    # Same procedure as with the continuum fit
     res = cmpfit(λ, Inorm, σnorm, (x, p) -> Util.fit_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
         cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, cube_fitter.n_flow_voff_tied, cube_fitter.flow_voff_tied_key,
         cube_fitter.line_flow_tied, flow_prof_ln, λ0_ln, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing), p₁, 
         parinfo=parinfo, config=config)
-
 
     # Get the results
     popt = res.param
@@ -2822,6 +2931,7 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex)
     λ = cube_fitter.cube.λ
     I = cube_fitter.cube.Iλ[spaxel, :]
 
+    # if there are any NaNs, skip over the spaxel
     if any(.!isfinite.(I))
         return nothing, nothing
     end
@@ -2881,8 +2991,8 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex)
                 @timeit timer_output "writedlm" writedlm(f, [p_out p_err], ',')
             end
 
+            # save memory allocations & other logistic data to a separate log file
             if cube_fitter.track_memory
-                # save memory allocations & other logistic data to a separate log file
                 open(joinpath("output_$(cube_fitter.name)", "logs", "mem.spaxel_$(spaxel[1])_$(spaxel[2]).log"), "w") do f
 
                     print(f, """
@@ -2908,7 +3018,6 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex)
     end
 
     # Otherwise, just grab the results from before
-    # results = deserialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).LOKI"))
     results = readdlm(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).csv"), ',', Float64, '\n')
     p_out = results[:, 1]
     p_err = results[:, 2]
@@ -2974,14 +3083,15 @@ end
 """
     fit_cube!(cube_fitter)
 
-Wrapper function to perform a full fit of an entire IFU cube, calling `fit_spaxel` for each spaxel in a parallel or
-serial loop depending on the cube_fitter options.  Results are concatenated and plotted/saved, also based on the
+This is the main cube fitting function!! It's essentially a wrapper function to perform a full fit of an 
+entire IFU cube, calling `fit_spaxel` for each spaxel in a parallel or serial loop depending on the cube_fitter options.  
+Results are then concatenated into `ParamMaps` and `CubeModel` structs and plotted/saved, also based on the 
 cube_fitter options.
 
 # Arguments
 - `cube_fitter::CubeFitter`: The CubeFitter object containing the data, parameters, and options for the fit
 """
-function fit_cube!(cube_fitter::CubeFitter)::CubeFitter
+function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamMaps, CubeModel}
 
     @info """\n
     #############################################################################
@@ -3034,22 +3144,22 @@ function fit_cube!(cube_fitter::CubeFitter)::CubeFitter
         prog = Progress(length(spaxels); showspeed=true)
         progress_pmap(spaxels, progress=prog) do index
             fit_spax_i(index)
-            GC.gc()  # ---> garbage collection (not sure if this is necessary...)
         end
     else
         prog = Progress(length(spaxels); showspeed=true)
         for index ∈ spaxels
             fit_spax_i(index)
             next!(prog)
-            GC.gc()   # ---> garbage collection (not sure if this is necessary...)
         end
     end
 
     @info "===> Generating parameter maps and model cubes... <==="
 
+    # Create the CubeModel and ParamMaps structs to be filled in
     cube_model = generate_cubemodel(cube_fitter)
     param_maps, param_errs = generate_parammaps(cube_fitter)
 
+    # Loop over each spaxel and fill in the associated fitting parameters into the ParamMaps and CubeModel
     for index ∈ spaxels
         # Set the 2D parameter map outputs
 
@@ -3330,8 +3440,6 @@ function fit_cube!(cube_fitter::CubeFitter)::CubeFitter
     if cube_fitter.save_fits
         @info "===> Writing FITS outputs... <==="
         write_fits(cube_fitter, cube_model, param_maps, param_errs)
-        # println("Cleaning outputs...")
-        # rm("output_$(cube_fitter.name)/spaxel_binaries", recursive=true)
     end
 
     if cube_fitter.make_movies
@@ -3349,6 +3457,7 @@ function fit_cube!(cube_fitter::CubeFitter)::CubeFitter
     cube_fitter, param_maps, param_errs, cube_model
 
 end
+
 
 ############################## OUTPUT / SAVING FUNCTIONS ####################################
 
@@ -3627,7 +3736,7 @@ function make_movie(cube_fitter::CubeFitter, cube_model::CubeModel; cmap::Symbol
         time_text = ax2.text(wave_rest[length(wave_rest) ÷ 2], 20, (@sprintf "%.3f" wave_rest[1]), ha="center", va="center")
         ax2.text(wave_rest[1], -8, (@sprintf "%.3f" wave_rest[1]), ha="center", va="center")
         ax2.text(wave_rest[end], -8, (@sprintf "%.3f" wave_rest[end]), ha="center", va="center")
-        plt.tight_layout()
+        # plt.tight_layout()  ---> doesn't work for some reason
 
         # Loop over the wavelength axis and set the image data to the new slice for each frame
         output_file = joinpath("output_$(cube_fitter.name)", "$title.mp4")

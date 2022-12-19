@@ -1,14 +1,41 @@
-chi2_threshold = 3.0
+# options.toml: This file contains general options for the code
+
+# overwrite: This controls what to do in case the fit for a certain spaxel
+# has already been performed / saved.  If true, the fit will be performed again
+# and the old one will be overwritten.  Otherwise, it won't.
 overwrite = false
+
+# track_memory: This controls whether an additional log file is saved for each
+# spaxel which specifically tracks the memory usage / allocations during the
+# spaxel fitting. Useful if memory usage is higher than expected.
 track_memory = false
+
+# track_convergence: Similarly, this controls whether an additional log file is
+# generated which prints convergence information for each spaxel fit (but only
+# for the LINE fit). Be warned that the way Optim.jl works with the simulated
+# annealing method SAMIN makes it always print "status: failure" even if convergence
+# was reached. The way to tell whether convergence was ACTUALLY reached is if
+# the number of iterations reached the maximum (which is 10^6 by default).
 track_convergence = true
+
+# make_movies: Whether or not to save mp4 files of the data and final models of
+# IFU cubes. This option require the user to have FFMPeg (https://ffmpeg.org/),
+# as well as the FFMPeg and Astropy python packages, installed on their system.
+# These are not necessarily scientifically useful, but they're pretty to watch.
 make_movies = true
 
+# extinction_curve: May be either "kvt" for the Kemper, Vriend, & Tielens (2004) 
+# extinction profile, or "d+" for the Donnan et al. (2022) extinction profile.
 extinction_curve = "kvt"
+
+# extinction_screen: Controls whether extinction is modeled as e^-tau (true) or
+# (1 - e^-tau) / tau (false), following PAHFIT.
 extinction_screen = false
 
+# cosmology options: Controls the cosmology used for distance / luminosity calculations.
+# If h is set to 1, the distances in plot scale bars will be shown with h^-1 units.
 [cosmology]
-h = 1.0
-omega_m = 0.3
-omega_K = 0.0
-omega_r = 0.0
+h = 1.0          # Hubble constant (in km s^-1 Mpc^-1) / 100
+omega_m = 0.3    # matter density parameter
+omega_K = 0.0    # curvature density parameter
+omega_r = 0.0    # radiation density parameter

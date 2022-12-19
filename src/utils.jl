@@ -1,3 +1,14 @@
+#=
+THE UTIL MODULE
+---------------
+
+This module is not intended to be directly accessed by the user when fitting
+IFU cubes. Rather, it contains miscellaneous utility functions to aid in correcting
+and fitting data.  As such, nothing in this module is exported, although the module
+itself IS exported within the CubeData, CubeFit, and Loki modules, so it may be
+accessed with the "Util" prefix.
+=#
+
 module Util
 
 # Import math packages
