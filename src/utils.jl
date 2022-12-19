@@ -1,5 +1,6 @@
 module Util
 
+# Import math packages
 using NaNStatistics
 using Interpolations
 using Dierckx
@@ -61,7 +62,8 @@ function read_irs_data(path::String)::Tuple{Vector{Float64}, Vector{Float64}, Ve
 
     datatable = CSV.read(path, DataFrame, comment="#", delim=' ', ignorerepeated=true, stripwhitespace=true,
         header=["rest_wave", "flux", "e_flux", "enod", "order", "module", "nod1flux", "nod2flux", "e_nod1flux", "e_nod2flux"])
-    return datatable[!, "rest_wave"], datatable[!, "flux"], datatable[!, "e_flux"]
+
+    datatable[!, "rest_wave"], datatable[!, "flux"], datatable[!, "e_flux"]
 end
 
 
@@ -101,7 +103,7 @@ function silicate_dp()::Tuple{Vector{Float64}, Vector{Float64}}
     τ_97 = τ_smooth[findmin(abs.(λ_irs .- 9.7))[2]]
     τ_λ = τ_smooth ./ τ_97
 
-    return λ_irs, τ_λ
+    λ_irs, τ_λ
 end
 
 # Save the Donnan et al. 2022 profile as a constant
@@ -344,7 +346,7 @@ function MJysr_to_cgs_err(MJy, MJy_err, λ, λ_err)
     if !isfinite(err)
         err = 0.
     end
-    return err
+    err
 end
 
 
@@ -361,7 +363,7 @@ julia> ln_likelihood([1.1, 1.9, 3.2], [1., 2., 3.], [0.1, 0.1, 0.1])
 """
 function ln_likelihood(data::Vector{<:AbstractFloat}, model::Vector{<:AbstractFloat}, 
     err::Vector{<:AbstractFloat})::AbstractFloat
-    return -0.5 * sum(@. (data - model)^2 / err^2 + log(2π * err^2))
+    -0.5 * sum(@. (data - model)^2 / err^2 + log(2π * err^2))
 end
 
 
@@ -383,11 +385,11 @@ julia> hermite(2., 3)
 """
 function hermite(x::AbstractFloat, n::Integer)::AbstractFloat
     if iszero(n)
-        return 1.
+        1.
     elseif isone(n)
-        return 2x
+        2x
     else
-        return 2x * hermite(x, n-1) - 2(n-1) * hermite(x, n-2)
+        2x * hermite(x, n-1) - 2(n-1) * hermite(x, n-2)
     end
 end
 
@@ -404,7 +406,7 @@ given a wavelength in μm and a temperature in Kelvins.
 Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 """
 function Blackbody_ν(λ::AbstractFloat, Temp::Real)::AbstractFloat
-    return Bν_1/λ^3 / (exp(Bν_2/(λ*Temp))-1)
+    Bν_1/λ^3 / (exp(Bν_2/(λ*Temp))-1)
 end
 
 
@@ -415,7 +417,7 @@ Return the peak wavelength (in μm) of a Blackbody spectrum at a given temperatu
 using Wein's Displacement Law.
 """
 function Wein(Temp::AbstractFloat)::AbstractFloat
-    return b_Wein / Temp
+    b_Wein / Temp
 end
 
 
@@ -430,7 +432,7 @@ Calculate a Drude profile at location `x`, with amplitude `A`, central value `μ
 Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 """
 function Drude(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::AbstractFloat)::AbstractFloat
-    return A * (FWHM/μ)^2 / ((x/μ - μ/x)^2 + (FWHM/μ)^2)
+    A * (FWHM/μ)^2 / ((x/μ - μ/x)^2 + (FWHM/μ)^2)
 end
 
 ############################################## EXTINCTION PROFILES #############################################
@@ -465,7 +467,7 @@ function τ_kvt(λ::AbstractFloat, β::AbstractFloat)::AbstractFloat
     # Add a drude profile around 18 microns
     ext += Drude(λ, 0.4, 18., 4.446)
 
-    return (1 - β) * ext + β * (9.7/λ)^1.7
+    (1 - β) * ext + β * (9.7/λ)^1.7
 end
 
 
@@ -480,7 +482,7 @@ function τ_dp(λ::AbstractFloat, β::AbstractFloat)::AbstractFloat
     ext = Spline1D(DPlus_prof[1], DPlus_prof[2]; k=3).(λ)
 
     # Add 1.7 power law, as in PAHFIT
-    return (1 - β) * ext + β * (9.7/λ)^1.7
+    (1 - β) * ext + β * (9.7/λ)^1.7
 end
 
 
@@ -489,9 +491,10 @@ function Extinction(ext::AbstractFloat, τ_97::AbstractFloat; screen::Bool=false
     Calculate the overall extinction factor
     """
     if screen
-        return exp(-τ_97*ext)
+        exp(-τ_97*ext)
+    else
+        iszero(τ_97) ? 1. : (1 - exp(-τ_97*ext)) / (τ_97*ext)
     end
-    return iszero(τ_97) ? 1. : (1 - exp(-τ_97*ext)) / (τ_97*ext)
 end
 
 
@@ -562,7 +565,7 @@ function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloa
     if return_components
         return contin, comps
     end
-    return contin
+    contin
 
 end
 
@@ -601,7 +604,7 @@ function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloa
     contin .*= Extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
     pᵢ += 2
 
-    return contin
+    contin
 
 end
 
@@ -831,7 +834,7 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
     if return_components
         return contin, comps
     end
-    return contin
+    contin
 
 end
 
@@ -1019,7 +1022,7 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
 
     end
 
-    return contin
+    contin
 
 end
 
@@ -1036,7 +1039,7 @@ full-width at half-maximum `FWHM`
 function Gaussian(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::AbstractFloat)::AbstractFloat
     # Reparametrize FWHM as dispersion σ
     σ = FWHM / (2√(2log(2)))
-    return A * exp(-(x-μ)^2 / (2σ^2))
+    A * exp(-(x-μ)^2 / (2σ^2))
 end
 
 
@@ -1070,9 +1073,7 @@ function GaussHermite(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWH
     Herm0 = sum([coeff[nᵢ] * hermite(0., nᵢ-1) for nᵢ ∈ 1:length(coeff)])
 
     # Combine the Gaussian and Hermite profiles
-    GH = A * α * Herm / Herm0
-
-    return GH
+    A * α * Herm / Herm0
 end
 
 
@@ -1083,7 +1084,7 @@ Evaluate a Lorentzian profile at `x`, parametrized by the amplitude `A`, mean va
 and full-width at half-maximum `FWHM`
 """
 function Lorentzian(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::AbstractFloat)::AbstractFloat
-    return A/π * (FWHM/2) / ((x-μ)^2 + (FWHM/2)^2)
+    A/π * (FWHM/2) / ((x-μ)^2 + (FWHM/2)^2)
 end
 
 
@@ -1107,9 +1108,7 @@ function Voigt(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::Abst
     I = A * FWHM * π / (2 * (1 + (√(π*log(2)) - 1)*η))
 
     # Mix the two distributions with the mixing parameter η
-    pV = I * (η * G + (1 - η) * L)
-
-    return pV
+    I * (η * G + (1 - η) * L)
 end
 
 end

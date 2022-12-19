@@ -22,7 +22,10 @@ mutable struct Parameter
     prior::UnivariateDistribution
     mcmc_scale::Number
     
+    # Constructor function
     function Parameter(value::Number, locked::Bool, prior::UnivariateDistribution)
+
+        # Calculate "MCMC scale" parameter for the search scale of the walker
         if typeof(prior) <: Normal
             mcmc_scale = std(prior) / 10
         elseif typeof(prior) <: Uniform
@@ -33,7 +36,7 @@ mutable struct Parameter
             mcmc_scale = value / 100
         end
 
-        return new(value, locked, prior, mcmc_scale)
+        new(value, locked, prior, mcmc_scale)
     end
 
 end
@@ -70,7 +73,7 @@ function from_dict(dict::Dict)::Parameter
         prior = truncated(prior, dict["plim"]...)
     end
 
-    return Parameter(value, locked, prior)
+    Parameter(value, locked, prior)
 end 
 
 
@@ -98,7 +101,7 @@ function from_dict_wave(dict::Dict)::Parameter
         prior = truncated(prior, dict["plim"]...)
     end
 
-    return Parameter(value, locked, prior)
+    Parameter(value, locked, prior)
 end
 
 
@@ -126,7 +129,7 @@ function from_dict_fwhm(dict::Dict)::Parameter
         prior = truncated(prior, dict["plim"]...)
     end
 
-    return Parameter(value, locked, prior)
+    Parameter(value, locked, prior)
 end
 
 
@@ -137,7 +140,8 @@ ParamDict = Dict{Union{Symbol,String}, Parameter}
 """
     TransitionLine(λ₀, profile, flow_profile, parameters, tied, flow_tied)
 
-A struct for an emission/absorption Line
+A struct for an emission/absorption Line with a given name, rest wavelength,
+and fitting parameters
 
 # Fields
 - `λ₀::AbstractFloat`: The central wavelength of the line in the rest frame
@@ -151,9 +155,7 @@ A struct for an emission/absorption Line
 - `flow_tied::Union{String,Nothing}`: Same as `tied`, but for an inflow/outflow voff component
 """
 struct TransitionLine
-    """
-    A structure for an emission/absorption line with a given name, rest wavelength, and fitting parameters
-    """
+    
     λ₀::AbstractFloat
     profile::Symbol
     flow_profile::Union{Symbol,Nothing}

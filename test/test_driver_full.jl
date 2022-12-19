@@ -15,7 +15,7 @@ end
 # n_procs = 1
 
 to = TimerOutput()
-channel = 2
+channel = 3
 
 # Load in data
 obs = from_fits(["data/jw01328-o015_t014_miri_ch1-mediumshortlong-_s3d.fits", 
@@ -37,4 +37,4 @@ cube_fitter = CubeFitter(obs.channels[channel], obs.z, obs.name * "_ch$(channel)
     parallel=true, plot_spaxels=:pyplot, plot_maps=true, save_fits=true)
 
 # Perform the Levenberg-Marquardt least-squares fitting
-cube_fitter = @timeit to "Full Fitting Procedure for Channel $channel" fit_cube(cube_fitter)
+@timeit to "Full Fitting Procedure for Channel $channel" fit_cube!(cube_fitter)

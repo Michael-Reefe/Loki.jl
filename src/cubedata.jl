@@ -18,7 +18,7 @@ using WCS
 using Interpolations
 using Dierckx
 
-# Plotting utilities
+# Misc utilities
 using ColorSchemes
 using LaTeXStrings
 using Reexport
@@ -26,20 +26,23 @@ using Reexport
 # Plotting with python
 # PyCall is only needed to import an additional matplotlib package
 using PyCall
-# Importing it within the __init__ function is necessary so that it works after precompilation
-const plt = PyNULL()
-const py_anchored_artists = PyNULL()
 
-# MATPLOTLIB SETTINGS TO MAKE PLOTS LOOK PRETTY :)
-const SMALL = 12
-const MED = 14
-const BIG = 16
+# Importing it within the __init__ function is necessary so that it works after precompilation
+const plt::PyObject = PyNULL()
+const py_anchored_artists::PyObject = PyNULL()
+
+const SMALL::UInt8 = 12
+const MED::UInt8 = 14
+const BIG::UInt8 = 16
+
 function __init__()
+
     # Import pyplot
     copy!(plt, pyimport_conda("matplotlib.pyplot", "matplotlib"))
     # Import the anchored_artists package from matplotlib
     copy!(py_anchored_artists, pyimport_conda("mpl_toolkits.axes_grid1.anchored_artists", "matplotlib"))
 
+    # MATPLOTLIB SETTINGS TO MAKE PLOTS LOOK PRETTY :)
     plt.switch_backend("Agg")         # switch to agg backend so that nothing is displayed, just saved to files
     plt.rc("font", size=MED)          # controls default text sizes
     plt.rc("axes", titlesize=MED)     # fontsize of the axes title
@@ -50,6 +53,7 @@ function __init__()
     plt.rc("figure", titlesize=BIG)   # fontsize of the figure title
     plt.rc("text", usetex=true)       # use LaTeX
     plt.rc("font", family="Times New Roman")  # use Times New Roman font
+
 end
 
 # Import and reexport the utils functions for use all throughout the code
@@ -112,9 +116,9 @@ struct DataCube
         band::String="Generic Band", rest_frame::Bool=false, masked::Bool=false)
 
         # Make sure inputs have the right dimensions
-        @assert ndims(λ) == 1
-        @assert (ndims(Iλ) == 3) && (size(Iλ)[end] == size(λ)[1])
-        @assert (ndims(σI) == 3) && (size(σI)[end] == size(λ)[1])
+        @assert ndims(λ) == 1 "Wavelength vector must be 1-dimensional!"
+        @assert (ndims(Iλ) == 3) && (size(Iλ)[end] == size(λ)[1]) "The last axis of the intensity cube must be the same length as the wavelength!"
+        @assert size(Iλ) == size(σI) "The intensity and error cubes must be the same size!"
         nx, ny, nz = size(Iλ)
 
         # If no mask is given, make the default mask to be all falses (i.e. don't mask out anything)
@@ -124,7 +128,7 @@ struct DataCube
         end
 
         # Return a new instance of the DataCube struct
-        return new(λ, Iλ, σI, mask, Ω, α, δ, wcs, channel, band, nx, ny, nz, rest_frame, masked)
+        new(λ, Iλ, σI, mask, Ω, α, δ, wcs, channel, band, nx, ny, nz, rest_frame, masked)
     end
 
 end
@@ -171,17 +175,19 @@ function from_fits(filename::String)::DataCube
 
     # Wavelength vector
     λ = hdr["CRVAL3"] .+ hdr["CDELT3"] .* collect(0:nz-1)
+    # Alternative method using the WCS directly:
     # λ = pix_to_world(wcs, Matrix(hcat(ones(nz), ones(nz), collect(1:nz))'))[3,:] ./ 1e-6
 
     # Data quality map (i.e. the mask)
     # dq = 0 if the data is good, > 0 if the data is bad
     dq = read(hdu["DQ"])
-    # also make sure to mask any points with Inf/NaN in the intensity or error, in case they were missed by the DQ map
+    # also make sure to mask any points with Inf/NaN in the intensity or error, in case they were 
+    # missed by the DQ map
     mask = (dq .≠ 0) .|| .!isfinite.(Iλ) .|| .!isfinite.(σI)
 
     # Target info from the header
     hdr0 = read_header(hdu[1])
-    name = hdr0["TARGNAME"]
+    name = hdr0["TARGNAME"]    # name of the target
     ra = hdr0["TARG_RA"]       # right ascension in deg
     dec = hdr0["TARG_DEC"]     # declination in deg
     channel = hdr0["CHANNEL"]  # MIRI channel (1-4)
@@ -199,8 +205,8 @@ function from_fits(filename::String)::DataCube
     ##################################################################
     """
 
-    # Make sure intensity units are MegaJansky per steradian and wavelength units are microns
-    # (this is assumed in the fitting code)
+    # Make sure intensity units are MegaJansky per steradian and wavelength 
+    # units are microns (this is assumed in the fitting code)
     if hdr["BUNIT"] ≠ "MJy/sr"
         error("Unrecognized flux unit: $(hdr["BUNIT"])")
     end
@@ -210,25 +216,7 @@ function from_fits(filename::String)::DataCube
 
     @debug "Intensity units: $(hdr["BUNIT"]), Wavelength units: $(hdr["CUNIT3"])"
 
-    ##################################################################################
-    # # DEPRECATED unit conversion code to go to CGS units
-    # # 1 μm = 10^4 Å
-    # Å = 1e4
-    # λ .*= Å
-    # # Extend wavelength into same dimensionality as I and σI
-    # ext_λ = Util.extend(λ, (nx,ny)) 
-
-    # # 1 Jy = 10^-23 erg s^-1 cm^-2 Hz^-1
-    # # 1 MJy = 10^6 Jy
-    # # Fνdν = Fλdλ
-    # # Fλ = Fν(dν/dλ) = Fν(c/λ²)
-    # # 1 erg s^-1 cm^-2 Å^-1 sr^-1 = Ω * 1 erg s^-1 cm^-2 Å^-1 spax^-1
-    
-    # Iλ = Iλ .* 1e-7 .* Util.C_MS ./ ext_λ.^2
-    # σI = σI .* 1e-7 .* Util.C_MS ./ ext_λ.^2
-    ##################################################################################
-
-    return DataCube(λ, Iλ, σI, mask, Ω, ra, dec, wcs, channel, band, false, false)
+    DataCube(λ, Iλ, σI, mask, Ω, ra, dec, wcs, channel, band, false, false)
 end
 
 
@@ -320,6 +308,7 @@ function interpolate_cube!(cube::DataCube)
         # Filter NaNs
         if sum(.!isfinite.(I) .| .!isfinite.(σ)) > (size(I, 1) / 10)
             # Keep NaNs in spaxels that are a majority NaN (i.e., we do not want to fit them)
+            @debug "Too many NaNs in spaxel ($x, $y) -- this spaxel will not be fit"
             continue
         end
         filt = .!isfinite.(I) .& .!isfinite.(σ)
@@ -330,8 +319,7 @@ function interpolate_cube!(cube::DataCube)
 
             # Make sure the wavelength vector is linear, since it is assumed later in the function
             diffs = diff(λ)
-            @assert diffs[1] ≈ diffs[end]
-            Δλ = diffs[1]
+            Δλ = mean(diffs[1])
 
             # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
             λknots = λ[51]:Δλ*50:λ[end-51]
@@ -345,6 +333,8 @@ function interpolate_cube!(cube::DataCube)
 
         end 
     end
+
+    return
 end
 
 ############################## PLOTTING FUNCTIONS ####################################
@@ -576,7 +566,9 @@ function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
 
 end
 
+
 ############################## OBSERVATION STRUCTURE AND FUNCTIONS ####################################
+
 
 """
     Observation([channels, name, z, α, δ, instrument, detector, rest_frame, masked])
@@ -614,7 +606,7 @@ struct Observation
         z::AbstractFloat=NaN, α::AbstractFloat=NaN, δ::AbstractFloat=NaN, instrument::String="Generic Instrument", 
         detector::String="Generic Detector", rest_frame::Bool=false, masked::Bool=false)
 
-        return new(channels, name, z, α, δ, instrument, detector, rest_frame, masked)
+        new(channels, name, z, α, δ, instrument, detector, rest_frame, masked)
     end
     
 end
@@ -652,7 +644,7 @@ function from_fits(filenames::Vector{String}, z::AbstractFloat)::Observation
         channels[i] = from_fits(filepath)
     end
 
-    return Observation(channels, name, z, ra, dec, inst, detector, false, false)
+    Observation(channels, name, z, ra, dec, inst, detector, false, false)
 end
 
 
@@ -678,7 +670,7 @@ function to_rest_frame(obs::Observation)::Observation
             new_channels[i] = to_rest_frame(chan, obs.z)
         end
     end
-    return Observation(new_channels, obs.name, obs.z, obs.α, obs.δ, obs.instrument, obs.detector, true, obs.masked)
+    Observation(new_channels, obs.name, obs.z, obs.α, obs.δ, obs.instrument, obs.detector, true, obs.masked)
 
 end
 
@@ -705,7 +697,7 @@ function apply_mask(obs::Observation)::Observation
             new_channels[i] = apply_mask(chan)
         end
     end
-    return Observation(new_channels, obs.name, obs.z, obs.α, obs.δ, obs.instrument, obs.detector, obs.rest_frame, true)
+    Observation(new_channels, obs.name, obs.z, obs.α, obs.δ, obs.instrument, obs.detector, obs.rest_frame, true)
 
 end
 
@@ -713,7 +705,7 @@ end
 """
     correct(obs::Observation)
 
-A combination of the `apply_mask` and `to_rest_frame` functions for Observation objects
+A composition of the `apply_mask` and `to_rest_frame` functions for Observation objects
 
 See [`apply_mask`](@ref) and [`to_rest_frame`](@ref)
 """
@@ -766,7 +758,7 @@ function cube_rebin!(obs::Observation, channels::Union{Vector{S},Nothing}=nothin
         function pix_transform(x, y)
             coords3d = [x, y, 1.]
             cprime = world_to_pix(obs.channels[ch_in].wcs, pix_to_world(obs.channels[ch_ref].wcs, coords3d))
-            return cprime[1], cprime[2]
+            cprime[1], cprime[2]
         end
 
         # Convert NaNs to 0s
@@ -836,7 +828,7 @@ function cube_rebin!(obs::Observation, channels::Union{Vector{S},Nothing}=nothin
     
     @info "Done!"
     
-    return obs.channels[0]
+    obs.channels[0]
 
 end
 
