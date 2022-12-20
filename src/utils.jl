@@ -581,7 +581,7 @@ function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloa
 end
 
 
-# Multiple dispatch for more efficiency
+# Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
 function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_dust_cont::Integer, n_dust_features::Integer,
     extinction_curve::String, extinction_screen::Bool)
 
@@ -850,7 +850,7 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
 end
 
 
-# Multiple dispatch for more efficiency
+# Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
 function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_lines::Integer, n_voff_tied::Integer, 
     voff_tied_key::Vector{String}, line_tied::Vector{Union{String,Nothing}}, line_profiles::Vector{Symbol}, 
     n_flow_voff_tied::Integer, flow_voff_tied_key::Vector{String}, line_flow_tied::Vector{Union{String,Nothing}},

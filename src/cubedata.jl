@@ -188,7 +188,7 @@ function from_fits(filename::String)::DataCube
     wcs.pc = [hdr["PC1_1"] hdr["PC1_2"] hdr["PC1_3"]; hdr["PC2_1"] hdr["PC2_2"] hdr["PC2_3"]; hdr["PC3_1"] hdr["PC3_2"] hdr["PC3_3"]]
 
     # Wavelength vector
-    λ = hdr["CRVAL3"] .+ hdr["CDELT3"] .* collect(0:nz-1)
+    λ = hdr["CRVAL3"] .+ hdr["CDELT3"] .* (collect(0:hdr["NAXIS3"]-1) .+ hdr["CRPIX3"] .- 1)
     # Alternative method using the WCS directly:
     # λ = pix_to_world(wcs, Matrix(hcat(ones(nz), ones(nz), collect(1:nz))'))[3,:] ./ 1e-6
 
