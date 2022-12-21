@@ -1346,7 +1346,8 @@ function mask_emission_lines(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFl
 
     # cubic spline interpolation 
     Δλ = mean(diff(λ))
-    λknots = λ[51]:Δλ*50:λ[end-51]
+    scale = length(λ) ÷ 40
+    λknots = λ[scale+1]:Δλ*scale:λ[end-scale-1]
     I_cub = Spline1D(λ, I, λknots, k=3, bc="extrapolate")
 
     # For each window size, do a sliding median filter
@@ -2686,7 +2687,7 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
         # end
 
         # Convert FWHM from km/s to μm
-        fwhm_μm = Util.Doppler_shift_λ(ln.λ₀, fwhm) - ln.λ₀
+        fwhm_μm = Util.Doppler_shift_λ(ln.λ₀, fwhm/2) - Util.Doppler_shift_λ(ln.λ₀, -fwhm/2)
         fwhm_μm_err = ln.λ₀ / Util.C_KMS * fwhm_err
 
         # Convert amplitude to erg s^-1 cm^-2 μm^-1 sr^-1, put back in the normalization
@@ -2807,7 +2808,7 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
             flow_mean_μm = Util.Doppler_shift_λ(ln.λ₀, flow_voff)
             flow_mean_μm_err = ln.λ₀ / Util.C_KMS * flow_voff_err
             # Convert FWHM from km/s to μm
-            flow_fwhm_μm = Util.Doppler_shift_λ(ln.λ₀, flow_fwhm) - ln.λ₀
+            flow_fwhm_μm = Util.Doppler_shift_λ(ln.λ₀, flow_fwhm/2) - Util.Doppler_shift_λ(ln.λ₀, -flow_fwhm/2)
             flow_fwhm_μm_err = ln.λ₀ / Util.C_KMS * flow_fwhm_err
 
             # Convert amplitude to erg s^-1 cm^-2 μm^-1 sr^-1, put back in the normalization

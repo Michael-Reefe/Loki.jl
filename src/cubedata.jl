@@ -334,9 +334,10 @@ function interpolate_cube!(cube::DataCube)
             # Make sure the wavelength vector is linear, since it is assumed later in the function
             diffs = diff(λ)
             Δλ = mean(diffs[1])
+            scale = length(λ) ÷ 40
 
             # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
-            λknots = λ[51]:Δλ*50:λ[end-51]
+            λknots = λ[scale+1]:Δλ*scale:λ[end-scale-1]
             # ONLY replace NaN values, keep the rest of the data as-is
             I[filt] .= Spline1D(λ[isfinite.(I)], I[isfinite.(I)], λknots, k=3, bc="extrapolate").(λ[filt])
             σ[filt] .= Spline1D(λ[isfinite.(σ)], σ[isfinite.(σ)], λknots, k=3, bc="extrapolate").(λ[filt])

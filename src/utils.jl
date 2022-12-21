@@ -740,7 +740,7 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
         # Convert voff in km/s to mean wavelength in μm
         mean_μm = Doppler_shift_λ(line_restwave[k], voff)
         # Convert FWHM from km/s to μm
-        fwhm_μm = Doppler_shift_λ(line_restwave[k], fwhm) - line_restwave[k]
+        fwhm_μm = Doppler_shift_λ(line_restwave[k], fwhm/2) - Doppler_shift_λ(line_restwave[k], -fwhm/2)
         # Evaluate line profile
         if line_profiles[k] == :Gaussian
             comps["line_$k"] = Gaussian.(λ, amp, mean_μm, fwhm_μm)
@@ -812,7 +812,7 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
             # Convert voff in km/s to mean wavelength in μm
             flow_mean_μm = Doppler_shift_λ(line_restwave[k], flow_voff)
             # Convert FWHM from km/s to μm
-            flow_fwhm_μm = Doppler_shift_λ(line_restwave[k], flow_fwhm) - line_restwave[k]
+            flow_fwhm_μm = Doppler_shift_λ(line_restwave[k], flow_fwhm/2) - Doppler_shift_λ(line_restwave[k], -flow_fwhm/2)
             # Evaluate line profile
             if line_flow_profiles[k] == :Gaussian
                 comps["line_$(k)_flow"] = Gaussian.(λ, flow_amp, flow_mean_μm, flow_fwhm_μm)
@@ -936,7 +936,7 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
         # Convert voff in km/s to mean wavelength in μm
         mean_μm = Doppler_shift_λ(line_restwave[k], voff)
         # Convert FWHM from km/s to μm
-        fwhm_μm = Doppler_shift_λ(line_restwave[k], fwhm) - line_restwave[k]
+        fwhm_μm = Doppler_shift_λ(line_restwave[k], fwhm/2) - Doppler_shift_λ(line_restwave[k], -fwhm/2)
         # Evaluate line profile
         if line_profiles[k] == :Gaussian
             contin .+= Gaussian.(λ, amp, mean_μm, fwhm_μm)
@@ -1006,7 +1006,7 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
             # Convert voff in km/s to mean wavelength in μm
             flow_mean_μm = Doppler_shift_λ(line_restwave[k], flow_voff)
             # Convert FWHM from km/s to μm
-            flow_fwhm_μm = Doppler_shift_λ(line_restwave[k], flow_fwhm) - line_restwave[k]
+            flow_fwhm_μm = Doppler_shift_λ(line_restwave[k], flow_fwhm/2) - Doppler_shift_λ(line_restwave[k], -flow_fwhm/2)
             # Evaluate line profile
             if line_flow_profiles[k] == :Gaussian
                 contin .+= Gaussian.(λ, flow_amp, flow_mean_μm, flow_fwhm_μm)

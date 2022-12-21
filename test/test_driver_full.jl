@@ -18,17 +18,17 @@ to = TimerOutput()
 channel = 2
 
 # Load in data
-obs = from_fits(["data/jw01328-o015_t014_miri_ch1-mediumshortlong-_s3d.fits", 
-    "data/jw01328-o015_t014_miri_ch2-mediumshortlong-_s3d.fits", 
-    "data/jw01328-o015_t014_miri_ch3-mediumshortlong-_s3d.fits", 
-    "data/jw01328-o015_t014_miri_ch4-mediumshortlong-_s3d.fits"], 
-    0.016317)
+# obs = from_fits(["data/jw01328-o015_t014_miri_ch1-mediumshortlong-_s3d.fits", 
+#     "data/jw01328-o015_t014_miri_ch2-mediumshortlong-_s3d.fits", 
+#     "data/jw01328-o015_t014_miri_ch3-mediumshortlong-_s3d.fits", 
+#     "data/jw01328-o015_t014_miri_ch4-mediumshortlong-_s3d.fits"], 
+#     0.016317)
 
-# obs = from_fits([parent * "/jw01039-o005_t001_miri_ch1-shortlongmedium-_s3d.fits",
-#     parent * "/jw01039-o005_t001_miri_ch2-shortlongmedium-_s3d.fits",
-#     parent * "/jw01039-o005_t001_miri_ch3-shortlongmedium-_s3d.fits",
-#     parent * "/jw01039-o005_t001_miri_ch4-shortlongmedium-_s3d.fits"],
-#     0.0266)
+obs = from_fits(["data/jw01039-o005_t001_miri_ch1-shortlongmedium-_s3d.fits",
+    "data/jw01039-o005_t001_miri_ch2-shortlongmedium-_s3d.fits",
+    "data/jw01039-o005_t001_miri_ch3-shortlongmedium-_s3d.fits",
+    "data/jw01039-o005_t001_miri_ch4-shortlongmedium-_s3d.fits"],
+    0.0266)
 
 obs = correct(obs)
 
