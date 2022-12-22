@@ -40,7 +40,7 @@ obs = correct(obs)
 
 # Create the cube fitting object
 cube_fitter = CubeFitter(obs.channels[channel], obs.z, obs.name * "_ch$(channel)_nofringe", n_procs; 
-    parallel=true, plot_spaxels=:both, plot_maps=true, save_fits=true)
+    parallel=true, plot_spaxels=:pyplot, plot_maps=true, save_fits=true)
 
 # Perform the Levenberg-Marquardt least-squares fitting
 @timeit to "Full Fitting Procedure for Channel $channel" fit_cube!(cube_fitter)

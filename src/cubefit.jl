@@ -1782,7 +1782,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     # Perform a cubic spline continuum fit
     mask_lines, spline_continuum, _ = continuum_cubic_spline(λ, I, σ)
     N = Float64(abs(nanmaximum(I)))
-    N = N ≤ 0. ? N : 1.
+    N = N ≠ 0. ? N : 1.
 
     @debug "Using normalization N=$N"
 
@@ -2540,7 +2540,7 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
     # Perform a cubic spline fit to the continuum, masking out lines
     mask_lines, continuum, _ = continuum_cubic_spline(λ, I, σ)
     N = Float64(abs(nanmaximum(I)))
-    N = N ≤ 0. ? N : 1.
+    N = N ≠ 0. ? N : 1.
     @debug "Normalization: $N"
 
     # Loop through dust features
@@ -2925,7 +2925,7 @@ end
 
 
 """
-    fit_spaxel(cube_fitter, spaxel, continuum)
+    fit_spaxel(cube_fitter, spaxel)
 
 Wrapper function to perform a full fit of a single spaxel, calling `continuum_fit_spaxel` and `line_fit_spaxel` and
 concatenating the best-fit parameters. The outputs are also saved to files so the fit need not be repeated in the case
@@ -3385,7 +3385,7 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
 
         # Renormalize
         N = Float64(abs(nanmaximum(cube_fitter.cube.Iλ[index, :])))
-        N = N ≤ 0. ? N : 1.
+        N = N ≠ 0. ? N : 1.
         for comp ∈ keys(comps_l)
             comps_l[comp] .*= N
         end
