@@ -691,17 +691,17 @@ in the parameter map.
 
 See ['parammaps_empty`](@ref) for a default constructor function.
 """
-struct ParamMaps
+struct ParamMaps{T<:AbstractFloat}
 
-    stellar_continuum::Dict{Symbol, Array{Float64, 2}}
-    dust_continuum::Dict{Int, Dict{Symbol, Array{Float64, 2}}}
-    dust_features::Dict{String, Dict{Symbol, Array{Float64, 2}}}
-    lines::Dict{Symbol, Dict{Symbol, Array{Float64, 2}}}
-    tied_voffs::Dict{String, Array{Float64, 2}}
-    flow_tied_voffs::Dict{String, Array{Float64, 2}}
-    tied_voigt_mix::Union{Array{Float64, 2}, Nothing}
-    extinction::Dict{Symbol, Array{Float64, 2}}
-    reduced_χ2::Array{Float64, 2}
+    stellar_continuum::Dict{Symbol, Array{T, 2}}
+    dust_continuum::Dict{Int, Dict{Symbol, Array{T, 2}}}
+    dust_features::Dict{String, Dict{Symbol, Array{T, 2}}}
+    lines::Dict{Symbol, Dict{Symbol, Array{T, 2}}}
+    tied_voffs::Dict{String, Array{T, 2}}
+    flow_tied_voffs::Dict{String, Array{T, 2}}
+    tied_voigt_mix::Union{Array{T, 2}, Nothing}
+    extinction::Dict{Symbol, Array{T, 2}}
+    reduced_χ2::Array{T, 2}
 
 end
 
@@ -840,7 +840,7 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, df_names::Ve
     reduced_χ2 = copy(nan_arr)
     @debug "reduced chi^2 map"
 
-    ParamMaps(stellar_continuum, dust_continuum, dust_features, lines, tied_voffs, flow_tied_voffs,
+    ParamMaps{Float64}(stellar_continuum, dust_continuum, dust_features, lines, tied_voffs, flow_tied_voffs,
         tied_voigt_mix, extinction, reduced_χ2)
 end
 
@@ -1318,6 +1318,7 @@ end
 
 
 ############################## FITTING FUNCTIONS AND HELPERS ####################################
+
 
 """
     mask_emission_lines(λ, I, σ)

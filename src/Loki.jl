@@ -5,6 +5,9 @@ using Reexport
 include("cubefit.jl")
 @reexport using .CubeFit
 
+include("reduce.jl")
+@reexport using .Reduce
+
 #####################
 #= WELCOME TO LOKI =#
 #####################
