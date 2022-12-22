@@ -141,7 +141,7 @@ function parse_resolving(z::AbstractFloat, channel::Integer)::Function
 
     # Find points where wavelength jumps down (b/w channels)
     jumps = diff(wave) .< 0
-    indices = 1:length(wave)
+    indices = eachindex(wave)
     ind_left = indices[BitVector([0; jumps])]
     ind_right = indices[BitVector([jumps; 0])]
 
@@ -320,7 +320,7 @@ function parse_dust()::Dict
     @debug "Stellar continuum:\nTemp $(dust_out[:stellar_continuum_temp])"
 
     # Dust continuum temperatures
-    dust_out[:dust_continuum_temps] = [Param.from_dict(dust["dust_continuum_temps"][i]) for i ∈ 1:length(dust["dust_continuum_temps"])]
+    dust_out[:dust_continuum_temps] = [Param.from_dict(dust["dust_continuum_temps"][i]) for i ∈ eachindex(dust["dust_continuum_temps"])]
     msg = "Dust continuum:"
     for dc ∈ dust_out[:dust_continuum_temps]
         msg *= "\nTemp $dc"
@@ -1351,8 +1351,8 @@ function mask_emission_lines(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFl
     I_cub = Spline1D(λ, I, λknots, k=3, bc="extrapolate")
 
     # For each window size, do a sliding median filter
-    for i ∈ 1:length(window_sizes)
-        pix = 1:length(λ)
+    for i ∈ eachindex(window_sizes)
+        pix = eachindex(λ)
         for p ∈ pix
             i_sort = sortperm(abs.(p .- pix))
             idx = pix[i_sort][1:window_sizes[i]]
@@ -1360,7 +1360,7 @@ function mask_emission_lines(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFl
         end
     end
     # Check if the std between the window medians is larger than the noise -> if so, there is a line
-    for j ∈ 1:length(λ)
+    for j ∈ eachindex(λ)
         mask[j] = dropdims(std(med_spec, dims=2), dims=2)[j] > std(I[λ[j]-0.1 .< λ .< λ[j]+0.1] .- I_cub.(λ[λ[j]-0.1 .< λ .< λ[j]+0.1]))
     end
     # Extend mask edges by a few pixels
@@ -1478,9 +1478,14 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
 
     # Extract spaxel to be fit
     λ = cube_fitter.cube.λ
-    # Get the data to fit -- either one spaxel, or if "init" is set, the sum of all spaxels
-    I = !init ? cube_fitter.cube.Iλ[spaxel, :] : Util.Σ(cube_fitter.cube.Iλ, (1,2))
-    σ = !init ? cube_fitter.cube.σI[spaxel, :] : sqrt.(Util.Σ(cube_fitter.cube.σI.^2, (1,2)))
+    #= 
+    Get the data to fit -- either one spaxel, or if "init" is set, the sum of all spaxels.
+    The spaxels are in surface brightness units (flux per steradian), so to preserve the units when summing them up, 
+    we must divide by the number of spaxels in the sum (this way preserves the proper conversion into flux units, i.e. you would
+    multiply the result by N_SPAXELS x STERADIANS_PER_SPAXEL to get the total flux within all the spaxels included in the sum) 
+    =#
+    I = !init ? cube_fitter.cube.Iλ[spaxel, :] : Util.Σ(cube_fitter.cube.Iλ, (1,2)) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+    σ = !init ? cube_fitter.cube.σI[spaxel, :] : sqrt.(Util.Σ(cube_fitter.cube.σI.^2, (1,2))) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2))
 
     # Mask out emission lines so that they aren't included in the continuum fit
     mask_lines, I_cubic, σ_cubic = continuum_cubic_spline(λ, I, σ)
@@ -1514,8 +1519,9 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
         # Set the parameters to the best parameters
         p₀ = copy(cube_fitter.p_init_cont)
 
-        # scale all flux amplitudes by the difference in medians between spaxels
-        scale = nanmedian(I) / nanmedian(Util.Σ(cube_fitter.cube.Iλ, (1,2)))
+        # scale all flux amplitudes by the difference in medians between the spaxel and the summed spaxels
+        # (should be close to 1 since the sum is already normalized by the number of spaxels included anyways)
+        scale = nanmedian(I) / nanmedian(Util.Σ(cube_fitter.cube.Iλ, (1,2)) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2)))
         max_amp = nanmaximum(I)
         
         # Stellar amplitude
@@ -1530,7 +1536,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
 
         # Dust feature amplitudes
         for i ∈ 1:cube_fitter.n_dust_feat
-            p₀[pᵢ] = clamp(nanmedian(I)/2, 0., Inf)
+            # dont take the best fit values, just start them all equal otherwise weird stuff happens
+            p₀[pᵢ] = clamp(nanmedian(I)/2, 0., Inf) 
             pᵢ += 3
         end
 
@@ -1629,9 +1636,9 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
     # Create a `config` structure
     config = CMPFit.Config()
 
-    @debug "Continuum Parameters locked? \n $([parinfo[i].fixed for i ∈ 1:length(p₀)])"
-    @debug "Continuum Lower limits: \n $([parinfo[i].limits[1] for i ∈ 1:length(p₀)])"
-    @debug "Continuum Upper limits: \n $([parinfo[i].limits[2] for i ∈ 1:length(p₀)])"
+    @debug "Continuum Parameters locked? \n $([parinfo[i].fixed for i ∈ eachindex(p₀)])"
+    @debug "Continuum Lower limits: \n $([parinfo[i].limits[1] for i ∈ eachindex(p₀)])"
+    @debug "Continuum Upper limits: \n $([parinfo[i].limits[2] for i ∈ eachindex(p₀)])"
 
     @debug "Beginning continuum fitting with Levenberg-Marquardt least squares (CMPFit):"
 
@@ -1647,7 +1654,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
 
     # Count free parameters
     n_free = 0
-    for pᵢ ∈ 1:length(popt)
+    for pᵢ ∈ eachindex(popt)
         if iszero(parinfo[pᵢ].fixed)
             n_free += 1
         end
@@ -1713,7 +1720,7 @@ Priors will be -Inf if any parameter goes out of bounds.
 """
 function _ln_prior(p, priors)
     # sum the log prior distribution of each parameter
-    sum([logpdf(priors[i], p[i]) for i ∈ 1:length(p)])
+    sum([logpdf(priors[i], p[i]) for i ∈ eachindex(p)])
 end
 
 
@@ -1739,7 +1746,7 @@ end
 
 
 """
-    line_fit_spaxel(cube_fitter, spaxel, continuum)
+    line_fit_spaxel(cube_fitter, spaxel, continuum, init=init)
 
 Fit the emission lines of a given spaxel in the DataCube, subtracting the continuum, using the 
 Simulated Annealing and L-BFGS fitting methods with the `Optim` package.
@@ -1753,10 +1760,13 @@ See Smith, Draine, et al. 2007; http://tir.astro.utoledo.edu/jdsmith/research/pa
 `S<:Integer`
 - `cube_fitter::CubeFitter`: The CubeFitter object containing the data, parameters, and options for the fit
 - `spaxel::CartesianIndex`: The coordinates of the spaxel to be fit
+- `continuum::Vector{<:AbstractFloat}`: The fitted continuum level of the spaxel being fit (which will be subtracted
+    before the lines are fit)
 - `init::Bool=false`: Flag for the initial fit which fits the sum of all spaxels, to get an estimation for
     the initial parameter vector for individual spaxel fits
 """
-function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; init::Bool=false)
+function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, continuum::Vector{<:AbstractFloat}; 
+    init::Bool=false)
 
     @debug """\n
     #########################################################
@@ -1766,18 +1776,18 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; init::
 
     # Extract spaxel to be fit
     λ = cube_fitter.cube.λ
-    I = !init ? cube_fitter.cube.Iλ[spaxel, :] : Util.Σ(cube_fitter.cube.Iλ, (1,2))
-    σ = !init ? cube_fitter.cube.σI[spaxel, :] : sqrt.(Util.Σ(cube_fitter.cube.σI.^2, (1,2)))
+    I = !init ? cube_fitter.cube.Iλ[spaxel, :] : Util.Σ(cube_fitter.cube.Iλ, (1,2)) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+    σ = !init ? cube_fitter.cube.σI[spaxel, :] : sqrt.(Util.Σ(cube_fitter.cube.σI.^2, (1,2))) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2))
 
     # Perform a cubic spline continuum fit
-    mask_lines, continuum, _ = continuum_cubic_spline(λ, I, σ)
+    mask_lines, spline_continuum, _ = continuum_cubic_spline(λ, I, σ)
     N = Float64(abs(nanmaximum(I)))
-    N = N ≠ 0. ? N : 1.
+    N = N ≤ 0. ? N : 1.
 
     @debug "Using normalization N=$N"
 
     # Add statistical uncertainties to the systematic uncertainties in quadrature
-    σ_stat = std(I[.!mask_lines] .- continuum[.!mask_lines])
+    σ_stat = std(I[.!mask_lines] .- spline_continuum[.!mask_lines])
     σ .= .√(σ.^2 .+ σ_stat.^2)
 
     @debug "Adding statistical error of $σ_stat in quadrature"
@@ -2187,7 +2197,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; init::
 
     # Count free parameters
     n_free = 0
-    for pᵢ ∈ 1:length(popt)
+    for pᵢ ∈ eachindex(popt)
         if iszero(parinfo[pᵢ].fixed)
             n_free += 1
         end
@@ -2344,7 +2354,7 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
     name::String, label::String; backend::Symbol=:pyplot) where {T<:AbstractFloat}
 
     # Plotly ---> useful interactive plots for visually inspecting data, but not publication-quality
-    if backend == :plotly
+    if backend == :plotly || backend == :both
         # Plot the overall data / model
         trace1 = PlotlyJS.scatter(x=λ, y=I, mode="lines", line=Dict(:color => "black", :width => 1), name="Data", showlegend=true)
         trace2 = PlotlyJS.scatter(x=λ, y=I_cont, mode="lines", line=Dict(:color => "red", :width => 1), name="Continuum Fit", showlegend=true)
@@ -2399,8 +2409,10 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
         PlotlyJS.savefig(p, isnothing(label) ? joinpath("output_$name", "spaxel_plots", "levmar_fit_spaxel.html") : 
             joinpath("output_$name", "spaxel_plots", "$label.html"))
 
+    end
+
     # Pyplot --> actually publication-quality plots finely tuned to be the most useful and visually appealing that I could make them
-    elseif backend == :pyplot
+    if backend == :pyplot || backend == :both
 
         # If max is above 10^4, normalize so the y axis labels aren't super wide
         power = floor(Int, log10(maximum(I)))
@@ -2421,7 +2433,7 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
         ax1.plot(λ, I_cont ./ norm, "r-", label="Model")
         ax2.plot(λ, (I.-I_cont) ./ norm, "k-")
         ax2.plot(λ, zeros(length(λ)), "r-", label="\$\\tilde{\\chi}^2 = $(@sprintf "%.3f" χ2red)\$")
-        ax2.fill_between(λ, σ./norm, .-σ./norm, color="k", alpha=0.5)
+        ax2.fill_between(λ, (I.-I_cont.+σ)./norm, (I.-I_cont.-σ)./norm, color="k", alpha=0.5)
         # twin axes with different labels --> extinction for ax3 and observed wavelength for ax4
         ax3 = ax1.twinx()
         ax4 = ax1.twiny()
@@ -2528,7 +2540,7 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
     # Perform a cubic spline fit to the continuum, masking out lines
     mask_lines, continuum, _ = continuum_cubic_spline(λ, I, σ)
     N = Float64(abs(nanmaximum(I)))
-    N = N ≠ 0. ? N : 1.
+    N = N ≤ 0. ? N : 1.
     @debug "Normalization: $N"
 
     # Loop through dust features
@@ -2913,7 +2925,7 @@ end
 
 
 """
-    fit_spaxel(cube_fitter, spaxel)
+    fit_spaxel(cube_fitter, spaxel, continuum)
 
 Wrapper function to perform a full fit of a single spaxel, calling `continuum_fit_spaxel` and `line_fit_spaxel` and
 concatenating the best-fit parameters. The outputs are also saved to files so the fit need not be repeated in the case
@@ -2957,7 +2969,7 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex)
             σ, popt_c, I_cont, comps_cont, n_free_c, perr_c, covar_c = 
                 @timeit timer_output "continuum_fit_spaxel" continuum_fit_spaxel(cube_fitter, spaxel)
             _, popt_l, I_line, comps_line, n_free_l, perr_l, covar_l = 
-                @timeit timer_output "line_fit_spaxel" line_fit_spaxel(cube_fitter, spaxel)
+                @timeit timer_output "line_fit_spaxel" line_fit_spaxel(cube_fitter, spaxel, I_cont)
 
             # Combine the continuum and line models
             I_model = I_cont .+ I_line
@@ -3040,11 +3052,11 @@ function fit_stack!(cube_fitter::CubeFitter)
     @info "===> Performing initial fit to the sum of all spaxels... <==="
     # Collect the data
     λ_init = cube_fitter.cube.λ
-    I_sum_init = Util.Σ(cube_fitter.cube.Iλ, (1,2))
+    I_sum_init = Util.Σ(cube_fitter.cube.Iλ, (1,2)) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2))
 
     # Continuum and line fits
     σ_init, popt_c_init, I_c_init, comps_c_init, n_free_c_init, _, _ = continuum_fit_spaxel(cube_fitter, CartesianIndex(0,0); init=true)
-    _, popt_l_init, I_l_init, comps_l_init, n_free_l_init, _, _ = line_fit_spaxel(cube_fitter, CartesianIndex(0,0); init=true)
+    _, popt_l_init, I_l_init, comps_l_init, n_free_l_init, _, _ = line_fit_spaxel(cube_fitter, CartesianIndex(0,0), I_c_init; init=true)
 
     # Get the overall models
     I_model_init = I_c_init .+ I_l_init
@@ -3137,7 +3149,7 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
 
     # Sort spaxels by median brightness, so that we fit the brightest ones first
     # (which hopefully have the best reduced chi^2s)
-    spaxels = CartesianIndices((1:shape[1], 1:shape[2]))
+    spaxels = CartesianIndices(selectdim(cube_fitter.cube.Iλ, 3, 1))
 
     @info "===> Beginning individual spaxel fitting... <==="
     # Use multiprocessing (not threading) to iterate over multiple spaxels at once using multiple CPUs
@@ -3373,7 +3385,7 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
 
         # Renormalize
         N = Float64(abs(nanmaximum(cube_fitter.cube.Iλ[index, :])))
-        N = N ≠ 0. ? N : 1.
+        N = N ≤ 0. ? N : 1.
         for comp ∈ keys(comps_l)
             comps_l[comp] .*= N
         end
@@ -3507,9 +3519,6 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
     elseif occursin("SNR", String(name_i))
         bunit = "\$S/N\$"
         small = 1
-    elseif occursin("beta", String(name_i))
-        bunit = "\$\\beta\$"
-        small = 0
     elseif occursin("tau", String(name_i))
         bunit = "\$\\tau_{9.7}\$"
         small = 0
@@ -3527,6 +3536,9 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
         small = 0.01
     elseif occursin("mixing", String(name_i))
         bunit = "\$\\eta\$"
+        small = 0
+    elseif occursin("beta", String(name_i))
+        bunit = "\$\\beta\$"
         small = 0
     end
 

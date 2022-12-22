@@ -1078,10 +1078,10 @@ function GaussHermite(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWH
     norm = .√(factorial.(n) .* 2 .^ n)
     coeff = vcat([1, 0, 0], h./norm)
     # Calculate hermite basis
-    Herm = sum([coeff[nᵢ] * hermite(w, nᵢ-1) for nᵢ ∈ 1:length(coeff)])
+    Herm = sum([coeff[nᵢ] * hermite(w, nᵢ-1) for nᵢ ∈ eachindex(coeff)])
 
     # Calculate peak height (i.e. value of function at w=0)
-    Herm0 = sum([coeff[nᵢ] * hermite(0., nᵢ-1) for nᵢ ∈ 1:length(coeff)])
+    Herm0 = sum([coeff[nᵢ] * hermite(0., nᵢ-1) for nᵢ ∈ eachindex(coeff)])
 
     # Combine the Gaussian and Hermite profiles
     A * α * Herm / Herm0

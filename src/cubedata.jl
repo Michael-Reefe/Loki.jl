@@ -314,22 +314,22 @@ function interpolate_cube!(cube::DataCube)
     λ = cube.λ
     @debug "Interpolating NaNs in cube with channel $(cube.channel), band $(cube.band):"
 
-    for (x, y) ∈ Iterators.product(1:size(cube.Iλ, 1), 1:size(cube.Iλ, 2))
+    for index ∈ CartesianIndices(selectdim(cube.Iλ, 3, 1))
 
-        I = cube.Iλ[x, y, :]
-        σ = cube.σI[x, y, :]
+        I = cube.Iλ[index, :]
+        σ = cube.σI[index, :]
 
         # Filter NaNs
         if sum(.!isfinite.(I) .| .!isfinite.(σ)) > (size(I, 1) / 10)
             # Keep NaNs in spaxels that are a majority NaN (i.e., we do not want to fit them)
-            @debug "Too many NaNs in spaxel ($x, $y) -- this spaxel will not be fit"
+            @debug "Too many NaNs in spaxel $index -- this spaxel will not be fit"
             continue
         end
         filt = .!isfinite.(I) .& .!isfinite.(σ)
 
         # Interpolate the NaNs
         if sum(filt) > 0
-            @debug "NaNs found in spaxel ($x, $y) -- interpolating"
+            @debug "NaNs found in spaxel $index -- interpolating"
 
             # Make sure the wavelength vector is linear, since it is assumed later in the function
             diffs = diff(λ)
@@ -343,8 +343,8 @@ function interpolate_cube!(cube::DataCube)
             σ[filt] .= Spline1D(λ[isfinite.(σ)], σ[isfinite.(σ)], λknots, k=3, bc="extrapolate").(λ[filt])
 
             # Reassign data in cube structure
-            cube.Iλ[x, y, :] .= I
-            cube.σI[x, y, :] .= σ
+            cube.Iλ[index, :] .= I
+            cube.σI[index, :] .= σ
 
         end 
     end
