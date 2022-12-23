@@ -53,6 +53,7 @@ using LoggingExtras
 using Dates
 using InteractiveUtils
 using TimerOutputs
+using LaTeXStrings
 
 # PyCall needed for some matplotlib modules
 using PyCall
@@ -2400,9 +2401,9 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
             line=Dict(:color => "green", :width => 1), name="Dust+Stellar Continuum")])
         # axes labels / titles / fonts
         layout = PlotlyJS.Layout(
-            xaxis_title="\$\\lambda\\ (\\mu{\\rm m})\$",
-            yaxis_title="\$I_{\\nu}\\ ({\\rm MJy}\\,{\\rm sr}^{-1})\$",
-            title="\$\\tilde{\\chi}^2 = $χ2red\$",
+            xaxis_title=L"$\lambda\ (\mu{\rm m})$",
+            yaxis_title=L"$I_{\nu}\ ({\rm MJy}\,{\rm sr}^{-1})$",
+            title=L"$\tilde{\chi}^2 = %$χ2red$",
             xaxis_constrain="domain",
             font_family="Georgia, Times New Roman, Serif",
             template="plotly_white",
@@ -2438,7 +2439,8 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
         ax1.plot(λ, I ./ norm, "k-", label="Data")
         ax1.plot(λ, I_cont ./ norm, "r-", label="Model")
         ax2.plot(λ, (I.-I_cont) ./ norm, "k-")
-        ax2.plot(λ, zeros(length(λ)), "r-", label="\$\\tilde{\\chi}^2 = $(@sprintf "%.3f" χ2red)\$")
+        χ2_str = @sprintf "%.3f" χ2red
+        ax2.plot(λ, zeros(length(λ)), "r-", label=L"$\tilde{\chi}^2 = %$χ2_str$")
         ax2.fill_between(λ, (I.-I_cont.+σ)./norm, (I.-I_cont.-σ)./norm, color="k", alpha=0.5)
         # twin axes with different labels --> extinction for ax3 and observed wavelength for ax4
         ax3 = ax1.twinx()
@@ -2464,10 +2466,13 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
         # plot vertical dashed lines for emission line wavelengths
         for (lw, ln) ∈ zip(line_wave, line_names)
             ax1.axvline(lw, linestyle="--", 
-                color=occursin("H2", String(ln)) ? :red : (any(occursin.(["alpha", "beta", "gamma", "delta"], String(ln))) ? "#ff7f0e" : :rebeccapurple), lw=0.5, alpha=0.5)
+                color=occursin("H2", String(ln)) ? :red : 
+                (any(occursin.(["alpha", "beta", "gamma", "delta"], String(ln))) ? "#ff7f0e" : :rebeccapurple), lw=0.5, alpha=0.5)
             ax2.axvline(lw, linestyle="--", 
-                color=occursin("H2", String(ln)) ? :red : (any(occursin.(["alpha", "beta", "gamma", "delta"], String(ln))) ? "#ff7f0e" : :rebeccapurple), lw=0.5, alpha=0.5)
+                color=occursin("H2", String(ln)) ? :red : 
+                (any(occursin.(["alpha", "beta", "gamma", "delta"], String(ln))) ? "#ff7f0e" : :rebeccapurple), lw=0.5, alpha=0.5)
         end
+
         # full continuum
         ax1.plot(λ, comps["extinction"] .* (sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] .+ comps["stellar"]) ./ norm, "g-")
         # set axes limits and labels
@@ -2476,20 +2481,20 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
         ax2.set_ylim(-1.1maximum((I.-I_cont) ./ norm), 1.1maximum((I.-I_cont) ./ norm))
         ax3.set_ylim(0., 1.1)
         if screen
-            ax3.set_ylabel("\$ e^{-\\tau_{\\lambda}} \$")
+            ax3.set_ylabel(L"$e^{-\tau_{\lambda}}$")
         else
-            ax3.set_ylabel("\$ (1-e^{-\\tau_{\\lambda}}) / \\tau_{\\lambda} \$")
+            ax3.set_ylabel(L"$(1-e^{-\tau_{\lambda}}) / \tau_{\lambda}$")
         end
         ax4.set_xlim(minimum(Util.observed_frame(λ, z)), maximum(Util.observed_frame(λ, z)))
         if power ≥ 4
-            ax1.set_ylabel("\$ I_{\\nu} \$ (\$10^{$power}\$ MJy sr\$^{-1}\$)")
+            ax1.set_ylabel(L"$I_{\nu}$ ($10^{%$power}$ MJy sr$^{-1}$)")
         else
-            ax1.set_ylabel("\$ I_{\\nu} \$ (MJy sr\$^{-1}\$)")
+            ax1.set_ylabel(L"$I_{\nu}$ (MJy sr$^{-1}$)")
         end
         ax1.set_ylim(bottom=0.)
-        ax2.set_ylabel("\$ O-C \$")  # ---> residuals, (O)bserved - (C)alculated
-        ax2.set_xlabel("\$ \\lambda_{\\rm rest} \$ (\$\\mu\$m)")
-        ax4.set_xlabel("\$ \\lambda_{\\rm obs} \$ (\$\\mu\$m)")
+        ax2.set_ylabel(L"$O-C$")  # ---> residuals, (O)bserved - (C)alculated
+        ax2.set_xlabel(L"$\lambda_{\rm rest}$ ($\mu$m)")
+        ax4.set_xlabel(L"$\lambda_{\rm obs}$ ($\mu$m)")
         ax2.legend(loc="upper left")
 
         # Set minor ticks as multiples of 0.1 μm for x axis and automatic for y axis
@@ -3505,46 +3510,46 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
 
     # I know this is ugly but I couldn't figure out a better way to do it lmao
     if occursin("amp", String(name_i))
-        bunit = "\$\\log_{10}(I / \$ erg s\$^{-1}\$ cm\$^{-2}\$ Hz\$^{-1}\$ sr\$^{-1})\$"
+        bunit = L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$"
         small = 0.5
     elseif occursin("temp", String(name_i))
-        bunit = "\$T\$ (K)"
+        bunit = L"$T$ (K)"
         small = 5
     elseif occursin("fwhm", String(name_i)) && occursin("PAH", String(name_i))
-        bunit = "FWHM (\$\\mu\$m)"
+        bunit = L"FWHM ($\mu$m)"
         small = 0.01
     elseif occursin("fwhm", String(name_i)) && !occursin("PAH", String(name_i))
-        bunit = "FWHM (km s\$^{-1}\$)"
+        bunit = L"FWHM (km s$^{-1}$)"
         small = 10
     elseif occursin("mean", String(name_i))
-        bunit = "\$\\mu\$ (\$\\mu\$m)"
+        bunit = L"$\mu$ ($\mu$m)"
         small = 0.01
     elseif occursin("voff", String(name_i))
-        bunit = "\$v_{\\rm off}\$ (km s\$^{-1}\$)"
+        bunit = L"$v_{\rm off}$ (km s$^{-1}$)"
         small = 10
     elseif occursin("SNR", String(name_i))
-        bunit = "\$S/N\$"
+        bunit = L"$S/N$"
         small = 1
     elseif occursin("tau", String(name_i))
-        bunit = "\$\\tau_{9.7}\$"
+        bunit = L"$\tau_{9.7}$"
         small = 0
     elseif occursin("intI", String(name_i))
-        bunit = "\$\\log_{10}(I /\$ erg s\$^{-1}\$ cm\$^{-2}\$ sr\$^{-1}\$)"
+        bunit = L"$\log_{10}(I /$ erg s$^{-1}$ cm$^{-2}$ sr$^{-1}$)"
         small = 0.5
     elseif occursin("chi2", String(name_i))
-        bunit = "\$\\tilde{\\chi}^2\$"
+        bunit = L"$\tilde{\chi}^2$"
         small = 0.1
     elseif occursin("h3", String(name_i))
-        bunit = "\$h_3\$"
+        bunit = L"$h_3$"
         small = 0.01
     elseif occursin("h4", String(name_i))
-        bunit = "\$h_4\$"
+        bunit = L"$h_4$"
         small = 0.01
     elseif occursin("mixing", String(name_i))
-        bunit = "\$\\eta\$"
+        bunit = L"$\eta$"
         small = 0
     elseif occursin("beta", String(name_i))
-        bunit = "\$\\beta\$"
+        bunit = L"$\beta$"
         small = 0
     end
 
@@ -3575,10 +3580,10 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
     # Round to integer
     dL = floor(Int, dL)
     if cosmo.h == 1.0
-        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, "1\$\'\'\$ / $dL\$h^{-1}\$ pc", "lower left", pad=1, color=:black, 
+        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, L"1$\'\'$ / %$dL$h^{-1}$ pc", "lower left", pad=1, color=:black, 
             frameon=false, size_vertical=0.4, label_top=false)
     else
-        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, "1\$\'\'\$ / $dL pc", "lower left", pad=1, color=:black,
+        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, L"1$\'\'$ / %$dL pc", "lower left", pad=1, color=:black,
             frameon=false, size_vertical=0.4, label_top=false)
     end
     ax.add_artist(scalebar)
@@ -3744,13 +3749,13 @@ function make_movie(cube_fitter::CubeFitter, cube_model::CubeModel; cmap::Symbol
         ax1.set_xlabel(" ")
         ax1.set_ylabel(" ")
         # Add colorbar on the side
-        plt.colorbar(image, cax=ax3, label="\$I_{\\nu}\$ (MJy sr\$^{-1}\$)")
+        plt.colorbar(image, cax=ax3, label=L"$I_{\nu}$ (MJy sr$^{-1}$)")
         # Prepare the bottom 1D plot that slides along the wavelength 
         ax2.hlines(10, wave_rest[1], wave_rest[end], color="k")
         ln, = ax2.plot(wave_rest[1], 24, "|", ms=20, color="y")
         ax2.axis(:off)
         ax2.set_ylim(-10, 24)
-        ax2.text(wave_rest[length(wave_rest) ÷ 2], -8, "\$\\lambda_{\\rm rest}\$ (\$\\AA\$)", ha="center", va="center")
+        ax2.text(wave_rest[length(wave_rest) ÷ 2], -8, L"$\lambda_{\rm rest}$ ($\AA$)", ha="center", va="center")
         # Annotate with wavelength value at the current time
         time_text = ax2.text(wave_rest[length(wave_rest) ÷ 2], 20, (@sprintf "%.3f" wave_rest[1]), ha="center", va="center")
         ax2.text(wave_rest[1], -8, (@sprintf "%.3f" wave_rest[1]), ha="center", va="center")
