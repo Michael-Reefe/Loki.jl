@@ -53,6 +53,10 @@ using LoggingExtras
 using Dates
 using InteractiveUtils
 using TimerOutputs
+using LaTeXStrings
+using Colors
+using Makie, MakieTeX
+using CairoMakie
 
 # PyCall needed for some matplotlib modules
 using PyCall
@@ -2417,8 +2421,7 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
 
     end
 
-    # Pyplot --> actually publication-quality plots finely tuned to be the most useful and visually appealing that I could make them
-    if backend == :pyplot || backend == :both
+    if backend == :makie || backend == :both
 
         # If max is above 10^4, normalize so the y axis labels aren't super wide
         power = floor(Int, log10(maximum(I)))
@@ -2428,91 +2431,134 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
             norm = 1
         end
 
-        # Set up subplots with gridspec
-        fig = plt.figure(figsize=(12,6))
-        gs = fig.add_gridspec(nrows=4, ncols=1, hspace=0.)
+        # Set up the subplots with GridLayout
+        dpi = 300
+        fig = Figure(resolution = dpi .* (12, 6))
+        gs = fig[1:4, 1] = GridLayout()
+
         # ax1 is the main plot
-        ax1 = fig.add_subplot(py"$(gs)[:-1, :]")
+        ax1 = Axis(gs[1:3, 1], 
+                   xtickalign=1, ytickalign=1,
+                   xminortickalign=1, yminortickalign=1,
+                   xminorticksvisible=true, yminorticksvisible=true,
+                   xgridvisible=false, ygridvisible=false,
+                   xminorgridvisible=false, yminorgridvisible=false,
+                   xminorticks=IntervalsBetween(4))
+        hidexdecorations!(ax1)
         # ax2 is the residuals plot
-        ax2 = fig.add_subplot(py"$(gs)[-1, :]")
-        ax1.plot(λ, I ./ norm, "k-", label="Data")
-        ax1.plot(λ, I_cont ./ norm, "r-", label="Model")
-        ax2.plot(λ, (I.-I_cont) ./ norm, "k-")
-        ax2.plot(λ, zeros(length(λ)), "r-", label="\$\\tilde{\\chi}^2 = $(@sprintf "%.3f" χ2red)\$")
-        ax2.fill_between(λ, (I.-I_cont.+σ)./norm, (I.-I_cont.-σ)./norm, color="k", alpha=0.5)
+        ax2 = Axis(gs[4, 1],
+                   xtickalign=1, ytickalign=1,
+                   xminortickalign=1, yminortickalign=1,
+                   xminorticksvisible=true, yminorticksvisible=true,
+                   xgridvisible=false, ygridvisible=false,
+                   xminorgridvisible=false, yminorgridvisible=false,
+                   xminorticks=IntervalsBetween(4))
+
+        linkaxes!(ax1, ax2)
+        rowgap!(gs, 0.)
+        lines!(ax1, λ, I ./ norm, color=:black, label="Data")
+        lines!(ax1, λ, I_cont ./ norm, color=:red, label="Model")
+        lines!(ax2, λ, (I.-I_cont) ./ norm, color=:black)
+        χ2_str = @sprintf "%.3f" χ2red
+        lines!(ax2, λ, zeros(length(λ)), color=:red, label=L"$\tilde{\chi}^2 = %$χ2_str$")
+        fill_between!(ax2, λ, (I.-I_cont.-σ)./norm, (I.-I_cont.+σ)./norm, color=:black, alpha=0.5)
+
         # twin axes with different labels --> extinction for ax3 and observed wavelength for ax4
-        ax3 = ax1.twinx()
-        ax4 = ax1.twiny()
+        ax3 = Axis(gs[1:3, 1], yaxisposition=:right,
+                   xtickalign=1, ytickalign=1,
+                   xminortickalign=1, yminortickalign=1,
+                   xminorticksvisible=true, yminorticksvisible=true,
+                   xgridvisible=false, ygridvisible=false,
+                   xminorgridvisible=false, yminorgridvisible=false)
+        hidespines!(ax3)
+        hidexdecorations!(ax3)
+        ax4 = Axis(gs[1:3, 1], xaxisposition=:top,
+                   xtickalign=1, ytickalign=1,
+                   xminortickalign=1, yminortickalign=1,
+                   xminorticksvisible=true, yminorticksvisible=true,
+                   xgridvisible=false, ygridvisible=false,
+                   xminorgridvisible=false, yminorgridvisible=false,
+                   xminorticks=IntervalsBetween(4))
+        hidespines!(ax4)
+        hideydecorations!(ax4)
+        ax5 = Axis(gs[4, 1], yaxisposition=:right,
+                   xtickalign=1, ytickalign=1,
+                   xminortickalign=1, yminortickalign=1,
+                   xminorticksvisible=true, yminorticksvisible=true,
+                   xgridvisible=false, ygridvisible=false,
+                   xminorgridvisible=false, yminorgridvisible=false)
+        hidespines!(ax5)
+        hidexdecorations!(ax5)
+
         # loop over and plot individual model components
         for comp ∈ keys(comps)
             if comp == "extinction"
-                ax3.plot(λ, comps[comp], "k--", alpha=0.5)
+                lines!(ax3, λ, comps[comp], color=:black, linestyle=:dash, alpha=0.5)
             elseif comp == "stellar"
-                ax1.plot(λ, comps[comp] .* comps["extinction"] ./ norm, "r--", alpha=0.5)
+                lines!(ax1, λ, comps[comp] .* comps["extinction"] ./ norm, color=:red, linestyle=:dash, alpha=0.5)
             elseif occursin("dust_cont", comp)
-                ax1.plot(λ, comps[comp] .* comps["extinction"] ./ norm, "g--", alpha=0.5)
+                lines!(ax1, λ, comps[comp] .* comps["extinction"] ./ norm, color=:green, linestyle=:dash, alpha=0.5)
             elseif occursin("dust_feat", comp)
-                ax1.plot(λ, comps[comp] .* comps["extinction"] ./ norm, "b-", alpha=0.5)
+                lines!(ax1, λ, comps[comp] .* comps["extinction"] ./ norm, color=:blue, alpha=0.5)
             elseif occursin("line", comp)
                 if occursin("flow", comp)
-                    ax1.plot(λ, comps[comp] .* comps["extinction"] ./ norm, "-", color="#F574F9", alpha=0.5)
+                    lines!(ax1, λ, comps[comp] .* comps["extinction"] ./ norm, color=colorant"#F574F9", alpha=0.5)
                 else
-                    ax1.plot(λ, comps[comp] .* comps["extinction"] ./ norm, "-", color=:rebeccapurple, alpha=0.5)
+                    lines!(ax1, λ, comps[comp] .* comps["extinction"] ./ norm, color=colorant"#663399" #= rebeccapurple =#, alpha=0.5)
                 end
             end
         end
+
         # plot vertical dashed lines for emission line wavelengths
         for (lw, ln) ∈ zip(line_wave, line_names)
-            ax1.axvline(lw, linestyle="--", 
-                color=occursin("H2", String(ln)) ? :red : (any(occursin.(["alpha", "beta", "gamma", "delta"], String(ln))) ? "#ff7f0e" : :rebeccapurple), lw=0.5, alpha=0.5)
-            ax2.axvline(lw, linestyle="--", 
-                color=occursin("H2", String(ln)) ? :red : (any(occursin.(["alpha", "beta", "gamma", "delta"], String(ln))) ? "#ff7f0e" : :rebeccapurple), lw=0.5, alpha=0.5)
+            vlines!(ax1, lw, linestyle=:dash, linewidth=0.5, alpha=0.5,
+                    color=occursin("H2", String(ln)) ? :red : colorant"#663399")
+            vlines!(ax2, lw, linestyle=:dash, linewidth=0.5, alpha=0.5,
+                    color=occursin("H2", String(ln)) ? :red : colorant"#663399")
         end
+
         # full continuum
-        ax1.plot(λ, comps["extinction"] .* (sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] .+ comps["stellar"]) ./ norm, "g-")
+        lines!(ax1, λ, comps["extinction"] .* (sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] .+ comps["stellar"]) ./ norm, color=:green)
         # set axes limits and labels
-        ax1.set_xlim(minimum(λ), maximum(λ))
-        ax2.set_xlim(minimum(λ), maximum(λ))
-        ax2.set_ylim(-1.1maximum((I.-I_cont) ./ norm), 1.1maximum((I.-I_cont) ./ norm))
-        ax3.set_ylim(0., 1.1)
+        xlims!(ax1, minimum(λ), maximum(λ))
+        xlims!(ax2, minimum(λ), maximum(λ))
+        ylims!(ax2, -1.1maximum((I.-I_cont) ./ norm), 1.1maximum((I.-I_cont) ./ norm))
+        ylims!(ax5, -1.1maximum((I.-I_cont) ./ norm), 1.1maximum((I.-I_cont) ./ norm))
+        ylims!(ax3, 0., 1.1)
         if screen
-            ax3.set_ylabel("\$ e^{-\\tau_{\\lambda}} \$")
+            ax3.ylabel = L"$e^{-\tau_{\lambda}}$"
         else
-            ax3.set_ylabel("\$ (1-e^{-\\tau_{\\lambda}}) / \\tau_{\\lambda} \$")
+            ax3.ylabel = L"$(1-e^{-\tau_{\lambda}}) / \tau_{\lambda}$"
         end
-        ax4.set_xlim(minimum(Util.observed_frame(λ, z)), maximum(Util.observed_frame(λ, z)))
+        xlims!(ax4, minimum(Util.observed_frame(λ, z)), maximum(Util.observed_frame(λ, z)))
         if power ≥ 4
-            ax1.set_ylabel("\$ I_{\\nu} \$ (\$10^{$power}\$ MJy sr\$^{-1}\$)")
+            ax1.ylabel = L"$I_{\nu}$ ($10^{%$power}$ MJy sr$^{-1}$)"
         else
-            ax1.set_ylabel("\$ I_{\\nu} \$ (MJy sr\$^{-1}\$)")
+            ax1.ylabel = L"$I_{\nu}$ (MJy sr$^{-1}$)"
         end
-        ax1.set_ylim(bottom=0.)
-        ax2.set_ylabel("\$ O-C \$")  # ---> residuals, (O)bserved - (C)alculated
-        ax2.set_xlabel("\$ \\lambda_{\\rm rest} \$ (\$\\mu\$m)")
-        ax4.set_xlabel("\$ \\lambda_{\\rm obs} \$ (\$\\mu\$m)")
-        ax2.legend(loc="upper left")
+        ylims!(ax1, low=0.)
+        ax2.ylabel = L"$O-C$" # ---> residuals, (O)bserved - (C)alculated
+        ax2.xlabel = L"$\lambda_\mathrm{rest}$ ($\mu$m)"
+        ax4.xlabel = L"$\lambda_\mathrm{obs}$ ($\mu$m)"
+        axislegend(ax2, merge=true, unique=true, position=:lt)
 
-        # Set minor ticks as multiples of 0.1 μm for x axis and automatic for y axis
-        ax1.xaxis.set_minor_locator(py_ticker.MultipleLocator(0.1))
-        ax1.yaxis.set_minor_locator(py_ticker.AutoMinorLocator())
-        ax2.xaxis.set_minor_locator(py_ticker.MultipleLocator(0.1))
-        ax2.yaxis.set_minor_locator(py_ticker.AutoMinorLocator())
-        ax3.yaxis.set_minor_locator(py_ticker.MultipleLocator(0.1))
-        ax4.xaxis.set_minor_locator(py_ticker.MultipleLocator(0.1))
+        # Set ticks for minor and major values
+        xmin = round(minimum(λ)/0.5) * 0.5
+        xmax = round(maximum(λ)/0.5) * 0.5
+        ax1.xticks = xmin:0.5:xmax
+        ax2.xticks = xmin:0.5:xmax
+        ax2.yticks = [-round(maximum((I.-I_cont) ./ norm) / 2, sigdigits=1), 0.0, round(maximum((I.-I_cont) ./ norm) / 2, sigdigits=1)]
+        ax5.yticks = [-round(maximum((I.-I_cont) ./ norm) / 2, sigdigits=1), 0.0, round(maximum((I.-I_cont) ./ norm) / 2, sigdigits=1)]
 
-        # Set major ticks and formats
-        ax1.set_xticklabels([]) # ---> will be covered up by the residuals plot
-        ax2.set_yticks([-round(maximum((I.-I_cont) ./ norm) / 2, sigdigits=1), 0.0, round(maximum((I.-I_cont) ./ norm) / 2, sigdigits=1)])
-        ax1.tick_params(which="both", axis="both", direction="in")
-        ax2.tick_params(which="both", axis="both", direction="in", labelright=true, right=true, top=true)
-        ax3.tick_params(which="both", axis="both", direction="in")
-        ax4.tick_params(which="both", axis="both", direction="in")
-        
+        xmin = round(minimum(Util.observed_frame(λ, z))/0.5) * 0.5
+        xmax = round(maximum(Util.observed_frame(λ, z))/0.5) * 0.5
+        ax4.xticks = xmin:0.5:xmax
+
         # Save figure as PDF, yay for vector graphics!
-        plt.savefig(isnothing(label) ? joinpath("output_$name", "spaxel_plots", "levmar_fit_spaxel.pdf") : 
-            joinpath("output_$name", "spaxel_plots", "$label.pdf"), dpi=300, bbox_inches="tight")
-        plt.close()
+        save(isnothing(label) ? joinpath("output_$name", "spaxel_plots", "levmar_fit_spaxel.pdf") :
+             joinpath("output_$name", "spaxel_plots", "$label.pdf"), fig)
     end
+
 end
 
 
