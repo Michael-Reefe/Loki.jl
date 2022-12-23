@@ -1626,6 +1626,11 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
     if !(cube_fitter.τ_97.locked)
         parinfo[pᵢ].limited = (1,1)
         parinfo[pᵢ].limits = (minimum(cube_fitter.τ_97.prior), maximum(cube_fitter.τ_97.prior))
+        # If the initial fit has found some optical depth, it shouldn't change too much over the whole cube,
+        # so we can constrain it more (to within +/-50%)
+        if !init
+            parinfo[pᵢ].limits = (p₀[pᵢ]*0.5, p₀[pᵢ]*1.5)
+        end
     end
     parinfo[pᵢ+1].fixed = cube_fitter.β.locked
     if !(cube_fitter.β.locked)

@@ -153,8 +153,8 @@ def rundet1(filename, outdir):
     
     # The jump and ramp fitting steps can benefit from multi-core processing, but this is off by default
     # Turn them on here if desired by choosing how many cores to use (quarter, half, or all)
-    det1.jump.maximum_cores='half'
-    det1.ramp_fit.maximum_cores='half'
+    # det1.jump.maximum_cores='half'
+    # det1.ramp_fit.maximum_cores='half'
     
     # Bad pixel mask overrides
     #det1.dq_init.override_mask = 'myfile.fits'
