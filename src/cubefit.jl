@@ -2404,9 +2404,9 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
             line=Dict(:color => "green", :width => 1), name="Dust+Stellar Continuum")])
         # axes labels / titles / fonts
         layout = PlotlyJS.Layout(
-            xaxis_title="\$\\lambda\\ (\\mu{\\rm m})\$",
-            yaxis_title="\$I_{\\nu}\\ ({\\rm MJy}\\,{\\rm sr}^{-1})\$",
-            title="\$\\tilde{\\chi}^2 = $χ2red\$",
+            xaxis_title=L"$\lambda\ (\mu{\rm m})$",
+            yaxis_title=L"$I_{\nu}\ ({\rm MJy}\,{\rm sr}^{-1})$",
+            title=L"$\tilde{\chi}^2 = %$χ2red$",
             xaxis_constrain="domain",
             font_family="Georgia, Times New Roman, Serif",
             template="plotly_white",
@@ -2445,6 +2445,7 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
                    xminorgridvisible=false, yminorgridvisible=false,
                    xminorticks=IntervalsBetween(4))
         hidexdecorations!(ax1)
+
         # ax2 is the residuals plot
         ax2 = Axis(gs[4, 1],
                    xtickalign=1, ytickalign=1,
@@ -2454,7 +2455,6 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
                    xminorgridvisible=false, yminorgridvisible=false,
                    xminorticks=IntervalsBetween(4))
 
-        linkaxes!(ax1, ax2)
         rowgap!(gs, 0.)
         lines!(ax1, λ, I ./ norm, color=:black, label="Data")
         lines!(ax1, λ, I_cont ./ norm, color=:red, label="Model")
@@ -3551,46 +3551,46 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
 
     # I know this is ugly but I couldn't figure out a better way to do it lmao
     if occursin("amp", String(name_i))
-        bunit = "\$\\log_{10}(I / \$ erg s\$^{-1}\$ cm\$^{-2}\$ Hz\$^{-1}\$ sr\$^{-1})\$"
+        bunit = L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$"
         small = 0.5
     elseif occursin("temp", String(name_i))
-        bunit = "\$T\$ (K)"
+        bunit = L"$T$ (K)"
         small = 5
     elseif occursin("fwhm", String(name_i)) && occursin("PAH", String(name_i))
-        bunit = "FWHM (\$\\mu\$m)"
+        bunit = L"FWHM ($\mu$m)"
         small = 0.01
     elseif occursin("fwhm", String(name_i)) && !occursin("PAH", String(name_i))
-        bunit = "FWHM (km s\$^{-1}\$)"
+        bunit = L"FWHM (km s$^{-1}$)"
         small = 10
     elseif occursin("mean", String(name_i))
-        bunit = "\$\\mu\$ (\$\\mu\$m)"
+        bunit = L"$\mu$ ($\mu$m)"
         small = 0.01
     elseif occursin("voff", String(name_i))
-        bunit = "\$v_{\\rm off}\$ (km s\$^{-1}\$)"
+        bunit = L"$v_{\rm off}$ (km s$^{-1}$)"
         small = 10
     elseif occursin("SNR", String(name_i))
-        bunit = "\$S/N\$"
+        bunit = L"$S/N$"
         small = 1
     elseif occursin("tau", String(name_i))
-        bunit = "\$\\tau_{9.7}\$"
+        bunit = L"$\tau_{9.7}$"
         small = 0
     elseif occursin("intI", String(name_i))
-        bunit = "\$\\log_{10}(I /\$ erg s\$^{-1}\$ cm\$^{-2}\$ sr\$^{-1}\$)"
+        bunit = L"$\log_{10}(I /$ erg s$^{-1}$ cm$^{-2}$ sr$^{-1}$)"
         small = 0.5
     elseif occursin("chi2", String(name_i))
-        bunit = "\$\\tilde{\\chi}^2\$"
+        bunit = L"$\tilde{\chi}^2$"
         small = 0.1
     elseif occursin("h3", String(name_i))
-        bunit = "\$h_3\$"
+        bunit = L"$h_3$"
         small = 0.01
     elseif occursin("h4", String(name_i))
-        bunit = "\$h_4\$"
+        bunit = L"$h_4$"
         small = 0.01
     elseif occursin("mixing", String(name_i))
-        bunit = "\$\\eta\$"
+        bunit = L"$\eta$"
         small = 0
     elseif occursin("beta", String(name_i))
-        bunit = "\$\\beta\$"
+        bunit = L"$\beta$"
         small = 0
     end
 
@@ -3621,10 +3621,10 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
     # Round to integer
     dL = floor(Int, dL)
     if cosmo.h == 1.0
-        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, "1\$\'\'\$ / $dL\$h^{-1}\$ pc", "lower left", pad=1, color=:black, 
+        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, L"1$\'\'$ / %$dL$h^{-1}$ pc", "lower left", pad=1, color=:black, 
             frameon=false, size_vertical=0.4, label_top=false)
     else
-        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, "1\$\'\'\$ / $dL pc", "lower left", pad=1, color=:black,
+        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, L"1$\'\'$ / %$dL pc", "lower left", pad=1, color=:black,
             frameon=false, size_vertical=0.4, label_top=false)
     end
     ax.add_artist(scalebar)
@@ -3790,13 +3790,13 @@ function make_movie(cube_fitter::CubeFitter, cube_model::CubeModel; cmap::Symbol
         ax1.set_xlabel(" ")
         ax1.set_ylabel(" ")
         # Add colorbar on the side
-        plt.colorbar(image, cax=ax3, label="\$I_{\\nu}\$ (MJy sr\$^{-1}\$)")
+        plt.colorbar(image, cax=ax3, label=L"$I_{\nu}$ (MJy sr$^{-1}$)")
         # Prepare the bottom 1D plot that slides along the wavelength 
         ax2.hlines(10, wave_rest[1], wave_rest[end], color="k")
         ln, = ax2.plot(wave_rest[1], 24, "|", ms=20, color="y")
         ax2.axis(:off)
         ax2.set_ylim(-10, 24)
-        ax2.text(wave_rest[length(wave_rest) ÷ 2], -8, "\$\\lambda_{\\rm rest}\$ (\$\\AA\$)", ha="center", va="center")
+        ax2.text(wave_rest[length(wave_rest) ÷ 2], -8, L"$\lambda_{\rm rest}$ ($\AA$)", ha="center", va="center")
         # Annotate with wavelength value at the current time
         time_text = ax2.text(wave_rest[length(wave_rest) ÷ 2], 20, (@sprintf "%.3f" wave_rest[1]), ha="center", va="center")
         ax2.text(wave_rest[1], -8, (@sprintf "%.3f" wave_rest[1]), ha="center", va="center")
