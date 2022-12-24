@@ -3580,10 +3580,10 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
     # Round to integer
     dL = floor(Int, dL)
     if cosmo.h == 1.0
-        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, L"1$\'\'$ / %$dL$h^{-1}$ pc", "lower left", pad=1, color=:black, 
+        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, L"1$''$ / %$dL$h^{-1}$ pc", "lower left", pad=1, color=:black, 
             frameon=false, size_vertical=0.4, label_top=false)
     else
-        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, L"1$\'\'$ / %$dL pc", "lower left", pad=1, color=:black,
+        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, L"1$''$ / %$dL pc", "lower left", pad=1, color=:black,
             frameon=false, size_vertical=0.4, label_top=false)
     end
     ax.add_artist(scalebar)
