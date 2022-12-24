@@ -410,7 +410,7 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
     end
 
     # Format units
-    unit_str = isnothing(slice) ? "MJy\$\\,\$sr\$^{-1}\\,\\mu\$m" : "MJy\$\\,\$sr\$^{-1}\$"
+    unit_str = isnothing(slice) ? L"MJy$\,$sr$^{-1}\,\mu$m" : L"MJy$\,$sr$^{-1}$"
 
     ax1 = ax2 = nothing
 
@@ -431,12 +431,12 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
         ax1.set_title(isnothing(name) ? "" : name)
         cdata = ax1.imshow(I', origin=:lower, cmap=colormap, vmin=quantile(flatI, 0.01), vmax=quantile(flatI, 0.99))
         fig.colorbar(cdata, ax=ax1, fraction=0.046, pad=0.04, 
-            label=(isnothing(logᵢ) ? "" : "\$\\log_{$logᵢ}\$(") * "\$I_{$sub}\\,/\\,\$" * unit_str * (isnothing(logᵢ) ? "" : ")"))
+            label=(isnothing(logᵢ) ? "" : L"$\log_{%$logᵢ}$(") * L"$I_{%$sub}\,/\,$" * unit_str * (isnothing(logᵢ) ? "" : ")"))
         ax1.axis(:off)
         
         # Add scale bars for reference
         n_pix = 1/(sqrt(data.Ω) * 180/π * 3600)
-        scalebar = py_anchored_artists.AnchoredSizeBar(ax1.transData, n_pix, "1\$\'\'\$", "lower left", pad=1, color=:black, 
+        scalebar = py_anchored_artists.AnchoredSizeBar(ax1.transData, n_pix, L"1$''$", "lower left", pad=1, color=:black, 
             frameon=false, size_vertical=0.2)
         ax1.add_artist(scalebar)
 
@@ -462,12 +462,12 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
         ax2.set_title(isnothing(name) ? "" : name)
         cdata = ax2.imshow(σ', origin=:lower, cmap=colormap, vmin=quantile(flatσ, 0.01), vmax=quantile(flatσ, 0.99))
         fig.colorbar(cdata, ax=ax2, fraction=0.046, pad=0.04,
-            label=isnothing(logₑ) ? "\$\\sigma_{I_{$sub}}\\,/\\,\$" * unit_str : "\$\\sigma_{\\log_{$logᵢ}I_{$sub}}\$")
+            label=isnothing(logₑ) ? L"$\sigma_{I_{%$sub}}\,/\,$" * unit_str : L"$\sigma_{\log_{%$logᵢ}I_{%$sub}}$")
         ax2.axis(:off)
 
         # Add scale bar for reference
         n_pix = 1/(sqrt(data.Ω) * 180/π * 3600)
-        scalebar = py_anchored_artists.AnchoredSizeBar(ax2.transData, n_pix, "1\$\'\'\$", "lower left", pad=1, color=:black, 
+        scalebar = py_anchored_artists.AnchoredSizeBar(ax2.transData, n_pix, L"1$''$", "lower left", pad=1, color=:black, 
             frameon=false, size_vertical=0.2)
         ax2.add_artist(scalebar)
 
@@ -549,8 +549,8 @@ function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
     end
 
     # Formatting for x and y units on the axis labels
-    xunit = "\${\\rm \\mu m}\$"
-    yunit = logᵢ == false ? "MJy\$\\,\$sr\$^{-1}\$" : "MJy\$\\,\$sr\$^{-1}\\,\$Hz"
+    xunit = L"${\rm \mu m}$"
+    yunit = logᵢ == false ? L"MJy$\,$sr$^{-1}$" : L"MJy$\,$sr$^{-1}\,$Hz"
 
     # Plot formatting
     fig, ax = plt.subplots(figsize=(10,5))
@@ -558,16 +558,16 @@ function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
         ax.plot(λ, I, "k", linestyle=linestyle, label="Data")
     end
     if err && !intensity
-        ax.plot(λ, σ, "k", linestyle=linestyle, label="\$1\\sigma\$ Error")
+        ax.plot(λ, σ, "k", linestyle=linestyle, label=L"$1\sigma$ Error")
     end
     if intensity && !err
-        ax.fill_between(λ, I.-σ, I.+σ, color="k", alpha=0.5, label="\$1\\sigma\$ Error")
+        ax.fill_between(λ, I.-σ, I.+σ, color="k", alpha=0.5, label=L"$1\sigma$ Error")
     end
-    ax.set_xlabel("\$\\lambda\$ ($xunit)")
+    ax.set_xlabel(L"$\lambda$ (%$xunit)")
     if logᵢ == false
-        ax.set_ylabel("\$I_{\\nu}\$ ($yunit)")
+        ax.set_ylabel(L"$I_{\nu}$ (%$yunit)")
     else
-        ax.set_ylabel("\$\\log_{$logᵢ}{\\nu}{I}_{\\nu}\$ ($yunit)")
+        ax.set_ylabel(L"$\log_{%$logᵢ}{\nu}{I}_{\nu}$ (%$yunit)")
     end
     ax.legend(loc="upper right", frameon=false)
     ax.set_xlim(minimum(λ), maximum(λ))
