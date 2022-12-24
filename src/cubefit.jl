@@ -24,7 +24,6 @@ using Distributions
 using Statistics
 using NaNStatistics
 using QuadGK
-using Interpolations
 using Dierckx
 
 # Optimization packages

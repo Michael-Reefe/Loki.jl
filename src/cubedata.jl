@@ -29,7 +29,6 @@ using Cosmology
 using WCS
 
 # Interpolation packages
-using Interpolations
 using Dierckx
 
 # Misc utilities
@@ -781,19 +780,28 @@ function cube_rebin!(obs::Observation, channels::Union{Vector{S},Nothing}=nothin
         ch_Iν[.!isfinite.(ch_Iν)] .= 0.
         ch_σI = obs.channels[ch_in].σI
         ch_σI[.!isfinite.(ch_σI)] .= 0.
+        shape_in = size(ch_Iν)
 
         prog = Progress(wi_size, dt=0.01, showspeed=true)
         for wi ∈ 1:wi_size
             # 2D Cubic spline interpolations at each wavelength bin with flat boundary conditions
-            interp_func_I = extrapolate(interpolate(ch_Iν[:, :, wi], BSpline(Cubic(Interpolations.Flat(OnGrid())))), Interpolations.Flat())
-            interp_func_σ = extrapolate(interpolate(ch_σI[:, :, wi], BSpline(Cubic(Interpolations.Flat(OnGrid())))), Interpolations.Flat())
+            interp_func_I = Spline2D(1:shape_in[1], 1:shape_in[2], ch_Iν[:, :, wi]; kx=3, ky=3)
+            interp_func_σ = Spline2D(1:shape_in[1], 1:shape_in[2], ch_Iν[:, :, wi]; kx=3, ky=3)
+            # interp_func_I = extrapolate(interpolate(ch_Iν[:, :, wi], BSpline(Cubic(Interpolations.Flat(OnGrid())))), Interpolations.Flat())
+            # interp_func_σ = extrapolate(interpolate(ch_σI[:, :, wi], BSpline(Cubic(Interpolations.Flat(OnGrid())))), Interpolations.Flat())
+            
             # Loop through all pairs of coordinates in the refrerence grid and set the intensity and error
             # at that point to the interpolated values of the corresponding location in the input grid, given by
             # the pix_transform function
             for (xᵣ, yᵣ) ∈ collect(Iterators.product(1:shape_ref[1], 1:shape_ref[2]))
                 xᵢ, yᵢ = pix_transform(xᵣ, yᵣ)
-                I_out[xᵣ, yᵣ, cumsum+wi] = interp_func_I(xᵢ, yᵢ)
-                σ_out[xᵣ, yᵣ, cumsum+wi] = interp_func_σ(xᵢ, yᵢ)
+                if (xᵢ > shape_in[1]) || (xᵢ < 1) || (yᵢ > shape_in[2]) || (yᵢ < 1)
+                    I_out[xᵣ, yᵣ, cumsum+wi] = 0.
+                    σ_out[xᵣ, yᵣ, cumsum+wi] = 0.
+                else
+                    I_out[xᵣ, yᵣ, cumsum+wi] = interp_func_I(xᵢ, yᵢ)
+                    σ_out[xᵣ, yᵣ, cumsum+wi] = interp_func_σ(xᵢ, yᵢ)
+                end
             end
             # Iterate the progress bar
             next!(prog)
