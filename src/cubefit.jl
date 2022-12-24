@@ -73,7 +73,21 @@ const SMALL::UInt8 = 12
 const MED::UInt8 = 14
 const BIG::UInt8 = 16
 
+
 function __init__()
+
+    const MakieTheme = Theme(fontsize=140,
+                             subtitlesize=140,
+                             titlesize=160,
+                             xlabelsize=140,
+                             xticklabelsize=120,
+                             ylabelsize=140,
+                             yticklabelsize=120,
+                             font="Times New Roman",
+                             transparency=true,
+                             Lines=(linewidth=10)
+                            )
+    set_theme!(MakieTheme)
 
     # Import pyplot
     copy!(plt, pyimport_conda("matplotlib.pyplot", "matplotlib"))

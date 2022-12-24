@@ -27,12 +27,14 @@ interpolate_cube!(obs.channels[2])
 # cube_rebin!(obs, [1,2,3,4])
 
 # Create the cube fitting object
-cube_fitter = CubeFitter(obs.channels[2], obs.z, "test_2", 1; parallel=false, plot_spaxels=:plotly,
+cube_fitter = CubeFitter(obs.channels[2], obs.z, "test_2", 1; parallel=false, plot_spaxels=:makie,
     plot_maps=true, save_fits=true)
 
 # Fit some individual spaxels
-x = [11, 23, 33, 35, 28, 28, 13, 14, 15, 33, 25, 10, 6, 15, 33, 36, 8]
-y = [24, 35, 7, 6, 12, 13, 18, 23, 27, 4, 19, 14, 17, 38, 13, 13, 14]
+# x = [11, 23, 33, 35, 28, 28, 13, 14, 15, 33, 25, 10, 6, 15, 33, 36, 8]
+# y = [24, 35, 7, 6, 12, 13, 18, 23, 27, 4, 19, 14, 17, 38, 13, 13, 14]
+x = [28]
+y = [12]
 
 if all(iszero.(cube_fitter.p_init_cont))
     fit_stack!(cube_fitter)
