@@ -2393,12 +2393,13 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
         # Add vertical dashed lines for emission line rest wavelengths
         for (lw, ln) ∈ zip(line_wave, line_names)
             append!(traces, [PlotlyJS.scatter(x=[lw, lw], y=[0., nanmaximum(I)*1.1], mode="lines", 
-                line=Dict(:color => occursin("H2", String(ln)) ? "red" : (any(occursin.(["alpha", "beta", "gamma", "delta"], String(ln))) ? "#ff7f0e" : "rebeccapurple"), 
-                :width => 0.5, :dash => "dash"))])
+                line=Dict(:color => occursin("H2", String(ln)) ? "red" : 
+                              (any(occursin.(["alpha", "beta", "gamma", "delta"], String(ln))) ? "#ff7f0e" : "rebeccapurple"), 
+                          :width => 0.5, :dash => "dash"))])
         end
         # Add the summed up continuum
-        append!(traces, [PlotlyJS.scatter(x=λ, y=comps["extinction"] .* (sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] .+ comps["stellar"]), mode="lines",
-            line=Dict(:color => "green", :width => 1), name="Dust+Stellar Continuum")])
+        append!(traces, [PlotlyJS.scatter(x=λ, y=comps["extinction"] .* (sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] .+ comps["stellar"]),
+            mode="lines", line=Dict(:color => "green", :width => 1), name="Dust+Stellar Continuum")])
         # axes labels / titles / fonts
         layout = PlotlyJS.Layout(
             xaxis_title=L"$\lambda\ (\mu{\rm m})$",
