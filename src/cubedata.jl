@@ -79,31 +79,31 @@ include("utils.jl")
 
 
 """ 
-    DataCube(λ, Iλ, σI[, mask, Ω, α, δ, wcs, channel, band, rest_frame, masked])
+    DataCube(λ, Iν, σI[, mask, Ω, α, δ, wcs, channel, band, rest_frame, masked])
 
 An object for holding 3D IFU spectroscopy data. 
 
 # Fields
 - `λ::Vector{<:AbstractFloat}`: 1D array of wavelengths, in Angstroms
-- `Iλ::Array{<:AbstractFloat,3}`: 3D array of intensity, in MJy/sr
+- `Iν::Array{<:AbstractFloat,3}`: 3D array of intensity, in MJy/sr
 - `σI::Array{<:AbstractFloat,3}`: 3D array of uncertainties, in MJy/sr
-- `mask::BitArray{3}=falses(size(Iλ))`: 3D array of booleans acting as a mask for the flux/error data
+- `mask::BitArray{3}=falses(size(Iν))`: 3D array of booleans acting as a mask for the flux/error data
 - `Ω::AbstractFloat=NaN`: the solid angle subtended by each spaxel, in steradians
 - `α::AbstractFloat=NaN`: the right ascension of the observation, in decimal degrees
 - `δ::AbstractFloat=NaN`: the declination of the observation, in decimal degrees
 - `wcs::Union{WCSTransform,Nothing}=nothing`: a World Coordinate System conversion object, optional
 - `channel::String="Generic Channel"`: the MIRI channel of the observation, from 1-4
 - `band::String="Generic Band"`: the MIRI band of the observation, i.e. 'MULTIPLE'
-- `nx::Integer=size(Iλ,1)`: the length of the x dimension of the cube
-- `ny::Integer=size(Iλ,2)`: the length of the y dimension of the cube
-- `nz::Integer=size(Iλ,3)`: the length of the z dimension of the cube
+- `nx::Integer=size(Iν,1)`: the length of the x dimension of the cube
+- `ny::Integer=size(Iν,2)`: the length of the y dimension of the cube
+- `nz::Integer=size(Iν,3)`: the length of the z dimension of the cube
 - `rest_frame::Bool=false`: whether or not the DataCube wavelength vector is in the rest-frame
 - `masked::Bool=false`: whether or not the DataCube has been masked
 """
 struct DataCube
 
     λ::Vector{<:AbstractFloat}
-    Iλ::Array{<:AbstractFloat,3}
+    Iν::Array{<:AbstractFloat,3}
     σI::Array{<:AbstractFloat,3}
  
     mask::BitArray{3}
@@ -125,24 +125,24 @@ struct DataCube
     masked::Bool
 
     # This is the constructor for the DataCube struct; see the DataCube docstring for details
-    function DataCube(λ::Vector{<:AbstractFloat}, Iλ::Array{<:AbstractFloat,3}, σI::Array{<:AbstractFloat,3}, mask::Union{BitArray{3},Nothing}=nothing, 
+    function DataCube(λ::Vector{<:AbstractFloat}, Iν::Array{<:AbstractFloat,3}, σI::Array{<:AbstractFloat,3}, mask::Union{BitArray{3},Nothing}=nothing, 
         Ω::AbstractFloat=NaN, α::AbstractFloat=NaN, δ::AbstractFloat=NaN, wcs::Union{WCSTransform,Nothing}=nothing, channel::String="Generic Channel", 
         band::String="Generic Band", rest_frame::Bool=false, masked::Bool=false)
 
         # Make sure inputs have the right dimensions
         @assert ndims(λ) == 1 "Wavelength vector must be 1-dimensional!"
-        @assert (ndims(Iλ) == 3) && (size(Iλ)[end] == size(λ)[1]) "The last axis of the intensity cube must be the same length as the wavelength!"
-        @assert size(Iλ) == size(σI) "The intensity and error cubes must be the same size!"
-        nx, ny, nz = size(Iλ)
+        @assert (ndims(Iν) == 3) && (size(Iν)[end] == size(λ)[1]) "The last axis of the intensity cube must be the same length as the wavelength!"
+        @assert size(Iν) == size(σI) "The intensity and error cubes must be the same size!"
+        nx, ny, nz = size(Iν)
 
         # If no mask is given, make the default mask to be all falses (i.e. don't mask out anything)
         if isnothing(mask)
             @info "DataCube initialization: No mask was given, all spaxels will be unmasked"
-            mask = falses(size(Iλ))
+            mask = falses(size(Iν))
         end
 
         # Return a new instance of the DataCube struct
-        new(λ, Iλ, σI, mask, Ω, α, δ, wcs, channel, band, nx, ny, nz, rest_frame, masked)
+        new(λ, Iν, σI, mask, Ω, α, δ, wcs, channel, band, nx, ny, nz, rest_frame, masked)
     end
 
 end
@@ -173,7 +173,7 @@ function from_fits(filename::String)::DataCube
     # Solid angle of each spaxel
     Ω = hdr["PIXAR_SR"]
     # Intensity and error arrays
-    Iλ = read(hdu["SCI"])
+    Iν = read(hdu["SCI"])
     σI = read(hdu["ERR"])
 
     @debug "FITS data dimensions: ($nx, $ny, $nz), solid angle per spaxel: $Ω"
@@ -197,7 +197,7 @@ function from_fits(filename::String)::DataCube
     dq = read(hdu["DQ"])
     # also make sure to mask any points with Inf/NaN in the intensity or error, in case they were 
     # missed by the DQ map
-    mask = (dq .≠ 0) .|| .!isfinite.(Iλ) .|| .!isfinite.(σI)
+    mask = (dq .≠ 0) .|| .!isfinite.(Iν) .|| .!isfinite.(σI)
 
     # Target info from the header
     hdr0 = read_header(hdu[1])
@@ -230,7 +230,7 @@ function from_fits(filename::String)::DataCube
 
     @debug "Intensity units: $(hdr["BUNIT"]), Wavelength units: $(hdr["CUNIT3"])"
 
-    DataCube(λ, Iλ, σI, mask, Ω, ra, dec, wcs, channel, band, false, false)
+    DataCube(λ, Iν, σI, mask, Ω, ra, dec, wcs, channel, band, false, false)
 end
 
 
@@ -253,7 +253,7 @@ function to_rest_frame(cube::DataCube, z::AbstractFloat)::DataCube
         " to the rest frame using redshift z=$z"
 
         new_λ = Util.rest_frame(cube.λ, z)
-        return DataCube(new_λ, cube.Iλ, cube.σI, cube.mask, cube.Ω, cube.α, cube.δ, cube.wcs, cube.channel, 
+        return DataCube(new_λ, cube.Iν, cube.σI, cube.mask, cube.Ω, cube.α, cube.δ, cube.wcs, cube.channel, 
             cube.band, true, cube.masked)
     end
 
@@ -280,13 +280,13 @@ function apply_mask(cube::DataCube)::DataCube
     if !cube.masked
         @debug "Masking the intensity and error maps of cube with channel $(cube.channel), band $(cube.band)"
 
-        Iλ = copy(cube.Iλ)
+        Iν = copy(cube.Iν)
         σI = copy(cube.σI)
 
-        Iλ[cube.mask] .= NaN
+        Iν[cube.mask] .= NaN
         σI[cube.mask] .= NaN
 
-        return DataCube(cube.λ, Iλ, σI, cube.mask, cube.Ω, cube.α, cube.δ, cube.wcs, cube.channel, cube.band, 
+        return DataCube(cube.λ, Iν, σI, cube.mask, cube.Ω, cube.α, cube.δ, cube.wcs, cube.channel, cube.band, 
             cube.rest_frame, true)
     end
 
@@ -314,9 +314,9 @@ function interpolate_cube!(cube::DataCube)
     λ = cube.λ
     @debug "Interpolating NaNs in cube with channel $(cube.channel), band $(cube.band):"
 
-    for index ∈ CartesianIndices(selectdim(cube.Iλ, 3, 1))
+    for index ∈ CartesianIndices(selectdim(cube.Iν, 3, 1))
 
-        I = cube.Iλ[index, :]
+        I = cube.Iν[index, :]
         σ = cube.σI[index, :]
 
         # Filter NaNs
@@ -343,7 +343,7 @@ function interpolate_cube!(cube::DataCube)
             σ[filt] .= Spline1D(λ[isfinite.(σ)], σ[isfinite.(σ)], λknots, k=3, bc="extrapolate").(λ[filt])
 
             # Reassign data in cube structure
-            cube.Iλ[index, :] .= I
+            cube.Iν[index, :] .= I
             cube.σI[index, :] .= σ
 
         end 
@@ -387,7 +387,7 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
 
     if isnothing(slice)
         # Sum up data along wavelength dimension
-        I = Util.Σ(data.Iλ, 3)
+        I = Util.Σ(data.Iν, 3)
         σ = sqrt.(Util.Σ(data.σI.^2, 3))
         # Reapply masks
         I[I .≤ 0.] .= NaN
@@ -395,7 +395,7 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
         sub = ""
     else
         # Take the wavelength slice
-        I = data.Iλ[:, :, slice]
+        I = data.Iν[:, :, slice]
         σ = data.σI[:, :, slice]
         λᵢ = data.λ[slice]
         sub = @sprintf "\\lambda%.2f" λᵢ
@@ -525,7 +525,7 @@ function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
     λ = data.λ
     if isnothing(spaxel)
         # Sum up data along spatial dimensions
-        I = Util.Σ(data.Iλ, (1,2))
+        I = Util.Σ(data.Iν, (1,2))
         σ = sqrt.(Util.Σ(data.σI.^2, (1,2)))
         # Reapply masks
         I[I .≤ 0.] .= NaN
@@ -536,7 +536,7 @@ function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
         σ ./= Util.Σ(Array{Int}(.~data.mask), (1,2))
     else
         # Take the spaxel
-        I = data.Iλ[spaxel..., :]
+        I = data.Iν[spaxel..., :]
         σ = data.σI[spaxel..., :]
         sub = "\\lambda"
     end
@@ -755,10 +755,10 @@ function cube_rebin!(obs::Observation, channels::Union{Vector{S},Nothing}=nothin
 
     # Output wavelength is just the individual wavelength vectors concatenated
     λ_out = vcat([obs.channels[ch_i].λ for ch_i ∈ channels]...)
-    I_out = zeros(size(obs.channels[ch_ref].Iλ)[1:end-1]..., size(λ_out)...)
+    I_out = zeros(size(obs.channels[ch_ref].Iν)[1:end-1]..., size(λ_out)...)
     σ_out = copy(I_out)
 
-    shape_ref = size(obs.channels[ch_ref].Iλ)
+    shape_ref = size(obs.channels[ch_ref].Iν)
 
     # Loop through all other channels
     cumsum = 0
@@ -777,15 +777,15 @@ function cube_rebin!(obs::Observation, channels::Union{Vector{S},Nothing}=nothin
         end
 
         # Convert NaNs to 0s
-        ch_Iλ = obs.channels[ch_in].Iλ
-        ch_Iλ[.!isfinite.(ch_Iλ)] .= 0.
+        ch_Iν = obs.channels[ch_in].Iν
+        ch_Iν[.!isfinite.(ch_Iν)] .= 0.
         ch_σI = obs.channels[ch_in].σI
         ch_σI[.!isfinite.(ch_σI)] .= 0.
 
         prog = Progress(wi_size, dt=0.01, showspeed=true)
         for wi ∈ 1:wi_size
             # 2D Cubic spline interpolations at each wavelength bin with flat boundary conditions
-            interp_func_I = extrapolate(interpolate(ch_Iλ[:, :, wi], BSpline(Cubic(Interpolations.Flat(OnGrid())))), Interpolations.Flat())
+            interp_func_I = extrapolate(interpolate(ch_Iν[:, :, wi], BSpline(Cubic(Interpolations.Flat(OnGrid())))), Interpolations.Flat())
             interp_func_σ = extrapolate(interpolate(ch_σI[:, :, wi], BSpline(Cubic(Interpolations.Flat(OnGrid())))), Interpolations.Flat())
             # Loop through all pairs of coordinates in the refrerence grid and set the intensity and error
             # at that point to the interpolated values of the corresponding location in the input grid, given by
@@ -805,12 +805,12 @@ function cube_rebin!(obs::Observation, channels::Union{Vector{S},Nothing}=nothin
     # append the last channel in as normal with no rebinning,
     # since by definition its grid is the one we rebinned to
     wf = shape_ref[3]
-    ch_Iλ = obs.channels[ch_ref].Iλ
-    ch_Iλ[.!isfinite.(ch_Iλ)] .= 0.
+    ch_Iν = obs.channels[ch_ref].Iν
+    ch_Iν[.!isfinite.(ch_Iν)] .= 0.
     ch_σI = obs.channels[ch_ref].σI
     ch_σI[.!isfinite.(ch_σI)] .= 0.    
 
-    I_out[:, :, cumsum+1:cumsum+wf] = ch_Iλ
+    I_out[:, :, cumsum+1:cumsum+wf] = ch_Iν
     σ_out[:, :, cumsum+1:cumsum+wf] = ch_σI
 
     # deal with overlapping wavelength data -> sort wavelength vector to be monotonically increasing

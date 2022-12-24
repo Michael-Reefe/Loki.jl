@@ -1113,7 +1113,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
         """
 
         # Get shape
-        shape = size(cube.Iλ)
+        shape = size(cube.Iν)
         # Alias
         λ = cube.λ
 
@@ -1288,7 +1288,7 @@ end
 Generate a CubeModel object corresponding to the options given by the CubeFitter object
 """
 function generate_cubemodel(cube_fitter::CubeFitter)::CubeModel
-    shape = size(cube_fitter.cube.Iλ)
+    shape = size(cube_fitter.cube.Iν)
     # Full 3D intensity model array
     @debug "Generating full 3D cube models"
     cubemodel_empty(shape, cube_fitter.n_dust_cont, cube_fitter.df_names, cube_fitter.line_names)
@@ -1302,7 +1302,7 @@ Generate two ParamMaps objects (for the values and errors) corrresponding to the
 by the CubeFitter object
 """
 function generate_parammaps(cube_fitter::CubeFitter)::Tuple{ParamMaps, ParamMaps}
-    shape = size(cube_fitter.cube.Iλ)
+    shape = size(cube_fitter.cube.Iν)
     # 2D maps of fitting parameters
     @debug "Generating 2D parameter value & error maps"
     param_maps = parammaps_empty(shape, cube_fitter.n_dust_cont, cube_fitter.df_names, cube_fitter.line_names, cube_fitter.line_tied,
@@ -1486,7 +1486,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
     we must divide by the number of spaxels in the sum (this way preserves the proper conversion into flux units, i.e. you would
     multiply the result by N_SPAXELS x STERADIANS_PER_SPAXEL to get the total flux within all the spaxels included in the sum) 
     =#
-    I = !init ? cube_fitter.cube.Iλ[spaxel, :] : Util.Σ(cube_fitter.cube.Iλ, (1,2)) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+    I = !init ? cube_fitter.cube.Iν[spaxel, :] : Util.Σ(cube_fitter.cube.Iν, (1,2)) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2))
     σ = !init ? cube_fitter.cube.σI[spaxel, :] : sqrt.(Util.Σ(cube_fitter.cube.σI.^2, (1,2))) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2))
 
     # Mask out emission lines so that they aren't included in the continuum fit
@@ -1523,7 +1523,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
 
         # scale all flux amplitudes by the difference in medians between the spaxel and the summed spaxels
         # (should be close to 1 since the sum is already normalized by the number of spaxels included anyways)
-        scale = nanmedian(I) / nanmedian(Util.Σ(cube_fitter.cube.Iλ, (1,2)) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2)))
+        scale = nanmedian(I) / nanmedian(Util.Σ(cube_fitter.cube.Iν, (1,2)) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2)))
         max_amp = nanmaximum(I)
         
         # Stellar amplitude
@@ -1783,7 +1783,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
 
     # Extract spaxel to be fit
     λ = cube_fitter.cube.λ
-    I = !init ? cube_fitter.cube.Iλ[spaxel, :] : Util.Σ(cube_fitter.cube.Iλ, (1,2)) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+    I = !init ? cube_fitter.cube.Iν[spaxel, :] : Util.Σ(cube_fitter.cube.Iν, (1,2)) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2))
     σ = !init ? cube_fitter.cube.σI[spaxel, :] : sqrt.(Util.Σ(cube_fitter.cube.σI.^2, (1,2))) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2))
 
     # Perform a cubic spline continuum fit
@@ -2542,7 +2542,7 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
 
     # Extract the wavelength, intensity, and uncertainty data
     λ = cube_fitter.cube.λ
-    I = cube_fitter.cube.Iλ[spaxel, :]
+    I = cube_fitter.cube.Iν[spaxel, :]
     σ = cube_fitter.cube.σI[spaxel, :]
 
     # Get the average wavelength resolution, and divide by 10 to subsample pixels
@@ -2954,7 +2954,7 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex)
 
     # Skip spaxels with NaNs (post-interpolation)
     λ = cube_fitter.cube.λ
-    I = cube_fitter.cube.Iλ[spaxel, :]
+    I = cube_fitter.cube.Iν[spaxel, :]
 
     # if there are any NaNs, skip over the spaxel
     if any(.!isfinite.(I))
@@ -3064,7 +3064,7 @@ function fit_stack!(cube_fitter::CubeFitter)
     @info "===> Performing initial fit to the sum of all spaxels... <==="
     # Collect the data
     λ_init = cube_fitter.cube.λ
-    I_sum_init = Util.Σ(cube_fitter.cube.Iλ, (1,2)) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+    I_sum_init = Util.Σ(cube_fitter.cube.Iν, (1,2)) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2))
 
     # Continuum and line fits
     σ_init, popt_c_init, I_c_init, comps_c_init, n_free_c_init, _, _ = continuum_fit_spaxel(cube_fitter, CartesianIndex(0,0); init=true)
@@ -3124,7 +3124,7 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
     #############################################################################
     """
 
-    shape = size(cube_fitter.cube.Iλ)
+    shape = size(cube_fitter.cube.Iν)
     # Interpolate NaNs in the cube
     interpolate_cube!(cube_fitter.cube)
 
@@ -3161,7 +3161,7 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
 
     # Sort spaxels by median brightness, so that we fit the brightest ones first
     # (which hopefully have the best reduced chi^2s)
-    spaxels = CartesianIndices(selectdim(cube_fitter.cube.Iλ, 3, 1))
+    spaxels = CartesianIndices(selectdim(cube_fitter.cube.Iν, 3, 1))
 
     @info "===> Beginning individual spaxel fitting... <==="
     # Use multiprocessing (not threading) to iterate over multiple spaxels at once using multiple CPUs
@@ -3396,7 +3396,7 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
             cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, true)
 
         # Renormalize
-        N = Float64(abs(nanmaximum(cube_fitter.cube.Iλ[index, :])))
+        N = Float64(abs(nanmaximum(cube_fitter.cube.Iν[index, :])))
         N = N ≠ 0. ? N : 1.
         for comp ∈ keys(comps_l)
             comps_l[comp] .*= N
@@ -3723,7 +3723,7 @@ function make_movie(cube_fitter::CubeFitter, cube_model::CubeModel; cmap::Symbol
     cube_wcs.wcs.cunit = cube_fitter.cube.wcs.cunit[1:2]
     cube_wcs.wcs.pc = cube_fitter.cube.wcs.pc[1:2, 1:2]
 
-    for (full_data, title) ∈ zip([cube_fitter.cube.Iλ, cube_model.model], ["DATA", "MODEL"])
+    for (full_data, title) ∈ zip([cube_fitter.cube.Iν, cube_model.model], ["DATA", "MODEL"])
 
         # Writer using FFMpeg to create an mp4 file
         metadata = Dict(:title => title, :artist => "LOKI", :fps => 60)
@@ -3827,9 +3827,9 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
         @debug "Writing 3D model FITS HDUs"
 
         write(f, Vector{Int}())                                                                     # Primary HDU (empty)
-        write(f, cube_fitter.cube.Iλ; header=hdr, name="DATA")                                      # Raw data with nans inserted
+        write(f, cube_fitter.cube.Iν; header=hdr, name="DATA")                                      # Raw data with nans inserted
         write(f, cube_model.model; header=hdr, name="MODEL")                                        # Full intensity model
-        write(f, cube_fitter.cube.Iλ .- cube_model.model; header=hdr, name="RESIDUALS")             # Residuals (data - model)
+        write(f, cube_fitter.cube.Iν .- cube_model.model; header=hdr, name="RESIDUALS")             # Residuals (data - model)
         write(f, cube_model.stellar; header=hdr, name="STELLAR_CONTINUUM")                          # Stellar continuum model
         for i ∈ 1:size(cube_model.dust_continuum, 4)
             write(f, cube_model.dust_continuum[:, :, :, i]; header=hdr, name="DUST_CONTINUUM_$i")   # Dust continuum models
