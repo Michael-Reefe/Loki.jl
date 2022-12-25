@@ -411,7 +411,7 @@ function parse_lines(channel::Integer, interp_R::Function, λ::Vector{<:Abstract
     @debug "Setting minimum FWHM to $fwhm_pmin km/s"
 
     # Define the initial values of line parameters given the values in the options file (if present)
-    fwhm_init = "fwhm_init" ∈ keys(lines) ? lines["fwhm_init"] : maximum([fwhm_pmin + 1, 100])
+    fwhm_init = "fwhm_init" ∈ keys(lines) ? lines["fwhm_init"] : max(fwhm_pmin + 1, 100)
     voff_init = "voff_init" ∈ keys(lines) ? lines["voff_init"] : 0.0
     h3_init = "h3_init" ∈ keys(lines) ? lines["h3_init"] : 0.0        # gauss-hermite series start fully gaussian,
     h4_init = "h4_init" ∈ keys(lines) ? lines["h4_init"] : 0.0        # with both h3 and h4 moments starting at 0
@@ -1367,7 +1367,7 @@ function mask_emission_lines(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFl
     # Extend mask edges by a few pixels
     mask_edges = findall(x -> x == 1, diff(mask))
     for me ∈ mask_edges
-        mask[maximum([1, me-5]):minimum([length(mask), me+5])] .= 1
+        mask[max(1, me-5):min(length(mask), me+5)] .= 1
     end
 
     mask
