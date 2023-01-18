@@ -20,7 +20,7 @@ flow_fwhm_plim = [1.0, 10.0]             # multiplicative factor with the main l
 
 # Uncertainty in the wavelength solution of the data
 flexible_wavesol = true                  # allow tied voffs to vary slightly based on wavelength solution uncertainty
-wavesol_unc = [50, 50, 50, 50]           # wavelength solution uncertainties in each of the 4 MIRI channels (<20 km/s)
+wavesol_unc = [50, 50, 50, 50]           # wavelength solution uncertainties in each of the 4 MIRI channels (<50 km/s)
 
 # [channels]
 # 1 = [4.9, 7.65]

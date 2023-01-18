@@ -1522,7 +1522,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
 
         # scale all flux amplitudes by the difference in medians between the spaxel and the summed spaxels
         # (should be close to 1 since the sum is already normalized by the number of spaxels included anyways)
-        scale = nanmedian(I) / nanmedian(Util.Σ(cube_fitter.cube.Iν, (1,2)) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2)))
+        scale = max(nanmedian(I), 1e-10) / nanmedian(Util.Σ(cube_fitter.cube.Iν, (1,2)) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2)))
         max_amp = nanmaximum(I)
         
         # Stellar amplitude
@@ -1904,8 +1904,11 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
         param_names = vcat(["voff_tied_$k" for k ∈ cube_fitter.voff_tied_key], 
                            ["flow_voff_tied_$k" for k ∈ cube_fitter.flow_voff_tied_key], param_names)
     else
-        # If the voigt mixing parameters are tied, just add the single mixing parameter before the rest of the linen parameters
-        priors = vcat(voff_tied_priors, flow_voff_tied_priors, η_ln.prior, ln_priors)
+        # If the voigt mixing parameters are tied, just add the single mixing parameter before the rest of the line parameters
+        ηᵢ = cube_fitter.n_voff_tied + cube_fitter.n_flow_voff_tied + 1
+        # If the sum has already been fit, keep eta fixed for the individual spaxels
+        η_prior = init ? η_ln.prior : Uniform(cube_fitter.p_init_line[ηᵢ]-1e-10, cube_fitter.p_init_line[ηᵢ]+1e-10)
+        priors = vcat(voff_tied_priors, flow_voff_tied_priors, η_prior, ln_priors)
         param_names = vcat(["voff_tied_$k" for k ∈ cube_fitter.voff_tied_key], 
                            ["flow_voff_tied_$k" for k ∈ cube_fitter.flow_voff_tied_key], ["eta_tied"], param_names)
     end
@@ -2047,8 +2050,8 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
 
     # Tied voigt mixing
     if cube_fitter.tie_voigt_mixing
-        parinfo[pᵢ].fixed = cube_fitter.voigt_mix_tied.locked
-        if !(cube_fitter.voigt_mix_tied.locked)
+        parinfo[pᵢ].fixed = cube_fitter.voigt_mix_tied.locked || !init
+        if !(parinfo[pᵢ].fixed)
             parinfo[pᵢ].limited = (1,1)
             parinfo[pᵢ].limits = (minimum(cube_fitter.voigt_mix_tied.prior), maximum(cube_fitter.voigt_mix_tied.prior))
         end
@@ -3636,7 +3639,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
             data = param_maps.dust_features[df][parameter]
             name_i = join(["dust_features", df, parameter], "_")
             plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
-                snr_filter=parameter ≠ :SNR ? snr : nothing, snr_thresh=snr_thresh)
+                snr_filter=!(parameter in (:SNR, :amp)) ? snr : nothing, snr_thresh=snr_thresh)
         end
     end
 
@@ -3675,7 +3678,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
             data = param_maps.lines[line][parameter]
             name_i = join(["lines", line, parameter], "_")
             plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
-                snr_filter=parameter ≠ :SNR ? snr : nothing, snr_thresh=snr_thresh)
+                snr_filter=!(parameter in (:SNR, :amp)) ? snr : nothing, snr_thresh=snr_thresh)
         end
     end
 

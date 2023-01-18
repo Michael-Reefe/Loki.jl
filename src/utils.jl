@@ -100,7 +100,7 @@ function silicate_dp()::Tuple{Vector{Float64}, Vector{Float64}}
     cubic_spline_irs = Spline1D(anchors, values; k=3)
 
     # Get optical depth
-    τ_DS = log.(cubic_spline_irs.(λ_irs) ./ F_irs)
+    τ_DS = log10.(cubic_spline_irs.(λ_irs) ./ F_irs)
     # Smooth data and remove features < ~7.5 um
     τ_smooth = movmean(τ_DS, 10)
     v1, p1 = findmin(τ_DS[λ_irs .< 6])
@@ -108,10 +108,12 @@ function silicate_dp()::Tuple{Vector{Float64}, Vector{Float64}}
     slope_beg = (v2 - v1) / (λ_irs[7 .< λ_irs .< 8][p2] - λ_irs[λ_irs .< 6][p1])
     beg_filt = λ_irs .< λ_irs[7 .< λ_irs .< 8][p2]
     τ_smooth[beg_filt] .= v1 .+ slope_beg .* (λ_irs[beg_filt] .- λ_irs[1])
+    mid_filt = (λ_irs[7 .< λ_irs .< 8][p2] .- 0.5) .< λ_irs .< (λ_irs[7 .< λ_irs .< 8][p2] .+ 0.5)  
+    τ_smooth[mid_filt] = movmean(τ_smooth, 5)[mid_filt]
 
     # Normalize to value at 9.7
-    τ_97 = τ_smooth[findmin(abs.(λ_irs .- 9.7))[2]]
-    τ_λ = τ_smooth ./ τ_97
+    τ_98 = τ_smooth[findmin(abs.(λ_irs .- 9.8))[2]]
+    τ_λ = τ_smooth ./ τ_98
 
     λ_irs, τ_λ
 end
@@ -494,7 +496,7 @@ function τ_dp(λ::AbstractFloat, β::AbstractFloat)::AbstractFloat
     ext = Spline1D(DPlus_prof[1], DPlus_prof[2]; k=3).(λ)
 
     # Add 1.7 power law, as in PAHFIT
-    (1 - β) * ext + β * (9.7/λ)^1.7
+    (1 - β) * ext + β * (9.8/λ)^1.7
 end
 
 
