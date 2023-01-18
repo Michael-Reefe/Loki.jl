@@ -2051,7 +2051,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     # Tied voigt mixing
     if cube_fitter.tie_voigt_mixing
         parinfo[pᵢ].fixed = cube_fitter.voigt_mix_tied.locked || !init
-        if !(parinfo[pᵢ].fixed)
+        if iszero(parinfo[pᵢ].fixed)
             parinfo[pᵢ].limited = (1,1)
             parinfo[pᵢ].limits = (minimum(cube_fitter.voigt_mix_tied.prior), maximum(cube_fitter.voigt_mix_tied.prior))
         end
