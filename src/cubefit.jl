@@ -664,17 +664,31 @@ function parse_lines(channel::Integer, interp_R::Function, λ::Vector{<:Abstract
 end
 
 
+"""
+    fit_optical_depth(obs)
+
+Gets an estimated value for tau_9.7, the optical depth at 9.7 um, for each spaxel in an observation.
+This requires rebinning the cube to get full spectral coverage across the spatial dimension, then linearly
+interpolating the continuum from 6.7-13 um, and taking the ratio with the observed value at 9.7 um.  This
+is done four times, each time rebinning the spaxels spatially to match the grid of one of the MIRI channels.
+This is necessary to preserve the highest spatail resolution in each of the four channels.
+
+# Arguments
+- `obs::Observation`: The Observation object containing the MIRI data in all four channels to be fit.
+"""
 function fit_optical_depth(obs::Observation)
 
     @info "Fitting optical depth at 9.7 um with linear interpolation..."
     name = replace(obs.name, " " => "_")
 
+    # Create dictionary to hold outputs
     τ_97 = Dict{Int, Matrix{Float64}}()
     τ_97[0] = zeros(length(keys(obs.channels)),1)
     if !isdir("output_$(name)_optical_depth")
         mkdir("output_$(name)_optical_depth")
     end
     
+    # Check for outputs that already have been saved
     c1 = false
     if isfile(joinpath("output_$(name)_optical_depth", "optical_depth_$(name)_sum.csv"))
         @debug "Optical depth sum file found for $(name)"
@@ -703,6 +717,7 @@ function fit_optical_depth(obs::Observation)
         cube_rebin!(obs, out_grid=channel, out_id=0)
         τ_97[channel] = zeros(size(obs.channels[0].Iν)[1:2])
 
+        # Find specific wavelength points in the vectors
         _, p1 = findmin(x -> abs(x - 6.7), obs.channels[0].λ)
         λ1 = obs.channels[0].λ[p1]
         _, p2 = findmin(x -> abs(x - 13), obs.channels[0].λ)
@@ -1631,7 +1646,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
         for i ∈ 1:cube_fitter.n_dust_feat
             # dont take the best fit values, just start them all equal otherwise weird stuff happens
             # p₀[pᵢ] = clamp(nanmedian(I)/2, 0., Inf) 
-            p₀[pᵢ] *= scale
+            p₀[pᵢ] = clamp(p₀[pᵢ]*scale, 0., max_amp)
             pᵢ += 3
         end
 
