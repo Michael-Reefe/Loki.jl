@@ -24,13 +24,14 @@ track_convergence = true
 # These are not necessarily scientifically useful, but they're pretty to watch.
 make_movies = true
 
-# extinction_curve: May be either "kvt" for the Kemper, Vriend, & Tielens (2004) 
-# extinction profile, or "d+" for the Donnan et al. (2022) extinction profile.
-extinction_curve = "kvt"
+# extinction_curve: May be "kvt" for the Kemper, Vriend, & Tielens (2004) 
+# extinction profile, "ct" for the Chiar & Tielens (2005) extinction profile,
+# or "d+" for the Donnan et al. (2022) extinction profile.
+extinction_curve = "ct"
 
 # extinction_screen: Controls whether extinction is modeled as e^-tau (true) or
 # (1 - e^-tau) / tau (false), following PAHFIT.
-extinction_screen = false
+extinction_screen = true
 
 # cosmology options: Controls the cosmology used for distance / luminosity calculations.
 # If h is set to 1, the distances in plot scale bars will be shown with h^-1 units.

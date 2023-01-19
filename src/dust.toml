@@ -411,14 +411,6 @@ val = 1.655
 plim = [0.4, 1.1]
 locked = false
 
-
-# extinction.tau_9_7: the optical depth at 9.7 microns.
-# Default: 10^-4
-[extinction.tau_9_7]
-val = 1e-4
-plim = [0.0, 10.0]
-locked = false
-
 # extinction.beta: the mixing ratio for the extinction profile,
 # between the profile specified in options.toml and a -1.7 index
 # power law on the wavelength, relative to 9.7 microns.

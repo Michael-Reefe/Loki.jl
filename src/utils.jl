@@ -66,7 +66,7 @@ Setup function for reading in the configuration IRS spectrum of IRS 08572+3915
 # Arguments
 - `path::String`: The file path pointing to the IRS 08572+3915 spectrum 
 """
-function read_irs_data(path::String)::Tuple{Vector{Float64}, Vector{Float64}, Vector{Float64}}
+function read_irs_data(path::String)
 
     @debug "Reading in IRS data from: $path"
 
@@ -82,7 +82,7 @@ end
 
 Setup function for creating a silicate extinction profile based on Donnan et al. (2022)
 """
-function silicate_dp()::Tuple{Vector{Float64}, Vector{Float64}}
+function silicate_dp()
 
     @debug "Creating Donnan+2022 optical depth profile..."
 
@@ -120,7 +120,18 @@ end
 
 # Save the Donnan et al. 2022 profile as a constant
 const DPlus_prof = silicate_dp()
+const DP_interp = Spline1D(DPlus_prof[1], DPlus_prof[2]; k=3)
 
+# Setup function for creating the extinction profile from Chiar+Tielens 2006
+function silicate_ct()
+    data = CSV.read(joinpath(@__DIR__, "chiar+tielens_2005.dat"), DataFrame, skipto=15, delim=' ', 
+        ignorerepeated=true, header=["wave", "a_galcen", "a_local"])
+    data[!, "wave"], data[!, "a_galcen"]
+end
+
+# Save the Chiar+Tielens 2005 profile as a constant
+const CT_prof = silicate_ct()
+const CT_interp = Spline1D(CT_prof[1], CT_prof[2]; k=3)
 
 ########################################### UTILITY FUNCTIONS ###############################################
 
@@ -485,6 +496,23 @@ function τ_kvt(λ::AbstractFloat, β::AbstractFloat)::AbstractFloat
 end
 
 
+function τ_ct(λ::AbstractFloat)::AbstractFloat
+
+    mx = argmax(CT_prof[1])
+    λ_mx = CT_prof[1][mx]
+    if λ > λ_mx
+        ext = CT_prof[2][mx] * (λ_mx/λ)^1.7
+    else
+        ext = CT_interp(λ)
+    end
+
+    _, wh = findmin(x -> abs(x - 9.7), CT_prof[1])
+    ext /= CT_prof[2][wh]
+
+    ext
+end
+
+
 """
     τ_dp(λ, β)
 
@@ -493,7 +521,7 @@ Calculate the mixed silicate extinction profile based on Donnan et al. (2022)
 function τ_dp(λ::AbstractFloat, β::AbstractFloat)::AbstractFloat
 
     # Simple cubic spline interpolation
-    ext = Spline1D(DPlus_prof[1], DPlus_prof[2]; k=3).(λ)
+    ext = DP_interp(λ)
 
     # Add 1.7 power law, as in PAHFIT
     (1 - β) * ext + β * (9.8/λ)^1.7
@@ -568,6 +596,8 @@ function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloa
         ext_curve = τ_dp.(λ, params[pᵢ+1])
     elseif extinction_curve == "kvt"
         ext_curve = τ_kvt.(λ, params[pᵢ+1])
+    elseif extinction_curve == "ct"
+        ext_curve = τ_ct.(λ)
     else
         error("Unrecognized extinction curve: $extinction_curve")
     end
@@ -612,6 +642,8 @@ function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloa
         ext_curve = τ_dp.(λ, params[pᵢ+1])
     elseif extinction_curve == "kvt"
         ext_curve = τ_kvt.(λ, params[pᵢ+1])
+    elseif extinction_curve == "ct"
+        ext_curve = τ_ct.(λ)
     else
         error("Unrecognized extinction curve: $extinction_curve")
     end

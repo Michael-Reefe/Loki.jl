@@ -13,7 +13,8 @@ CubeFitter. An example of this is provided in the test driver files in the test 
 module CubeFit
 
 # Export only the functions that the user may want to call
-export CubeFitter, fit_cube!, continuum_fit_spaxel, line_fit_spaxel, fit_spaxel, fit_stack!, plot_parameter_maps, write_fits
+export CubeFitter, fit_optical_depth, fit_cube!, continuum_fit_spaxel, line_fit_spaxel, fit_spaxel, 
+    fit_stack!, plot_parameter_maps, write_fits
 
 # Parallel computing packages
 using Distributed
@@ -275,7 +276,7 @@ function parse_dust()::Dict
     dust_out = Dict()
     keylist1 = ["stellar_continuum_temp", "dust_continuum_temps", "dust_features", "extinction"]
     keylist2 = ["wave", "fwhm"]
-    keylist3 = ["tau_9_7", "beta"]
+    keylist3 = ["beta"]
     keylist4 = ["val", "plim", "locked"]
 
     # Loop through all of the required keys that should be in the file and confirm that they are there
@@ -342,8 +343,8 @@ function parse_dust()::Dict
     # Extinction parameters, optical depth and mixing ratio
     dust_out[:extinction] = Param.ParamDict()
     msg = "Extinction:"
-    dust_out[:extinction][:tau_9_7] = Param.from_dict(dust["extinction"]["tau_9_7"])
-    msg *= "\nTau $(dust_out[:extinction][:tau_9_7])"
+    # dust_out[:extinction][:tau_9_7] = Param.from_dict(dust["extinction"]["tau_9_7"])
+    # msg *= "\nTau $(dust_out[:extinction][:tau_9_7])"
     dust_out[:extinction][:beta] = Param.from_dict(dust["extinction"]["beta"])
     msg *= "\nBeta $(dust_out[:extinction][:beta])"
     @debug msg
@@ -660,6 +661,95 @@ function parse_lines(channel::Integer, interp_R::Function, λ::Vector{<:Abstract
     end
 
     lines_out, voff_tied, flow_voff_tied, lines["flexible_wavesol"], lines["tie_voigt_mixing"], voigt_mix_tied
+end
+
+
+function fit_optical_depth(obs::Observation)
+
+    @info "Fitting optical depth at 9.7 um with linear interpolation..."
+    name = replace(obs.name, " " => "_")
+
+    τ_97 = Dict{Int, Matrix{Float64}}()
+    τ_97[0] = zeros(length(keys(obs.channels)),1)
+    if !isdir("output_$(name)_optical_depth")
+        mkdir("output_$(name)_optical_depth")
+    end
+    
+    c1 = false
+    if isfile(joinpath("output_$(name)_optical_depth", "optical_depth_$(name)_sum.csv"))
+        @debug "Optical depth sum file found for $(name)"
+        τ_97[0] = readdlm(joinpath("output_$(name)_optical_depth", "optical_depth_$(name)_sum.csv"), 
+            ',', Float64, '\n')
+        c1 = true 
+    end
+
+    # Loop through each channel
+    for channel ∈ keys(obs.channels)
+
+        # Check if file already exists
+        c2 = false
+        if isfile(joinpath("output_$(name)_optical_depth", "optical_depth_$(name)_ch$channel.csv"))
+            @debug "Optical depth files found for $(name) in channel $channel"
+            τ_97[channel] = readdlm(joinpath("output_$(name)_optical_depth", "optical_depth_$(name)_ch$channel.csv"), 
+                ',', Float64, '\n')
+            c2 = true
+        end
+
+        if c1 && c2
+            continue
+        end
+
+        # Rebin the other channels onto this channel's grid
+        cube_rebin!(obs, out_grid=channel, out_id=0)
+        τ_97[channel] = zeros(size(obs.channels[0].Iν)[1:2])
+
+        _, p1 = findmin(x -> abs(x - 6.7), obs.channels[0].λ)
+        λ1 = obs.channels[0].λ[p1]
+        _, p2 = findmin(x -> abs(x - 13), obs.channels[0].λ)
+        λ2 = obs.channels[0].λ[p2]
+        _, p3 = findmin(x -> abs(x - 9.7), obs.channels[0].λ)
+
+        # Loop through each spaxel
+        @debug "Calculating optical depth for each spaxel in channel $channel"
+        for spax ∈ CartesianIndices(size(obs.channels[0].Iν)[1:2])
+            # Linear interpolation from 6.7 um to 13 um
+            i1 = mean(obs.channels[0].Iν[spax, p1-5:p1+5])
+            i2 = mean(obs.channels[0].Iν[spax, p2-5:p2+5])
+            slope = (i2 - i1) / (λ2 - λ1)
+            # extrapolate to get intrinsic flux value at 9.7 um
+            i_97 = i1 + slope * (9.7 - λ1)
+            # get the observed flux at 9.7 um
+            o_97 = mean(obs.channels[0].Iν[spax, p3-5:p3+5])
+            # take the ratio of the observed to intrinsic flux to get the optical depth
+            # REFERENCE: Donnan et al. 2023, MNRAS 519, 3691-3705 https://doi.org/10.1093/mnras/stac3729
+            ratio = (o_97 / i_97) > 0 ? (o_97 / i_97) : 1.
+            ratio == 1. && @debug "Spaxel $spax, ratio <= 0 with obs. $o_97 and intrin. $i_97"
+            τ_97[channel][spax] = max(0., -log(ratio) / 0.9)
+        end
+
+        # Calculate for the sum of spaxels
+        i1 = mean(Util.Σ(obs.channels[0].Iν, (1,2))[p1-5:p1+5])
+        i2 = mean(Util.Σ(obs.channels[0].Iν, (1,2))[p2-5:p2+5])
+        slope = (i2 - i1) / (λ2 - λ1)
+        i_97 = i1 + slope * (9.7 - λ1)
+        o_97 = mean(Util.Σ(obs.channels[0].Iν, (1,2))[p3-5:p3+5])
+        ratio = (o_97 / i_97) > 0 ? (o_97 / i_97) : 1.
+        ratio == 1. && @debug "Sum, ratio <= 0 with obs. $o_97 and intrin. $i_97"
+        τ_97[0][channel,1] = max(0., -log(ratio) / 0.9)
+
+        # save outputs to CSV files
+        @debug "Writing outputs to file optical_depth_$(name)_ch$channel.csv"
+        open(joinpath("output_$(name)_optical_depth", "optical_depth_$(name)_ch$channel.csv"), "w") do file
+            writedlm(file, τ_97[channel], ',')
+        end
+
+    end
+
+    open(joinpath("output_$(name)_optical_depth", "optical_depth_$(name)_sum.csv"), "w") do file
+        writedlm(file, τ_97[0], ',')
+    end
+
+    τ_97
 end
 
 
@@ -997,6 +1087,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
     # Data
     cube::CubeData.DataCube
     z::T
+    τ_97::Dict{Int, Matrix{T}}
     name::String
 
     # Basic fitting options
@@ -1015,7 +1106,6 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
     # Continuum parameters
     T_s::Param.Parameter
     T_dc::Vector{Param.Parameter}
-    τ_97::Param.Parameter
     β::Param.Parameter
     n_dust_cont::S
     n_dust_feat::S
@@ -1059,9 +1149,9 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
 
     #= Constructor function --> the inputs taken map directly to fields in the CubeFitter object,
     the rest of the fields are generated in the function from these inputs =#
-    function CubeFitter(cube::CubeData.DataCube, z::AbstractFloat, name::String, n_procs::Integer; 
-        plot_spaxels::Symbol=:pyplot, plot_maps::Bool=true, parallel::Bool=true, save_fits::Bool=true)
-
+    function CubeFitter(cube::CubeData.DataCube, z::AbstractFloat, τ_97::Dict{Int, Matrix{T}}, 
+        name::String, n_procs::Integer; plot_spaxels::Symbol=:pyplot, plot_maps::Bool=true, 
+        parallel::Bool=true, save_fits::Bool=true) where {T<:AbstractFloat}
 
         # Prepare output directories
         @info "Preparing output directories"
@@ -1131,7 +1221,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
         # Get dust options from the dictionary
         T_s = dust[:stellar_continuum_temp]
         T_dc = dust[:dust_continuum_temps]
-        τ_97 = dust[:extinction][:tau_9_7]
+        # τ_97 = dust[:extinction][:tau_9_7]
         β = dust[:extinction][:beta]
 
         @debug "### Model will include 1 stellar continuum component ###" *
@@ -1270,9 +1360,9 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
             p_init_line = readdlm(joinpath("output_$name", "spaxel_binaries", "init_fit_line.csv"), ',', Float64, '\n')[:, 1]
         end
 
-        new{typeof(z), typeof(n_procs)}(cube, z, name, n_procs, plot_spaxels, plot_maps, 
+        new{typeof(z), typeof(n_procs)}(cube, z, τ_97, name, n_procs, plot_spaxels, plot_maps, 
             parallel, save_fits, overwrite, track_memory, track_convergence, make_movies, extinction_curve, extinction_screen, 
-            T_s, T_dc, τ_97, β, n_dust_cont, n_dust_features, df_names, dust_features, n_lines, line_names, line_profiles, 
+            T_s, T_dc, β, n_dust_cont, n_dust_features, df_names, dust_features, n_lines, line_names, line_profiles, 
             line_flow_profiles, lines, n_voff_tied, line_tied, voff_tied_key, voff_tied, n_flow_voff_tied, 
             line_flow_tied, flow_voff_tied_key, flow_voff_tied, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, 
             cosmo, interp_R, flexible_wavesol, p_init_cont, p_init_line)
@@ -1369,6 +1459,8 @@ function mask_emission_lines(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFl
     for me ∈ mask_edges
         mask[max(1, me-5):min(length(mask), me+5)] .= 1
     end
+    # Exclude this region from masking (it tends to get tricked by the strong PAH feature)
+    mask[11.175 .< λ .< 11.225] .= 0
 
     mask
 end
@@ -1538,9 +1630,13 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
         # Dust feature amplitudes
         for i ∈ 1:cube_fitter.n_dust_feat
             # dont take the best fit values, just start them all equal otherwise weird stuff happens
-            p₀[pᵢ] = clamp(nanmedian(I)/2, 0., Inf) 
+            # p₀[pᵢ] = clamp(nanmedian(I)/2, 0., Inf) 
+            p₀[pᵢ] *= scale
             pᵢ += 3
         end
+
+        # Set optical depth based on the pre-fitting
+        p₀[end-1] = cube_fitter.τ_97[parse(Int, cube_fitter.cube.channel)][spaxel]
 
     # Otherwise, we estimate the initial parameters based on the data
     else
@@ -1565,7 +1661,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
         df_pars = vcat([[Ai, mi.value, fi.value] for (Ai, mi, fi) ∈ zip(A_df, mean_df, fwhm_df)]...)
 
         # Initial parameter vector
-        p₀ = Vector{Float64}(vcat(stellar_pars, dc_pars, df_pars, [cube_fitter.τ_97.value, cube_fitter.β.value]))
+        p₀ = Vector{Float64}(vcat(stellar_pars, dc_pars, df_pars, [cube_fitter.τ_97[0][parse(Int, cube_fitter.cube.channel)], 
+            cube_fitter.β.value]))
 
     end
 
@@ -1622,15 +1719,11 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
     end
 
     # Extinction
-    parinfo[pᵢ].fixed = cube_fitter.τ_97.locked
-    if !(cube_fitter.τ_97.locked)
+    parinfo[pᵢ].fixed = true
+    if iszero(parinfo[pᵢ].fixed)
         parinfo[pᵢ].limited = (1,1)
-        parinfo[pᵢ].limits = (minimum(cube_fitter.τ_97.prior), maximum(cube_fitter.τ_97.prior))
-        # If the initial fit has found some optical depth, it shouldn't change too much over the whole cube,
-        # so we can constrain it more (to within +/-50%)
-        if !init
-            parinfo[pᵢ].limits = (p₀[pᵢ]*0.5, p₀[pᵢ]*1.5)
-        end
+        # parinfo[pᵢ].limits = (minimum(cube_fitter.τ_97.prior), maximum(cube_fitter.τ_97.prior))
+        parinfo[pᵢ].limits = (0.0, 10.0)
     end
     parinfo[pᵢ+1].fixed = cube_fitter.β.locked
     if !(cube_fitter.β.locked)
@@ -1702,9 +1795,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
         pᵢ += 3
     end
     msg *= "\n#> EXTINCTION <#\n"
-    msg *= "τ_9.7: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ]) +/- $(@sprintf "%.2f" perr[pᵢ]) [-] \t Limits: " *
-        "($(@sprintf "%.2f" minimum(cube_fitter.τ_97.prior)), $(@sprintf "%.2f" maximum(cube_fitter.τ_97.prior)))" * 
-        (cube_fitter.τ_97.locked ? " (fixed)" : "") * "\n"
+    msg *= "τ_9.7: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ]) +/- $(@sprintf "%.2f" perr[pᵢ]) Limits: " *
+        "($(@sprintf "%.2f" 0.9*p₀[pᵢ]), $(@sprintf "%.2f" 1.1*p₀[pᵢ])) \n"  
     msg *= "β: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ+1]) +/- $(@sprintf "%.2f" perr[pᵢ+1]) [-] \t Limits: " *
         "($(@sprintf "%.2f" minimum(cube_fitter.β.prior)), $(@sprintf "%.2f" maximum(cube_fitter.β.prior)))" * 
         (cube_fitter.β.locked ? " (fixed)" : "") * "\n"

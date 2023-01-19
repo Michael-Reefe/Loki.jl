@@ -737,8 +737,11 @@ be the coarsest grid.
 `S<:Integer`
 - `obs::Observation`: The Observation object to rebin
 - `channels::Union{Vector{S},Nothing}=nothing`: The list of channels to be rebinned. If nothing, rebin all channels.
+- `out_grid::S=1`: Index for the channel whose grid the other channels should be rebinned to, defaults to 1 (first in the channels array).
+- `out_id::S=0`: The dictionary key corresponding to the newly rebinned cube, defaults to 0.
 """
-function cube_rebin!(obs::Observation, channels::Union{Vector{S},Nothing}=nothing) where {S<:Integer}
+function cube_rebin!(obs::Observation, channels::Union{Vector{S},Nothing}=nothing; 
+    out_grid::Integer=1, out_id::Integer=0) where {S<:Integer}
 
     # Default channels to include
     if isnothing(channels)
@@ -746,11 +749,12 @@ function cube_rebin!(obs::Observation, channels::Union{Vector{S},Nothing}=nothin
     end
 
     # Reference channel
-    ch_ref = channels[end]
-    # Output grid is determined by the highest channel (lowest resolution)
-    # Examples: input ch [1,2,3], output ch 4
-    #           input ch [1,2],   output ch 3
-    #           input ch 2,       output ch 3
+    ch_ref = channels[out_grid]
+    # DEPRECATED: Output grid is determined by the highest channel (lowest spatial resolution)
+    # NEW: Output grid is determined by the input value, defaults to the first channel given
+    # Examples: input ch [1,2,3,4], output ch 1
+    #           input ch [2,3],     output ch 2
+    #           input ch 2,         output ch 2
 
     # Output wavelength is just the individual wavelength vectors concatenated
     λ_out = vcat([obs.channels[ch_i].λ for ch_i ∈ channels]...)
@@ -761,11 +765,26 @@ function cube_rebin!(obs::Observation, channels::Union{Vector{S},Nothing}=nothin
 
     # Loop through all other channels
     cumsum = 0
-    for ch_in ∈ channels[1:end-1]
+    for ch_in ∈ channels
 
-        @info "Rebinning $(obs.name) in channel $ch_in..."
+        @info "Rebinning $(obs.name), channel $ch_in to channel $ch_ref..."
 
         wi_size = size(obs.channels[ch_in].λ)[1]
+
+        if ch_in == ch_ref
+            # append this channel in as normal with no rebinning,
+            # since by definition its grid is the one we rebinned to
+            ch_Iν = obs.channels[ch_ref].Iν
+            ch_Iν[.!isfinite.(ch_Iν)] .= 0.
+            ch_σI = obs.channels[ch_ref].σI
+            ch_σI[.!isfinite.(ch_σI)] .= 0.    
+
+            I_out[:, :, cumsum+1:cumsum+wi_size] = ch_Iν
+            σ_out[:, :, cumsum+1:cumsum+wi_size] = ch_σI
+
+            cumsum += wi_size
+            continue
+        end
 
         # Function to transform output coordinates into input coordinates
         # Add in the wavelength coordinate, which doesn't change
@@ -795,6 +814,7 @@ function cube_rebin!(obs::Observation, channels::Union{Vector{S},Nothing}=nothin
             # the pix_transform function
             for (xᵣ, yᵣ) ∈ collect(Iterators.product(1:shape_ref[1], 1:shape_ref[2]))
                 xᵢ, yᵢ = pix_transform(xᵣ, yᵣ)
+                # Fill with zeros for any points outside the boundaries of the input data
                 if (xᵢ > shape_in[1]) || (xᵢ < 1) || (yᵢ > shape_in[2]) || (yᵢ < 1)
                     I_out[xᵣ, yᵣ, cumsum+wi] = 0.
                     σ_out[xᵣ, yᵣ, cumsum+wi] = 0.
@@ -809,17 +829,6 @@ function cube_rebin!(obs::Observation, channels::Union{Vector{S},Nothing}=nothin
 
         cumsum += wi_size
     end
-
-    # append the last channel in as normal with no rebinning,
-    # since by definition its grid is the one we rebinned to
-    wf = shape_ref[3]
-    ch_Iν = obs.channels[ch_ref].Iν
-    ch_Iν[.!isfinite.(ch_Iν)] .= 0.
-    ch_σI = obs.channels[ch_ref].σI
-    ch_σI[.!isfinite.(ch_σI)] .= 0.    
-
-    I_out[:, :, cumsum+1:cumsum+wf] = ch_Iν
-    σ_out[:, :, cumsum+1:cumsum+wf] = ch_σI
 
     # deal with overlapping wavelength data -> sort wavelength vector to be monotonically increasing
     ss = sortperm(λ_out)
@@ -845,13 +854,13 @@ function cube_rebin!(obs::Observation, channels::Union{Vector{S},Nothing}=nothin
     end
 
     # Define the rebinned cube as the zeroth channel (since this is not taken up by anything else)
-    obs.channels[0] = DataCube(λ_out, I_out, σ_out, mask_out, 
+    obs.channels[out_id] = DataCube(λ_out, I_out, σ_out, mask_out, 
         obs.channels[ch_ref].Ω, obs.α, obs.δ, obs.channels[ch_ref].wcs, obs.channels[ch_ref].channel, 
         obs.channels[ch_ref].band, obs.rest_frame, true)
     
     @info "Done!"
     
-    obs.channels[0]
+    obs.channels[out_id]
 
 end
 
