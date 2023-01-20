@@ -3551,13 +3551,13 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
         N = Float64(abs(nanmaximum(cube_fitter.cube.Iν[index, :])))
         N = N ≠ 0. ? N : 1.
         for comp ∈ keys(comps_l)
-            # include extinction correction factor
-            comps_l[comp] .*= N ./ comps_c["extinction"]
+            # (dont include extinction correction here since it's already included in the amplitudes in out_params)
+            comps_l[comp] .*= N
         end
         I_line .*= N
         
-        # Combine the continuum and line models
-        I_model = I_cont .+ I_line
+        # Combine the continuum and line models (here extinction is needed in the line model)
+        I_model = I_cont .+ I_line .* comps_c["extinction"]
         comps = merge(comps_c, comps_l)
 
         # Dust feature intensity and SNR, from calculate_extra_parameters
