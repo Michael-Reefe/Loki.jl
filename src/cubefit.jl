@@ -3345,14 +3345,14 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
 
         # Stellar continuum amplitude, temp
         param_maps.stellar_continuum[:amp][index] = out_params[index, 1] > 0. ? log10(out_params[index, 1])-17 : -Inf 
-        param_errs.stellar_continuum[:amp][index] = out_params[index, 1] > 0. ? out_errs[index, 1] / out_params[index, 1] : NaN
+        param_errs.stellar_continuum[:amp][index] = out_params[index, 1] > 0. ? out_errs[index, 1] / (log(10) * out_params[index, 1]) : NaN
         param_maps.stellar_continuum[:temp][index] = out_params[index, 2]
         param_errs.stellar_continuum[:temp][index] = out_errs[index, 2]
         pᵢ = 3
         # Dust continuum amplitude, temp
         for i ∈ 1:cube_fitter.n_dust_cont
             param_maps.dust_continuum[i][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ])-17 : -Inf
-            param_errs.dust_continuum[i][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / out_params[index, pᵢ] : NaN
+            param_errs.dust_continuum[i][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / (log(10) * out_params[index, pᵢ]) : NaN
             param_maps.dust_continuum[i][:temp][index] = out_params[index, pᵢ+1]
             param_errs.dust_continuum[i][:temp][index] = out_errs[index, pᵢ+1]
             pᵢ += 2
@@ -3360,7 +3360,7 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
         # Dust feature log(amplitude), mean, FWHM
         for df ∈ cube_fitter.df_names
             param_maps.dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ])-17 : -Inf
-            param_errs.dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / out_params[index, pᵢ] : NaN
+            param_errs.dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / (log(10) * out_params[index, pᵢ]) : NaN
             param_maps.dust_features[df][:mean][index] = out_params[index, pᵢ+1]
             param_errs.dust_features[df][:mean][index] = out_errs[index, pᵢ+1]
             param_maps.dust_features[df][:fwhm][index] = out_params[index, pᵢ+2]
@@ -3541,7 +3541,7 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
 
         end
 
-        # End of line parameters: recreate the line model
+        # End of line parameters: recreate the un-extincted (intrinsic) line model
         I_line, comps_l = Util.fit_line_residuals(cube_fitter.cube.λ, out_params[index, vᵢ:pᵢ-1], cube_fitter.n_lines, cube_fitter.n_voff_tied,
             cube_fitter.voff_tied_key, cube_fitter.line_tied, cube_fitter.line_profiles, cube_fitter.n_flow_voff_tied, cube_fitter.flow_voff_tied_key,
             cube_fitter.line_flow_tied, cube_fitter.line_flow_profiles, [ln.λ₀ for ln ∈ cube_fitter.lines], 
@@ -3556,14 +3556,14 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
         end
         I_line .*= N
         
-        # Combine the continuum and line models (here extinction is needed in the line model)
+        # Combine the continuum and line models (here extinction is needed in the line model to create the final extincted model)
         I_model = I_cont .+ I_line .* comps_c["extinction"]
         comps = merge(comps_c, comps_l)
 
         # Dust feature intensity and SNR, from calculate_extra_parameters
         for df ∈ cube_fitter.df_names
             param_maps.dust_features[df][:intI][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
-            param_errs.dust_features[df][:intI][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / out_params[index, pᵢ] : NaN
+            param_errs.dust_features[df][:intI][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / (log(10) * out_params[index, pᵢ]) : NaN
             param_maps.dust_features[df][:SNR][index] = out_params[index, pᵢ+1]
             pᵢ += 2
         end
@@ -3573,17 +3573,17 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
             amp_norm = param_maps.lines[ln][:amp][index]
             amp_norm_err = param_errs.lines[ln][:amp][index]
             param_maps.lines[ln][:amp][index] = amp_norm > 0 ? log10(amp_norm * N)-17 : -Inf
-            param_errs.lines[ln][:amp][index] = amp_norm > 0 ? amp_norm_err / amp_norm : NaN
+            param_errs.lines[ln][:amp][index] = amp_norm > 0 ? amp_norm_err / (log(10) * amp_norm) : NaN
             if !isnothing(cube_fitter.line_flow_profiles[k])
                 flow_amp_norm = param_maps.lines[ln][:flow_amp][index]
                 flow_amp_norm_err = param_errs.lines[ln][:flow_amp][index]
-                param_maps.lines[ln][:flow_amp][index] = flow_amp_norm > 0 ? log10(amp_norm * flow_amp_norm * N)-17 : -Inf
-                param_errs.lines[ln][:flow_amp][index] = flow_amp_norm > 0 ? flow_amp_norm_err / flow_amp_norm : NaN
+                param_maps.lines[ln][:flow_amp][index] = flow_amp_norm > 0 ? log10(flow_amp_norm * N)-17 : -Inf
+                param_errs.lines[ln][:flow_amp][index] = flow_amp_norm > 0 ? flow_amp_norm_err / (log(10) * flow_amp_norm) : NaN
             end
 
             # Line intensity and SNR, from calculate_extra_parameters
             param_maps.lines[ln][:intI][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
-            param_errs.lines[ln][:intI][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / out_params[index, pᵢ] : NaN
+            param_errs.lines[ln][:intI][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / (log(10) * out_params[index, pᵢ]) : NaN
             param_maps.lines[ln][:SNR][index] = out_params[index, pᵢ+1]
             pᵢ += 2
         end
