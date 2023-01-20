@@ -47,7 +47,7 @@ obs = correct(obs)
 τ_97 = fit_optical_depth(obs)
 
 # Create the cube fitting object
-cube_fitter = CubeFitter(obs.channels[channel], obs.z, τ_97, obs.name * "_ch$(channel)_nofringe", n_procs; 
+cube_fitter = CubeFitter(obs.channels[channel], obs.z, τ_97, obs.name * "_ch$(channel)_nofringe_2", n_procs; 
     parallel=true, plot_spaxels=:pyplot, plot_maps=true, save_fits=true)
 
 # Perform the Levenberg-Marquardt least-squares fitting

@@ -1627,6 +1627,9 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
         # Set the parameters to the best parameters
         p₀ = copy(cube_fitter.p_init_cont)
 
+        # pull out optical depth that was pre-fit
+        τ_97_0 = cube_fitter.τ_97[parse(Int, cube_fitter.cube.channel)][spaxel]
+
         # scale all flux amplitudes by the difference in medians between the spaxel and the summed spaxels
         # (should be close to 1 since the sum is already normalized by the number of spaxels included anyways)
         scale = max(nanmedian(I), 1e-10) / nanmedian(Util.Σ(cube_fitter.cube.Iν, (1,2)) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2)))
@@ -1646,12 +1649,12 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
         for i ∈ 1:cube_fitter.n_dust_feat
             # dont take the best fit values, just start them all equal otherwise weird stuff happens
             # p₀[pᵢ] = clamp(nanmedian(I)/2, 0., Inf) 
-            p₀[pᵢ] = clamp(p₀[pᵢ]*scale, 0., max_amp)
+            p₀[pᵢ] = clamp(p₀[pᵢ]*scale, 0., max_amp / exp(-τ_97_0))
             pᵢ += 3
         end
 
         # Set optical depth based on the pre-fitting
-        p₀[end-1] = cube_fitter.τ_97[parse(Int, cube_fitter.cube.channel)][spaxel]
+        p₀[end-1] = τ_97_0
 
     # Otherwise, we estimate the initial parameters based on the data
     else
@@ -1719,7 +1722,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
     # Dust feature amplitude, mean, fwhm
     for i ∈ 1:cube_fitter.n_dust_feat
         parinfo[pᵢ].limited = (1,1)
-        parinfo[pᵢ].limits = (0., nanmaximum(I))
+        parinfo[pᵢ].limits = (0., nanmaximum(I) / exp(-p₀[end-1]))
         parinfo[pᵢ+1].fixed = mean_df[i].locked
         if !(mean_df[i].locked)
             parinfo[pᵢ+1].limited = (1,1)
@@ -1782,6 +1785,10 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
     I_model, comps = Util.fit_spectrum(λ, popt, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, 
         cube_fitter.extinction_curve, cube_fitter.extinction_screen, true)
 
+    if init
+        cube_fitter.p_init_cont[:] .= copy(popt)
+    end
+
     msg = "######################################################################\n"
     msg *= "################# SPAXEL FIT RESULTS -- CONTINUUM ####################\n"
     msg *= "######################################################################\n"
@@ -1799,7 +1806,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
     msg *= "\n#> DUST FEATURES <#\n"
     for (j, df) ∈ enumerate(cube_fitter.df_names)
         msg *= "$(df)_amp:\t\t\t $(@sprintf "%.1f" popt[pᵢ]) +/- $(@sprintf "%.1f" perr[pᵢ]) MJy/sr \t Limits: " *
-            "(0, $(@sprintf "%.1f" nanmaximum(I)))\n"
+            "(0, $(@sprintf "%.1f" (nanmaximum(I) / exp(-popt[end-1]))))\n"
         msg *= "$(df)_mean:  \t\t $(@sprintf "%.3f" popt[pᵢ+1]) +/- $(@sprintf "%.3f" perr[pᵢ+1]) μm \t Limits: " *
             "($(@sprintf "%.3f" minimum(mean_df[j].prior)), $(@sprintf "%.3f" maximum(mean_df[j].prior)))" * 
             (mean_df[j].locked ? " (fixed)" : "") * "\n"
@@ -1859,7 +1866,7 @@ end
 
 
 """
-    line_fit_spaxel(cube_fitter, spaxel, continuum, init=init)
+    line_fit_spaxel(cube_fitter, spaxel, continuum, ext_curve, init=init)
 
 Fit the emission lines of a given spaxel in the DataCube, subtracting the continuum, using the 
 Simulated Annealing and L-BFGS fitting methods with the `Optim` package.
@@ -1875,11 +1882,13 @@ See Smith, Draine, et al. 2007; http://tir.astro.utoledo.edu/jdsmith/research/pa
 - `spaxel::CartesianIndex`: The coordinates of the spaxel to be fit
 - `continuum::Vector{<:AbstractFloat}`: The fitted continuum level of the spaxel being fit (which will be subtracted
     before the lines are fit)
+- `ext_curve::Vector{<:AbstractFloat}`: The extinction curve of the spaxel being fit (which will be used to calculate
+    extinction-corrected line amplitudes and fluxes)
 - `init::Bool=false`: Flag for the initial fit which fits the sum of all spaxels, to get an estimation for
     the initial parameter vector for individual spaxel fits
 """
-function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, continuum::Vector{<:AbstractFloat}; 
-    init::Bool=false)
+function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, continuum::Vector{<:AbstractFloat}, 
+    ext_curve::Vector{<:AbstractFloat}; init::Bool=false)
 
     @debug """\n
     #########################################################
@@ -2334,7 +2343,44 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     # Renormalize
     I_model = I_model .* N
     for comp ∈ keys(comps)
-        comps[comp] = comps[comp] .* N
+        # Also divide out the extinction curve from the line profiles to get the intrinsic fluxes
+        comps[comp] = comps[comp] .* N ./ ext_curve
+    end
+
+    if init
+        cube_fitter.p_init_line[:] .= copy(popt)
+    end
+
+    # Loop through and divide out the extinction factors from the amplitudes
+    pᵢ = 1 + cube_fitter.n_voff_tied + cube_fitter.n_flow_voff_tied
+    pᵢ += cube_fitter.tie_voigt_mixing ? 1 : 0
+    for (k, ln) ∈ enumerate(cube_fitter.lines)
+        center = argmax(comps["line_$k"])
+        popt[pᵢ] /= ext_curve[center]
+        if prof_ln[k] == :GaussHermite
+            pᵢ += 2
+        elseif prof_ln[k] == :Voigt && !cube_fitter.tie_voigt_mixing
+            pᵢ += 1
+        end
+        if isnothing(cube_fitter.line_tied[k]) || cube_fitter.flexible_wavesol
+            pᵢ += 3
+        else
+            pᵢ += 2
+        end
+        if !isnothing(flow_prof_ln[k])
+            center = argmax(comps["line_$(k)_flow"])
+            popt[pᵢ] /= ext_curve[center]
+            if flow_prof_ln[k] == :GaussHermite
+                pᵢ += 2
+            elseif flow_prof_ln[k] == :Voigt && !cube_fitter.tie_voigt_mixing
+                pᵢ += 1
+            end
+            if isnothing(cube_fitter.line_flow_tied[k])
+                pᵢ += 3
+            else
+                pᵢ += 2
+            end
+        end
     end
 
     msg = "######################################################################\n"
@@ -3090,7 +3136,7 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex)
             σ, popt_c, I_cont, comps_cont, n_free_c, perr_c, covar_c = 
                 @timeit timer_output "continuum_fit_spaxel" continuum_fit_spaxel(cube_fitter, spaxel)
             _, popt_l, I_line, comps_line, n_free_l, perr_l, covar_l = 
-                @timeit timer_output "line_fit_spaxel" line_fit_spaxel(cube_fitter, spaxel, I_cont)
+                @timeit timer_output "line_fit_spaxel" line_fit_spaxel(cube_fitter, spaxel, I_cont, comps_cont["extinction"])
 
             # Combine the continuum and line models
             I_model = I_cont .+ I_line
@@ -3177,7 +3223,8 @@ function fit_stack!(cube_fitter::CubeFitter)
 
     # Continuum and line fits
     σ_init, popt_c_init, I_c_init, comps_c_init, n_free_c_init, _, _ = continuum_fit_spaxel(cube_fitter, CartesianIndex(0,0); init=true)
-    _, popt_l_init, I_l_init, comps_l_init, n_free_l_init, _, _ = line_fit_spaxel(cube_fitter, CartesianIndex(0,0), I_c_init; init=true)
+    _, popt_l_init, I_l_init, comps_l_init, n_free_l_init, _, _ = line_fit_spaxel(cube_fitter, CartesianIndex(0,0), I_c_init, 
+        comps_c_init["extinction"]; init=true)
 
     # Get the overall models
     I_model_init = I_c_init .+ I_l_init
@@ -3188,10 +3235,6 @@ function fit_stack!(cube_fitter::CubeFitter)
 
     # Calculate reduce chi^2
     χ2red_init = 1 / (n_data_init - n_free_init) * sum((I_sum_init .- I_model_init).^2 ./ σ_init.^2)
-
-    # Save the results to the cube fitter
-    cube_fitter.p_init_cont[:] .= popt_c_init
-    cube_fitter.p_init_line[:] .= popt_l_init
 
     # Save the results to a file 
     # save running best fit parameters in case the fitting is interrupted
@@ -3508,7 +3551,8 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
         N = Float64(abs(nanmaximum(cube_fitter.cube.Iν[index, :])))
         N = N ≠ 0. ? N : 1.
         for comp ∈ keys(comps_l)
-            comps_l[comp] .*= N
+            # include extinction correction factor
+            comps_l[comp] .*= N ./ comps_c["extinction"]
         end
         I_line .*= N
         
