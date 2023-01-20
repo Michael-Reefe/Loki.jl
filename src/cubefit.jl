@@ -1787,6 +1787,11 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
 
     if init
         cube_fitter.p_init_cont[:] .= copy(popt)
+        # Save the results to a file 
+        # save running best fit parameters in case the fitting is interrupted
+        open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_cont.csv"), "w") do f
+            writedlm(f, cube_fitter.p_init_cont, ',')
+        end
     end
 
     msg = "######################################################################\n"
@@ -2349,6 +2354,10 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
 
     if init
         cube_fitter.p_init_line[:] .= copy(popt)
+        # Save results to file
+        open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_line.csv"), "w") do f
+            writedlm(f, cube_fitter.p_init_line, ',')
+        end
     end
 
     # Loop through and divide out the extinction factors from the amplitudes
@@ -3235,15 +3244,6 @@ function fit_stack!(cube_fitter::CubeFitter)
 
     # Calculate reduce chi^2
     χ2red_init = 1 / (n_data_init - n_free_init) * sum((I_sum_init .- I_model_init).^2 ./ σ_init.^2)
-
-    # Save the results to a file 
-    # save running best fit parameters in case the fitting is interrupted
-    open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_cont.csv"), "w") do f
-        writedlm(f, popt_c_init, ',')
-    end
-    open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_line.csv"), "w") do f
-        writedlm(f, popt_l_init, ',')
-    end
 
     # Plot the fit
     λ0_ln = [ln.λ₀ for ln ∈ cube_fitter.lines]
