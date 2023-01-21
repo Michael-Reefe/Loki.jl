@@ -15,7 +15,7 @@ end
 # n_procs = 1
 
 to = TimerOutput()
-channel = 3
+channel = 4
 # Load in data
 # obs = from_fits(["data/jw01328-o015_t014_miri_ch1-mediumshortlong-_s3d.fits", 
 #     "data/jw01328-o015_t014_miri_ch2-mediumshortlong-_s3d.fits", 

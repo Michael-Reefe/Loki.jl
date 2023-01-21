@@ -64,6 +64,7 @@ const plt::PyObject = PyNULL()
 const py_anchored_artists::PyObject = PyNULL()
 const py_ticker::PyObject = PyNULL()
 const py_animation::PyObject = PyNULL()
+const py_wcs::PyObject = PyNULL()
 
 # Some constants for setting matplotlib font sizes
 const SMALL::UInt8 = 12
@@ -82,6 +83,8 @@ function __init__()
     copy!(py_ticker, pyimport_conda("matplotlib.ticker", "matplotlib"))
     # animation --> used for making mp4 movie files (optional)
     copy!(py_animation, pyimport_conda("matplotlib.animation", "matplotlib"))
+    # Import astropy's WCS module to work with matplotlib
+    copy!(py_wcs, pyimport_conda("astropy.wcs", "astropy"))
 
     # Matplotlib settings to make plots look pretty :)
     plt.switch_backend("Agg")                  # agg backend just saves to file, no GUI display
@@ -1162,6 +1165,10 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
     p_init_cont::Vector{T}
     p_init_line::Vector{T}
 
+    # Store the astropy version of the 2D WCS transformation object,
+    # for nice plotting with matplotlib
+    python_wcs::PyObject
+
     #= Constructor function --> the inputs taken map directly to fields in the CubeFitter object,
     the rest of the fields are generated in the function from these inputs =#
     function CubeFitter(cube::CubeData.DataCube, z::AbstractFloat, τ_97::Dict{Int, Matrix{T}}, 
@@ -1375,12 +1382,21 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
             p_init_line = readdlm(joinpath("output_$name", "spaxel_binaries", "init_fit_line.csv"), ',', Float64, '\n')[:, 1]
         end
 
+        # Get WCS transformation as a python object
+        cube_wcs = py_wcs.WCS(naxis=2)
+        cube_wcs.wcs.cdelt = cube.wcs.cdelt[1:2]
+        cube_wcs.wcs.ctype = cube.wcs.ctype[1:2]
+        cube_wcs.wcs.crpix = cube.wcs.crpix[1:2]
+        cube_wcs.wcs.crval = cube.wcs.crval[1:2]
+        cube_wcs.wcs.cunit = cube.wcs.cunit[1:2]
+        cube_wcs.wcs.pc = cube.wcs.pc[1:2, 1:2]
+
         new{typeof(z), typeof(n_procs)}(cube, z, τ_97, name, n_procs, plot_spaxels, plot_maps, 
             parallel, save_fits, overwrite, track_memory, track_convergence, make_movies, extinction_curve, extinction_screen, 
             T_s, T_dc, β, n_dust_cont, n_dust_features, df_names, dust_features, n_lines, line_names, line_profiles, 
             line_flow_profiles, lines, n_voff_tied, line_tied, voff_tied_key, voff_tied, n_flow_voff_tied, 
             line_flow_tied, flow_voff_tied_key, flow_voff_tied, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, 
-            cosmo, interp_R, flexible_wavesol, p_init_cont, p_init_line)
+            cosmo, interp_R, flexible_wavesol, p_init_cont, p_init_line, cube_wcs)
     end
 
 end
@@ -3653,14 +3669,15 @@ Plotting function for 2D parameter maps which are output by `fit_cube!`
 - `Ω::Float64`: The solid angle subtended by each pixel, in steradians (used for angular scalebar)
 - `z::Float64`: The redshift of the object (used for physical scalebar)
 - `cosmo::Cosmology.AbstractCosmology`: The cosmology to use to calculate distance for the physical scalebar
+- `python_wcs::PyObject`: The astropy WCS object used to project the maps onto RA/Dec space
 - `snr_filter::Matrix{Float64}=Matrix{Float64}(undef,0,0)`: A 2D array of S/N values to
     be used to filter out certain spaxels from being plotted - must be the same size as `data` to filter
 - `snr_thresh::Float64=3.`: The S/N threshold below which to cut out any spaxels using the values in snr_filter
 - `cmap::Symbol=:cubehelix`: The colormap used in the plot, defaults to the cubehelix map
 """
 function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String, Ω::Float64, z::Float64, 
-    cosmo::Cosmology.AbstractCosmology; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, snr_thresh::Float64=1.,
-    cmap::Symbol=:cubehelix)
+    cosmo::Cosmology.AbstractCosmology, python_wcs::PyObject; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, 
+    snr_thresh::Float64=1., cmap::Symbol=:cubehelix)
 
     # I know this is ugly but I couldn't figure out a better way to do it lmao
     if occursin("amp", String(name_i))
@@ -3716,28 +3733,35 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
     end
 
     fig = plt.figure()
-    ax = plt.subplot()
+    ax = fig.add_subplot(111, projection=python_wcs)
     # Need to filter out any NaNs in order to use quantile
     flatdata = filtered[isfinite.(filtered)]
     vmin = length(flatdata) > 0 ? quantile(flatdata, 0.01) - small : 0.0
     vmax = length(flatdata) > 0 ? quantile(flatdata, 0.99) + small : 0.0
     cdata = ax.imshow(filtered', origin=:lower, cmap=cmap, vmin=vmin, vmax=vmax)
-    ax.axis(:off)
+    # ax.axis(:off)
+    ax.tick_params(which="both", axis="both", direction="in")
+    ax.set_xlabel("R.A.")
+    ax.set_ylabel("Dec.")
 
     # Angular and physical scalebars
     n_pix = 1/(sqrt(Ω) * 180/π * 3600)
     @debug "Using angular diameter distance $(angular_diameter_dist(cosmo, z))"
     # Calculate in Mpc
-    dL = angular_diameter_dist(u"pc", cosmo, z) / (180/π * 3600)  # l = d * theta (1")
+    dA = angular_diameter_dist(u"pc", cosmo, z)
     # Remove units
-    dL = uconvert(NoUnits, dL/u"pc")
-    # Round to integer
-    dL = floor(Int, dL)
+    dA = uconvert(NoUnits, dA/u"pc")
+    l = dA * π/180 / 3600  # l = d * theta (1")
+    # Round to a nice even number
+    l = Int(round(l, sigdigits=1))
+     # new angular size for this scale
+    θ = l / dA
+    n_pix = 1/sqrt(Ω) * θ   # number of pixels = (pixels per radian) * radians
     if cosmo.h == 1.0
-        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, L"1$''$ / %$dL$h^{-1}$ pc", "lower left", pad=1, color=:black, 
+        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, L"%$l$h^{-1}$ pc", "lower left", pad=1, color=:black, 
             frameon=false, size_vertical=0.4, label_top=false)
     else
-        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, L"1$''$ / %$dL pc", "lower left", pad=1, color=:black,
+        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, L"%$l pc", "lower left", pad=1, color=:black,
             frameon=false, size_vertical=0.4, label_top=false)
     end
     ax.add_artist(scalebar)
@@ -3771,7 +3795,8 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
     for parameter ∈ keys(param_maps.stellar_continuum)
         data = param_maps.stellar_continuum[parameter]
         name_i = join(["stellar_continuum", parameter], "_")
-        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology)
+        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
+            cube_fitter.python_wcs)
     end
 
     # Dust continuum parameters
@@ -3779,7 +3804,8 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
         for parameter ∈ keys(param_maps.dust_continuum[i])
             data = param_maps.dust_continuum[i][parameter]
             name_i = join(["dust_continuum", i, parameter], "_")
-            plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology)
+            plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
+                cube_fitter.python_wcs)
         end
     end
 
@@ -3790,7 +3816,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
             data = param_maps.dust_features[df][parameter]
             name_i = join(["dust_features", df, parameter], "_")
             plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
-                snr_filter=!(parameter in (:SNR, :amp)) ? snr : nothing, snr_thresh=snr_thresh)
+                cube_fitter.python_wcs, snr_filter=!(parameter in (:SNR, :amp)) ? snr : nothing, snr_thresh=snr_thresh)
         end
     end
 
@@ -3798,28 +3824,32 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
     for parameter ∈ keys(param_maps.extinction)
         data = param_maps.extinction[parameter]
         name_i = join(["extinction", parameter], "_")
-        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology)
+        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
+            cube_fitter.python_wcs)
     end
 
     # Tied Voigt mixing parameter
     if cube_fitter.tie_voigt_mixing
         data = param_maps.tied_voigt_mix
         name_i = "tied_voigt_mixing"
-        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology)
+        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
+            cube_fitter.python_wcs)
     end
 
     # Tied velocity offsets
     for vk ∈ cube_fitter.voff_tied_key
         data = param_maps.tied_voffs[vk]
         name_i = join(["tied_voffs", vk], "_")
-        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology)
+        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
+            cube_fitter.python_wcs)
     end
 
     # Tied flow velocity offsets
     for fvk ∈ cube_fitter.flow_voff_tied_key
         data = param_maps.flow_tied_voffs[fvk]
         name_i = join(["flow_tied_voffs", fvk], "_")
-        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology)
+        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
+            cube_fitter.python_wcs)
     end
 
     # Line parameters
@@ -3829,14 +3859,15 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
             data = param_maps.lines[line][parameter]
             name_i = join(["lines", line, parameter], "_")
             plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
-                snr_filter=!(parameter in (:SNR, :amp)) ? snr : nothing, snr_thresh=snr_thresh)
+                cube_fitter.python_wcs, snr_filter=!(parameter in (:SNR, :amp)) ? snr : nothing, snr_thresh=snr_thresh)
         end
     end
 
     # Reduced chi^2 
     data = param_maps.reduced_χ2
     name_i = "reduced_chi2"
-    plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology)
+    plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
+        cube_fitter.python_wcs)
 
     return
 
@@ -3864,18 +3895,6 @@ N.B. This function takes a while to run so be prepared to wait a good few minute
 """
 function make_movie(cube_fitter::CubeFitter, cube_model::CubeModel; cmap::Symbol=:cubehelix)
 
-    # Import astropy's WCS module to work with matplotlib
-    py_wcs = pyimport_conda("astropy.wcs", "astropy")
-
-    # Get WCS transformation as a python object
-    cube_wcs = py_wcs.WCS(naxis=2)
-    cube_wcs.wcs.cdelt = cube_fitter.cube.wcs.cdelt[1:2]
-    cube_wcs.wcs.ctype = cube_fitter.cube.wcs.ctype[1:2]
-    cube_wcs.wcs.crpix = cube_fitter.cube.wcs.crpix[1:2]
-    cube_wcs.wcs.crval = cube_fitter.cube.wcs.crval[1:2]
-    cube_wcs.wcs.cunit = cube_fitter.cube.wcs.cunit[1:2]
-    cube_wcs.wcs.pc = cube_fitter.cube.wcs.pc[1:2, 1:2]
-
     for (full_data, title) ∈ zip([cube_fitter.cube.Iν, cube_model.model], ["DATA", "MODEL"])
 
         # Writer using FFMpeg to create an mp4 file
@@ -3885,7 +3904,7 @@ function make_movie(cube_fitter::CubeFitter, cube_model::CubeModel; cmap::Symbol
         # Set up plots with gridspec
         fig = plt.figure()
         gs = fig.add_gridspec(ncols=20,  nrows=10)
-        ax1 = fig.add_subplot(py"$(gs)[0:8, 0:18]", projection=cube_wcs)
+        ax1 = fig.add_subplot(py"$(gs)[0:8, 0:18]", projection=cube_fitter.python_wcs)
         ax2 = fig.add_subplot(py"$(gs)[9:10, :]")
         ax3 = fig.add_subplot(py"$(gs)[0:8, 18:19]")
 
