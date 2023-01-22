@@ -12,10 +12,12 @@ accessed with the "Util" prefix.
 module Util
 
 # Import math packages
+using Statistics
 using NaNStatistics
 using Dierckx
 using CSV
 using DataFrames
+using QuadGK
 
 # CONSTANTS
 
@@ -1156,5 +1158,250 @@ function Voigt(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::Abst
     # Mix the two distributions with the mixing parameter η
     I * (η * G + (1 - η) * L)
 end
+
+
+"""
+    _continuum(x, popt_c)
+
+Calculate the pure blackbody continuum (without PAHs or lines) of the spectrum given
+optimization parameters popt_c, at a location x.
+"""
+function _continuum(x::AbstractFloat, popt_c::Vector{<:AbstractFloat}, n_dust_cont::Integer,
+    n_dust_feat::Integer=0)
+    c = 0.
+    # stellar continuum
+    c += popt_c[1] * Blackbody_ν(x, popt_c[2])
+    pₓ = 3
+    # dust continua
+    for i ∈ 1:n_dust_cont
+        c += popt_c[pₓ] * (9.7 / x)^2 * Blackbody_ν(x, popt_c[pₓ+1])
+        pₓ += 2
+    end
+    # dust features
+    for j ∈ 1:n_dust_feat
+        c += Drude(x, popt_c[pₓ:pₓ+2]...)
+        pₓ += 3
+    end
+    # dont include extinction here since it's not included in the PAH/line profiles either
+    c
+end
+
+
+"""
+    _continuum_errs(x, popt_c, perr_c)
+
+Calculate the error in the pure blackbody continuum (without PAHs or lines) of the spectrum given
+optimization parameters popt_c and errors perr_c, at a location x.
+"""
+function _continuum_errs(x::AbstractFloat, popt_c::Vector{<:AbstractFloat},
+    perr_c::Vector{<:AbstractFloat}, n_dust_cont::Integer, n_dust_feat::Integer=0)
+    c_l = 0.
+    c_u = 0.
+    # stellar continuum
+    c_l += (popt_c[1] - perr_c[1]) * Blackbody_ν(x, popt_c[2] - perr_c[2])
+    c_u += (popt_c[1] + perr_c[1]) * Blackbody_ν(x, popt_c[2] + perr_c[2])
+    pₓ = 3
+    # dust continua
+    for i ∈ 1:n_dust_cont
+        c_l += (popt_c[pₓ] - perr_c[pₓ]) * (9.7 / x)^2 * Blackbody_ν(x, popt_c[pₓ+1] - perr_c[pₓ+1])
+        c_u += (popt_c[pₓ] + perr_c[pₓ]) * (9.7 / x)^2 * Blackbody_ν(x, popt_c[pₓ+1] + perr_c[pₓ+1])
+        pₓ += 2
+    end
+    # dust features
+    for j ∈ 1:n_dust_feat
+        c_l += Drude(x, (popt_c[pₓ:pₓ+2] .- perr_c[pₓ:pₓ+2])...)
+        c_u += Drude(x, (popt_c[pₓ:pₓ+2] .+ perr_c[pₓ:pₓ+2])...)
+        pₓ += 3
+    end
+    # dont include extinction
+    c_l, c_u
+end
+
+
+"""
+    calculate_intensity(profile, amp, amp_err, peak, peak_err, fwhm, fwhm_err; <keyword_args>)
+
+Calculate the integrated intensity of a spectral feature, i.e. a PAH or emission line. Calculates the integral
+of the feature profile, using an analytic form if available, otherwise integrating numerically with QuadGK.
+"""
+function calculate_intensity(profile::Symbol, amp::T, amp_err::T, peak::T, peak_err::T, fwhm::T, fwhm_err::T;
+    h3::Union{T,Nothing}=nothing, h3_err::Union{T,Nothing}=nothing, h4::Union{T,Nothing}=nothing, 
+    h4_err::Union{T,Nothing}=nothing, η::Union{T,Nothing}=nothing, η_err::Union{T,Nothing}=nothing) where {T<:AbstractFloat}
+
+    # Evaluate the line profiles according to whether there is a simple analytic form
+    # otherwise, integrate numerically with quadgk
+    if profile == :Drude
+        # (integral = π/2 * A * fwhm)
+        intensity = ∫Drude(amp, fwhm)
+        if iszero(amp)
+            i_err = π/2 * fwhm * amp_err
+        else
+            frac_err2 = (amp_err / amp)^2 + (fwhm_err / fwhm)^2
+            i_err = √(frac_err2 * intensity^2)
+        end
+    elseif profile == :Gaussian
+        intensity = ∫Gaussian(amp, fwhm)
+        frac_err2 = (amp_err / amp)^2 + (fwhm_err / fwhm)^2
+        i_err = √(frac_err2 * intensity^2)
+    elseif profile == :Lorentzian
+        intensity = ∫Lorentzian(amp)
+        i_err = amp_err
+    elseif profile == :GaussHermite
+        # shift the profile to be centered at 0 since it doesnt matter for the integral, and it makes it
+        # easier for quadgk to find a solution
+        intensity = quadgk(x -> GaussHermite(x+peak, amp, peak, fwhm, h3, h4), -Inf, Inf, order=200)[1]
+        # estimate error by evaluating the integral at +/- 1 sigma
+        err_l = intensity - quadgk(x -> GaussHermite(x+peak, amp-amp_err, peak, fwhm-fwhm_err, h3-h3_err, h4-h4_err), -Inf, Inf, order=200)[1]
+        err_u = quadgk(x -> GaussHermite(x+peak, amp+amp_err, peak, fwhm+fwhm_err, h3+h3_err, h4+h4_err), -Inf, Inf, order=200)[1] - intensity
+        err_l = err_l ≥ 0 ? err_l : 0.
+        i_err = (err_l + err_u)/2
+    elseif profile == :Voigt
+        # also use a high order to ensure that all the initial test points dont evaluate to precisely 0
+        intensity = quadgk(x -> Voigt(x+peak, amp, peak, fwhm, η), -Inf, Inf, order=200)[1]
+        # estimate error by evaluating the integral at +/- 1 sigma
+        err_l = intensity - quadgk(x -> Voigt(x+peak, amp-amp_err, peak, fwhm-fwhm_err, η-η_err), -Inf, Inf, order=200)[1]
+        err_u = quadgk(x -> Voigt(x+peak, amp+amp_err, peak, fwhm+fwhm_err, η+η_err), -Inf, Inf, order=200)[1] - intensity
+        err_l = err_l ≥ 0 ? err_l : 0.
+        i_err = (err_l + err_u)/2
+    else
+        error("Unrecognized line profile $profile")
+    end
+
+    @debug "I=$intensity, err=$i_err"
+    intensity, i_err
+end
+
+
+"""
+    calculate_eqw(popt_c, perr_c, n_dust_cont, n_dust_feat, profile, amp, amp_err, 
+        peak, peak_err, fwhm, fwhm_err; <keyword_args>)
+
+Calculate the equivalent width (in microns) of a spectral feature, i.e. a PAH or emission line. Calculates the
+integral of the ratio of the feature profile to the underlying continuum, calculated using the _continuum function.
+"""
+function calculate_eqw(popt_c::Vector{T}, perr_c::Vector{T}, n_dust_cont::Integer, n_dust_feat::Integer, profile::Symbol, 
+    amp::T, amp_err::T, peak::T, peak_err::T, fwhm::T, fwhm_err::T; h3::Union{T,Nothing}=nothing, h3_err::Union{T,Nothing}=nothing, 
+    h4::Union{T,Nothing}=nothing, h4_err::Union{T,Nothing}=nothing, η::Union{T,Nothing}=nothing, 
+    η_err::Union{T,Nothing}=nothing) where {T<:AbstractFloat}
+
+    # If the line is not present, the equivalent width is 0
+    if iszero(amp)
+        @debug "eqw=0, err=0"
+        return 0., 0.
+    end
+
+    # Integrate the flux ratio to get equivalent width
+    if profile == :Drude
+        # do not shift the drude profiles since x=0 and mu=0 cause problems;
+        # the wide wings should allow quadgk to find the solution even without shifting it
+        eqw = quadgk(x -> Drude(x, amp, peak, fwhm) / _continuum(x, popt_c, n_dust_cont), peak-10fwhm, peak+10fwhm, order=200)[1]
+        # errors
+        err_l = eqw - quadgk(x -> Drude(x, amp-amp_err, peak, fwhm-fwhm_err) / _continuum_errs(x, popt_c, perr_c, n_dust_cont)[1], 
+            peak-10fwhm, peak+10fwhm, order=200)[1]
+        err_u = quadgk(x -> Drude(x, amp+amp_err, peak, fwhm+fwhm_err) / _continuum_errs(x, popt_c, perr_c, n_dust_cont)[2], 
+            peak-10fwhm, peak+10fwhm, order=200)[1] - eqw
+        err_l = err_l ≥ 0 ? err_l : 0.
+        err = (err_l + err_u)/2
+    elseif profile == :Gaussian
+        eqw = quadgk(x -> Gaussian(x+peak, amp, peak, fwhm) / _continuum(x+peak, popt_c, n_dust_cont, n_dust_feat), -10fwhm, 10fwhm, order=200)[1]
+        err_l = eqw - quadgk(x -> Gaussian(x+peak, amp-amp_err, peak, fwhm-fwhm_err) / _continuum_errs(x+peak, popt_c, perr_c, n_dust_cont, n_dust_feat)[1], 
+            -10fwhm, 10fwhm, order=200)[1]
+        err_u = quadgk(x -> Gaussian(x+peak, amp+amp_err, peak, fwhm+fwhm_err) / _continuum_errs(x+peak, popt_c, perr_c, n_dust_cont, n_dust_feat)[2], 
+            -10fwhm, 10fwhm, order=200)[1] - eqw
+        err_l = err_l ≥ 0 ? err_l : 0.
+        err = (err_l + err_u)/2
+    elseif profile == :Lorentzian
+        eqw = quadgk(x -> Lorentzian(x+peak, amp, peak, fwhm) / _continuum(x+peak, popt_c, n_dust_cont, n_dust_feat), -10fwhm, 10fwhm, order=200)[1]
+        err_l = eqw - quadgk(x -> Lorentzian(x+peak, amp-amp_err, peak, fwhm-fwhm_err) / _continuum_errs(x+peak, popt_c, perr_c, n_dust_cont, n_dust_feat)[1], 
+            -10fwhm, 10fwhm, order=200)[1]
+        err_u = quadgk(x -> Lorentzian(x+peak, amp+amp_err, peak, fwhm+fwhm_err) / _continuum_errs(x+peak, popt_c, perr_c, n_dust_cont, n_dust_feat)[2], 
+            -10fwhm, 10fwhm, order=200)[1] - eqw
+        err_l = err_l ≥ 0 ? err_l : 0.
+        err = (err_l + err_u)/2
+    elseif profile == :GaussHermite
+        eqw = quadgk(x -> GaussHermite(x+peak, amp, peak, fwhm, h3, h4) / _continuum(x+peak, popt_c, n_dust_cont, n_dust_feat), -10fwhm, 10fwhm, order=200)[1]
+        err_l = eqw - quadgk(x -> GaussHermite(x+peak, amp-amp_err, peak, fwhm-fwhm_err, h3-h3_err, h4-h4_err) / 
+            _continuum_errs(x+peak, popt_c, perr_c, n_dust_cont, n_dust_feat)[1], -10fwhm, 10fwhm, order=200)[1]
+        err_u = quadgk(x -> GaussHermite(x+peak, amp+amp_err, peak, fwhm+fwhm_err, h3+h3_err, h4+h4_err) / 
+            _continuum_errs(x+peak, popt_c, perr_c, n_dust_cont, n_dust_feat)[2], -10fwhm, 10fwhm, order=200)[1] - eqw
+        err_l = err_l ≥ 0 ? err_l : 0.
+        err = (err_l + err_u)/2
+    elseif profile == :Voigt
+        eqw = quadgk(x -> Voigt(x+peak, amp, peak, fwhm, η) / _continuum(x+peak, popt_c, n_dust_cont, n_dust_feat), -10fwhm, 10fwhm, order=200)[1]
+        err_l = eqw - quadgk(x -> Voigt(x+peak, amp-amp_err, peak, fwhm-fwhm_err, η-η_err) / 
+            _continuum_errs(x+peak, popt_c, perr_c, n_dust_cont, n_dust_feat)[1], -10fwhm, 10fwhm, order=200)[1]
+        err_u = quadgk(x -> Voigt(x+peak, amp+amp_err, peak, fwhm+fwhm_err, η+η_err) / 
+            _continuum_errs(x+peak, popt_c, perr_c, n_dust_cont, n_dust_feat)[2], -10fwhm, 10fwhm, order=200)[1] - eqw
+        err_l = err_l ≥ 0 ? err_l : 0.
+        err = (err_l + err_u)/2
+    else
+        error("Unrecognized line profile $profile")
+    end
+
+    @debug "eqw=$eqw, err=$err"
+    eqw, err
+end
+
+
+"""
+    calculate_SNR(resolution, continuum, prof, amp, peak, fwhm; <keyword_args>)
+
+Calculate the signal to noise ratio of a spectral feature, i.e. a PAH or emission line. Calculates the ratio
+of the peak intensity of the feature over the root-mean-square (RMS) deviation of the surrounding spectrum.
+"""
+function calculate_SNR(resolution::T, continuum::Vector{T}, prof::Symbol, amp::T, peak::T, 
+    fwhm::T; h3::Union{T,Nothing}=nothing, h4::Union{T,Nothing}=nothing, 
+    η::Union{T,Nothing}=nothing, flow_prof::Union{Symbol,Nothing}=nothing, 
+    flow_amp::Union{T,Nothing}=nothing, flow_peak::Union{T,Nothing}=nothing, 
+    flow_fwhm::Union{T,Nothing}=nothing, flow_h3::Union{T,Nothing}=nothing, 
+    flow_h4::Union{T,Nothing}=nothing, flow_η::Union{T,Nothing}=nothing) where {T<:AbstractFloat}
+
+    # PAH / Drude profiles do not have extra components, so it's a simple A/RMS
+    if prof == :Drude
+        return amp / std(continuum)
+    end
+
+    # Prepare an anonymous function for calculating the line profile
+    if prof == :Gaussian
+        profile = x -> Gaussian(x, amp, peak, fwhm)
+    elseif prof == :Lorentzian
+        profile = x -> Lorentzian(x, amp, peak, fwhm)
+    elseif prof == :GaussHermite
+        profile = x -> GaussHermite(x, amp, peak, fwhm, h3, h4)
+    elseif prof == :Voigt
+        profile = x -> Voigt(x, amp, peak, fwhm, η)
+    else
+        error("Unrecognized line profile $(cube_fitter.line_profiles[k])!")
+    end
+
+    # Add in inflow/outflow profiles if necessary
+    if !isnothing(flow_prof)
+        if flow_prof == :Gaussian
+            profile = let profile = profile
+                x -> profile(x) + Gaussian(x, flow_amp, flow_peak, flow_fwhm)
+            end
+        elseif flow_prof == :Lorentzian
+            profile = let profile = profile
+                x -> profile(x) + Lorentzian(x, flow_amp, flow_peak, flow_fwhm)
+            end
+        elseif flow_prof == :GaussHermite
+            profile = let profile = profile
+                x -> profile(x) + GaussHermite(x, flow_amp, flow_peak, flow_fwhm, flow_h3, flow_h4)
+            end
+        elseif flow_prof == :Voigt
+            profile = let profile = profile
+                x -> profile(x) + Voigt(x, flow_amp, flow_peak, flow_fwhm, flow_η)
+            end
+        else
+            error("Unrecognized flow line profile $(cube_fitter.line_flow_profiles[k])!")
+        end
+    end
+
+    λ_arr = (peak-10fwhm):resolution:(peak+10fwhm)
+    i_max, _ = findmax(profile.(λ_arr))
+
+    i_max / std(continuum)
+end
+
 
 end

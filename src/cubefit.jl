@@ -882,6 +882,7 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, df_names::Ve
         dust_features[n][:mean] = copy(nan_arr)
         dust_features[n][:fwhm] = copy(nan_arr)
         dust_features[n][:intI] = copy(nan_arr)
+        dust_features[n][:eqw] = copy(nan_arr)
         dust_features[n][:SNR] = copy(nan_arr)
         @debug "dust feature $n maps with keys $(keys(dust_features[n]))"
     end
@@ -909,7 +910,7 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, df_names::Ve
             end
         end
         # Append parameters for intensity and signal-to-noise ratio, which are NOT fitting parameters, but are of interest
-        pnames = [pnames; :intI; :SNR]
+        pnames = [pnames; :intI; :eqw; :SNR]
         for pname ∈ pnames
             lines[line][pname] = copy(nan_arr)
         end
@@ -1315,7 +1316,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
         @debug msg
 
         # Total number of parameters for the continuum and line fits
-        n_params_cont = (2+2) + 2n_dust_cont + 5n_dust_features
+        n_params_cont = (2+2) + 2n_dust_cont + 6n_dust_features
         n_params_lines = n_voff_tied + n_flow_voff_tied
         # One η for all voigt profiles
         if (any(line_profiles .== :Voigt) || any(line_flow_profiles .== :Voigt)) && tie_voigt_mixing
@@ -1354,9 +1355,9 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
                     end
                 end
             end
-            # Add extra 2 for the intensity and S/N, which are not fit but we need space for them in
+            # Add extra 3 for the intensity, EQW, and S/N, which are not fit but we need space for them in
             # the ParamMaps object
-            n_params_lines += 2
+            n_params_lines += 3
         end
         @debug "### This totals to $(n_params_cont-2n_dust_features) continuum parameters ###"
         @debug "### This totals to $(n_params_lines-2n_lines) emission line parameters ###"
@@ -1372,8 +1373,8 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
 
         # Prepare initial best fit parameter options
         @debug "Preparing initial best fit parameter vectors with $(n_params_cont-2n_dust_features) and $(n_params_lines-2n_lines) parameters"
-        p_init_cont = zeros(n_params_cont-2n_dust_features)
-        p_init_line = zeros(n_params_lines-2n_lines)
+        p_init_cont = zeros(n_params_cont-3n_dust_features)
+        p_init_line = zeros(n_params_lines-3n_lines)
 
         # If a fit has been run previously, read in the file containing the rolling best fit parameters
         # to pick up where the fitter left off seamlessly
@@ -2736,8 +2737,8 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
     @debug "Normalization: $N"
 
     # Loop through dust features
-    p_dust = zeros(2cube_fitter.n_dust_feat)
-    p_dust_err = zeros(2cube_fitter.n_dust_feat)
+    p_dust = zeros(3cube_fitter.n_dust_feat)
+    p_dust_err = zeros(3cube_fitter.n_dust_feat)
     pₒ = 1
     # Initial parameter vector index where dust profiles start
     pᵢ = 3 + 2cube_fitter.n_dust_cont
@@ -2751,39 +2752,38 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
         A_cgs = Util.MJysr_to_cgs(A, μ)
         # Convert the error in the intensity to CGS units
         A_cgs_err = Util.MJysr_to_cgs_err(A, A_err, μ, μ_err)
-        # add the integral of the individual Drude profiles using the helper function
-        # (integral = π/2 * A * fwhm)
-        intensity = Util.∫Drude(A_cgs, fwhm)
-        # get the error of the integrated intensity
-        if A_cgs == 0.
-            i_err = π/2 * fwhm * A_cgs_err
-        else
-            frac_err2 = (A_cgs_err / A_cgs)^2 + (fwhm_err / fwhm)^2
-            i_err = √(frac_err2 * intensity^2)
-        end
+
+        # Calculate the intensity using the utility function
+        intensity, i_err = Util.calculate_intensity(:Drude, A_cgs, A_cgs_err, μ, μ_err, fwhm, fwhm_err)
+        # Calculate the equivalent width using the utility function
+        eqw, e_err = Util.calculate_eqw(popt_c, perr_c, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, 
+            :Drude, A, A_err, μ, μ_err, fwhm, fwhm_err)
 
         @debug "Drude profile with ($A_cgs, $μ, $fwhm) and errors ($A_cgs_err, $μ_err, $fwhm_err)"
-        @debug "I=$intensity, err=$i_err"
+        @debug "I=$intensity, err=$i_err, EQW=$eqw, err=$e_err"
 
         # increment the parameter index
         pᵢ += 3
 
         # intensity units: erg s^-1 cm^-2 sr^-1 (integrated over μm)
         p_dust[pₒ] = intensity
-        # add errors in quadrature
-        p_dust_err[pₒ] = √(sum(i_err.^2))
+        p_dust_err[pₒ] = i_err
+        # equivalent width units: μm
+        p_dust[pₒ+1] = eqw
+        p_dust_err[pₒ+1] = e_err
 
         # SNR, calculated as (peak amplitude) / (RMS intensity of the surrounding spectrum)
-        p_dust[pₒ+1] = A / std(I[.!mask_lines] .- continuum[.!mask_lines])
+        p_dust[pₒ+2] = Util.calculate_SNR(Δλ, I[.!mask_lines] .- continuum[.!mask_lines], :Drude, A, μ, fwhm)
         @debug "Dust feature $df with integrated intensity $(p_dust[pₒ]) +/- $(p_dust_err[pₒ]) " *
-            "(erg s^-1 cm^-2 sr^-1) and SNR $(p_dust[pₒ+1])"
+            "(erg s^-1 cm^-2 sr^-1), equivalent width $(p_dust[pₒ+1]) +/- $(p_dust_err[pₒ+1]) um, " *
+            "and SNR $(p_dust[pₒ+2])"
 
-        pₒ += 2
+        pₒ += 3
     end
 
     # Loop through lines
-    p_lines = zeros(2cube_fitter.n_lines)
-    p_lines_err = zeros(2cube_fitter.n_lines)
+    p_lines = zeros(3cube_fitter.n_lines)
+    p_lines_err = zeros(3cube_fitter.n_lines)
     pₒ = 1
     # Skip over the tied velocity offsets
     pᵢ = cube_fitter.n_voff_tied + cube_fitter.n_flow_voff_tied + 1
@@ -2797,10 +2797,14 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
         # Start with 0 intensity -> intensity holds the overall integrated intensity in CGS units
         intensity = 0. 
         i_err = []
+        eqw = 0.
+        e_err = []
         # (\/ pretty much the same as the fit_line_residuals function, but calculating the integrated intensities)
         amp = popt_l[pᵢ]
         amp_err = perr_l[pᵢ]
-            
+        # fill values with nothings for profiles that may / may not have them
+        h3 = h3_err = h4 = h4_err = η = η_err = nothing
+
         # Check if voff is tied: if so, use the tied voff parameter, otherwise, use the line's own voff parameter
         if isnothing(cube_fitter.line_tied[k])
             # Unpack the components of the line
@@ -2900,55 +2904,17 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
 
         @debug "Line with ($amp_cgs, $mean_μm, $fwhm_μm) and errors ($amp_cgs_err, $mean_μm_err, $fwhm_μm_err)"
 
-        # Evaluate the line profiles according to whether there is a simple analytic form
-        # otherwise, integrate numerically with quadgk
-        if cube_fitter.line_profiles[k] == :Gaussian
-            ii = Util.∫Gaussian(amp_cgs, fwhm_μm)
-            intensity += ii
-            frac_err2 = (amp_cgs_err / amp_cgs)^2 + (fwhm_μm_err / fwhm_μm)^2
-            err = √(frac_err2 * ii^2)
-            append!(i_err, [err])
-            @debug "I=$ii, err=$err"
+        # Calculate line intensity using the helper function
+        ii, err = Util.calculate_intensity(cube_fitter.line_profiles[k], amp_cgs, amp_cgs_err, mean_μm, mean_μm_err,
+            fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err)
+        intensity += ii
+        append!(i_err, [err])
 
-            profile = x -> Util.Gaussian(x, amp, 0., fwhm_μm)
-        elseif cube_fitter.line_profiles[k] == :Lorentzian
-            ii = Util.∫Lorentzian(amp_cgs)
-            intensity += ii
-            frac_err2 = (amp_cgs_err / amp_cgs)^2
-            err = √(frac_err2 * ii^2)
-            append!(i_err, [err])
-            @debug "I=$ii, err=$err"
-
-            profile = x -> Util.Lorentzian(x, amp, 0., fwhm_μm)
-        elseif cube_fitter.line_profiles[k] == :GaussHermite
-            # shift the profile to be centered at 0 since it doesnt matter for the integral, and it makes it
-            # easier for quadgk to find a solution
-            ii = quadgk(x -> Util.GaussHermite(x, amp_cgs, 0., fwhm_μm, h3, h4), -Inf, Inf, order=200)[1]
-            intensity += ii
-            # estimate error by evaluating the integral at +/- 1 sigma
-            err_l = ii - quadgk(x -> Util.GaussHermite(x, amp_cgs-amp_cgs_err, 0., fwhm_μm-fwhm_μm_err, h3-h3_err, h4-h4_err), -Inf, Inf, order=200)[1]
-            err_u = quadgk(x -> Util.GaussHermite(x, amp_cgs+amp_cgs_err, 0., fwhm_μm+fwhm_μm_err, h3+h3_err, h4+h4_err), -Inf, Inf, order=200)[1] - ii
-            err = mean([err_l ≥ 0 ? err_l : 0., err_u])
-            append!(i_err, [err])
-            @debug "I=$ii, err_u=$err_u, err_l=$err_l, err=$err"
-
-            profile = x -> Util.GaussHermite(x, amp, 0., fwhm_μm, h3, h4)
-        elseif cube_fitter.line_profiles[k] == :Voigt
-            # also use a high order to ensure that all the initial test points dont evaluate to precisely 0
-            ii = quadgk(x -> Util.Voigt(x, amp_cgs, 0., fwhm_μm, η), -Inf, Inf, order=200)[1]
-            intensity += ii
-            # estimate error by evaluating the integral at +/- 1 sigma
-            err_l = ii - quadgk(x -> Util.Voigt(x, amp_cgs-amp_cgs_err, 0., fwhm_μm-fwhm_μm_err, η-η_err), -Inf, Inf, order=200)[1]
-            err_u = quadgk(x -> Util.Voigt(x, amp_cgs+amp_cgs_err, 0., fwhm_μm+fwhm_μm_err, η+η_err), -Inf, Inf, order=200)[1] - ii
-            err = mean([err_l ≥ 0 ? err_l : 0., err_u])
-            append!(i_err, [err])
-            @debug "I=$ii, err_u=$err_u, err_l=$err_l, err=$err"
-
-            profile = x -> Util.Voigt(x, amp, 0., fwhm_μm, η)
-        else
-            error("Unrecognized line profile $(cube_fitter.line_profiles[k])!")
-        end
-
+        # Calculate the equivalent width using the utility function
+        eqwi, err = Util.calculate_eqw(popt_c, perr_c, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, cube_fitter.line_profiles[k], 
+            amp*N, amp_err*N, mean_μm, mean_μm_err, fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err)
+        eqw += eqwi
+        append!(e_err, [err])
 
         # Advance the parameter vector index -> 3 if untied (or tied + flexible_wavesol) or 2 if tied
         pᵢ += isnothing(cube_fitter.line_tied[k]) || cube_fitter.flexible_wavesol ? 3 : 2
@@ -2962,8 +2928,12 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
             end
         end
 
+        # filler values
+        flow_amp = flow_mean_μm = flow_fwhm_μm = nothing
+        flow_h3 = flow_h3_err = flow_h4 = flow_h4_err = flow_η = flow_η_err = nothing
         # Repeat EVERYTHING, minus the flexible_wavesol, for the inflow/outflow components
         if !isnothing(cube_fitter.line_flow_profiles[k])
+
 
             flow_amp = amp * popt_l[pᵢ]
             flow_amp_err = √(flow_amp^2 * ((amp_err / amp)^2 + (perr_l[pᵢ] / flow_amp)^2))
@@ -3020,64 +2990,21 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
             flow_amp_cgs_err = Util.MJysr_to_cgs_err(flow_amp*N, flow_amp_err*N, flow_mean_μm, flow_mean_μm_err)
 
             @debug "Flow line with ($flow_amp_cgs, $flow_mean_μm, $flow_fwhm_μm) and errors ($flow_amp_cgs_err, $flow_mean_μm_err, $flow_fwhm_μm_err)"
-
-            # Evaluate line profile, shifted by the same amount as the primary line profile
-            if cube_fitter.line_flow_profiles[k] == :Gaussian
-                ii = Util.∫Gaussian(flow_amp_cgs, flow_fwhm_μm)
-                intensity += ii
-                frac_err2 = (flow_amp_cgs_err / flow_amp_cgs)^2 + (flow_fwhm_μm_err / flow_fwhm_μm)^2
-                err = √(frac_err2 * ii^2)
-                # warning: flow component degeneracy with the main line components causes large errors
-                append!(i_err, [err])
-                @debug "I=$ii, err=$err"
-
-                profile = let profile = profile
-                    x -> profile(x) + Util.Gaussian(x, flow_amp, flow_mean_μm-mean_μm, flow_fwhm_μm)
-                end
-            elseif cube_fitter.line_flow_profiles[k] == :Lorentzian
-                ii = Util.∫Lorentzian(flow_amp_cgs)
-                intensity += ii
-                frac_err2 = (flow_amp_cgs_err / flow_amp_cgs)^2
-                err = √(frac_err2 * ii^2)
-                append!(i_err, [err])
-                @debug "I=$ii, err=$err"
-
-                profile = let profile = profile
-                    x -> profile(x) + Util.Lorentzian(x, flow_amp, flow_mean_μm-mean_μm, flow_fwhm_μm)
-                end
-            elseif cube_fitter.line_profiles[k] == :GaussHermite
-                # same as above
-                ii = quadgk(x -> Util.GaussHermite(x, flow_amp_cgs, 0., flow_fwhm_μm, flow_h3, flow_h4), -Inf, Inf, order=200)[1]
-                intensity += ii
-                err_l = ii - quadgk(x -> Util.GaussHermite(x, flow_amp_cgs-flow_amp_cgs_err, 0., flow_fwhm_μm-flow_fwhm_μm_err, 
-                                                      flow_h3-flow_h3_err, flow_h4-flow_h4_err), -Inf, Inf, order=200)[1]
-                err_u = quadgk(x -> Util.GaussHermite(x, flow_amp_cgs+flow_amp_cgs_err, 0., flow_fwhm_μm+flow_fwhm_μm_err,
-                                                      flow_h3+flow_h3_err, flow_h4+flow_h4_err), -Inf, Inf, order=200)[1] - ii
-                err = mean([err_l ≥ 0 ? err_l : 0., err_u])
-                append!(i_err, [err])
-                @debug "I=$ii, err_u=$err_u, err_l=$err_l, err=$err"
-
-                profile = let profile = profile
-                    x -> profile(x) + Util.GaussHermite(x, flow_amp, flow_mean_μm-mean_μm, flow_fwhm_μm, flow_h3, flow_h4)
-                end
-            elseif cube_fitter.line_profiles[k] == :Voigt
-                # same as above
-                ii = quadgk(x -> Util.Voigt(x, flow_amp_cgs, 0., flow_fwhm_μm, flow_η), -Inf, Inf, order=200)[1]
-                intensity += ii
-                err_l = ii - quadgk(x -> Util.Voigt(x, flow_amp_cgs-flow_amp_cgs_err, 0., flow_fwhm_μm-flow_fwhm_μm_err, flow_η-flow_η_err),
-                               -Inf, Inf, order=200)[1]
-                err_u = quadgk(x -> Util.Voigt(x, flow_amp_cgs+flow_amp_cgs_err, 0., flow_fwhm_μm+flow_fwhm_μm_err, flow_η+flow_η_err),
-                               -Inf, Inf, order=200)[1] - ii
-                err = mean([err_l ≥ 0 ? err_l : 0., err_u])
-                append!(i_err, [err])
-                @debug "I=$ii, err_u=$err_u, err_l=$err_l, err=$err"
-
-                profile = let profile = profile
-                    x -> profile(x) + Util.Voigt(x, flow_amp, flow_mean_μm-mean_μm, flow_fwhm_μm, flow_η)
-                end
-            else
-                error("Unrecognized flow line profile $(cube_fitter.line_profiles[k])!")
-            end
+                   
+            # Calculate line intensity using the helper function
+            ii, err = Util.calculate_intensity(cube_fitter.line_flow_profiles[k], flow_amp_cgs, flow_amp_cgs_err, flow_mean_μm, 
+                flow_mean_μm_err, flow_fwhm_μm, flow_fwhm_μm_err, h3=flow_h3, h3_err=flow_h3_err, h4=flow_h4, h4_err=flow_h4_err, 
+                η=flow_η, η_err=flow_η_err)
+            intensity += ii
+            append!(i_err, [err])
+  
+            # Calculate the equivalent width using the utility function
+            eqwi, err = Util.calculate_eqw(popt_c, perr_c, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, 
+                cube_fitter.line_flow_profiles[k], flow_amp*N, flow_amp_err*N, flow_mean_μm, flow_mean_μm_err, 
+                flow_fwhm_μm, flow_fwhm_μm_err, h3=flow_h3, h3_err=flow_h3_err, h4=flow_h4, h4_err=flow_h4_err, η=flow_η, 
+                η_err=flow_η_err)
+            eqw += eqwi
+            append!(e_err, [err])
 
             # Advance the parameter vector index by the appropriate amount        
             pᵢ += isnothing(cube_fitter.line_flow_tied[k]) ? 3 : 2
@@ -3094,21 +3021,20 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
         p_lines[pₒ] = intensity
         p_lines_err[pₒ] = √(sum(i_err.^2))
 
-        # Add back in the normalization for the profile, to be used to calculate the S/N
-        profile = let profile = profile
-            x -> N * profile(x)
-        end
-
-        λ_arr = (-10fwhm_μm):Δλ:(10fwhm_μm)
-        peak, peak_ind = findmax(profile.(λ_arr))
+        # equivalent width in microns
+        p_lines[pₒ+1] = eqw
+        p_lines_err[pₒ+1] = √(sum(e_err.^2))
 
         # SNR, calculated as (amplitude) / (RMS of the surrounding spectrum)
-        p_lines[pₒ+1] = peak / std(I[.!mask_lines] .- continuum[.!mask_lines])
+        p_lines[pₒ+2] = Util.calculate_SNR(Δλ, I[.!mask_lines] .- continuum[.!mask_lines], cube_fitter.line_profiles[k],
+            amp*N, mean_μm, fwhm_μm, h3=h3, h4=h4, η=η, flow_prof=cube_fitter.line_flow_profiles[k], 
+            flow_amp=isnothing(flow_amp) ? flow_amp : flow_amp*N,
+            flow_peak=flow_mean_μm, flow_fwhm=flow_fwhm_μm, flow_h3=flow_h3, flow_h4=flow_h4, flow_η=flow_η)
 
         @debug "Line $(cube_fitter.line_names[k]) with integrated intensity $(p_lines[pₒ]) +/- $(p_lines_err[pₒ]) " *
-            "(erg s^-1 cm^-2 sr^-1) and SNR $(p_lines[pₒ+1])"
+            "(erg s^-1 cm^-2 sr^-1), equivalent width $(p_lines[pₒ+1]) +/- $(p_lines_err[pₒ+1]) um, and SNR $(p_lines[pₒ+1])"
 
-        pₒ += 2
+        pₒ += 3
 
     end
 
@@ -3576,12 +3502,14 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
         I_model = I_cont .+ I_line .* comps_c["extinction"]
         comps = merge(comps_c, comps_l)
 
-        # Dust feature intensity and SNR, from calculate_extra_parameters
+        # Dust feature intensity, EQW, and SNR, from calculate_extra_parameters
         for df ∈ cube_fitter.df_names
             param_maps.dust_features[df][:intI][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
             param_errs.dust_features[df][:intI][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / (log(10) * out_params[index, pᵢ]) : NaN
-            param_maps.dust_features[df][:SNR][index] = out_params[index, pᵢ+1]
-            pᵢ += 2
+            param_maps.dust_features[df][:eqw][index] = out_params[index, pᵢ+1]
+            param_errs.dust_features[df][:eqw][index] = out_errs[index, pᵢ+1]
+            param_maps.dust_features[df][:SNR][index] = out_params[index, pᵢ+2]
+            pᵢ += 3
         end
 
         for (k, ln) ∈ enumerate(cube_fitter.line_names)
@@ -3600,8 +3528,10 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
             # Line intensity and SNR, from calculate_extra_parameters
             param_maps.lines[ln][:intI][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
             param_errs.lines[ln][:intI][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / (log(10) * out_params[index, pᵢ]) : NaN
-            param_maps.lines[ln][:SNR][index] = out_params[index, pᵢ+1]
-            pᵢ += 2
+            param_maps.lines[ln][:eqw][index] = out_params[index, pᵢ+1]
+            param_errs.lines[ln][:eqw][index] = out_errs[index, pᵢ+1]
+            param_maps.lines[ln][:SNR][index] = out_params[index, pᵢ+2]
+            pᵢ += 3
         end
 
         # Reduced χ^2
@@ -3707,6 +3637,9 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
     elseif occursin("intI", String(name_i))
         bunit = L"$\log_{10}(I /$ erg s$^{-1}$ cm$^{-2}$ sr$^{-1}$)"
         small = 0.5
+    elseif occursin("eqw", String(name_i))
+        bunit = L"$W_{\rm eq}$ ($\mu$m)"
+        small = 0.01
     elseif occursin("chi2", String(name_i))
         bunit = L"$\tilde{\chi}^2$"
         small = 0.1
@@ -4104,7 +4037,7 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
                 name_i = join(["dust_features", df, parameter], "_")
                 if occursin("amp", String(name_i))
                     bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
-                elseif occursin("fwhm", String(name_i)) || occursin("mean", String(name_i))
+                elseif occursin("fwhm", String(name_i)) || occursin("mean", String(name_i)) || occursin("eqw", String(name_i))
                     bunit = "um"
                 elseif occursin("intI", String(name_i))
                     bunit = "log10(I / erg s^-1 cm^-2 sr^-1)"
@@ -4121,7 +4054,7 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
                 name_i = join(["dust_features", df, parameter, "err"], "_")
                 if occursin("amp", String(name_i))
                     bunit = "dex"
-                elseif occursin("fwhm", String(name_i)) || occursin("mean", String(name_i))
+                elseif occursin("fwhm", String(name_i)) || occursin("mean", String(name_i)) || occursin("eqw", String(name_i))
                     bunit = "um"
                 elseif occursin("intI", String(name_i))
                     bunit = "dex"
@@ -4144,6 +4077,8 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
                     bunit = "km/s"
                 elseif occursin("intI", String(name_i))
                     bunit = "log10(I / erg s^-1 cm^-2 sr^-1)"
+                elseif occursin("eqw", String(name_i))
+                    bunit = "um"
                 elseif occursin("SNR", String(name_i)) || occursin("h3", String(name_i)) || 
                     occursin("h4", String(name_i)) || occursin("mixing", String(name_i))
                     bunit = "unitless"
@@ -4162,6 +4097,8 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
                     bunit = "km/s"
                 elseif occursin("intI", String(name_i))
                     bunit = "dex"
+                elseif occursin("eqw", String(name_i))
+                    bunit = "um"
                 elseif occursin("SNR", String(name_i)) || occursin("h3", String(name_i)) || 
                     occursin("h4", String(name_i)) || occursin("mixing", String(name_i))
                     bunit = "unitless"
