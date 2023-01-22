@@ -1254,6 +1254,7 @@ function calculate_intensity(profile::Symbol, amp::T, amp_err::T, peak::T, peak_
         err_l = intensity - quadgk(x -> GaussHermite(x+peak, amp-amp_err, peak, fwhm-fwhm_err, h3-h3_err, h4-h4_err), -Inf, Inf, order=200)[1]
         err_u = quadgk(x -> GaussHermite(x+peak, amp+amp_err, peak, fwhm+fwhm_err, h3+h3_err, h4+h4_err), -Inf, Inf, order=200)[1] - intensity
         err_l = err_l ≥ 0 ? err_l : 0.
+        err_u = abs(err_u)
         i_err = (err_l + err_u)/2
     elseif profile == :Voigt
         # also use a high order to ensure that all the initial test points dont evaluate to precisely 0
@@ -1262,6 +1263,7 @@ function calculate_intensity(profile::Symbol, amp::T, amp_err::T, peak::T, peak_
         err_l = intensity - quadgk(x -> Voigt(x+peak, amp-amp_err, peak, fwhm-fwhm_err, η-η_err), -Inf, Inf, order=200)[1]
         err_u = quadgk(x -> Voigt(x+peak, amp+amp_err, peak, fwhm+fwhm_err, η+η_err), -Inf, Inf, order=200)[1] - intensity
         err_l = err_l ≥ 0 ? err_l : 0.
+        err_u = abs(err_u)
         i_err = (err_l + err_u)/2
     else
         error("Unrecognized line profile $profile")
@@ -1301,6 +1303,7 @@ function calculate_eqw(popt_c::Vector{T}, perr_c::Vector{T}, n_dust_cont::Intege
         err_u = quadgk(x -> Drude(x, amp+amp_err, peak, fwhm+fwhm_err) / _continuum_errs(x, popt_c, perr_c, n_dust_cont)[2], 
             peak-10fwhm, peak+10fwhm, order=200)[1] - eqw
         err_l = err_l ≥ 0 ? err_l : 0.
+        err_u = abs(err_u)
         err = (err_l + err_u)/2
     elseif profile == :Gaussian
         eqw = quadgk(x -> Gaussian(x+peak, amp, peak, fwhm) / _continuum(x+peak, popt_c, n_dust_cont, n_dust_feat), -10fwhm, 10fwhm, order=200)[1]
@@ -1309,6 +1312,7 @@ function calculate_eqw(popt_c::Vector{T}, perr_c::Vector{T}, n_dust_cont::Intege
         err_u = quadgk(x -> Gaussian(x+peak, amp+amp_err, peak, fwhm+fwhm_err) / _continuum_errs(x+peak, popt_c, perr_c, n_dust_cont, n_dust_feat)[2], 
             -10fwhm, 10fwhm, order=200)[1] - eqw
         err_l = err_l ≥ 0 ? err_l : 0.
+        err_u = abs(err_u)
         err = (err_l + err_u)/2
     elseif profile == :Lorentzian
         eqw = quadgk(x -> Lorentzian(x+peak, amp, peak, fwhm) / _continuum(x+peak, popt_c, n_dust_cont, n_dust_feat), -10fwhm, 10fwhm, order=200)[1]
@@ -1317,6 +1321,7 @@ function calculate_eqw(popt_c::Vector{T}, perr_c::Vector{T}, n_dust_cont::Intege
         err_u = quadgk(x -> Lorentzian(x+peak, amp+amp_err, peak, fwhm+fwhm_err) / _continuum_errs(x+peak, popt_c, perr_c, n_dust_cont, n_dust_feat)[2], 
             -10fwhm, 10fwhm, order=200)[1] - eqw
         err_l = err_l ≥ 0 ? err_l : 0.
+        err_u = abs(err_u)
         err = (err_l + err_u)/2
     elseif profile == :GaussHermite
         eqw = quadgk(x -> GaussHermite(x+peak, amp, peak, fwhm, h3, h4) / _continuum(x+peak, popt_c, n_dust_cont, n_dust_feat), -10fwhm, 10fwhm, order=200)[1]
@@ -1325,6 +1330,7 @@ function calculate_eqw(popt_c::Vector{T}, perr_c::Vector{T}, n_dust_cont::Intege
         err_u = quadgk(x -> GaussHermite(x+peak, amp+amp_err, peak, fwhm+fwhm_err, h3+h3_err, h4+h4_err) / 
             _continuum_errs(x+peak, popt_c, perr_c, n_dust_cont, n_dust_feat)[2], -10fwhm, 10fwhm, order=200)[1] - eqw
         err_l = err_l ≥ 0 ? err_l : 0.
+        err_u = abs(err_u)
         err = (err_l + err_u)/2
     elseif profile == :Voigt
         eqw = quadgk(x -> Voigt(x+peak, amp, peak, fwhm, η) / _continuum(x+peak, popt_c, n_dust_cont, n_dust_feat), -10fwhm, 10fwhm, order=200)[1]
@@ -1333,6 +1339,7 @@ function calculate_eqw(popt_c::Vector{T}, perr_c::Vector{T}, n_dust_cont::Intege
         err_u = quadgk(x -> Voigt(x+peak, amp+amp_err, peak, fwhm+fwhm_err, η+η_err) / 
             _continuum_errs(x+peak, popt_c, perr_c, n_dust_cont, n_dust_feat)[2], -10fwhm, 10fwhm, order=200)[1] - eqw
         err_l = err_l ≥ 0 ? err_l : 0.
+        err_u = abs(err_u)
         err = (err_l + err_u)/2
     else
         error("Unrecognized line profile $profile")
