@@ -1296,12 +1296,12 @@ function calculate_eqw(popt_c::Vector{T}, perr_c::Vector{T}, n_dust_cont::Intege
     if profile == :Drude
         # do not shift the drude profiles since x=0 and mu=0 cause problems;
         # the wide wings should allow quadgk to find the solution even without shifting it
-        eqw = quadgk(x -> Drude(x, amp, peak, fwhm) / _continuum(x, popt_c, n_dust_cont), peak-10fwhm, peak+10fwhm, order=200)[1]
+        eqw = quadgk(x -> Drude(x, amp, peak, fwhm) / _continuum(x, popt_c, n_dust_cont), max(peak-10fwhm, 3.), peak+10fwhm, order=200)[1]
         # errors
         err_l = eqw - quadgk(x -> Drude(x, amp-amp_err, peak, fwhm-fwhm_err) / _continuum_errs(x, popt_c, perr_c, n_dust_cont)[1], 
-            peak-10fwhm, peak+10fwhm, order=200)[1]
+            max(peak-10fwhm, 3.), peak+10fwhm, order=200)[1]
         err_u = quadgk(x -> Drude(x, amp+amp_err, peak, fwhm+fwhm_err) / _continuum_errs(x, popt_c, perr_c, n_dust_cont)[2], 
-            peak-10fwhm, peak+10fwhm, order=200)[1] - eqw
+            max(peak-10fwhm, 3.), peak+10fwhm, order=200)[1] - eqw
         err_l = err_l ≥ 0 ? err_l : 0.
         err_u = abs(err_u)
         err = (err_l + err_u)/2
