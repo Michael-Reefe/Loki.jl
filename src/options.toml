@@ -22,7 +22,7 @@ track_convergence = true
 # IFU cubes. This option require the user to have FFMPeg (https://ffmpeg.org/),
 # as well as the FFMPeg and Astropy python packages, installed on their system.
 # These are not necessarily scientifically useful, but they're pretty to watch.
-make_movies = true
+make_movies = false
 
 # extinction_curve: May be "kvt" for the Kemper, Vriend, & Tielens (2004) 
 # extinction profile, "ct" for the Chiar & Tielens (2005) extinction profile,

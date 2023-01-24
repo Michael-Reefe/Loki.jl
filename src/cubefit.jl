@@ -3669,8 +3669,9 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
     ax = fig.add_subplot(111, projection=python_wcs)
     # Need to filter out any NaNs in order to use quantile
     flatdata = filtered[isfinite.(filtered)]
+    upper_quant = occursin("eqw", String(name_i)) ? 0.95 : 0.99
     vmin = length(flatdata) > 0 ? quantile(flatdata, 0.01) - small : 0.0
-    vmax = length(flatdata) > 0 ? quantile(flatdata, 0.99) + small : 0.0
+    vmax = length(flatdata) > 0 ? quantile(flatdata, upper_quant) + small : 0.0
     cdata = ax.imshow(filtered', origin=:lower, cmap=cmap, vmin=vmin, vmax=vmax)
     # ax.axis(:off)
     ax.tick_params(which="both", axis="both", direction="in")
