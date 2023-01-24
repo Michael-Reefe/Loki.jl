@@ -1182,6 +1182,10 @@ function _continuum(x::AbstractFloat, popt_c::Vector{<:AbstractFloat}, n_dust_co
         c += Drude(x, popt_c[pₓ:pₓ+2]...)
         pₓ += 3
     end
+    # add small epsilon to avoid divide by zero errors
+    if c ≤ 0
+        c = eps()
+    end
     # dont include extinction here since it's not included in the PAH/line profiles either
     c
 end
@@ -1213,11 +1217,11 @@ function _continuum_errs(x::AbstractFloat, popt_c::Vector{<:AbstractFloat},
         c_u += Drude(x, popt_c[pₓ] + perr_c[pₓ], popt_c[pₓ+1], popt_c[pₓ+2] + perr_c[pₓ+2])
         pₓ += 3
     end
-    # dont include extinction
     # add small epsilon to avoid divide by zero errors
-    if iszero(c_l)
-        c_l += eps()
+    if c_l ≤ 0
+        c_l = eps()
     end
+    # dont include extinction
     c_l, c_u
 end
 
