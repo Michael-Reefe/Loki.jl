@@ -3,9 +3,9 @@
 
 # Tying parameters
 tie_H2_voff = true         # tie all molecular H2 lines to the same velocity offset
-tie_H2_flow_voff = true    # tie all inflow/outflow components of molecular H2 lines to the same velocity offset
+tie_H2_acomp_voff = true    # tie all additional components of molecular H2 lines to the same velocity offset
 tie_ion_voff = true        # tie all ionization lines to the same velocity offset
-tie_ion_flow_voff = true   # tie all inflow/outflow components of ionization lines to the same velocity offset
+tie_ion_acomp_voff = true   # tie all additional components of ionization lines to the same velocity offset
 tie_voigt_mixing = true    # tie the Voigt mixing ratios of all lines
 
 # Line voff and FWHM limits
@@ -13,9 +13,9 @@ voff_plim = [-500.0, 500.0]              # -500 to 500 km/s from the rest wavele
 fwhm_pmax = 500.0                        # 500 km/s maximum FWHM -> lower limit is filled in by the spectral resolution (c/R)
 h3_plim = [-0.5, 0.5]                    # skewness (3rd moment) limits (-0.5, 0.5), to remain mostly gaussian
 h4_plim = [-0.5, 0.5]                    # kurtosis (4th moment) limits (-0.5, 0.5), to remain mostly gaussian
-flow_voff_plim = [-500.0, 500.0]         # additive factor with the main line voff -> i.e. the flow component
+acomp_voff_plim = [-500.0, 500.0]         # additive factor with the main line voff -> i.e. the additional component
                                          # is allowed to have a voff within +/- 500 km/s from the main component
-flow_fwhm_plim = [1.0, 10.0]             # multiplicative factor with the main line FWHM -> i.e. the flow component
+acomp_fwhm_plim = [1.0, 10.0]             # multiplicative factor with the main line FWHM -> i.e. the additional component
                                          # is allowed to have a FWHM from 1-10x the main component
 
 # Uncertainty in the wavelength solution of the data
@@ -380,9 +380,9 @@ H200_S0    = 28.21883
 [profiles]
 default = "Voigt"
 
-# flows: specify which, if any, lines to add a flow component, and what type
+# acomps: specify which, if any, lines to add an additional component, and what type
 # of profile it should be.
-[flows]
+[acomps]
 NeVI_7652 = "Voigt"
 SIV_10511 = "Voigt"
 

@@ -150,7 +150,7 @@ ParamDict = Dict{Union{Symbol,String}, Parameter}
 
 
 """
-    TransitionLine(λ₀, profile, flow_profile, parameters, tied, flow_tied)
+    TransitionLine(λ₀, profile, acomp_profile, parameters, tied, acomp_tied)
 
 A struct for an emission/absorption Line with a given name, rest wavelength,
 and fitting parameters
@@ -158,22 +158,22 @@ and fitting parameters
 # Fields
 - `λ₀::AbstractFloat`: The central wavelength of the line in the rest frame
 - `profile::Symbol`: The type of profile to fit with, i.e. `:Gaussian`, `:Lorentzian`, `:GaussHermite`, or `:Voigt`
-- `flow_profile::Union{Symbol,Nothing}`: Same as `profile`, but for an inflow/outflow component. Leave as `nothing` to
-    not include any inflow/outflow components
+- `acomp_profile::Union{Symbol,Nothing}`: Same as `profile`, but for an additional component. Leave as `nothing` to
+    not include any additional components
 - `parameters::ParamDict`: All the necessary fitting parameters for the line, based on the profile, as Parameter objects
     (i.e. amplitude, voff, FWHM, etc.)
 - `tied::Union{String,Nothing}`: If the voff should be tied to other lines, this should be a String that is the same
     between all of the lines that share a voff. Otherwise, keep it as `nothing` to have an untied voff.
-- `flow_tied::Union{String,Nothing}`: Same as `tied`, but for an inflow/outflow voff component
+- `acomp_tied::Union{String,Nothing}`: Same as `tied`, but for an additional voff component
 """
 struct TransitionLine
 
     λ₀::AbstractFloat
     profile::Symbol
-    flow_profile::Union{Symbol,Nothing}
+    acomp_profile::Union{Symbol,Nothing}
     parameters::ParamDict
     tied::Union{String,Nothing}
-    flow_tied::Union{String,Nothing}
+    acomp_tied::Union{String,Nothing}
 
 end
 
