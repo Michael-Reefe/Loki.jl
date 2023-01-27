@@ -3261,8 +3261,7 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
 
     # Sort spaxels by median brightness, so that we fit the brightest ones first
     # (which hopefully have the best reduced chi^2s)
-    # spaxels = CartesianIndices(selectdim(cube_fitter.cube.Iν, 3, 1))
-    spaxels = CartesianIndices((38:39, 21:22))
+    spaxels = CartesianIndices(selectdim(cube_fitter.cube.Iν, 3, 1))
 
     @info "===> Beginning individual spaxel fitting... <==="
     # Use multiprocessing (not threading) to iterate over multiple spaxels at once using multiple CPUs
