@@ -1161,9 +1161,9 @@ end
 
 
 """
-    _continuum(x, popt_c)
+    _continuum(x, popt_c, n_dust_cont, n_dust_feat)
 
-Calculate the pure blackbody continuum (without PAHs or lines) of the spectrum given
+Calculate the pure blackbody continuum (with or without PAHs) of the spectrum given
 optimization parameters popt_c, at a location x.
 """
 function _continuum(x::AbstractFloat, popt_c::Vector{<:AbstractFloat}, n_dust_cont::Integer,
@@ -1192,9 +1192,9 @@ end
 
 
 """
-    _continuum_errs(x, popt_c, perr_c)
+    _continuum_errs(x, popt_c, perr_c, n_dust_cont, n_dust_feat)
 
-Calculate the error in the pure blackbody continuum (without PAHs or lines) of the spectrum given
+Calculate the error in the pure blackbody continuum (with or without PAHs) of the spectrum given
 optimization parameters popt_c and errors perr_c, at a location x.
 """
 function _continuum_errs(x::AbstractFloat, popt_c::Vector{<:AbstractFloat},
@@ -1414,6 +1414,7 @@ function calculate_SNR(resolution::T, continuum::Vector{T}, prof::Symbol, amp::T
 
     λ_arr = (peak-10fwhm):resolution:(peak+10fwhm)
     i_max, _ = findmax(profile.(λ_arr))
+    # Factor in extinction
 
     i_max / std(continuum)
 end

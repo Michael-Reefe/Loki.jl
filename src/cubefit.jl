@@ -2383,6 +2383,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     for (k, ln) ∈ enumerate(cube_fitter.lines)
         center = argmax(comps["line_$k"])
         popt[pᵢ] /= ext_curve[center]
+        perr[pᵢ] /= ext_curve[center]
         if prof_ln[k] == :GaussHermite
             pᵢ += 2
         elseif prof_ln[k] == :Voigt && !cube_fitter.tie_voigt_mixing
@@ -2394,8 +2395,6 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
             pᵢ += 2
         end
         if !isnothing(acomp_prof_ln[k])
-            center = argmax(comps["line_$(k)_acomp"])
-            popt[pᵢ] /= ext_curve[center]
             if acomp_prof_ln[k] == :GaussHermite
                 pᵢ += 2
             elseif acomp_prof_ln[k] == :Voigt && !cube_fitter.tie_voigt_mixing
@@ -2717,7 +2716,8 @@ Currently this includes the integrated intensity and signal to noise ratios of d
 - `popt_l::Vector{T}`: The best-fit parameter vector for the line components of the fit
 """
 function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIndex, 
-    popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}) where {T<:AbstractFloat}
+    popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}, 
+    extinction::Vector{T}) where {T<:AbstractFloat}
 
     @debug "Calculating extra parameters"
 
@@ -2772,8 +2772,12 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
         p_dust[pₒ+1] = eqw
         p_dust_err[pₒ+1] = e_err
 
+        # Get the extinction profile at the center
+        ext = extinction[argmin(abs.(λ .- μ))]
+
         # SNR, calculated as (peak amplitude) / (RMS intensity of the surrounding spectrum)
-        p_dust[pₒ+2] = Util.calculate_SNR(Δλ, I[.!mask_lines] .- continuum[.!mask_lines], :Drude, A, μ, fwhm)
+        # include the extinction factor when calculating the SNR
+        p_dust[pₒ+2] = Util.calculate_SNR(Δλ, I[.!mask_lines] .- continuum[.!mask_lines], :Drude, A*ext, μ, fwhm)
         @debug "Dust feature $df with integrated intensity $(p_dust[pₒ]) +/- $(p_dust_err[pₒ]) " *
             "(erg s^-1 cm^-2 sr^-1), equivalent width $(p_dust[pₒ+1]) +/- $(p_dust_err[pₒ+1]) um, " *
             "and SNR $(p_dust[pₒ+2])"
@@ -3023,10 +3027,13 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
         p_lines[pₒ+1] = eqw
         p_lines_err[pₒ+1] = √(sum(e_err.^2))
 
+        # Get the extinction factor at the line center
+        ext = extinction[argmin(abs.(λ .- mean_μm))]
+
         # SNR, calculated as (amplitude) / (RMS of the surrounding spectrum)
         p_lines[pₒ+2] = Util.calculate_SNR(Δλ, I[.!mask_lines] .- continuum[.!mask_lines], cube_fitter.line_profiles[k],
-            amp*N, mean_μm, fwhm_μm, h3=h3, h4=h4, η=η, acomp_prof=cube_fitter.line_acomp_profiles[k], 
-            acomp_amp=isnothing(acomp_amp) ? acomp_amp : acomp_amp*N,
+            amp*N*ext, mean_μm, fwhm_μm, h3=h3, h4=h4, η=η, acomp_prof=cube_fitter.line_acomp_profiles[k], 
+            acomp_amp=isnothing(acomp_amp) ? acomp_amp : acomp_amp*N*ext,
             acomp_peak=acomp_mean_μm, acomp_fwhm=acomp_fwhm_μm, acomp_h3=acomp_h3, acomp_h4=acomp_h4, acomp_η=acomp_η)
 
         @debug "Line $(cube_fitter.line_names[k]) with integrated intensity $(p_lines[pₒ]) +/- $(p_lines_err[pₒ]) " *
@@ -3100,7 +3107,8 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex)
 
             # Add dust feature and line parameters (intensity and SNR)
             p_dust, p_lines, p_dust_err, p_lines_err = 
-                @timeit timer_output "calculate_extra_parameters" calculate_extra_parameters(cube_fitter, spaxel, popt_c, popt_l, perr_c, perr_l)
+                @timeit timer_output "calculate_extra_parameters" calculate_extra_parameters(cube_fitter, spaxel, popt_c, popt_l, perr_c, perr_l,
+                    comps["extinction"])
             p_out = [popt_c; popt_l; p_dust; p_lines; χ2red]
             p_err = [perr_c; perr_l; p_dust_err; p_lines_err; 0.]
 
@@ -3253,7 +3261,8 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
 
     # Sort spaxels by median brightness, so that we fit the brightest ones first
     # (which hopefully have the best reduced chi^2s)
-    spaxels = CartesianIndices(selectdim(cube_fitter.cube.Iν, 3, 1))
+    # spaxels = CartesianIndices(selectdim(cube_fitter.cube.Iν, 3, 1))
+    spaxels = CartesianIndices((38:39, 21:22))
 
     @info "===> Beginning individual spaxel fitting... <==="
     # Use multiprocessing (not threading) to iterate over multiple spaxels at once using multiple CPUs
