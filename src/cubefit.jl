@@ -261,13 +261,14 @@ end
 
 
 """
-    parse_dust()
+    parse_dust(τ_guess)
 
 Read in the dust.toml configuration file, checking that it is formatted correctly,
 and convert it into a julia dictionary with Parameter objects for dust fitting parameters.
-This deals with continuum, PAH features, and extinction options.
+This deals with continuum, PAH features, and extinction options.  The input parameter τ_guess
+is an initial guess for the optical depth, estimated by interpolating the continuum.
 """
-function parse_dust()::Dict
+function parse_dust(τ_guess::AbstractFloat)::Dict
 
     @debug """\n
     Parsing dust file
@@ -279,7 +280,7 @@ function parse_dust()::Dict
     dust_out = Dict()
     keylist1 = ["stellar_continuum_temp", "dust_continuum_temps", "dust_features", "extinction"]
     keylist2 = ["wave", "fwhm"]
-    keylist3 = ["beta"]
+    keylist3 = ["tau_9_7", "beta"]
     keylist4 = ["val", "plim", "locked"]
 
     # Loop through all of the required keys that should be in the file and confirm that they are there
@@ -312,6 +313,9 @@ function parse_dust()::Dict
                 error("Missing option $ex_key in extinction options!")
             end
             if !(key ∈ keys(dust["extinction"][ex_key]))
+                if (ex_key == "tau_9_7") && (key == "val")
+                    continue
+                end
                 error("Missing option $key in $ex_key options!")
             end
         end
@@ -346,8 +350,10 @@ function parse_dust()::Dict
     # Extinction parameters, optical depth and mixing ratio
     dust_out[:extinction] = Param.ParamDict()
     msg = "Extinction:"
-    # dust_out[:extinction][:tau_9_7] = Param.from_dict(dust["extinction"]["tau_9_7"])
-    # msg *= "\nTau $(dust_out[:extinction][:tau_9_7])"
+    # Write tau_9_7 value based on the provided guess
+    dust["extinction"]["tau_9_7"]["val"] = τ_guess
+    dust_out[:extinction][:tau_9_7] = Param.from_dict(dust["extinction"]["tau_9_7"])
+    msg *= "\nTau $(dust_out[:extinction][:tau_9_7])"
     dust_out[:extinction][:beta] = Param.from_dict(dust["extinction"]["beta"])
     msg *= "\nBeta $(dust_out[:extinction][:beta])"
     @debug msg
@@ -1042,6 +1048,7 @@ to run. The actual fitting functions (`fit_spaxel` and `fit_cube!`) require an i
 `T<:AbstractFloat, S<:Integer`
 - `cube::CubeData.DataCube`: The main DataCube object containing the cube that is being fit
 - `z::AbstractFloat`: The redshift of the target that is being fit
+- `τ_guess::AbstractFloat`: Initial guess for the optical depth
 - `n_procs::Integer`: The number of parallel processes that are being used in the fitting procedure
 - `plot_spaxels::Symbol=:pyplot`: A Symbol specifying the plotting backend to be used when plotting individual spaxel fits, can
     be either `:pyplot` or `:plotly`
@@ -1106,7 +1113,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
     # Data
     cube::CubeData.DataCube
     z::T
-    τ_97::Dict{Int, Matrix{T}}
+    τ_guess::Dict{Int, Matrix{T}}
     name::String
 
     # Basic fitting options
@@ -1125,6 +1132,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
     # Continuum parameters
     T_s::Param.Parameter
     T_dc::Vector{Param.Parameter}
+    τ_97::Param.Parameter
     β::Param.Parameter
     n_dust_cont::S
     n_dust_feat::S
@@ -1172,7 +1180,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
 
     #= Constructor function --> the inputs taken map directly to fields in the CubeFitter object,
     the rest of the fields are generated in the function from these inputs =#
-    function CubeFitter(cube::CubeData.DataCube, z::AbstractFloat, τ_97::Dict{Int, Matrix{T}}, 
+    function CubeFitter(cube::CubeData.DataCube, z::AbstractFloat, τ_guess::Dict{Int, Matrix{T}},
         name::String, n_procs::Integer; plot_spaxels::Symbol=:pyplot, plot_maps::Bool=true, 
         parallel::Bool=true, save_fits::Bool=true) where {T<:AbstractFloat}
 
@@ -1220,8 +1228,8 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
         #############################################################
 
         @debug """\n
-        Creating CubeFitter struct for $name
-        ####################################
+        Creating CubeFitter struct for $name at z=$z, with tau_9.7=$τ_guess
+        ###################################################################
         """
 
         # Get shape
@@ -1231,7 +1239,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
 
         # Parse all of the options files to create default options and parameter objects
         interp_R = parse_resolving(z, parse(Int, cube.channel))
-        dust = parse_dust() 
+        dust = parse_dust(τ_guess[0][parse(Int, cube.channel)])
         options = parse_options()
         line_list, voff_tied, acomp_voff_tied, flexible_wavesol, tie_voigt_mixing, 
             voigt_mix_tied = parse_lines(parse(Int, cube.channel), interp_R, λ)
@@ -1244,7 +1252,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
         # Get dust options from the dictionary
         T_s = dust[:stellar_continuum_temp]
         T_dc = dust[:dust_continuum_temps]
-        # τ_97 = dust[:extinction][:tau_9_7]
+        τ_97 = dust[:extinction][:tau_9_7]
         β = dust[:extinction][:beta]
 
         @debug "### Model will include 1 stellar continuum component ###" *
@@ -1392,9 +1400,9 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
         cube_wcs.wcs.cunit = cube.wcs.cunit[1:2]
         cube_wcs.wcs.pc = cube.wcs.pc[1:2, 1:2]
 
-        new{typeof(z), typeof(n_procs)}(cube, z, τ_97, name, n_procs, plot_spaxels, plot_maps, 
+        new{typeof(z), typeof(n_procs)}(cube, z, τ_guess, name, n_procs, plot_spaxels, plot_maps, 
             parallel, save_fits, overwrite, track_memory, track_convergence, make_movies, extinction_curve, extinction_screen, 
-            T_s, T_dc, β, n_dust_cont, n_dust_features, df_names, dust_features, n_lines, line_names, line_profiles, 
+            T_s, T_dc, τ_97, β, n_dust_cont, n_dust_features, df_names, dust_features, n_lines, line_names, line_profiles, 
             line_acomp_profiles, lines, n_voff_tied, line_tied, voff_tied_key, voff_tied, n_acomp_voff_tied, 
             line_acomp_tied, acomp_voff_tied_key, acomp_voff_tied, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, 
             cosmo, interp_R, flexible_wavesol, p_init_cont, p_init_line, cube_wcs)
@@ -1645,7 +1653,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
         p₀ = copy(cube_fitter.p_init_cont)
 
         # pull out optical depth that was pre-fit
-        τ_97_0 = cube_fitter.τ_97[parse(Int, cube_fitter.cube.channel)][spaxel]
+        τ_97_0 = cube_fitter.τ_guess[parse(Int, cube_fitter.cube.channel)][spaxel]
 
         # scale all flux amplitudes by the difference in medians between the spaxel and the summed spaxels
         # (should be close to 1 since the sum is already normalized by the number of spaxels included anyways)
@@ -1696,8 +1704,9 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
         df_pars = vcat([[Ai, mi.value, fi.value] for (Ai, mi, fi) ∈ zip(A_df, mean_df, fwhm_df)]...)
 
         # Initial parameter vector
-        p₀ = Vector{Float64}(vcat(stellar_pars, dc_pars, df_pars, [cube_fitter.τ_97[0][parse(Int, cube_fitter.cube.channel)], 
-            cube_fitter.β.value]))
+        p₀ = Vector{Float64}(vcat(stellar_pars, dc_pars, df_pars, [cube_fitter.τ_97.value, cube_fitter.β.value]))
+        # p₀ = Vector{Float64}(vcat(stellar_pars, dc_pars, df_pars, [cube_fitter.τ_97[0][parse(Int, cube_fitter.cube.channel)], 
+            # cube_fitter.β.value]))
 
     end
 
@@ -1754,11 +1763,11 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
     end
 
     # Extinction
-    parinfo[pᵢ].fixed = true
+    parinfo[pᵢ].fixed = cube_fitter.τ_97.locked
     if iszero(parinfo[pᵢ].fixed)
         parinfo[pᵢ].limited = (1,1)
-        # parinfo[pᵢ].limits = (minimum(cube_fitter.τ_97.prior), maximum(cube_fitter.τ_97.prior))
-        parinfo[pᵢ].limits = (0.0, 10.0)
+        parinfo[pᵢ].limits = (minimum(cube_fitter.τ_97.prior), maximum(cube_fitter.τ_97.prior))
+        # parinfo[pᵢ].limits = (0.0, 10.0)
     end
     parinfo[pᵢ+1].fixed = cube_fitter.β.locked
     if !(cube_fitter.β.locked)
@@ -1839,8 +1848,9 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
         pᵢ += 3
     end
     msg *= "\n#> EXTINCTION <#\n"
-    msg *= "τ_9.7: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ]) +/- $(@sprintf "%.2f" perr[pᵢ]) Limits: " *
-        "($(@sprintf "%.2f" 0.9*p₀[pᵢ]), $(@sprintf "%.2f" 1.1*p₀[pᵢ])) \n"  
+    msg *= "τ_9.7: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ]) +/- $(@sprintf "%.2f" perr[pᵢ]) [-] \t Limits: " *
+        "($(@sprintf "%.2f" minimum(cube_fitter.τ_97.prior)), $(@sprintf "%.2f" maximum(cube_fitter.τ_97.prior)))" * 
+        (cube_fitter.τ_97.locked ? " (fixed)" : "") * "\n"
     msg *= "β: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ+1]) +/- $(@sprintf "%.2f" perr[pᵢ+1]) [-] \t Limits: " *
         "($(@sprintf "%.2f" minimum(cube_fitter.β.prior)), $(@sprintf "%.2f" maximum(cube_fitter.β.prior)))" * 
         (cube_fitter.β.locked ? " (fixed)" : "") * "\n"
