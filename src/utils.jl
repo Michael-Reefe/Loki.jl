@@ -1221,6 +1221,9 @@ function _continuum_errs(x::AbstractFloat, popt_c::Vector{<:AbstractFloat},
     if c_l ≤ 0
         c_l = eps()
     end
+    if c_u ≤ 0
+        c_u = eps()
+    end
     # dont include extinction
     c_l, c_u
 end
