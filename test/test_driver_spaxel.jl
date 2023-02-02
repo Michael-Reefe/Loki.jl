@@ -25,9 +25,10 @@ obs = correct(obs)
 interpolate_cube!(obs.channels[2])
 
 # cube_rebin!(obs, [1,2,3,4])
+τ_guess = fit_optical_depth(obs)
 
 # Create the cube fitting object
-cube_fitter = CubeFitter(obs.channels[2], obs.z, "test_2", 1; parallel=false, plot_spaxels=:plotly,
+cube_fitter = CubeFitter(obs.channels[2], obs.z, τ_guess, "test_ops", 1; parallel=false, plot_spaxels=:pyplot,
     plot_maps=true, save_fits=true)
 
 # Fit some individual spaxels
