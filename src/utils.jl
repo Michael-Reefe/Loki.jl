@@ -61,6 +61,26 @@ const kvt_prof::Matrix{Float64} =  [8.0  0.06;
 
 
 """
+    read_smith_temps()
+
+Setup function for reading in the PAH templates from Smith et al. 2006
+"""
+function read_smith_temps()
+    
+    path3 = joinpath(@__DIR__, "smith_nftemp3.pah.ext.dat")
+    path4 = joinpath(@__DIR__, "smith_nftemp4.pah.next.dat")
+    @debug "Reading in Smith et al. 2006 PAH template from: $path3 and $path4"
+
+    temp3 = CSV.read(path3, DataFrame, delim=' ', ignorerepeated=true, stripwhitespace=true,
+        header=["rest_wave", "flux"])
+    temp4 = CSV.read(path4, DataFrame, delim=' ', ignorerepeated=true, stripwhitespace=true,
+        header=["rest_wave", "flux"])
+
+    temp3[!, "rest_wave"], temp3[!, "flux"], temp4[!, "rest_wave"], temp4[!, "flux"]
+end
+
+
+"""
     read_irs_data(path)
 
 Setup function for reading in the configuration IRS spectrum of IRS 08572+3915
@@ -134,6 +154,12 @@ end
 # Save the Chiar+Tielens 2005 profile as a constant
 const CT_prof = silicate_ct()
 const CT_interp = Spline1D(CT_prof[1], CT_prof[2]; k=3)
+
+# Save the Smith+2006 PAH templates as constants
+const SmithTemps = read_smith_temps()
+const Smith3_interp = Spline1D(SmithTemps[1], SmithTemps[2]; k=3)
+const Smith4_interp = Spline1D(SmithTemps[3], SmithTemps[4]; k=3)
+
 
 ########################################### UTILITY FUNCTIONS ###############################################
 
@@ -561,13 +587,12 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
     `[stellar amp, stellar temp, (amp, temp for each dust continuum), (amp, mean, FWHM for each PAH profile), 
     extinction τ, extinction β]`
 - `n_dust_cont::Integer`: Number of dust continuum profiles to be fit
-- `n_dust_features::Integer`: Number of PAH dust features to be fit
 - `extinction_curve::String`: The type of extinction curve to use, "kvt" or "d+"
 - `extinction_screen::Bool`: Whether or not to use a screen model for the extinction curve
 - `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
-function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_dust_cont::Integer, n_dust_features::Integer,
+function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_dust_cont::Integer,
     extinction_curve::String, extinction_screen::Bool, return_components::Bool)
 
     # Prepare outputs
@@ -586,13 +611,6 @@ function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloa
         pᵢ += 2
     end
 
-    # Add dust features with drude profiles
-    for j ∈ 1:n_dust_features
-        comps["dust_feat_$j"] = Drude.(λ, params[pᵢ:pᵢ+2]...)
-        contin .+= comps["dust_feat_$j"]
-        pᵢ += 3
-    end
-
     # Extinction 
     if extinction_curve == "d+"
         ext_curve = τ_dp.(λ, params[pᵢ+1])
@@ -604,8 +622,16 @@ function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloa
         error("Unrecognized extinction curve: $extinction_curve")
     end
     comps["extinction"] = Extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
-    contin .*= comps["extinction"]
     pᵢ += 2
+
+    # Add Smith+2006 PAH templates
+    comps["pah_temp_3"] = params[pᵢ] .* Smith3_interp.(λ)
+    contin .+= comps["pah_temp_3"]
+    comps["pah_temp_4"] = params[pᵢ+1] .* Smith4_interp.(λ)
+    contin .+= comps["pah_temp_4"]
+    pᵢ += 2
+
+    contin .*= comps["extinction"]
 
     # Return components if necessary
     if return_components
@@ -617,7 +643,7 @@ end
 
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
-function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_dust_cont::Integer, n_dust_features::Integer,
+function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_dust_cont::Integer,
     extinction_curve::String, extinction_screen::Bool)
 
     # Prepare outputs
@@ -633,12 +659,6 @@ function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloa
         pᵢ += 2
     end
 
-    # Add dust features with drude profiles
-    for j ∈ 1:n_dust_features
-        contin .+= Drude.(λ, params[pᵢ:pᵢ+2]...)
-        pᵢ += 3
-    end
-
     # Extinction 
     if extinction_curve == "d+"
         ext_curve = τ_dp.(λ, params[pᵢ+1])
@@ -649,10 +669,99 @@ function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloa
     else
         error("Unrecognized extinction curve: $extinction_curve")
     end
-    contin .*= Extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
+    ext = Extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
     pᵢ += 2
 
+    # Add Smith+2006 PAH templates
+    contin .+= params[pᵢ] .* Smith3_interp.(λ)
+    contin .+= params[pᵢ+1] .* Smith4_interp.(λ)
+    pᵢ += 2
+
+    contin .*= ext
     contin
+
+end
+
+
+"""
+    fit_pah_residuals(λ, params, n_dust_feat, return_components)
+
+Create a model of the PAH features at the given wavelengths `λ`, given the parameter vector `params`.
+
+Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
+(with modifications)
+
+# Arguments
+- `λ::Vector{<:AbstractFloat}`: Wavelength vector of the spectrum to be fit
+- `params::Vector{<:AbstractFloat}`: Parameter vector. Parameters should be ordered as: `(amp, center, fwhm) for each PAH profile`
+- `n_dust_feat::Integer`: The number of PAH features that are being fit
+- `ext_curve::Vector{<:AbstractFloat}`: The extinction curve that was fit using fit_spectrum
+- `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in
+    addition to the overall fit
+"""
+function fit_pah_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_dust_feat::Integer,
+    ext_curve::Vector{<:AbstractFloat}, return_components::Bool)
+
+    # Prepare outputs
+    comps = Dict{String, Vector{Float64}}()
+    contin = zeros(Float64, length(λ))
+
+    # Add dust features with drude profiles
+    pᵢ = 1
+    for j ∈ 1:n_dust_feat
+        comps["dust_feat_$j"] = Drude.(λ, params[pᵢ:pᵢ+2]...)
+        contin .+= comps["dust_feat_$j"]
+        pᵢ += 3
+    end
+
+    # Apply extinction
+    contin .*= ext_curve
+
+    # Return components, if necessary
+    if return_components
+        return contin, comps
+    end
+    contin
+
+end
+
+
+# Multiple dispatch for more efficiency
+function fit_pah_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_dust_feat::Integer,
+    ext_curve::Vector{<:AbstractFloat})
+
+    # Prepare outputs
+    contin = zeros(Float64, length(λ))
+
+    # Add dust features with drude profiles
+    pᵢ = 1
+    for j ∈ 1:n_dust_feat
+        contin .+= Drude.(λ, params[pᵢ:pᵢ+2]...)
+        pᵢ += 3
+    end
+
+    # Apply extinction
+    contin .*= ext_curve
+
+    contin
+
+end
+
+
+# Combine fit_spectrum and fit_pah_residuals to get the full continuum in one function (after getting the optimized parameters)
+function fit_full_continuum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_dust_cont::Integer,
+    n_dust_feat::Integer, extinction_curve::String, extinction_screen::Bool)
+
+    pars_1 = vcat(params[1:(2+2n_dust_cont+2)], [0., 0.])
+    pars_2 = params[(3+2n_dust_cont+2):end]
+
+    contin_1, ccomps = fit_spectrum(λ, pars_1, n_dust_cont, extinction_curve, extinction_screen, true)
+    contin_2, pcomps = fit_pah_residuals(λ, pars_2, n_dust_feat, ccomps["extinction"], true)
+
+    contin = contin_1 .+ contin_2
+    comps = merge(ccomps, pcomps)
+
+    contin, comps
 
 end
 
@@ -660,7 +769,7 @@ end
 """
     fit_line_residuals(λ, params, n_lines, n_voff_tied, voff_tied_key, line_tied, line_profiles,
         n_acomp_voff_tied, acomp_voff_tied_key, line_acomp_tied, line_acomp_profiles, line_restwave,
-        flexible_wavesol, tie_voigt_mixing; return_components=return_components) 
+        flexible_wavesol, tie_voigt_mixing, ext_curve; return_components=return_components) 
 
 Create a model of the emission lines at the given wavelengths `λ`, given the parameter vector `params`.
 
@@ -688,6 +797,7 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `flexible_wavesol::Bool`: Whether or not to allow small variations in tied velocity offsets, to account for a poor
     wavelength solution in the data
 - `tie_voigt_mixing::Bool`: Whether or not to tie the mixing parameters of all Voigt profiles together
+- `ext_curve::Vector{<:AbstractFloat}`: The extinction curve fit with fit_spectrum
 - `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
@@ -695,7 +805,7 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
     voff_tied_key::Vector{String}, line_tied::Vector{Union{String,Nothing}}, line_profiles::Vector{Symbol}, 
     n_acomp_voff_tied::Integer, acomp_voff_tied_key::Vector{String}, line_acomp_tied::Vector{Union{String,Nothing}},
     line_acomp_profiles::Vector{Union{Symbol,Nothing}}, line_restwave::Vector{<:AbstractFloat}, 
-    flexible_wavesol::Bool, tie_voigt_mixing::Bool, return_components::Bool)
+    flexible_wavesol::Bool, tie_voigt_mixing::Bool, ext_curve::Vector{<:AbstractFloat}, return_components::Bool)
 
     # Prepare outputs
     comps = Dict{String, Vector{Float64}}()
@@ -878,6 +988,9 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
 
     end
 
+    # Apply extinction
+    contin .*= ext_curve
+
     # Return components if necessary
     if return_components
         return contin, comps
@@ -892,7 +1005,7 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
     voff_tied_key::Vector{String}, line_tied::Vector{Union{String,Nothing}}, line_profiles::Vector{Symbol}, 
     n_acomp_voff_tied::Integer, acomp_voff_tied_key::Vector{String}, line_acomp_tied::Vector{Union{String,Nothing}},
     line_acomp_profiles::Vector{Union{Symbol,Nothing}}, line_restwave::Vector{<:AbstractFloat}, 
-    flexible_wavesol::Bool, tie_voigt_mixing::Bool)
+    flexible_wavesol::Bool, tie_voigt_mixing::Bool, ext_curve::Vector{<:AbstractFloat})
 
     # Prepare outputs
     contin = zeros(Float64, length(λ))
@@ -1069,6 +1182,9 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
         end
 
     end
+
+    # Apply extinction
+    contin .*= ext_curve
 
     contin
 

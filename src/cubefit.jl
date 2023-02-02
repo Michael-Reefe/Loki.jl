@@ -1670,6 +1670,10 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
             pᵢ += 2
         end
 
+        # Set optical depth based on the pre-fitting
+        p₀[pᵢ] = τ_97_0
+        pᵢ += 2
+
         # Dust feature amplitudes
         for i ∈ 1:cube_fitter.n_dust_feat
             # dont take the best fit values, just start them all equal otherwise weird stuff happens
@@ -1677,9 +1681,6 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
             p₀[pᵢ] = clamp(p₀[pᵢ]*scale, 0., max_amp / exp(-τ_97_0))
             pᵢ += 3
         end
-
-        # Set optical depth based on the pre-fitting
-        p₀[end-1] = τ_97_0
 
     # Otherwise, we estimate the initial parameters based on the data
     else
@@ -1704,7 +1705,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
         df_pars = vcat([[Ai, mi.value, fi.value] for (Ai, mi, fi) ∈ zip(A_df, mean_df, fwhm_df)]...)
 
         # Initial parameter vector
-        p₀ = Vector{Float64}(vcat(stellar_pars, dc_pars, df_pars, [cube_fitter.τ_97.value, cube_fitter.β.value]))
+        p₀ = Vector{Float64}(vcat(stellar_pars, dc_pars, [cube_fitter.τ_97.value, cube_fitter.β.value], df_pars))
         # p₀ = Vector{Float64}(vcat(stellar_pars, dc_pars, df_pars, [cube_fitter.τ_97[0][parse(Int, cube_fitter.cube.channel)], 
             # cube_fitter.β.value]))
 
@@ -1712,104 +1713,160 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
 
     @debug "Continuum Parameter labels: \n [stellar_amp, stellar_temp, " * 
         join(["dust_continuum_amp_$i, dust_continuum_temp_$i" for i ∈ 1:cube_fitter.n_dust_cont], ", ") * 
-        join(["$(df)_amp, $(df)_mean, $(df)_fwhm" for df ∈ cube_fitter.df_names], ", ") *
-        "extinction_tau_97, extinction_beta]"
+        "extinction_tau_97, extinction_beta, " * join(["$(df)_amp, $(df)_mean, $(df)_fwhm" for df ∈ cube_fitter.df_names], ", ") * "]"
+
+    # Split up the parameter vector into the components that we need for each fitting step
+
+    # Step 1: Stellar + Dust blackbodies, 2 new amplitudes for the PAH templates, and the extinction parameters
+    pars_1 = vcat(p₀[1:(2+2*cube_fitter.n_dust_cont+2)], repeat([clamp(nanmedian(I)/2, 0., Inf)], 2))
+    # Step 2: The PAH profile amplitudes, centers, and FWHMs
+    pars_2 = p₀[(3+2*cube_fitter.n_dust_cont+2):end]
 
     # @debug "Priors: \n $priors"
     @debug "Continuum Starting Values: \n $p₀"
 
     # Convert parameter limits into CMPFit object
-    parinfo = CMPFit.Parinfo(length(p₀))
+    parinfo_1 = CMPFit.Parinfo(length(pars_1))
+    parinfo_2 = CMPFit.Parinfo(length(pars_2))
 
     # Stellar amplitude
-    parinfo[1].limited = (1,0)
-    parinfo[1].limits = (0., 0.)
+    parinfo_1[1].limited = (1,0)
+    parinfo_1[1].limits = (0., 0.)
 
     # Stellar temp
-    parinfo[2].fixed = cube_fitter.T_s.locked
+    parinfo_1[2].fixed = cube_fitter.T_s.locked
     if !(cube_fitter.T_s.locked)
-        parinfo[2].limited = (1,1)
-        parinfo[2].limits = (minimum(cube_fitter.T_s.prior), maximum(cube_fitter.T_s.prior))
+        parinfo_1[2].limited = (1,1)
+        parinfo_1[2].limits = (minimum(cube_fitter.T_s.prior), maximum(cube_fitter.T_s.prior))
     end
 
     # Dust cont amplitudes and temps
-    pᵢ = 3
+    p₁ = 3
     for i ∈ 1:cube_fitter.n_dust_cont
-        parinfo[pᵢ].limited = (1,0)
-        parinfo[pᵢ].limits = (0., 0.)
-        parinfo[pᵢ+1].fixed = cube_fitter.T_dc[i].locked
+        parinfo_1[p₁].limited = (1,0)
+        parinfo_1[p₁].limits = (0., 0.)
+        parinfo_1[p₁+1].fixed = cube_fitter.T_dc[i].locked
         if !(cube_fitter.T_dc[i].locked)
-            parinfo[pᵢ+1].limited = (1,1)
-            parinfo[pᵢ+1].limits = (minimum(cube_fitter.T_dc[i].prior), maximum(cube_fitter.T_dc[i].prior))
+            parinfo_1[p₁+1].limited = (1,1)
+            parinfo_1[p₁+1].limits = (minimum(cube_fitter.T_dc[i].prior), maximum(cube_fitter.T_dc[i].prior))
         end
-        pᵢ += 2
-    end
-
-    # Dust feature amplitude, mean, fwhm
-    for i ∈ 1:cube_fitter.n_dust_feat
-        parinfo[pᵢ].limited = (1,1)
-        parinfo[pᵢ].limits = (0., clamp(nanmaximum(I) / exp(-p₀[end-1]), 1., Inf))
-        parinfo[pᵢ+1].fixed = mean_df[i].locked
-        if !(mean_df[i].locked)
-            parinfo[pᵢ+1].limited = (1,1)
-            parinfo[pᵢ+1].limits = (minimum(mean_df[i].prior), maximum(mean_df[i].prior))
-        end
-        parinfo[pᵢ+2].fixed = fwhm_df[i].locked
-        if !(fwhm_df[i].locked)
-            parinfo[pᵢ+2].limited = (1,1)
-            parinfo[pᵢ+2].limits = (minimum(fwhm_df[i].prior), maximum(fwhm_df[i].prior))
-        end
-        pᵢ += 3
+        p₁ += 2
     end
 
     # Extinction
-    parinfo[pᵢ].fixed = cube_fitter.τ_97.locked
-    if iszero(parinfo[pᵢ].fixed)
-        parinfo[pᵢ].limited = (1,1)
-        parinfo[pᵢ].limits = (minimum(cube_fitter.τ_97.prior), maximum(cube_fitter.τ_97.prior))
-        # parinfo[pᵢ].limits = (0.0, 10.0)
+    parinfo_1[p₁].fixed = cube_fitter.τ_97.locked
+    if iszero(parinfo_1[p₁].fixed)
+        parinfo_1[p₁].limited = (1,1)
+        parinfo_1[p₁].limits = (minimum(cube_fitter.τ_97.prior), maximum(cube_fitter.τ_97.prior))
+        # parinfo_1[p₁].limits = (0.0, 10.0)
     end
-    parinfo[pᵢ+1].fixed = cube_fitter.β.locked
+    parinfo_1[p₁+1].fixed = cube_fitter.β.locked
     if !(cube_fitter.β.locked)
-        parinfo[pᵢ+1].limited = (1,1)
-        parinfo[pᵢ+1].limits = (minimum(cube_fitter.β.prior), maximum(cube_fitter.β.prior))
+        parinfo_1[p₁+1].limited = (1,1)
+        parinfo_1[p₁+1].limits = (minimum(cube_fitter.β.prior), maximum(cube_fitter.β.prior))
     end
-    pᵢ += 2
+    p₁ += 2
+
+    # PAH template amplitudes
+    parinfo_1[p₁].limited = (1,0)
+    parinfo_1[p₁].limits = (0., clamp(nanmaximum(I) / exp(-pars_1[end-4]), 1., Inf))
+    parinfo_1[p₁+1].limited = (1,0)
+    parinfo_1[p₁+1].limits = (0., clamp(nanmaximum(I) / exp(-pars_1[end-4]), 1., Inf))
+
+    p₂ = 1
+    # Dust feature amplitude, mean, fwhm
+    for i ∈ 1:cube_fitter.n_dust_feat
+        parinfo_2[p₂].limited = (1,1)
+        parinfo_2[p₂].limits = (0., clamp(nanmaximum(I) / exp(-pars_1[end-4]), 1., Inf))
+        parinfo_2[p₂+1].fixed = mean_df[i].locked
+        if !(mean_df[i].locked)
+            parinfo_2[p₂+1].limited = (1,1)
+            parinfo_2[p₂+1].limits = (minimum(mean_df[i].prior), maximum(mean_df[i].prior))
+        end
+        parinfo_2[p₂+2].fixed = fwhm_df[i].locked
+        if !(fwhm_df[i].locked)
+            parinfo_2[p₂+2].limited = (1,1)
+            parinfo_2[p₂+2].limits = (minimum(fwhm_df[i].prior), maximum(fwhm_df[i].prior))
+        end
+        p₂ += 3
+    end
 
     # Create a `config` structure
     config = CMPFit.Config()
 
-    @debug "Continuum Parameters locked? \n $([parinfo[i].fixed for i ∈ eachindex(p₀)])"
-    @debug "Continuum Lower limits: \n $([parinfo[i].limits[1] for i ∈ eachindex(p₀)])"
-    @debug "Continuum Upper limits: \n $([parinfo[i].limits[2] for i ∈ eachindex(p₀)])"
+    @debug """\n
+    ##########################################################################################################
+    ########################## STEP 1 - FIT THE BLACKBODY CONTINUUM WITH PAH TEMPLATES #######################
+    ##########################################################################################################
+    """
+    @debug "Continuum Step 1 Parameters: \n $(pars_1)"
+    @debug "Continuum Parameters locked? \n $([parinfo_1[i].fixed for i ∈ eachindex(pars_1)])"
+    @debug "Continuum Lower limits: \n $([parinfo_1[i].limits[1] for i ∈ eachindex(pars_1)])"
+    @debug "Continuum Upper limits: \n $([parinfo_1[i].limits[2] for i ∈ eachindex(pars_1)])"
 
     @debug "Beginning continuum fitting with Levenberg-Marquardt least squares (CMPFit):"
 
-    res = cmpfit(λ, I, σ, (x, p) -> Util.fit_spectrum(x, p, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat,
-        cube_fitter.extinction_curve, cube_fitter.extinction_screen), p₀, parinfo=parinfo, config=config)
+    res_1 = cmpfit(λ, I, σ, (x, p) -> Util.fit_spectrum(x, p, cube_fitter.n_dust_cont,
+        cube_fitter.extinction_curve, cube_fitter.extinction_screen), pars_1, parinfo=parinfo_1, config=config)
 
-    @debug "Continuum CMPFit status: $(res.status)"
+    @debug "Continuum CMPFit status: $(res_1.status)"
 
-    # Get best fit results
-    popt = res.param        # Best fit parameters
-    perr = res.perror       # 1-sigma uncertainties
-    covar = res.covar       # Covariance matrix
+    # Create continuum without the PAH features
+    _, ccomps = Util.fit_spectrum(λ, res_1.param, cube_fitter.n_dust_cont, cube_fitter.extinction_curve, 
+        cube_fitter.extinction_screen, true)
+
+    I_cont = ccomps["stellar"]
+    for i ∈ 1:cube_fitter.n_dust_cont
+        I_cont .+= ccomps["dust_cont_$i"]
+    end
+    I_cont .*= ccomps["extinction"]
 
     # Count free parameters
-    n_free = 0
-    for pᵢ ∈ eachindex(popt)
-        if iszero(parinfo[pᵢ].fixed)
-            n_free += 1
+    n_free_1 = 0
+    for p₁ ∈ eachindex(pars_1)
+        if iszero(parinfo_1[p₁].fixed)
+            n_free_1 += 1
         end
     end
+
+    @debug """\n
+    ##########################################################################################################
+    ################################# STEP 2 - FIT THE PAHs AS DRUDE PROFILES ################################
+    ##########################################################################################################
+    """
+    @debug "Continuum Step 2 Parameters: \n $(pars_2)"
+    @debug "Continuum Parameters locked? \n $([parinfo_2[i].fixed for i ∈ eachindex(pars_2)])"
+    @debug "Continuum Lower limits: \n $([parinfo_2[i].limits[1] for i ∈ eachindex(pars_2)])"
+    @debug "Continuum Upper limits: \n $([parinfo_2[i].limits[2] for i ∈ eachindex(pars_2)])"
+
+    @debug "Beginning continuum fitting with Levenberg-Marquardt least squares (CMPFit):"
+
+    res_2 = cmpfit(λ, I.-I_cont, σ, (x, p) -> Util.fit_pah_residuals(x, p, cube_fitter.n_dust_feat,
+        ccomps["extinction"]), pars_2, parinfo=parinfo_2, config=config)
+
+    @debug "Continuum CMPFit status: $(res_2.status)"
+
+    # Count free parameters
+    n_free_2 = 0
+    for p₂ ∈ eachindex(pars_2)
+        if iszero(parinfo_2[p₂].fixed)
+            n_free_2 += 1
+        end
+    end
+
+    # Get combined best fit results
+    popt = vcat(res_1.param[1:end-2], res_2.param)        # Combined Best fit parameters
+    perr = vcat(res_1.perror[1:end-2], res_2.perror)      # Combined 1-sigma uncertainties
+    covar = (res_1.covar[1:end-2, 1:end-2], res_2.covar)  # Combined Covariance matrix
+    n_free = n_free_1 - 2 + n_free_2
 
     @debug "Best fit continuum parameters: \n $popt"
     @debug "Continuum parameter errors: \n $perr"
     @debug "Continuum covariance matrix: \n $covar"
 
-    # Final optimized fit
-    I_model, comps = Util.fit_spectrum(λ, popt, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, 
-        cube_fitter.extinction_curve, cube_fitter.extinction_screen, true)
+    # Create the full model
+    I_model, comps = Util.fit_full_continuum(λ, popt, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat,
+        cube_fitter.extinction_curve, cube_fitter.extinction_screen)
 
     if init
         cube_fitter.p_init_cont[:] .= copy(popt)
@@ -1834,6 +1891,15 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
         msg *= "\n"
         pᵢ += 2
     end
+    msg *= "\n#> EXTINCTION <#\n"
+    msg *= "τ_9.7: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ]) +/- $(@sprintf "%.2f" perr[pᵢ]) [-] \t Limits: " *
+        "($(@sprintf "%.2f" minimum(cube_fitter.τ_97.prior)), $(@sprintf "%.2f" maximum(cube_fitter.τ_97.prior)))" * 
+        (cube_fitter.τ_97.locked ? " (fixed)" : "") * "\n"
+    msg *= "β: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ+1]) +/- $(@sprintf "%.2f" perr[pᵢ+1]) [-] \t Limits: " *
+        "($(@sprintf "%.2f" minimum(cube_fitter.β.prior)), $(@sprintf "%.2f" maximum(cube_fitter.β.prior)))" * 
+        (cube_fitter.β.locked ? " (fixed)" : "") * "\n"
+    msg *= "\n"
+    pᵢ += 2
     msg *= "\n#> DUST FEATURES <#\n"
     for (j, df) ∈ enumerate(cube_fitter.df_names)
         msg *= "$(df)_amp:\t\t\t $(@sprintf "%.1f" popt[pᵢ]) +/- $(@sprintf "%.1f" perr[pᵢ]) MJy/sr \t Limits: " *
@@ -1845,17 +1911,9 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
             "($(@sprintf "%.3f" minimum(fwhm_df[j].prior)), $(@sprintf "%.3f" maximum(fwhm_df[j].prior)))" * 
             (fwhm_df[j].locked ? " (fixed)" : "") * "\n"
         msg *= "\n"
+        msg *= "######################################################################"
         pᵢ += 3
     end
-    msg *= "\n#> EXTINCTION <#\n"
-    msg *= "τ_9.7: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ]) +/- $(@sprintf "%.2f" perr[pᵢ]) [-] \t Limits: " *
-        "($(@sprintf "%.2f" minimum(cube_fitter.τ_97.prior)), $(@sprintf "%.2f" maximum(cube_fitter.τ_97.prior)))" * 
-        (cube_fitter.τ_97.locked ? " (fixed)" : "") * "\n"
-    msg *= "β: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ+1]) +/- $(@sprintf "%.2f" perr[pᵢ+1]) [-] \t Limits: " *
-        "($(@sprintf "%.2f" minimum(cube_fitter.β.prior)), $(@sprintf "%.2f" maximum(cube_fitter.β.prior)))" * 
-        (cube_fitter.β.locked ? " (fixed)" : "") * "\n"
-    msg *= "\n"
-    msg *= "######################################################################"
     @debug msg
 
     σ, popt, I_model, comps, n_free, perr, covar
@@ -1877,19 +1935,19 @@ end
 
 
 """
-    _negln_probability(p, λ, Inorm, σnorm, cube_fitter, λ0_ln, priors)
+    _negln_probability(p, λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors)
 
 Internal helper function to calculate the negative of the log of the probability,
 for the line residual fitting.
 
 ln(probability) = ln(likelihood) + ln(prior)
 """
-function _negln_probability(p, λ, Inorm, σnorm, cube_fitter, λ0_ln, priors)
+function _negln_probability(p, λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors)
     # First compute the model
     model = Util.fit_line_residuals(λ, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
         cube_fitter.voff_tied_key, cube_fitter.line_tied, cube_fitter.line_profiles, cube_fitter.n_acomp_voff_tied,
         cube_fitter.acomp_voff_tied_key, cube_fitter.line_acomp_tied, cube_fitter.line_acomp_profiles, 
-        λ0_ln, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing)
+        λ0_ln, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, ext_curve)
     # Add the log of the likelihood (based on the model) and the prior distribution functions
     lnP = Util.ln_likelihood(Inorm, model, σnorm) + _ln_prior(p, priors)
     # return the NEGATIVE log of the probability
@@ -2144,13 +2202,12 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     # these are a bit loose since we're mainly just looking to get into the right global minimum region with SAMIN
     # before refining the fit later with a LevMar local minimum routine
     x_tol = 1e-5
-    f_tol = 0.01abs(_negln_probability(p₀, λ, Inorm, σnorm, cube_fitter, λ0_ln, priors) - 
-                _negln_probability(clamp.(p₀ .- x_tol, lower_bounds, upper_bounds), λ, Inorm, σnorm, cube_fitter, λ0_ln, priors))
+    f_tol = 0.01abs(_negln_probability(p₀, λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors) - 
+                _negln_probability(clamp.(p₀ .- x_tol, lower_bounds, upper_bounds), λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors))
 
     # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
-    res = optimize(p -> _negln_probability(p, λ, Inorm, σnorm, cube_fitter, λ0_ln, priors), lower_bounds, upper_bounds, p₀, 
-       SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), 
-       Optim.Options(iterations=10^6))
+    res = optimize(p -> _negln_probability(p, λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors), lower_bounds, upper_bounds, p₀, 
+       SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
     p₁ = res.minimizer
 
     # Write convergence results to file, if specified
@@ -2344,7 +2401,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     # Same procedure as with the continuum fit
     res = cmpfit(λ, Inorm, σnorm, (x, p) -> Util.fit_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
         cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, cube_fitter.n_acomp_voff_tied, cube_fitter.acomp_voff_tied_key,
-        cube_fitter.line_acomp_tied, acomp_prof_ln, λ0_ln, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing), p₁, 
+        cube_fitter.line_acomp_tied, acomp_prof_ln, λ0_ln, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, ext_curve), p₁, 
         parinfo=parinfo, config=config)
 
     # Get the results
@@ -2370,13 +2427,12 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     I_model, comps = Util.fit_line_residuals(λ, popt, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
         cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, cube_fitter.n_acomp_voff_tied,
         cube_fitter.acomp_voff_tied_key, cube_fitter.line_acomp_tied, acomp_prof_ln, λ0_ln, 
-        cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, true)
+        cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, ext_curve, true)
     
     # Renormalize
     I_model = I_model .* N
     for comp ∈ keys(comps)
-        # Also divide out the extinction curve from the line profiles to get the intrinsic fluxes
-        comps[comp] = comps[comp] .* N ./ ext_curve
+        comps[comp] = comps[comp] .* N
     end
 
     if init
@@ -2384,37 +2440,6 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
         # Save results to file
         open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_line.csv"), "w") do f
             writedlm(f, cube_fitter.p_init_line, ',')
-        end
-    end
-
-    # Loop through and divide out the extinction factors from the amplitudes
-    pᵢ = 1 + cube_fitter.n_voff_tied + cube_fitter.n_acomp_voff_tied
-    pᵢ += cube_fitter.tie_voigt_mixing ? 1 : 0
-    for (k, ln) ∈ enumerate(cube_fitter.lines)
-        center = argmax(comps["line_$k"])
-        popt[pᵢ] /= ext_curve[center]
-        perr[pᵢ] /= ext_curve[center]
-        if prof_ln[k] == :GaussHermite
-            pᵢ += 2
-        elseif prof_ln[k] == :Voigt && !cube_fitter.tie_voigt_mixing
-            pᵢ += 1
-        end
-        if isnothing(cube_fitter.line_tied[k]) || cube_fitter.flexible_wavesol
-            pᵢ += 3
-        else
-            pᵢ += 2
-        end
-        if !isnothing(acomp_prof_ln[k])
-            if acomp_prof_ln[k] == :GaussHermite
-                pᵢ += 2
-            elseif acomp_prof_ln[k] == :Voigt && !cube_fitter.tie_voigt_mixing
-                pᵢ += 1
-            end
-            if isnothing(cube_fitter.line_acomp_tied[k])
-                pᵢ += 3
-            else
-                pᵢ += 2
-            end
         end
     end
 
@@ -3315,6 +3340,12 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
             param_errs.dust_continuum[i][:temp][index] = out_errs[index, pᵢ+1]
             pᵢ += 2
         end
+        # Extinction parameters
+        param_maps.extinction[:tau_9_7][index] = out_params[index, pᵢ]
+        param_errs.extinction[:tau_9_7][index] = out_errs[index, pᵢ]
+        param_maps.extinction[:beta][index] = out_params[index, pᵢ+1]
+        param_errs.extinction[:beta][index] = out_errs[index, pᵢ+1]
+        pᵢ += 2
         # Dust feature log(amplitude), mean, FWHM
         for df ∈ cube_fitter.df_names
             param_maps.dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ])-17 : -Inf
@@ -3325,16 +3356,10 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
             param_errs.dust_features[df][:fwhm][index] = out_errs[index, pᵢ+2]
             pᵢ += 3
         end
-        # Extinction parameters
-        param_maps.extinction[:tau_9_7][index] = out_params[index, pᵢ]
-        param_errs.extinction[:tau_9_7][index] = out_errs[index, pᵢ]
-        param_maps.extinction[:beta][index] = out_params[index, pᵢ+1]
-        param_errs.extinction[:beta][index] = out_errs[index, pᵢ+1]
-        pᵢ += 2
 
         # End of continuum parameters: recreate the continuum model
-        I_cont, comps_c = Util.fit_spectrum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], cube_fitter.n_dust_cont, cube_fitter.n_dust_feat,
-            cube_fitter.extinction_curve, cube_fitter.extinction_screen, true)
+        I_cont, comps_c = Util.fit_full_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], cube_fitter.n_dust_cont, cube_fitter.n_dust_feat,
+            cube_fitter.extinction_curve, cube_fitter.extinction_screen)
 
         # Tied line velocity offsets
         vᵢ = pᵢ
@@ -3503,19 +3528,19 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
         I_line, comps_l = Util.fit_line_residuals(cube_fitter.cube.λ, out_params[index, vᵢ:pᵢ-1], cube_fitter.n_lines, cube_fitter.n_voff_tied,
             cube_fitter.voff_tied_key, cube_fitter.line_tied, cube_fitter.line_profiles, cube_fitter.n_acomp_voff_tied, cube_fitter.acomp_voff_tied_key,
             cube_fitter.line_acomp_tied, cube_fitter.line_acomp_profiles, [ln.λ₀ for ln ∈ cube_fitter.lines], 
-            cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, true)
+            cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, comps_c["extinction"], true)
 
         # Renormalize
         N = Float64(abs(nanmaximum(cube_fitter.cube.Iν[index, :])))
         N = N ≠ 0. ? N : 1.
         for comp ∈ keys(comps_l)
-            # (dont include extinction correction here since it's already included in the amplitudes in out_params)
+            # (dont include extinction correction here since it's already included in the fitted line amplitudes)
             comps_l[comp] .*= N
         end
         I_line .*= N
         
-        # Combine the continuum and line models (here extinction is needed in the line model to create the final extincted model)
-        I_model = I_cont .+ I_line .* comps_c["extinction"]
+        # Combine the continuum and line models, which both have the extinction profile already applied to them 
+        I_model = I_cont .+ I_line
         comps = merge(comps_c, comps_l)
 
         # Dust feature intensity, EQW, and SNR, from calculate_extra_parameters
