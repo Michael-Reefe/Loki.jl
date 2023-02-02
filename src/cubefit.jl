@@ -1748,7 +1748,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
     # Dust feature amplitude, mean, fwhm
     for i ∈ 1:cube_fitter.n_dust_feat
         parinfo[pᵢ].limited = (1,1)
-        parinfo[pᵢ].limits = (0., nanmaximum(I) / exp(-p₀[end-1]))
+        parinfo[pᵢ].limits = (0., clamp(nanmaximum(I) / exp(-p₀[end-1]), 1., Inf))
         parinfo[pᵢ+1].fixed = mean_df[i].locked
         if !(mean_df[i].locked)
             parinfo[pᵢ+1].limited = (1,1)
@@ -3623,54 +3623,39 @@ Plotting function for 2D parameter maps which are output by `fit_cube!`
 """
 function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String, Ω::Float64, z::Float64, 
     cosmo::Cosmology.AbstractCosmology, python_wcs::PyObject; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, 
-    snr_thresh::Float64=1., cmap::Symbol=:cubehelix)
+    snr_thresh::Float64=3., cmap::Symbol=:cubehelix)
 
     # I know this is ugly but I couldn't figure out a better way to do it lmao
     if occursin("amp", String(name_i))
         bunit = L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$"
-        small = 0.5
     elseif occursin("temp", String(name_i))
         bunit = L"$T$ (K)"
-        small = 5
     elseif occursin("fwhm", String(name_i)) && occursin("PAH", String(name_i))
         bunit = L"FWHM ($\mu$m)"
-        small = 0.01
     elseif occursin("fwhm", String(name_i)) && !occursin("PAH", String(name_i))
         bunit = L"FWHM (km s$^{-1}$)"
-        small = 10
     elseif occursin("mean", String(name_i))
         bunit = L"$\mu$ ($\mu$m)"
-        small = 0.01
     elseif occursin("voff", String(name_i))
         bunit = L"$v_{\rm off}$ (km s$^{-1}$)"
-        small = 10
     elseif occursin("SNR", String(name_i))
         bunit = L"$S/N$"
-        small = 1
     elseif occursin("tau", String(name_i))
         bunit = L"$\tau_{9.7}$"
-        small = 0
     elseif occursin("intI", String(name_i))
         bunit = L"$\log_{10}(I /$ erg s$^{-1}$ cm$^{-2}$ sr$^{-1}$)"
-        small = 0.5
     elseif occursin("eqw", String(name_i))
         bunit = L"$W_{\rm eq}$ ($\mu$m)"
-        small = 0.01
     elseif occursin("chi2", String(name_i))
         bunit = L"$\tilde{\chi}^2$"
-        small = 0.1
     elseif occursin("h3", String(name_i))
         bunit = L"$h_3$"
-        small = 0.01
     elseif occursin("h4", String(name_i))
         bunit = L"$h_4$"
-        small = 0.01
     elseif occursin("mixing", String(name_i))
         bunit = L"$\eta$"
-        small = 0
     elseif occursin("beta", String(name_i))
         bunit = L"$\beta$"
-        small = 0
     end
 
     @debug "Plotting 2D map of $name_i with units $bunit"
@@ -3680,14 +3665,35 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
         filtered[snr_filter .≤ snr_thresh] .= NaN
         @debug "Performing SNR filtering, $(sum(isfinite.(filtered)))/$(length(filtered)) passed"
     end
+    # filter out insane/unphysical equivalent widths (due to ~0 continuum level)
+    if occursin("eqw", String(name_i))
+        filtered[filtered .> 100] .= NaN
+    end
 
     fig = plt.figure()
     ax = fig.add_subplot(111, projection=python_wcs)
     # Need to filter out any NaNs in order to use quantile
     flatdata = filtered[isfinite.(filtered)]
-    upper_quant = occursin("eqw", String(name_i)) ? 0.95 : 0.99
-    vmin = length(flatdata) > 0 ? quantile(flatdata, 0.01) - small : 0.0
-    vmax = length(flatdata) > 0 ? quantile(flatdata, upper_quant) + small : 0.0
+    vmin = length(flatdata) > 0 ? quantile(flatdata, 0.01) : 0.0
+    vmax = length(flatdata) > 0 ? quantile(flatdata, 0.99) : 0.0
+    # override vmin/vmax for mixing parameter
+    if occursin("mixing", String(name_i))
+        vmin = 0.
+        vmax = 1.
+    end
+    # if taking a voff, make sure vmin/vmax are symmetric and change the colormap to coolwarm
+    if occursin("voff", String(name_i))
+        vabs = max(abs(vmin), abs(vmax))
+        vmin = -vabs
+        vmax = vabs
+        if cmap == :cubehelix
+            cmap = :coolwarm
+        end
+    end
+    # default cmap is magma for FWHMs and equivalent widths
+    if (occursin("fwhm", String(name_i)) || occursin("eqw", String(name_i))) && cmap == :cubehelix
+        cmap = :magma
+    end
     cdata = ax.imshow(filtered', origin=:lower, cmap=cmap, vmin=vmin, vmax=vmax)
     # ax.axis(:off)
     ax.tick_params(which="both", axis="both", direction="in")
@@ -3766,7 +3772,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
             data = param_maps.dust_features[df][parameter]
             name_i = join(["dust_features", df, parameter], "_")
             plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
-                cube_fitter.python_wcs, snr_filter=!(parameter in (:SNR, :amp)) ? snr : nothing, snr_thresh=snr_thresh)
+                cube_fitter.python_wcs, snr_filter=parameter !== :SNR ? snr : nothing, snr_thresh=snr_thresh)
         end
     end
 
@@ -3809,7 +3815,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
             data = param_maps.lines[line][parameter]
             name_i = join(["lines", line, parameter], "_")
             plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
-                cube_fitter.python_wcs, snr_filter=!(parameter in (:SNR, :amp)) ? snr : nothing, snr_thresh=snr_thresh)
+                cube_fitter.python_wcs, snr_filter=parameter !== :SNR ? snr : nothing, snr_thresh=snr_thresh)
         end
     end
 

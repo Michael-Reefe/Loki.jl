@@ -1141,6 +1141,8 @@ end
 
 Evaluate a pseudo-Voigt profile at `x`, parametrized by the amplitude `A`, mean value `μ`,
 full-width at half-maximum `FWHM`, and mixing ratio `η`
+
+https://docs.mantidproject.org/nightly/fitting/fitfunctions/PseudoVoigt.html
 """
 function Voigt(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::AbstractFloat, 
     η::AbstractFloat)::AbstractFloat

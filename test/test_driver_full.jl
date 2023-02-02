@@ -29,17 +29,23 @@ channel = 3
 #                  "data/Level3_ch4-shortmediumlong_s3d.fits"],
 #                  0.016317)
 
-obs = from_fits(["data/NGC_6552_Level3_ch1-shortmediumlong_s3d.fits",
-                 "data/NGC_6552_Level3_ch2-shortmediumlong_s3d.fits",
-                 "data/NGC_6552_Level3_ch3-shortmediumlong_s3d.fits",
-                 "data/NGC_6552_Level3_ch4-shortmediumlong_s3d.fits"],
-                 0.0266)
+# obs = from_fits(["data/NGC_6552_Level3_ch1-shortmediumlong_s3d.fits",
+#                  "data/NGC_6552_Level3_ch2-shortmediumlong_s3d.fits",
+#                  "data/NGC_6552_Level3_ch3-shortmediumlong_s3d.fits",
+#                  "data/NGC_6552_Level3_ch4-shortmediumlong_s3d.fits"],
+#                  0.0266)
 
 # obs = from_fits(["data/VV_114E_Level3_ch1-shortmediumlong_s3d.fits",
 #                  "data/VV_114E_Level3_ch2-shortmediumlong_s3d.fits",
 #                  "data/VV_114E_Level3_ch3-shortmediumlong_s3d.fits",
 #                  "data/VV_114E_Level3_ch4-shortmediumlong_s3d.fits"],
 #                  0.02007)
+
+obs = from_fits(["data/NGC_7319_Level3_ch1-shortmediumlong_s3d.fits",
+                 "data/NGC_7319_Level3_ch2-shortmediumlong_s3d.fits",
+                 "data/NGC_7319_Level3_ch3-shortmediumlong_s3d.fits",
+                 "data/NGC_7319_Level3_ch4-shortmediumlong_s3d.fits"],
+                 0.022)
 
 obs = correct(obs)
 
