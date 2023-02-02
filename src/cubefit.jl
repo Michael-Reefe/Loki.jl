@@ -2772,7 +2772,7 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
     p_dust_err = zeros(3cube_fitter.n_dust_feat)
     pₒ = 1
     # Initial parameter vector index where dust profiles start
-    pᵢ = 3 + 2cube_fitter.n_dust_cont
+    pᵢ = 3 + 2cube_fitter.n_dust_cont + 2
 
     for (ii, df) ∈ enumerate(cube_fitter.dust_features)
 
