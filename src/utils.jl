@@ -625,9 +625,11 @@ function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloa
     pᵢ += 2
 
     # Add Smith+2006 PAH templates
-    comps["pah_temp_3"] = params[pᵢ] .* Smith3_interp.(λ)
+    pah3 = Smith3_interp.(λ)
+    comps["pah_temp_3"] = params[pᵢ] .* pah3 / maximum(pah3)
     contin .+= comps["pah_temp_3"]
-    comps["pah_temp_4"] = params[pᵢ+1] .* Smith4_interp.(λ)
+    pah4 = Smith4_interp.(λ)
+    comps["pah_temp_4"] = params[pᵢ+1] .* pah4 / maximum(pah4)
     contin .+= comps["pah_temp_4"]
     pᵢ += 2
 
@@ -673,8 +675,10 @@ function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloa
     pᵢ += 2
 
     # Add Smith+2006 PAH templates
-    contin .+= params[pᵢ] .* Smith3_interp.(λ)
-    contin .+= params[pᵢ+1] .* Smith4_interp.(λ)
+    pah3 = Smith3_interp.(λ)
+    contin .+= params[pᵢ] .* pah3 / maximum(pah3)
+    pah4 = Smith4_interp.(λ)
+    contin .+= params[pᵢ+1] .* pah4 / maximum(pah4)
     pᵢ += 2
 
     contin .*= ext

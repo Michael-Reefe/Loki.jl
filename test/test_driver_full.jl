@@ -15,7 +15,7 @@ end
 # n_procs = 1
 
 to = TimerOutput()
-channel = 3
+channel = 2
 # Load in data
 # obs = from_fits(["data/jw01328-o015_t014_miri_ch1-mediumshortlong-_s3d.fits", 
 #     "data/jw01328-o015_t014_miri_ch2-mediumshortlong-_s3d.fits", 
@@ -23,11 +23,11 @@ channel = 3
 #     "data/jw01328-o015_t014_miri_ch4-mediumshortlong-_s3d.fits"], 
 #     0.016317)
 
-# obs = from_fits(["data/Level3_ch1-shortmediumlong_s3d.fits",
-#                  "data/Level3_ch2-shortmediumlong_s3d.fits",
-#                  "data/Level3_ch3-shortmediumlong_s3d.fits",
-#                  "data/Level3_ch4-shortmediumlong_s3d.fits"],
-#                  0.016317)
+obs = from_fits(["data/Level3_ch1-shortmediumlong_s3d.fits",
+                 "data/Level3_ch2-shortmediumlong_s3d.fits",
+                 "data/Level3_ch3-shortmediumlong_s3d.fits",
+                 "data/Level3_ch4-shortmediumlong_s3d.fits"],
+                 0.016317)
 
 # obs = from_fits(["data/NGC_6552_Level3_ch1-shortmediumlong_s3d.fits",
 #                  "data/NGC_6552_Level3_ch2-shortmediumlong_s3d.fits",
@@ -41,11 +41,11 @@ channel = 3
 #                  "data/VV_114E_Level3_ch4-shortmediumlong_s3d.fits"],
 #                  0.02007)
 
-obs = from_fits(["data/NGC_7319_Level3_ch1-shortmediumlong_s3d.fits",
-                 "data/NGC_7319_Level3_ch2-shortmediumlong_s3d.fits",
-                 "data/NGC_7319_Level3_ch3-shortmediumlong_s3d.fits",
-                 "data/NGC_7319_Level3_ch4-shortmediumlong_s3d.fits"],
-                 0.022)
+# obs = from_fits(["data/NGC_7319_Level3_ch1-shortmediumlong_s3d.fits",
+#                  "data/NGC_7319_Level3_ch2-shortmediumlong_s3d.fits",
+#                  "data/NGC_7319_Level3_ch3-shortmediumlong_s3d.fits",
+#                  "data/NGC_7319_Level3_ch4-shortmediumlong_s3d.fits"],
+#                  0.022)
 
 obs = correct(obs)
 
@@ -56,7 +56,7 @@ obs = correct(obs)
 # cube_rebin!(obs; out_grid=1)
 
 # Create the cube fitting object
-cube_fitter = CubeFitter(obs.channels[channel], obs.z, τ_guess, obs.name * "_ch$(channel)_nofringe", n_procs; 
+cube_fitter = CubeFitter(obs.channels[channel], obs.z, τ_guess, obs.name * "_ch$(channel)_splitcont", n_procs; 
     parallel=true, plot_spaxels=:pyplot, plot_maps=true, save_fits=true)
 
 # Perform the Levenberg-Marquardt least-squares fitting

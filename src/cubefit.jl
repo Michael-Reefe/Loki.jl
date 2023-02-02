@@ -1381,7 +1381,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
 
         # Prepare initial best fit parameter options
         @debug "Preparing initial best fit parameter vectors with $(n_params_cont-2n_dust_features) and $(n_params_lines-2n_lines) parameters"
-        p_init_cont = zeros(n_params_cont-3n_dust_features)
+        p_init_cont = zeros(n_params_cont-3n_dust_features+2)
         p_init_line = zeros(n_params_lines-3n_lines)
 
         # If a fit has been run previously, read in the file containing the rolling best fit parameters
@@ -1650,7 +1650,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
         @debug "Using initial best fit continuum parameters..."
 
         # Set the parameters to the best parameters
-        p₀ = copy(cube_fitter.p_init_cont)
+        p₀ = copy(cube_fitter.p_init_cont)[1:end-2]
+        pah_frac = copy(cube_fitter.p_init_cont)[end-1:end]
 
         # pull out optical depth that was pre-fit
         τ_97_0 = cube_fitter.τ_guess[parse(Int, cube_fitter.cube.channel)][spaxel]
@@ -1659,6 +1660,9 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
         # (should be close to 1 since the sum is already normalized by the number of spaxels included anyways)
         scale = max(nanmedian(I), 1e-10) / nanmedian(Util.Σ(cube_fitter.cube.Iν, (1,2)) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2)))
         max_amp = nanmaximum(I)
+
+        # PAH template strengths
+        pah_frac .*= scale
         
         # Stellar amplitude
         p₀[1] *= scale
@@ -1686,6 +1690,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
     else
 
         @debug "Calculating initial starting points..."
+        pah_frac = repeat([clamp(nanmedian(I)/2, 0., Inf)], 2)
 
         # Stellar amplitude
         A_s = clamp(_interp_func(5.5, λ, I) / Util.Blackbody_ν(5.5, cube_fitter.T_s.value), 0., Inf)
@@ -1718,7 +1723,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
     # Split up the parameter vector into the components that we need for each fitting step
 
     # Step 1: Stellar + Dust blackbodies, 2 new amplitudes for the PAH templates, and the extinction parameters
-    pars_1 = vcat(p₀[1:(2+2*cube_fitter.n_dust_cont+2)], repeat([clamp(nanmedian(I)/2, 0., Inf)], 2))
+    pars_1 = vcat(p₀[1:(2+2*cube_fitter.n_dust_cont+2)], pah_frac)
     # Step 2: The PAH profile amplitudes, centers, and FWHMs
     pars_2 = p₀[(3+2*cube_fitter.n_dust_cont+2):end]
 
@@ -1735,10 +1740,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
 
     # Stellar temp
     parinfo_1[2].fixed = cube_fitter.T_s.locked
-    if !(cube_fitter.T_s.locked)
-        parinfo_1[2].limited = (1,1)
-        parinfo_1[2].limits = (minimum(cube_fitter.T_s.prior), maximum(cube_fitter.T_s.prior))
-    end
+    parinfo_1[2].limited = (1,1)
+    parinfo_1[2].limits = (minimum(cube_fitter.T_s.prior), maximum(cube_fitter.T_s.prior))
 
     # Dust cont amplitudes and temps
     p₁ = 3
@@ -1746,30 +1749,26 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
         parinfo_1[p₁].limited = (1,0)
         parinfo_1[p₁].limits = (0., 0.)
         parinfo_1[p₁+1].fixed = cube_fitter.T_dc[i].locked
-        if !(cube_fitter.T_dc[i].locked)
-            parinfo_1[p₁+1].limited = (1,1)
-            parinfo_1[p₁+1].limits = (minimum(cube_fitter.T_dc[i].prior), maximum(cube_fitter.T_dc[i].prior))
-        end
+        parinfo_1[p₁+1].limited = (1,1)
+        parinfo_1[p₁+1].limits = (minimum(cube_fitter.T_dc[i].prior), maximum(cube_fitter.T_dc[i].prior))
         p₁ += 2
     end
 
     # Extinction
-    parinfo_1[p₁].fixed = cube_fitter.τ_97.locked
-    if iszero(parinfo_1[p₁].fixed)
-        parinfo_1[p₁].limited = (1,1)
-        parinfo_1[p₁].limits = (minimum(cube_fitter.τ_97.prior), maximum(cube_fitter.τ_97.prior))
-        # parinfo_1[p₁].limits = (0.0, 10.0)
-    end
+    parinfo_1[p₁].fixed = cube_fitter.τ_97.locked || init
+    parinfo_1[p₁].limited = (1,1)
+    parinfo_1[p₁].limits = (minimum(cube_fitter.τ_97.prior), maximum(cube_fitter.τ_97.prior))
+    # parinfo_1[p₁].limits = (0.0, 10.0)
     parinfo_1[p₁+1].fixed = cube_fitter.β.locked
-    if !(cube_fitter.β.locked)
-        parinfo_1[p₁+1].limited = (1,1)
-        parinfo_1[p₁+1].limits = (minimum(cube_fitter.β.prior), maximum(cube_fitter.β.prior))
-    end
+    parinfo_1[p₁+1].limited = (1,1)
+    parinfo_1[p₁+1].limits = (minimum(cube_fitter.β.prior), maximum(cube_fitter.β.prior))
     p₁ += 2
 
     # PAH template amplitudes
+    # parinfo_1[p₁].fixed = !init
     parinfo_1[p₁].limited = (1,0)
     parinfo_1[p₁].limits = (0., clamp(nanmaximum(I) / exp(-pars_1[end-4]), 1., Inf))
+    parinfo_1[p₁+1].fixed = !init
     parinfo_1[p₁+1].limited = (1,0)
     parinfo_1[p₁+1].limits = (0., clamp(nanmaximum(I) / exp(-pars_1[end-4]), 1., Inf))
 
@@ -1779,15 +1778,11 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
         parinfo_2[p₂].limited = (1,1)
         parinfo_2[p₂].limits = (0., clamp(nanmaximum(I) / exp(-pars_1[end-4]), 1., Inf))
         parinfo_2[p₂+1].fixed = mean_df[i].locked
-        if !(mean_df[i].locked)
-            parinfo_2[p₂+1].limited = (1,1)
-            parinfo_2[p₂+1].limits = (minimum(mean_df[i].prior), maximum(mean_df[i].prior))
-        end
+        parinfo_2[p₂+1].limited = (1,1)
+        parinfo_2[p₂+1].limits = (minimum(mean_df[i].prior), maximum(mean_df[i].prior))
         parinfo_2[p₂+2].fixed = fwhm_df[i].locked
-        if !(fwhm_df[i].locked)
-            parinfo_2[p₂+2].limited = (1,1)
-            parinfo_2[p₂+2].limits = (minimum(fwhm_df[i].prior), maximum(fwhm_df[i].prior))
-        end
+        parinfo_2[p₂+2].limited = (1,1)
+        parinfo_2[p₂+2].limits = (minimum(fwhm_df[i].prior), maximum(fwhm_df[i].prior))
         p₂ += 3
     end
 
@@ -1869,7 +1864,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; i
         cube_fitter.extinction_curve, cube_fitter.extinction_screen)
 
     if init
-        cube_fitter.p_init_cont[:] .= copy(popt)
+        cube_fitter.p_init_cont[:] .= vcat(popt, res_1.param[end-1:end])
+
         # Save the results to a file 
         # save running best fit parameters in case the fitting is interrupted
         open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_cont.csv"), "w") do f
