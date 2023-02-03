@@ -830,6 +830,22 @@ function cube_rebin!(obs::Observation, channels::Union{Vector{S},Nothing}=nothin
         cumsum += wi_size
     end
 
+    # find overlapping regions
+    jumps = findall(diff(λ_out) .< 0.)
+    # rescale each channel so the flux level is continuous
+    for jump ∈ jumps
+        # find the full scale of the overlapping region
+        wave_left, wave_right = λ_out[jump+1], λ_out[jump]
+        _, i1 = findmin(abs.(λ_out[1:jump] .- wave_left))
+        _, i2 = findmin(abs.(λ_out[jump+1:end] .- wave_right))
+        i2 += jump
+        # get the median fluxes from both channels over the full region
+        med_left = dropdims(nanmedian(I_out[:, :, i1:jump], dims=3), dims=3)
+        med_right = dropdims(nanmedian(I_out[:, :, jump+1:i2], dims=3), dims=3)
+        # rescale the flux in the right channel to match the left channel
+        I_out[:, :, jump+1:end] .*= med_left ./ med_right
+    end
+
     # deal with overlapping wavelength data -> sort wavelength vector to be monotonically increasing
     ss = sortperm(λ_out)
     λ_out = λ_out[ss]

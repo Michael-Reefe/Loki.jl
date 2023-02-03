@@ -15,7 +15,7 @@ end
 # n_procs = 1
 
 to = TimerOutput()
-channel = 2
+channel = 0
 # Load in data
 # obs = from_fits(["data/jw01328-o015_t014_miri_ch1-mediumshortlong-_s3d.fits", 
 #     "data/jw01328-o015_t014_miri_ch2-mediumshortlong-_s3d.fits", 
@@ -53,11 +53,11 @@ obs = correct(obs)
 τ_guess = fit_optical_depth(obs)
 
 # rebin channels 2-4 onto channel 1
-# cube_rebin!(obs; out_grid=1)
+cube_rebin!(obs; out_grid=1)
 
 # Create the cube fitting object
 cube_fitter = CubeFitter(obs.channels[channel], obs.z, τ_guess, obs.name * "_ch$(channel)_splitcont", n_procs; 
-    parallel=true, plot_spaxels=:pyplot, plot_maps=true, save_fits=true)
+    parallel=true, plot_spaxels=:both, plot_maps=true, save_fits=true)
 
 # Perform the Levenberg-Marquardt least-squares fitting
 @timeit to "Full Fitting Procedure for Channel $channel" fit_cube!(cube_fitter)

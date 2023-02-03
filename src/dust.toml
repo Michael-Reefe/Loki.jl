@@ -63,7 +63,7 @@ locked = true
 
 [dust_features."PAH_5.24".wave]
 val = 5.24
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_5.24".fwhm]
@@ -73,7 +73,7 @@ locked = false
 
 [dust_features."PAH_5.27".wave]
 val = 5.27
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_5.27".fwhm]
@@ -83,7 +83,7 @@ locked = false
 
 [dust_features."PAH_5.70".wave]
 val = 5.7
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_5.70".fwhm]
@@ -93,7 +93,7 @@ locked = false
 
 [dust_features."PAH_5.87".wave]
 val = 5.87
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_5.87".fwhm]
@@ -103,7 +103,7 @@ locked = false
 
 [dust_features."PAH_6.00".wave]
 val = 6.0
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_6.00".fwhm]
@@ -113,7 +113,7 @@ locked = false
 
 [dust_features."PAH_6.18".wave]
 val = 6.18
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_6.18".fwhm]
@@ -123,7 +123,7 @@ locked = false
 
 [dust_features."PAH_6.30".wave]
 val = 6.3
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_6.30".fwhm]
@@ -133,7 +133,7 @@ locked = false
 
 [dust_features."PAH_6.69".wave]
 val = 6.69
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_6.69".fwhm]
@@ -143,7 +143,7 @@ locked = false
 
 [dust_features."PAH_7.42".wave]
 val = 7.42
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_7.42".fwhm]
@@ -153,7 +153,7 @@ locked = false
 
 [dust_features."PAH_7.52".wave]
 val = 7.52
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_7.52".fwhm]
@@ -163,7 +163,7 @@ locked = false
 
 [dust_features."PAH_7.62".wave]
 val = 7.62
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_7.62".fwhm]
@@ -173,7 +173,7 @@ locked = false
 
 [dust_features."PAH_7.85".wave]
 val = 7.85
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_7.85".fwhm]
@@ -183,7 +183,7 @@ locked = false
 
 [dust_features."PAH_8.33".wave]
 val = 8.33
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_8.33".fwhm]
@@ -193,7 +193,7 @@ locked = false
 
 [dust_features."PAH_8.61".wave]
 val = 8.61
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_8.61".fwhm]
@@ -203,7 +203,7 @@ locked = false
 
 [dust_features."PAH_10.68".wave]
 val = 10.68
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_10.68".fwhm]
@@ -213,7 +213,7 @@ locked = false
 
 [dust_features."PAH_11.00".wave]
 val = 11.0
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_11.00".fwhm]
@@ -223,7 +223,7 @@ locked = false
 
 [dust_features."PAH_11.15".wave]
 val = 11.15
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_11.15".fwhm]
@@ -233,7 +233,7 @@ locked = false
 
 [dust_features."PAH_11.20".wave]
 val = 11.2
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_11.20".fwhm]
@@ -243,7 +243,7 @@ locked = false
 
 [dust_features."PAH_11.22".wave]
 val = 11.22
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_11.22".fwhm]
@@ -253,7 +253,7 @@ locked = false
 
 [dust_features."PAH_11.25".wave]
 val = 11.25
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_11.25".fwhm]
@@ -263,7 +263,7 @@ locked = false
 
 [dust_features."PAH_11.33".wave]
 val = 11.33
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_11.33".fwhm]
@@ -273,7 +273,7 @@ locked = false
 
 [dust_features."PAH_11.99".wave]
 val = 11.99
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_11.99".fwhm]
@@ -283,7 +283,7 @@ locked = false
 
 [dust_features."PAH_12.62".wave]
 val = 12.62
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_12.62".fwhm]
@@ -293,7 +293,7 @@ locked = false
 
 [dust_features."PAH_12.69".wave]
 val = 12.69
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_12.69".fwhm]
@@ -303,7 +303,7 @@ locked = false
 
 [dust_features."PAH_13.48".wave]
 val = 13.48
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_13.48".fwhm]
@@ -313,7 +313,7 @@ locked = false
 
 [dust_features."PAH_14.04".wave]
 val = 14.04
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_14.04".fwhm]
@@ -323,7 +323,7 @@ locked = false
 
 [dust_features."PAH_14.19".wave]
 val = 14.19
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_14.19".fwhm]
@@ -333,7 +333,7 @@ locked = false
 
 [dust_features."PAH_14.65".wave]
 val = 14.65
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_14.65".fwhm]
@@ -343,7 +343,7 @@ locked = false
 
 [dust_features."PAH_15.90".wave]
 val = 15.9
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_15.90".fwhm]
@@ -353,7 +353,7 @@ locked = false
 
 [dust_features."PAH_16.45".wave]
 val = 16.45
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_16.45".fwhm]
@@ -363,7 +363,7 @@ locked = false
 
 [dust_features."PAH_17.04".wave]
 val = 17.04
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_17.04".fwhm]
@@ -373,7 +373,7 @@ locked = false
 
 [dust_features."PAH_17.375".wave]
 val = 17.375
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_17.375".fwhm]
@@ -383,7 +383,7 @@ locked = false
 
 [dust_features."PAH_17.87".wave]
 val = 17.87
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_17.87".fwhm]
@@ -393,7 +393,7 @@ locked = false
 
 [dust_features."PAH_18.92".wave]
 val = 18.92
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_18.92".fwhm]
@@ -403,7 +403,7 @@ locked = false
 
 [dust_features."PAH_33.10".wave]
 val = 33.1
-plim = [-0.05, 0.05]
+plim = [-0.1, 0.1]
 locked = false
 
 [dust_features."PAH_33.10".fwhm]
