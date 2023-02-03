@@ -1877,19 +1877,19 @@ end
 
 
 """
-    _negln_probability(p, λ, Inorm, σnorm, cube_fitter, λ0_ln, priors)
+    _negln_probability(p, λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors)
 
 Internal helper function to calculate the negative of the log of the probability,
 for the line residual fitting.
 
 ln(probability) = ln(likelihood) + ln(prior)
 """
-function _negln_probability(p, λ, Inorm, σnorm, cube_fitter, λ0_ln, priors)
+function _negln_probability(p, λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors)
     # First compute the model
     model = Util.fit_line_residuals(λ, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
         cube_fitter.voff_tied_key, cube_fitter.line_tied, cube_fitter.line_profiles, cube_fitter.n_acomp_voff_tied,
         cube_fitter.acomp_voff_tied_key, cube_fitter.line_acomp_tied, cube_fitter.line_acomp_profiles, 
-        λ0_ln, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing)
+        λ0_ln, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, ext_curve)
     # Add the log of the likelihood (based on the model) and the prior distribution functions
     lnP = Util.ln_likelihood(Inorm, model, σnorm) + _ln_prior(p, priors)
     # return the NEGATIVE log of the probability
@@ -2144,29 +2144,42 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     # these are a bit loose since we're mainly just looking to get into the right global minimum region with SAMIN
     # before refining the fit later with a LevMar local minimum routine
     x_tol = 1e-5
-    f_tol = 0.01abs(_negln_probability(p₀, λ, Inorm, σnorm, cube_fitter, λ0_ln, priors) - 
-                _negln_probability(clamp.(p₀ .- x_tol, lower_bounds, upper_bounds), λ, Inorm, σnorm, cube_fitter, λ0_ln, priors))
+    f_tol = 0.01abs(_negln_probability(p₀, λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors) - 
+                _negln_probability(clamp.(p₀ .- x_tol, lower_bounds, upper_bounds), λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors))
+    
+    # Window around emission lines to make fitting more efficient
+    line_mask = falses(length(λ))
+    for (i, ln) ∈ enumerate(cube_fitter.lines)
+        window_size = (maximum(voff_ln[i].prior) + 5maximum(fwhm_ln[i].prior)) / Util.C_KMS * ln.λ₀
+        window = (ln.λ₀ - window_size) .< λ .< (ln.λ₀ + window_size)
+        line_mask .|= window
+    end
+    # Apply the mask to all relevant vectors
+    λ_masked = λ[line_mask]
+    I_masked = Inorm[line_mask]
+    σ_masked = σnorm[line_mask]
+    ext_masked = ext_curve[line_mask]
 
-    # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
-    res = optimize(p -> _negln_probability(p, λ, Inorm, σnorm, cube_fitter, λ0_ln, priors), lower_bounds, upper_bounds, p₀, 
-       SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), 
-       Optim.Options(iterations=10^6))
-    p₁ = res.minimizer
+    # # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
+    # res = optimize(p -> _negln_probability(p, λ_masked, I_masked, σ_masked, cube_fitter, λ0_ln, ext_masked, priors), lower_bounds, upper_bounds, p₀, 
+    #    SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
+    # p₁ = res.minimizer
+    p₁ = p₀
 
     # Write convergence results to file, if specified
-    if cube_fitter.track_convergence
-        global file_lock
-        # use the ReentrantLock to prevent multiple processes from trying to write to the same file at once
-        lock(file_lock) do 
-            open(joinpath("output_$(cube_fitter.name)", "loki.convergence.log"), "a") do conv
-                redirect_stdout(conv) do
-                    println("Spaxel ($(spaxel[1]),$(spaxel[2])) on worker $(myid()):")
-                    println(res)
-                    println("-------------------------------------------------------")
-                end
-            end
-        end
-    end
+    # if cube_fitter.track_convergence
+    #     global file_lock
+    #     # use the ReentrantLock to prevent multiple processes from trying to write to the same file at once
+    #     lock(file_lock) do 
+    #         open(joinpath("output_$(cube_fitter.name)", "loki.convergence.log"), "a") do conv
+    #             redirect_stdout(conv) do
+    #                 println("Spaxel ($(spaxel[1]),$(spaxel[2])) on worker $(myid()):")
+    #                 println(res)
+    #                 println("-------------------------------------------------------")
+    #             end
+    #         end
+    #     end
+    # end
 
     @debug "Refining Line best fit with Levenberg-Marquardt:"
 
@@ -2344,7 +2357,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     # Same procedure as with the continuum fit
     res = cmpfit(λ, Inorm, σnorm, (x, p) -> Util.fit_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
         cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, cube_fitter.n_acomp_voff_tied, cube_fitter.acomp_voff_tied_key,
-        cube_fitter.line_acomp_tied, acomp_prof_ln, λ0_ln, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing), p₁, 
+        cube_fitter.line_acomp_tied, acomp_prof_ln, λ0_ln, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, ext_curve), p₁, 
         parinfo=parinfo, config=config)
 
     # Get the results
@@ -2370,13 +2383,13 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     I_model, comps = Util.fit_line_residuals(λ, popt, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
         cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, cube_fitter.n_acomp_voff_tied,
         cube_fitter.acomp_voff_tied_key, cube_fitter.line_acomp_tied, acomp_prof_ln, λ0_ln, 
-        cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, true)
+        cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, ext_curve, true)
     
     # Renormalize
     I_model = I_model .* N
     for comp ∈ keys(comps)
         # Also divide out the extinction curve from the line profiles to get the intrinsic fluxes
-        comps[comp] = comps[comp] .* N ./ ext_curve
+        comps[comp] = comps[comp] .* N
     end
 
     if init
@@ -2384,37 +2397,6 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
         # Save results to file
         open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_line.csv"), "w") do f
             writedlm(f, cube_fitter.p_init_line, ',')
-        end
-    end
-
-    # Loop through and divide out the extinction factors from the amplitudes
-    pᵢ = 1 + cube_fitter.n_voff_tied + cube_fitter.n_acomp_voff_tied
-    pᵢ += cube_fitter.tie_voigt_mixing ? 1 : 0
-    for (k, ln) ∈ enumerate(cube_fitter.lines)
-        center = argmax(comps["line_$k"])
-        popt[pᵢ] /= ext_curve[center]
-        perr[pᵢ] /= ext_curve[center]
-        if prof_ln[k] == :GaussHermite
-            pᵢ += 2
-        elseif prof_ln[k] == :Voigt && !cube_fitter.tie_voigt_mixing
-            pᵢ += 1
-        end
-        if isnothing(cube_fitter.line_tied[k]) || cube_fitter.flexible_wavesol
-            pᵢ += 3
-        else
-            pᵢ += 2
-        end
-        if !isnothing(acomp_prof_ln[k])
-            if acomp_prof_ln[k] == :GaussHermite
-                pᵢ += 2
-            elseif acomp_prof_ln[k] == :Voigt && !cube_fitter.tie_voigt_mixing
-                pᵢ += 1
-            end
-            if isnothing(cube_fitter.line_acomp_tied[k])
-                pᵢ += 3
-            else
-                pᵢ += 2
-            end
         end
     end
 
@@ -2627,12 +2609,12 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
         ax1 = fig.add_subplot(py"$(gs)[:-1, :]")
         # ax2 is the residuals plot
         ax2 = fig.add_subplot(py"$(gs)[-1, :]")
-        ax1.plot(λ, I ./ norm, "k-", label="Data")
-        ax1.plot(λ, I_cont ./ norm, "r-", label="Model")
-        ax2.plot(λ, (I.-I_cont) ./ norm, "k-")
+        ax1.plot(λ, I ./ norm ./ λ, "k-", label="Data")
+        ax1.plot(λ, I_cont ./ norm ./ λ, "r-", label="Model")
+        ax2.plot(λ, (I.-I_cont) ./ norm ./ λ, "k-")
         χ2_str = @sprintf "%.3f" χ2red
         ax2.plot(λ, zeros(length(λ)), "r-", label=L"$\tilde{\chi}^2 = %$χ2_str$")
-        ax2.fill_between(λ, (I.-I_cont.+σ)./norm, (I.-I_cont.-σ)./norm, color="k", alpha=0.5)
+        ax2.fill_between(λ, (I.-I_cont.+σ)./norm./λ, (I.-I_cont.-σ)./norm./λ, color="k", alpha=0.5)
         # twin axes with different labels --> extinction for ax3 and observed wavelength for ax4
         ax3 = ax1.twinx()
         ax4 = ax1.twiny()
@@ -2641,16 +2623,16 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
             if comp == "extinction"
                 ax3.plot(λ, comps[comp], "k--", alpha=0.5)
             elseif comp == "stellar"
-                ax1.plot(λ, comps[comp] .* comps["extinction"] ./ norm, "r--", alpha=0.5)
+                ax1.plot(λ, comps[comp] .* comps["extinction"] ./ norm ./ λ, "r--", alpha=0.5)
             elseif occursin("dust_cont", comp)
-                ax1.plot(λ, comps[comp] .* comps["extinction"] ./ norm, "g--", alpha=0.5)
+                ax1.plot(λ, comps[comp] .* comps["extinction"] ./ norm ./ λ, "g--", alpha=0.5)
             elseif occursin("dust_feat", comp)
-                ax1.plot(λ, comps[comp] .* comps["extinction"] ./ norm, "b-", alpha=0.5)
+                ax1.plot(λ, comps[comp] .* comps["extinction"] ./ norm ./ λ, "b-", alpha=0.5)
             elseif occursin("line", comp)
                 if occursin("acomp", comp)
-                    ax1.plot(λ, comps[comp] .* comps["extinction"] ./ norm, "-", color="#F574F9", alpha=0.5)
+                    ax1.plot(λ, comps[comp] .* comps["extinction"] ./ norm ./ λ, "-", color="#F574F9", alpha=0.5)
                 else
-                    ax1.plot(λ, comps[comp] .* comps["extinction"] ./ norm, "-", color=:rebeccapurple, alpha=0.5)
+                    ax1.plot(λ, comps[comp] .* comps["extinction"] ./ norm ./ λ, "-", color=:rebeccapurple, alpha=0.5)
                 end
             end
         end
@@ -2665,11 +2647,11 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
         end
 
         # full continuum
-        ax1.plot(λ, comps["extinction"] .* (sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] .+ comps["stellar"]) ./ norm, "g-")
+        ax1.plot(λ, comps["extinction"] .* (sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] .+ comps["stellar"]) ./ norm ./ λ, "g-")
         # set axes limits and labels
         ax1.set_xlim(minimum(λ), maximum(λ))
         ax2.set_xlim(minimum(λ), maximum(λ))
-        ax2.set_ylim(-1.1maximum((I.-I_cont) ./ norm), 1.1maximum((I.-I_cont) ./ norm))
+        ax2.set_ylim(-1.1maximum((I.-I_cont) ./ norm ./ λ), 1.1maximum((I.-I_cont) ./ norm ./ λ))
         ax3.set_ylim(0., 1.1)
         if screen
             ax3.set_ylabel(L"$e^{-\tau_{\lambda}}$")
@@ -2678,9 +2660,9 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
         end
         ax4.set_xlim(minimum(Util.observed_frame(λ, z)), maximum(Util.observed_frame(λ, z)))
         if power ≥ 4
-            ax1.set_ylabel(L"$I_{\nu}$ ($10^{%$power}$ MJy sr$^{-1}$)")
+            ax1.set_ylabel(L"$I_{\nu}/\lambda$ ($10^{%$power}$ MJy sr$^{-1}$ $\mu$m$^{-1}$)")
         else
-            ax1.set_ylabel(L"$I_{\nu}$ (MJy sr$^{-1}$)")
+            ax1.set_ylabel(L"$I_{\nu}/\lambda$ (MJy sr$^{-1}$ $\mu$m$^{-1}$)")
         end
         ax1.set_ylim(bottom=0.)
         ax2.set_ylabel(L"$O-C$")  # ---> residuals, (O)bserved - (C)alculated
@@ -2698,7 +2680,7 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
 
         # Set major ticks and formats
         ax1.set_xticklabels([]) # ---> will be covered up by the residuals plot
-        ax2.set_yticks([-round(maximum((I.-I_cont) ./ norm) / 2, sigdigits=1), 0.0, round(maximum((I.-I_cont) ./ norm) / 2, sigdigits=1)])
+        ax2.set_yticks([-round(maximum((I.-I_cont) ./ norm ./ λ) / 2, sigdigits=1), 0.0, round(maximum((I.-I_cont) ./ norm ./ λ) / 2, sigdigits=1)])
         ax1.tick_params(which="both", axis="both", direction="in")
         ax2.tick_params(which="both", axis="both", direction="in", labelright=true, right=true, top=true)
         ax3.tick_params(which="both", axis="both", direction="in")
@@ -3503,7 +3485,7 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
         I_line, comps_l = Util.fit_line_residuals(cube_fitter.cube.λ, out_params[index, vᵢ:pᵢ-1], cube_fitter.n_lines, cube_fitter.n_voff_tied,
             cube_fitter.voff_tied_key, cube_fitter.line_tied, cube_fitter.line_profiles, cube_fitter.n_acomp_voff_tied, cube_fitter.acomp_voff_tied_key,
             cube_fitter.line_acomp_tied, cube_fitter.line_acomp_profiles, [ln.λ₀ for ln ∈ cube_fitter.lines], 
-            cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, true)
+            cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, comps_c["extinction"], true)
 
         # Renormalize
         N = Float64(abs(nanmaximum(cube_fitter.cube.Iν[index, :])))
@@ -3515,7 +3497,7 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
         I_line .*= N
         
         # Combine the continuum and line models (here extinction is needed in the line model to create the final extincted model)
-        I_model = I_cont .+ I_line .* comps_c["extinction"]
+        I_model = I_cont .+ I_line
         comps = merge(comps_c, comps_l)
 
         # Dust feature intensity, EQW, and SNR, from calculate_extra_parameters

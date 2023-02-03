@@ -27,7 +27,7 @@ make_movies = false
 # extinction_curve: May be "kvt" for the Kemper, Vriend, & Tielens (2004) 
 # extinction profile, "ct" for the Chiar & Tielens (2005) extinction profile,
 # or "d+" for the Donnan et al. (2022) extinction profile.
-extinction_curve = "ct"
+extinction_curve = "d+"
 
 # extinction_screen: Controls whether extinction is modeled as e^-tau (true) or
 # (1 - e^-tau) / tau (false), following PAHFIT.

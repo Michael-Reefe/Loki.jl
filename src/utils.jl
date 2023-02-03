@@ -660,7 +660,7 @@ end
 """
     fit_line_residuals(λ, params, n_lines, n_voff_tied, voff_tied_key, line_tied, line_profiles,
         n_acomp_voff_tied, acomp_voff_tied_key, line_acomp_tied, line_acomp_profiles, line_restwave,
-        flexible_wavesol, tie_voigt_mixing; return_components=return_components) 
+        flexible_wavesol, tie_voigt_mixing, ext_curve; return_components=return_components) 
 
 Create a model of the emission lines at the given wavelengths `λ`, given the parameter vector `params`.
 
@@ -688,6 +688,7 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `flexible_wavesol::Bool`: Whether or not to allow small variations in tied velocity offsets, to account for a poor
     wavelength solution in the data
 - `tie_voigt_mixing::Bool`: Whether or not to tie the mixing parameters of all Voigt profiles together
+- `ext_curve::Vector{<:AbstractFloat}`: The extinction curve
 - `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
@@ -695,7 +696,7 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
     voff_tied_key::Vector{String}, line_tied::Vector{Union{String,Nothing}}, line_profiles::Vector{Symbol}, 
     n_acomp_voff_tied::Integer, acomp_voff_tied_key::Vector{String}, line_acomp_tied::Vector{Union{String,Nothing}},
     line_acomp_profiles::Vector{Union{Symbol,Nothing}}, line_restwave::Vector{<:AbstractFloat}, 
-    flexible_wavesol::Bool, tie_voigt_mixing::Bool, return_components::Bool)
+    flexible_wavesol::Bool, tie_voigt_mixing::Bool, ext_curve::Vector{<:AbstractFloat}, return_components::Bool)
 
     # Prepare outputs
     comps = Dict{String, Vector{Float64}}()
@@ -877,6 +878,8 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
         end
 
     end
+    # Apply extinction
+    contin .*= ext_curve
 
     # Return components if necessary
     if return_components
@@ -892,7 +895,7 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
     voff_tied_key::Vector{String}, line_tied::Vector{Union{String,Nothing}}, line_profiles::Vector{Symbol}, 
     n_acomp_voff_tied::Integer, acomp_voff_tied_key::Vector{String}, line_acomp_tied::Vector{Union{String,Nothing}},
     line_acomp_profiles::Vector{Union{Symbol,Nothing}}, line_restwave::Vector{<:AbstractFloat}, 
-    flexible_wavesol::Bool, tie_voigt_mixing::Bool)
+    flexible_wavesol::Bool, tie_voigt_mixing::Bool, ext_curve::Vector{<:AbstractFloat})
 
     # Prepare outputs
     contin = zeros(Float64, length(λ))
@@ -1070,6 +1073,9 @@ function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:Abstra
 
     end
 
+    # Apply extinction
+    contin .*= ext_curve
+    
     contin
 
 end
