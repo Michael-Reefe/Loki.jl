@@ -622,18 +622,25 @@ function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloa
         error("Unrecognized extinction curve: $extinction_curve")
     end
     comps["extinction"] = Extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
+    contin .*= comps["extinction"]
     pᵢ += 2
+
+    # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
+    # Ref: Gallimore et al. 2010
+    comps["hot_dust"] = params[pᵢ] .* Blackbody_ν.(λ, params[pᵢ+1])
+    comps["hot_dust"] .*= (1 .- Extinction.(ext_curve, params[pᵢ+3], screen=true))
+    comps["hot_dust"] .*= (1 .- params[pᵢ+2] .* (1 .- Extinction.(ext_curve, params[pᵢ+4], screen=true)))
+    contin .+= comps["hot_dust"]
+    pᵢ += 5
 
     # Add Smith+2006 PAH templates
     pah3 = Smith3_interp.(λ)
     comps["pah_temp_3"] = params[pᵢ] .* pah3 / maximum(pah3)
-    contin .+= comps["pah_temp_3"]
+    contin .+= comps["pah_temp_3"] .* comps["extinction"]
     pah4 = Smith4_interp.(λ)
     comps["pah_temp_4"] = params[pᵢ+1] .* pah4 / maximum(pah4)
-    contin .+= comps["pah_temp_4"]
+    contin .+= comps["pah_temp_4"] .* comps["extinction"]
     pᵢ += 2
-
-    contin .*= comps["extinction"]
 
     # Return components if necessary
     if return_components
@@ -672,16 +679,24 @@ function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloa
         error("Unrecognized extinction curve: $extinction_curve")
     end
     ext = Extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
+    contin .*= ext
     pᵢ += 2
+
+    # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
+    # Ref: Gallimore et al. 2010
+    hot_dust = params[pᵢ] .* Blackbody_ν.(λ, params[pᵢ+1])
+    hot_dust .*= (1 .- Extinction.(ext_curve, params[pᵢ+3], screen=true))
+    hot_dust .*= (1 .- params[pᵢ+2] .* (1 .- Extinction.(ext_curve, params[pᵢ+4], screen=true)))
+    contin .+= hot_dust
+    pᵢ += 5
 
     # Add Smith+2006 PAH templates
     pah3 = Smith3_interp.(λ)
-    contin .+= params[pᵢ] .* pah3 / maximum(pah3)
+    contin .+= params[pᵢ] .* pah3 / maximum(pah3) .* ext
     pah4 = Smith4_interp.(λ)
-    contin .+= params[pᵢ+1] .* pah4 / maximum(pah4)
+    contin .+= params[pᵢ+1] .* pah4 / maximum(pah4) .* ext
     pᵢ += 2
 
-    contin .*= ext
     contin
 
 end
@@ -756,8 +771,8 @@ end
 function fit_full_continuum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_dust_cont::Integer,
     n_dust_feat::Integer, extinction_curve::String, extinction_screen::Bool)
 
-    pars_1 = vcat(params[1:(2+2n_dust_cont+2)], [0., 0.])
-    pars_2 = params[(3+2n_dust_cont+2):end]
+    pars_1 = vcat(params[1:(2+2n_dust_cont+2+5)], [0., 0.])
+    pars_2 = params[(3+2n_dust_cont+2+5):end]
 
     contin_1, ccomps = fit_spectrum(λ, pars_1, n_dust_cont, extinction_curve, extinction_screen, true)
     contin_2, pcomps = fit_pah_residuals(λ, pars_2, n_dust_feat, ccomps["extinction"], true)

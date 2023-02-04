@@ -53,7 +53,7 @@ obs = correct(obs)
 τ_guess = fit_optical_depth(obs)
 
 # rebin channels 2-4 onto channel 1
-cube_rebin!(obs; out_grid=1)
+cube_rebin!(obs, [1,2,3]; out_grid=1)
 
 # Create the cube fitting object
 cube_fitter = CubeFitter(obs.channels[channel], obs.z, τ_guess, obs.name * "_ch$(channel)_splitcont", n_procs; 
