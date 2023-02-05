@@ -2340,7 +2340,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     σ_masked = σnorm[line_mask]
     ext_masked = ext_curve[line_mask]
 
-    First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
+    # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
     res = optimize(p -> _negln_probability(p, λ_masked, I_masked, σ_masked, cube_fitter, λ0_ln, ext_masked, priors), lower_bounds, upper_bounds, p₀, 
        SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
     p₁ = res.minimizer
@@ -2941,11 +2941,15 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
         # Convert the error in the intensity to CGS units
         A_cgs_err = Util.MJysr_to_cgs_err(A, A_err, μ, μ_err)
 
+        # Get the extinction profile at the center
+        ext = extinction[argmin(abs.(λ .- μ))]
+
         # Calculate the intensity using the utility function
         intensity, i_err = Util.calculate_intensity(:Drude, A_cgs, A_cgs_err, μ, μ_err, fwhm, fwhm_err)
         # Calculate the equivalent width using the utility function
         eqw, e_err = Util.calculate_eqw(popt_c, perr_c, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, 
-            :Drude, A, A_err, μ, μ_err, fwhm, fwhm_err)
+            cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission,
+            :Drude, A*ext, A_err*ext, μ, μ_err, fwhm, fwhm_err)
 
         @debug "Drude profile with ($A_cgs, $μ, $fwhm) and errors ($A_cgs_err, $μ_err, $fwhm_err)"
         @debug "I=$intensity, err=$i_err, EQW=$eqw, err=$e_err"
@@ -2959,9 +2963,6 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
         # equivalent width units: μm
         p_dust[pₒ+1] = eqw
         p_dust_err[pₒ+1] = e_err
-
-        # Get the extinction profile at the center
-        ext = extinction[argmin(abs.(λ .- μ))]
 
         # SNR, calculated as (peak amplitude) / (RMS intensity of the surrounding spectrum)
         # include the extinction factor when calculating the SNR
@@ -3094,6 +3095,9 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
         amp_cgs = Util.MJysr_to_cgs(amp*N, mean_μm)
         amp_cgs_err = Util.MJysr_to_cgs_err(amp*N, amp_err*N, mean_μm, mean_μm_err)
 
+        # Get the extinction factor at the line center
+        ext = extinction[argmin(abs.(λ .- mean_μm))]
+
         @debug "Line with ($amp_cgs, $mean_μm, $fwhm_μm) and errors ($amp_cgs_err, $mean_μm_err, $fwhm_μm_err)"
 
         # Calculate line intensity using the helper function
@@ -3103,8 +3107,10 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
         append!(i_err, [err])
 
         # Calculate the equivalent width using the utility function
-        eqwi, err = Util.calculate_eqw(popt_c, perr_c, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, cube_fitter.line_profiles[k], 
-            amp*N, amp_err*N, mean_μm, mean_μm_err, fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err)
+        eqwi, err = Util.calculate_eqw(popt_c, perr_c, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat,
+            cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission,
+            cube_fitter.line_profiles[k], amp*N*ext, amp_err*N*ext, mean_μm, mean_μm_err, fwhm_μm, fwhm_μm_err, 
+            h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err)
         eqw += eqwi
         append!(e_err, [err])
 
@@ -3190,7 +3196,8 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
   
             # Calculate the equivalent width using the utility function
             eqwi, err = Util.calculate_eqw(popt_c, perr_c, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, 
-                cube_fitter.line_acomp_profiles[k], acomp_amp*N, acomp_amp_err*N, acomp_mean_μm, acomp_mean_μm_err, 
+                cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission,
+                cube_fitter.line_acomp_profiles[k], acomp_amp*N*ext, acomp_amp_err*N*ext, acomp_mean_μm, acomp_mean_μm_err, 
                 acomp_fwhm_μm, acomp_fwhm_μm_err, h3=acomp_h3, h3_err=acomp_h3_err, h4=acomp_h4, h4_err=acomp_h4_err, η=acomp_η, 
                 η_err=acomp_η_err)
             eqw += eqwi
@@ -3214,9 +3221,6 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
         # equivalent width in microns
         p_lines[pₒ+1] = eqw
         p_lines_err[pₒ+1] = √(sum(e_err.^2))
-
-        # Get the extinction factor at the line center
-        ext = extinction[argmin(abs.(λ .- mean_μm))]
 
         # SNR, calculated as (amplitude) / (RMS of the surrounding spectrum)
         p_lines[pₒ+2] = Util.calculate_SNR(Δλ, I[.!mask_lines] .- continuum[.!mask_lines], cube_fitter.line_profiles[k],
@@ -3509,7 +3513,7 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
         pᵢ += 2
         if cube_fitter.fit_sil_emission
             # Hot dust parameters
-            param_maps.hot_dust[:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]-17) : -Inf
+            param_maps.hot_dust[:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ])-17 : -Inf
             param_errs.hot_dust[:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / (log(10) * out_params[index, pᵢ]) : NaN
             param_maps.hot_dust[:temp][index] = out_params[index, pᵢ+1]
             param_errs.hot_dust[:temp][index] = out_errs[index, pᵢ+1]

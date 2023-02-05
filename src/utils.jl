@@ -594,7 +594,7 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
-function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_dust_cont::Integer,
+function fit_spectrum(λ, params::Vector{<:AbstractFloat}, n_dust_cont::Integer,
     extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, return_components::Bool)
 
     # Prepare outputs
@@ -656,7 +656,7 @@ end
 
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
-function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_dust_cont::Integer,
+function fit_spectrum(λ, params::Vector{<:AbstractFloat}, n_dust_cont::Integer,
     extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool)
 
     # Prepare outputs
@@ -721,7 +721,7 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in
     addition to the overall fit
 """
-function fit_pah_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_dust_feat::Integer,
+function fit_pah_residuals(λ, params::Vector{<:AbstractFloat}, n_dust_feat::Integer,
     ext_curve::Vector{<:AbstractFloat}, return_components::Bool)
 
     # Prepare outputs
@@ -749,7 +749,7 @@ end
 
 
 # Multiple dispatch for more efficiency
-function fit_pah_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_dust_feat::Integer,
+function fit_pah_residuals(λ, params::Vector{<:AbstractFloat}, n_dust_feat::Integer,
     ext_curve::Vector{<:AbstractFloat})
 
     # Prepare outputs
@@ -771,7 +771,7 @@ end
 
 
 # Combine fit_spectrum and fit_pah_residuals to get the full continuum in one function (after getting the optimized parameters)
-function fit_full_continuum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_dust_cont::Integer,
+function fit_full_continuum(λ, params::Vector{<:AbstractFloat}, n_dust_cont::Integer,
     n_dust_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool)
 
     pars_1 = vcat(params[1:(2+2n_dust_cont+2+(fit_sil_emission ? 5 : 0))], [0., 0.])
@@ -823,7 +823,7 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
-function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_lines::Integer, n_voff_tied::Integer, 
+function fit_line_residuals(λ, params::Vector{<:AbstractFloat}, n_lines::Integer, n_voff_tied::Integer, 
     voff_tied_key::Vector{String}, line_tied::Vector{Union{String,Nothing}}, line_profiles::Vector{Symbol}, 
     n_acomp_voff_tied::Integer, acomp_voff_tied_key::Vector{String}, line_acomp_tied::Vector{Union{String,Nothing}},
     line_acomp_profiles::Vector{Union{Symbol,Nothing}}, line_restwave::Vector{<:AbstractFloat}, 
@@ -1023,7 +1023,7 @@ end
 
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
-function fit_line_residuals(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_lines::Integer, n_voff_tied::Integer, 
+function fit_line_residuals(λ, params::Vector{<:AbstractFloat}, n_lines::Integer, n_voff_tied::Integer, 
     voff_tied_key::Vector{String}, line_tied::Vector{Union{String,Nothing}}, line_profiles::Vector{Symbol}, 
     n_acomp_voff_tied::Integer, acomp_voff_tied_key::Vector{String}, line_acomp_tied::Vector{Union{String,Nothing}},
     line_acomp_profiles::Vector{Union{Symbol,Nothing}}, line_restwave::Vector{<:AbstractFloat}, 
@@ -1301,75 +1301,6 @@ end
 
 
 """
-    _continuum(x, popt_c, n_dust_cont, n_dust_feat)
-
-Calculate the pure blackbody continuum (with or without PAHs) of the spectrum given
-optimization parameters popt_c, at a location x.
-"""
-function _continuum(x::AbstractFloat, popt_c::Vector{<:AbstractFloat}, n_dust_cont::Integer,
-    n_dust_feat::Integer=0)
-    c = 0.
-    # stellar continuum
-    c += popt_c[1] * Blackbody_ν(x, popt_c[2])
-    pₓ = 3
-    # dust continua
-    for i ∈ 1:n_dust_cont
-        c += popt_c[pₓ] * (9.7 / x)^2 * Blackbody_ν(x, popt_c[pₓ+1])
-        pₓ += 2
-    end
-    # dust features
-    for j ∈ 1:n_dust_feat
-        c += Drude(x, popt_c[pₓ:pₓ+2]...)
-        pₓ += 3
-    end
-    # add small epsilon to avoid divide by zero errors
-    if c ≤ 0
-        c = eps()
-    end
-    # dont include extinction here since it's not included in the PAH/line profiles either
-    c
-end
-
-
-"""
-    _continuum_errs(x, popt_c, perr_c, n_dust_cont, n_dust_feat)
-
-Calculate the error in the pure blackbody continuum (with or without PAHs) of the spectrum given
-optimization parameters popt_c and errors perr_c, at a location x.
-"""
-function _continuum_errs(x::AbstractFloat, popt_c::Vector{<:AbstractFloat},
-    perr_c::Vector{<:AbstractFloat}, n_dust_cont::Integer, n_dust_feat::Integer=0)
-    c_l = 0.
-    c_u = 0.
-    # stellar continuum
-    c_l += max(popt_c[1] - perr_c[1], 0.) * Blackbody_ν(x, max(popt_c[2] - perr_c[2], 0.))
-    c_u += (popt_c[1] + perr_c[1]) * Blackbody_ν(x, popt_c[2] + perr_c[2])
-    pₓ = 3
-    # dust continua
-    for i ∈ 1:n_dust_cont
-        c_l += max(popt_c[pₓ] - perr_c[pₓ], 0.) * (9.7 / x)^2 * Blackbody_ν(x, max(popt_c[pₓ+1] - perr_c[pₓ+1], 0.))
-        c_u += (popt_c[pₓ] + perr_c[pₓ]) * (9.7 / x)^2 * Blackbody_ν(x, popt_c[pₓ+1] + perr_c[pₓ+1])
-        pₓ += 2
-    end
-    # dust features
-    for j ∈ 1:n_dust_feat
-        c_l += Drude(x, max(popt_c[pₓ] - perr_c[pₓ], 0.), popt_c[pₓ+1], max(popt_c[pₓ+2] - perr_c[pₓ+2], eps()))
-        c_u += Drude(x, popt_c[pₓ] + perr_c[pₓ], popt_c[pₓ+1], popt_c[pₓ+2] + perr_c[pₓ+2])
-        pₓ += 3
-    end
-    # add small epsilon to avoid divide by zero errors
-    if c_l ≤ 0
-        c_l = eps()
-    end
-    if c_u ≤ 0
-        c_u = eps()
-    end
-    # dont include extinction
-    c_l, c_u
-end
-
-
-"""
     calculate_intensity(profile, amp, amp_err, peak, peak_err, fwhm, fwhm_err; <keyword_args>)
 
 Calculate the integrated intensity of a spectral feature, i.e. a PAH or emission line. Calculates the integral
@@ -1432,7 +1363,8 @@ end
 Calculate the equivalent width (in microns) of a spectral feature, i.e. a PAH or emission line. Calculates the
 integral of the ratio of the feature profile to the underlying continuum, calculated using the _continuum function.
 """
-function calculate_eqw(popt_c::Vector{T}, perr_c::Vector{T}, n_dust_cont::Integer, n_dust_feat::Integer, profile::Symbol, 
+function calculate_eqw(popt_c::Vector{T}, perr_c::Vector{T}, n_dust_cont::Integer, n_dust_feat::Integer,
+    extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, profile::Symbol, 
     amp::T, amp_err::T, peak::T, peak_err::T, fwhm::T, fwhm_err::T; h3::Union{T,Nothing}=nothing, h3_err::Union{T,Nothing}=nothing, 
     h4::Union{T,Nothing}=nothing, h4_err::Union{T,Nothing}=nothing, η::Union{T,Nothing}=nothing, 
     η_err::Union{T,Nothing}=nothing) where {T<:AbstractFloat}
@@ -1447,48 +1379,55 @@ function calculate_eqw(popt_c::Vector{T}, perr_c::Vector{T}, n_dust_cont::Intege
     if profile == :Drude
         # do not shift the drude profiles since x=0 and mu=0 cause problems;
         # the wide wings should allow quadgk to find the solution even without shifting it
-        eqw = quadgk(x -> Drude(x, amp, peak, fwhm) / _continuum(x, popt_c, n_dust_cont), max(peak-10fwhm, 3.), peak+10fwhm, order=200)[1]
+        cont = x -> fit_spectrum([x], popt_c, n_dust_cont, extinction_curve, extinction_screen, fit_sil_emission)[1]
+        eqw = quadgk(x -> Drude(x, amp, peak, fwhm) / cont(x), max(peak-10fwhm, 3.), peak+10fwhm, order=200)[1]
         # errors
-        err_l = eqw - quadgk(x -> Drude(x, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps())) / _continuum_errs(x, popt_c, perr_c, n_dust_cont)[1], 
+        err_l = eqw - quadgk(x -> Drude(x, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps())) / cont(x),
             max(peak-10fwhm, 3.), peak+10fwhm, order=200)[1]
-        err_u = quadgk(x -> Drude(x, amp+amp_err, peak, fwhm+fwhm_err) / _continuum_errs(x, popt_c, perr_c, n_dust_cont)[2], 
+        err_u = quadgk(x -> Drude(x, amp+amp_err, peak, fwhm+fwhm_err) / cont(x),
             max(peak-10fwhm, 3.), peak+10fwhm, order=200)[1] - eqw
         err_l = err_l ≥ 0 ? err_l : 0.
         err_u = abs(err_u)
         err = (err_l + err_u)/2
     elseif profile == :Gaussian
-        eqw = quadgk(x -> Gaussian(x+peak, amp, peak, fwhm) / _continuum(x+peak, popt_c, n_dust_cont, n_dust_feat), -10fwhm, 10fwhm, order=200)[1]
-        err_l = eqw - quadgk(x -> Gaussian(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps())) / _continuum_errs(x+peak, popt_c, perr_c, n_dust_cont, n_dust_feat)[1], 
+        # Make sure to use [x] as a vector and take the first element [1] of the result, since the continuum functions
+        # were written to be used with vector inputs + outputs
+        cont = x -> fit_full_continuum([x], popt_c, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen, fit_sil_emission)[1]
+        eqw = quadgk(x -> Gaussian(x+peak, amp, peak, fwhm) / cont(x+peak), -10fwhm, 10fwhm, order=200)[1]
+        err_l = eqw - quadgk(x -> Gaussian(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps())) / cont(x+peak),
             -10fwhm, 10fwhm, order=200)[1]
-        err_u = quadgk(x -> Gaussian(x+peak, amp+amp_err, peak, fwhm+fwhm_err) / _continuum_errs(x+peak, popt_c, perr_c, n_dust_cont, n_dust_feat)[2], 
+        err_u = quadgk(x -> Gaussian(x+peak, amp+amp_err, peak, fwhm+fwhm_err) / cont(x+peak),
             -10fwhm, 10fwhm, order=200)[1] - eqw
         err_l = err_l ≥ 0 ? err_l : 0.
         err_u = abs(err_u)
         err = (err_l + err_u)/2
     elseif profile == :Lorentzian
-        eqw = quadgk(x -> Lorentzian(x+peak, amp, peak, fwhm) / _continuum(x+peak, popt_c, n_dust_cont, n_dust_feat), -10fwhm, 10fwhm, order=200)[1]
-        err_l = eqw - quadgk(x -> Lorentzian(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps())) / _continuum_errs(x+peak, popt_c, perr_c, n_dust_cont, n_dust_feat)[1], 
+        cont = x -> fit_full_continuum([x], popt_c, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen, fit_sil_emission)[1]
+        eqw = quadgk(x -> Lorentzian(x+peak, amp, peak, fwhm) / cont(x+peak), -10fwhm, 10fwhm, order=200)[1]
+        err_l = eqw - quadgk(x -> Lorentzian(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps())) / cont(x+peak),
             -10fwhm, 10fwhm, order=200)[1]
-        err_u = quadgk(x -> Lorentzian(x+peak, amp+amp_err, peak, fwhm+fwhm_err) / _continuum_errs(x+peak, popt_c, perr_c, n_dust_cont, n_dust_feat)[2], 
+        err_u = quadgk(x -> Lorentzian(x+peak, amp+amp_err, peak, fwhm+fwhm_err) / cont(x+peak),
             -10fwhm, 10fwhm, order=200)[1] - eqw
         err_l = err_l ≥ 0 ? err_l : 0.
         err_u = abs(err_u)
         err = (err_l + err_u)/2
     elseif profile == :GaussHermite
-        eqw = quadgk(x -> GaussHermite(x+peak, amp, peak, fwhm, h3, h4) / _continuum(x+peak, popt_c, n_dust_cont, n_dust_feat), -10fwhm, 10fwhm, order=200)[1]
+        cont = x -> fit_spectrum([x], popt_c, n_dust_cont, extinction_curve, extinction_screen, fit_sil_emission)[1]
+        eqw = quadgk(x -> GaussHermite(x+peak, amp, peak, fwhm, h3, h4) / cont(x+peak), -10fwhm, 10fwhm, order=200)[1]
         err_l = eqw - quadgk(x -> GaussHermite(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), h3-h3_err, h4-h4_err) / 
-            _continuum_errs(x+peak, popt_c, perr_c, n_dust_cont, n_dust_feat)[1], -10fwhm, 10fwhm, order=200)[1]
+            cont(x+peak), -10fwhm, 10fwhm, order=200)[1]
         err_u = quadgk(x -> GaussHermite(x+peak, amp+amp_err, peak, fwhm+fwhm_err, h3+h3_err, h4+h4_err) / 
-            _continuum_errs(x+peak, popt_c, perr_c, n_dust_cont, n_dust_feat)[2], -10fwhm, 10fwhm, order=200)[1] - eqw
+            cont(x+peak), -10fwhm, 10fwhm, order=200)[1] - eqw
         err_l = err_l ≥ 0 ? err_l : 0.
         err_u = abs(err_u)
         err = (err_l + err_u)/2
     elseif profile == :Voigt
-        eqw = quadgk(x -> Voigt(x+peak, amp, peak, fwhm, η) / _continuum(x+peak, popt_c, n_dust_cont, n_dust_feat), -10fwhm, 10fwhm, order=200)[1]
+        cont = x -> fit_spectrum([x], popt_c, n_dust_cont, extinction_curve, extinction_screen, fit_sil_emission)[1]
+        eqw = quadgk(x -> Voigt(x+peak, amp, peak, fwhm, η) / cont(x+peak), -10fwhm, 10fwhm, order=200)[1]
         err_l = eqw - quadgk(x -> Voigt(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), η-η_err) / 
-            _continuum_errs(x+peak, popt_c, perr_c, n_dust_cont, n_dust_feat)[1], -10fwhm, 10fwhm, order=200)[1]
+            cont(x+peak), -10fwhm, 10fwhm, order=200)[1]
         err_u = quadgk(x -> Voigt(x+peak, amp+amp_err, peak, fwhm+fwhm_err, η+η_err) / 
-            _continuum_errs(x+peak, popt_c, perr_c, n_dust_cont, n_dust_feat)[2], -10fwhm, 10fwhm, order=200)[1] - eqw
+            cont(x+peak), -10fwhm, 10fwhm, order=200)[1] - eqw
         err_l = err_l ≥ 0 ? err_l : 0.
         err_u = abs(err_u)
         err = (err_l + err_u)/2
