@@ -572,7 +572,7 @@ end
 
 
 """
-    fit_spectrum(λ, params, n_dust_cont, n_dust_features, extinction_curve, extinction_screen;
+    fit_spectrum(λ, params, n_dust_cont, extinction_curve, extinction_screen, fit_sil_emission;
         return_components=return_components)
 
 Create a model of the continuum (including stellar+dust continuum, PAH features, and extinction, excluding emission lines)
@@ -587,13 +587,15 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
     `[stellar amp, stellar temp, (amp, temp for each dust continuum), (amp, mean, FWHM for each PAH profile), 
     extinction τ, extinction β]`
 - `n_dust_cont::Integer`: Number of dust continuum profiles to be fit
+- `n_dust_feat::Integer`: Number of PAH dust features to be fit
 - `extinction_curve::String`: The type of extinction curve to use, "kvt" or "d+"
 - `extinction_screen::Bool`: Whether or not to use a screen model for the extinction curve
+- `fit_sil_emission::Bool`: Whether or not to fit silicate emission with a hot dust continuum component
 - `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
 function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_dust_cont::Integer,
-    extinction_curve::String, extinction_screen::Bool, return_components::Bool)
+    extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, return_components::Bool)
 
     # Prepare outputs
     comps = Dict{String, Vector{Float64}}()
@@ -625,13 +627,15 @@ function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloa
     contin .*= comps["extinction"]
     pᵢ += 2
 
-    # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
-    # Ref: Gallimore et al. 2010
-    comps["hot_dust"] = params[pᵢ] .* Blackbody_ν.(λ, params[pᵢ+1])
-    comps["hot_dust"] .*= (1 .- Extinction.(ext_curve, params[pᵢ+3], screen=true))
-    comps["hot_dust"] .*= (1 .- params[pᵢ+2] .* (1 .- Extinction.(ext_curve, params[pᵢ+4], screen=true)))
-    contin .+= comps["hot_dust"]
-    pᵢ += 5
+    if fit_sil_emission
+        # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
+        # Ref: Gallimore et al. 2010
+        comps["hot_dust"] = params[pᵢ] .* Blackbody_ν.(λ, params[pᵢ+1])
+        comps["hot_dust"] .*= (1 .- Extinction.(ext_curve, params[pᵢ+3], screen=true))
+        comps["hot_dust"] .*= (1 .- params[pᵢ+2]) .* (1 .- Extinction.(ext_curve, params[pᵢ+4], screen=true))
+        contin .+= comps["hot_dust"]
+        pᵢ += 5
+    end
 
     # Add Smith+2006 PAH templates
     pah3 = Smith3_interp.(λ)
@@ -653,7 +657,7 @@ end
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
 function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_dust_cont::Integer,
-    extinction_curve::String, extinction_screen::Bool)
+    extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool)
 
     # Prepare outputs
     contin = zeros(Float64, length(λ))
@@ -682,13 +686,15 @@ function fit_spectrum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloa
     contin .*= ext
     pᵢ += 2
 
-    # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
-    # Ref: Gallimore et al. 2010
-    hot_dust = params[pᵢ] .* Blackbody_ν.(λ, params[pᵢ+1])
-    hot_dust .*= (1 .- Extinction.(ext_curve, params[pᵢ+3], screen=true))
-    hot_dust .*= (1 .- params[pᵢ+2] .* (1 .- Extinction.(ext_curve, params[pᵢ+4], screen=true)))
-    contin .+= hot_dust
-    pᵢ += 5
+    if fit_sil_emission
+        # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
+        # Ref: Gallimore et al. 2010
+        hot_dust = params[pᵢ] .* Blackbody_ν.(λ, params[pᵢ+1])
+        hot_dust .*= (1 .- Extinction.(ext_curve, params[pᵢ+3], screen=true))
+        hot_dust .*= (1 .- params[pᵢ+2]) .* (1 .- Extinction.(ext_curve, params[pᵢ+4], screen=true))
+        contin .+= hot_dust
+        pᵢ += 5
+    end
 
     # Add Smith+2006 PAH templates
     pah3 = Smith3_interp.(λ)
@@ -704,12 +710,9 @@ end
 
 """
     fit_pah_residuals(λ, params, n_dust_feat, return_components)
-
 Create a model of the PAH features at the given wavelengths `λ`, given the parameter vector `params`.
-
 Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 (with modifications)
-
 # Arguments
 - `λ::Vector{<:AbstractFloat}`: Wavelength vector of the spectrum to be fit
 - `params::Vector{<:AbstractFloat}`: Parameter vector. Parameters should be ordered as: `(amp, center, fwhm) for each PAH profile`
@@ -769,12 +772,12 @@ end
 
 # Combine fit_spectrum and fit_pah_residuals to get the full continuum in one function (after getting the optimized parameters)
 function fit_full_continuum(λ::Vector{<:AbstractFloat}, params::Vector{<:AbstractFloat}, n_dust_cont::Integer,
-    n_dust_feat::Integer, extinction_curve::String, extinction_screen::Bool)
+    n_dust_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool)
 
-    pars_1 = vcat(params[1:(2+2n_dust_cont+2+5)], [0., 0.])
-    pars_2 = params[(3+2n_dust_cont+2+5):end]
+    pars_1 = vcat(params[1:(2+2n_dust_cont+2+(fit_sil_emission ? 5 : 0))], [0., 0.])
+    pars_2 = params[(3+2n_dust_cont+2+(fit_sil_emission ? 5 : 0)):end]
 
-    contin_1, ccomps = fit_spectrum(λ, pars_1, n_dust_cont, extinction_curve, extinction_screen, true)
+    contin_1, ccomps = fit_spectrum(λ, pars_1, n_dust_cont, extinction_curve, extinction_screen, fit_sil_emission, true)
     contin_2, pcomps = fit_pah_residuals(λ, pars_2, n_dust_feat, ccomps["extinction"], true)
 
     contin = contin_1 .+ contin_2

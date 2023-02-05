@@ -16,18 +16,13 @@ end
 
 to = TimerOutput()
 channel = 0
-# Load in data
-# obs = from_fits(["data/jw01328-o015_t014_miri_ch1-mediumshortlong-_s3d.fits", 
-#     "data/jw01328-o015_t014_miri_ch2-mediumshortlong-_s3d.fits", 
-#     "data/jw01328-o015_t014_miri_ch3-mediumshortlong-_s3d.fits", 
-#     "data/jw01328-o015_t014_miri_ch4-mediumshortlong-_s3d.fits"], 
-#     0.016317)
 
-obs = from_fits(["data/Level3_ch1-shortmediumlong_s3d.fits",
-                 "data/Level3_ch2-shortmediumlong_s3d.fits",
-                 "data/Level3_ch3-shortmediumlong_s3d.fits",
-                 "data/Level3_ch4-shortmediumlong_s3d.fits"],
-                 0.016317)
+# Load in data
+# obs = from_fits(["data/Level3_ch1-shortmediumlong_s3d.fits",
+#                  "data/Level3_ch2-shortmediumlong_s3d.fits",
+#                  "data/Level3_ch3-shortmediumlong_s3d.fits",
+#                  "data/Level3_ch4-shortmediumlong_s3d.fits"],
+#                  0.016317)
 
 # obs = from_fits(["data/NGC_6552_Level3_ch1-shortmediumlong_s3d.fits",
 #                  "data/NGC_6552_Level3_ch2-shortmediumlong_s3d.fits",
@@ -41,11 +36,11 @@ obs = from_fits(["data/Level3_ch1-shortmediumlong_s3d.fits",
 #                  "data/VV_114E_Level3_ch4-shortmediumlong_s3d.fits"],
 #                  0.02007)
 
-# obs = from_fits(["data/NGC_7319_Level3_ch1-shortmediumlong_s3d.fits",
-#                  "data/NGC_7319_Level3_ch2-shortmediumlong_s3d.fits",
-#                  "data/NGC_7319_Level3_ch3-shortmediumlong_s3d.fits",
-#                  "data/NGC_7319_Level3_ch4-shortmediumlong_s3d.fits"],
-#                  0.022)
+obs = from_fits(["data/NGC_7319_Level3_ch1-shortmediumlong_s3d.fits",
+                 "data/NGC_7319_Level3_ch2-shortmediumlong_s3d.fits",
+                 "data/NGC_7319_Level3_ch3-shortmediumlong_s3d.fits",
+                 "data/NGC_7319_Level3_ch4-shortmediumlong_s3d.fits"],
+                 0.022)
 
 obs = correct(obs)
 

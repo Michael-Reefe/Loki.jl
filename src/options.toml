@@ -33,6 +33,9 @@ extinction_curve = "d+"
 # (1 - e^-tau) / tau (false), following PAHFIT.
 extinction_screen = true
 
+# whether or not to fit silicate emission
+fit_sil_emission = true
+
 # cosmology options: Controls the cosmology used for distance / luminosity calculations.
 # If h is set to 1, the distances in plot scale bars will be shown with h^-1 units.
 [cosmology]

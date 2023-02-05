@@ -171,6 +171,16 @@ val = 0.152
 plim = [0.4, 1.4]
 locked = false
 
+# [dust_features."PAH_7.60".wave]
+# val = 7.60
+# plim = [-0.05, 0.05]
+# locked = false
+
+# [dust_features."PAH_7.60".fwhm]
+# val = 0.334
+# plim = [0.4, 1.4]
+# locked = false
+
 [dust_features."PAH_7.85".wave]
 val = 7.85
 plim = [-0.05, 0.05]
@@ -415,7 +425,7 @@ locked = false
 # extinction.tau_9_7: the optical depth at 9.7 microns.
 # Default: gets estimated by the continuum at 9.7 microns.
 [extinction.tau_9_7]
-plim = [0.0, 10.0]
+plim = [0.0, 100.0]
 locked = false
 
 # extinction.beta: the mixing ratio for the extinction profile,
@@ -442,10 +452,10 @@ locked = false
 
 # Optical depth of warm dust
 [hot_dust.tau_warm]
-plim = [0.0, 10.0]
+plim = [0.0, 100.0]
 locked = false
 
 # Optical depth of cold dust
 [hot_dust.tau_cold]
-plim = [0.0, 10.0]
+plim = [0.0, 100.0]
 locked = false

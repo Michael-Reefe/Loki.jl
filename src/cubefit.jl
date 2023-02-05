@@ -213,7 +213,7 @@ function parse_options()::Dict
     # Read in the options file
     options = TOML.parsefile(joinpath(@__DIR__, "options.toml"))
     options_out = Dict()
-    keylist1 = ["extinction_curve", "extinction_screen", "overwrite", "track_memory", "track_convergence", 
+    keylist1 = ["extinction_curve", "extinction_screen", "fit_sil_emission", "overwrite", "track_memory", "track_convergence", 
                 "make_movies", "cosmology"]
     keylist2 = ["h", "omega_m", "omega_K", "omega_r"]
 
@@ -234,6 +234,8 @@ function parse_options()::Dict
     @debug "Extinction model - $(options["extinction_curve"])"
     options_out[:extinction_screen] = options["extinction_screen"]
     @debug "Extinction screening? - $(options["extinction_screen"])"
+    options_out[:fit_sil_emission] = options["fit_sil_emission"]
+    @debug "Fit Silicate Emission? - $(options["fit_sil_emission"])"
     options_out[:overwrite] = options["overwrite"]
     @debug "Overwrite old fits? - $(options["overwrite"])"
     options_out[:track_memory] = options["track_memory"]
@@ -1175,6 +1177,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
     make_movies::Bool
     extinction_curve::String
     extinction_screen::Bool
+    fit_sil_emission::Bool
 
     # Continuum parameters
     T_s::Param.Parameter
@@ -1379,7 +1382,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
         @debug msg
 
         # Total number of parameters for the continuum and line fits
-        n_params_cont = (2+2+5) + 2n_dust_cont + 6n_dust_features
+        n_params_cont = (2+2) + 2n_dust_cont + 6n_dust_features + (options[:fit_sil_emission] ? 5 : 0)
         n_params_lines = n_voff_tied + n_acomp_voff_tied
         # One η for all voigt profiles
         if (any(line_profiles .== :Voigt) || any(line_acomp_profiles .== :Voigt)) && tie_voigt_mixing
@@ -1428,6 +1431,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
         # Prepare options
         extinction_curve = options[:extinction_curve]
         extinction_screen = options[:extinction_screen]
+        fit_sil_emission = options[:fit_sil_emission]
         overwrite = options[:overwrite]
         track_memory = options[:track_memory]
         track_convergence = options[:track_convergence]
@@ -1457,7 +1461,7 @@ struct CubeFitter{T<:AbstractFloat,S<:Integer}
 
         new{typeof(z), typeof(n_procs)}(cube, z, τ_guess, name, n_procs, plot_spaxels, plot_maps, 
             parallel, save_fits, overwrite, track_memory, track_convergence, make_movies, extinction_curve, extinction_screen, 
-            T_s, T_dc, τ_97, β, T_hot, Cf_hot, τ_warm, τ_cold, n_dust_cont, n_dust_features, df_names, dust_features, n_lines, 
+            fit_sil_emission, T_s, T_dc, τ_97, β, T_hot, Cf_hot, τ_warm, τ_cold, n_dust_cont, n_dust_features, df_names, dust_features, n_lines, 
             line_names, line_profiles, line_acomp_profiles, lines, n_voff_tied, line_tied, voff_tied_key, voff_tied, n_acomp_voff_tied, 
             line_acomp_tied, acomp_voff_tied_key, acomp_voff_tied, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, 
             cosmo, interp_R, flexible_wavesol, p_init_cont, p_init_line, cube_wcs)
@@ -1521,7 +1525,7 @@ This function has been adapted from the BADASS code (Sexton et al. 2020; https:/
 
 See also [`continuum_cubic_spline`](@ref)
 """
-function mask_emission_lines(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}, σ::Vector{<:AbstractFloat})::BitVector
+function mask_emission_lines(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}, σ::Vector{<:AbstractFloat})
 
     # Series of window sizes to perform median filtering
     window_sizes = [2, 5, 10, 50, 100, 250, 500]
@@ -1532,8 +1536,9 @@ function mask_emission_lines(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFl
 
     # cubic spline interpolation 
     Δλ = mean(diff(λ))
-    scale = length(λ) ÷ 40
-    λknots = λ[scale+1]:Δλ*scale:λ[end-scale-1]
+    scale = 0.05
+    offset = findfirst(λ .> (scale + λ[1]))
+    λknots = λ[offset+1]:scale:λ[end-offset-1]
     I_cub = Spline1D(λ, I, λknots, k=3, bc="extrapolate")
 
     # For each window size, do a sliding median filter
@@ -1552,7 +1557,7 @@ function mask_emission_lines(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFl
     # Extend mask edges by a few pixels
     mask_edges = findall(x -> x == 1, diff(mask))
     for me ∈ mask_edges
-        mask[max(1, me-5):min(length(mask), me+5)] .= 1
+        mask[max(1, me-10):min(length(mask), me+10)] .= 1
     end
     # Exclude this region from masking (it tends to get tricked by the strong PAH feature)
     mask[11.175 .< λ .< 11.355] .= 0
@@ -1589,10 +1594,13 @@ function continuum_cubic_spline(λ::Vector{<:AbstractFloat}, I::Vector{<:Abstrac
     # Interpolate the NaNs
     diffs = diff(λ)
     Δλ = mean(diffs)
+    # Break up cubic spline interpolation into knots 0.05 um long
+    # (longer than a narrow emission line but not too long)
+    scale = 0.05
+    offset = findfirst(λ .> (scale + λ[1]))
 
-    scale = length(λ) ÷ 40
     # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
-    λknots = λ[scale+1]:Δλ*scale:λ[end-scale-1]
+    λknots = λ[offset+1]:scale:λ[end-offset-1]
     @debug "Performing cubic spline continuum fit with knots at $λknots"
 
     # Do a full cubic spline remapping of the data
@@ -1676,13 +1684,11 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
     I = !init ? cube_fitter.cube.Iν[spaxel, :] : Util.Σ(cube_fitter.cube.Iν, (1,2)) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2))
     σ = !init ? cube_fitter.cube.σI[spaxel, :] : sqrt.(Util.Σ(cube_fitter.cube.σI.^2, (1,2))) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2))
 
-    # Mask out emission lines so that they aren't included in the continuum fit
-    # mask_lines, I_cubic, σ_cubic = continuum_cubic_spline(λ, I, σ)
     # Fill in the data where the lines are with the cubic spline interpolation
     I[mask_lines] .= I_spline[mask_lines]
     σ[mask_lines] .= σ_spline[mask_lines]
     # Add statistical uncertainties to the systematic uncertainties in quadrature
-    σ_stat = std(I[.!mask_lines] .- I_cubic[.!mask_lines])
+    σ_stat = std(I[.!mask_lines] .- I_spline[.!mask_lines])
     σ .= .√(σ.^2 .+ σ_stat.^2)
 
     @debug "Adding statistical error of $σ_stat in quadrature"
@@ -1734,12 +1740,14 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
         p₀[pᵢ] = τ_97_0
         pᵢ += 2
 
-        # Hot dust amplitude
-        p₀[pᵢ] *= scale
-        # Warm / cold optical depths
-        p₀[pᵢ+3] = τ_97_0
-        p₀[pᵢ+4] = τ_97_0
-        pᵢ += 5
+        if cube_fitter.fit_sil_emission
+            # Hot dust amplitude
+            p₀[pᵢ] *= scale
+            # Warm / cold optical depths
+            p₀[pᵢ+3] = τ_97_0
+            p₀[pᵢ+4] = τ_97_0
+            pᵢ += 5
+        end
 
         # Dust feature amplitudes
         for i ∈ 1:cube_fitter.n_dust_feat
@@ -1756,7 +1764,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
         pah_frac = repeat([clamp(nanmedian(I)/2, 0., Inf)], 2)
 
         # Stellar amplitude
-        A_s = clamp(_interp_func(5.5, λ, I) / Util.Blackbody_ν(5.5, cube_fitter.T_s.value), 0., Inf) / 2
+        A_s = clamp(_interp_func(5.5, λ, I) / Util.Blackbody_ν(5.5, cube_fitter.T_s.value), 0., Inf) 
 
         # Dust feature amplitudes
         A_df = repeat([clamp(nanmedian(I)/2, 0., Inf)], cube_fitter.n_dust_feat)
@@ -1772,10 +1780,16 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
         stellar_pars = [A_s, cube_fitter.T_s.value]
         dc_pars = vcat([[Ai, Ti.value] for (Ai, Ti) ∈ zip(A_dc, cube_fitter.T_dc)]...)
         df_pars = vcat([[Ai, mi.value, fi.value] for (Ai, mi, fi) ∈ zip(A_df, mean_df, fwhm_df)]...)
-        hd_pars = [A_hd, cube_fitter.T_hot.value, cube_fitter.Cf_hot.value, cube_fitter.τ_warm.value, cube_fitter.τ_cold.value]
+        if cube_fitter.fit_sil_emission
+            hd_pars = [A_hd, cube_fitter.T_hot.value, cube_fitter.Cf_hot.value, cube_fitter.τ_warm.value, cube_fitter.τ_cold.value]
+        else
+            hd_pars = []
+        end
+
+        τ_97_0 = cube_fitter.τ_97.value
 
         # Initial parameter vector
-        p₀ = Vector{Float64}(vcat(stellar_pars, dc_pars, [cube_fitter.τ_97.value, cube_fitter.β.value], hd_pars, df_pars))
+        p₀ = Vector{Float64}(vcat(stellar_pars, dc_pars, [τ_97_0, cube_fitter.β.value], hd_pars, df_pars))
         # p₀ = Vector{Float64}(vcat(stellar_pars, dc_pars, df_pars, [cube_fitter.τ_97[0][parse(Int, cube_fitter.cube.channel)], 
             # cube_fitter.β.value]))
 
@@ -1783,18 +1797,19 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
 
     @debug "Continuum Parameter labels: \n [stellar_amp, stellar_temp, " * 
         join(["dust_continuum_amp_$i, dust_continuum_temp_$i" for i ∈ 1:cube_fitter.n_dust_cont], ", ") * 
-        "extinction_tau_97, extinction_beta, hot_dust_amp, hot_dust_temp, hot_dust_covering_frac, hot_dust_tau, cold_dust_tau, " *
+        "extinction_tau_97, extinction_beta, " *  
+        (cube_fitter.fit_sil_emission ? "hot_dust_amp, hot_dust_temp, hot_dust_covering_frac, hot_dust_tau, cold_dust_tau, " : "") *
         join(["$(df)_amp, $(df)_mean, $(df)_fwhm" for df ∈ cube_fitter.df_names], ", ") * "]"
+        
+    # @debug "Priors: \n $priors"
+    @debug "Continuum Starting Values: \n $p₀"
 
     # Split up the parameter vector into the components that we need for each fitting step
 
     # Step 1: Stellar + Dust blackbodies, 2 new amplitudes for the PAH templates, and the extinction parameters
-    pars_1 = vcat(p₀[1:(2+2*cube_fitter.n_dust_cont+2+5)], pah_frac)
+    pars_1 = vcat(p₀[1:(2+2*cube_fitter.n_dust_cont+2+(cube_fitter.fit_sil_emission ? 5 : 0))], pah_frac)
     # Step 2: The PAH profile amplitudes, centers, and FWHMs
-    pars_2 = p₀[(3+2*cube_fitter.n_dust_cont+2+5):end]
-
-    # @debug "Priors: \n $priors"
-    @debug "Continuum Starting Values: \n $p₀"
+    pars_2 = p₀[(3+2*cube_fitter.n_dust_cont+2+(cube_fitter.fit_sil_emission ? 5 : 0)):end]
 
     # Convert parameter limits into CMPFit object
     parinfo_1 = CMPFit.Parinfo(length(pars_1))
@@ -1821,7 +1836,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
     end
 
     # Extinction
-    parinfo_1[p₁].fixed = cube_fitter.τ_97.locked || init
+    parinfo_1[p₁].fixed = cube_fitter.τ_97.locked
     parinfo_1[p₁].limited = (1,1)
     parinfo_1[p₁].limits = (minimum(cube_fitter.τ_97.prior), maximum(cube_fitter.τ_97.prior))
     # parinfo_1[p₁].limits = (0.0, 10.0)
@@ -1830,40 +1845,43 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
     parinfo_1[p₁+1].limits = (minimum(cube_fitter.β.prior), maximum(cube_fitter.β.prior))
     p₁ += 2
 
-    # Hot dust amplitude
-    parinfo_1[p₁].limited = (1,0)
-    parinfo_1[p₁].limits = (0., 0.)
-    # Hot dust temp
-    parinfo_1[p₁+1].fixed = cube_fitter.T_hot.locked
-    parinfo_1[p₁+1].limited = (1,1)
-    parinfo_1[p₁+1].limits = (minimum(cube_fitter.T_hot.prior), maximum(cube_fitter.T_hot.prior))
-    # Hot dust covering fraction
-    parinfo_1[p₁+2].fixed = cube_fitter.Cf_hot.locked
-    parinfo_1[p₁+2].limited = (1,1)
-    parinfo_1[p₁+2].limits = (minimum(cube_fitter.Cf_hot.prior), maximum(cube_fitter.Cf_hot.prior))
-    # Hot dust warm tau
-    parinfo_1[p₁+3].fixed = cube_fitter.τ_warm.locked
-    parinfo_1[p₁+3].limited = (1,1)
-    parinfo_1[p₁+3].limits = (minimum(cube_fitter.τ_warm.prior), maximum(cube_fitter.τ_warm.prior))
-    # Hot dust cold tau
-    parinfo_1[p₁+4].fixed = cube_fitter.τ_cold.locked
-    parinfo_1[p₁+4].limited = (1,1)
-    parinfo_1[p₁+4].limits = (minimum(cube_fitter.τ_cold.prior), maximum(cube_fitter.τ_cold.prior))
-    p₁ += 5
+    if cube_fitter.fit_sil_emission
+        # Hot dust amplitude
+        parinfo_1[p₁].limited = (1,0)
+        parinfo_1[p₁].limits = (0., 0.)
+        # Hot dust temp
+        parinfo_1[p₁+1].fixed = cube_fitter.T_hot.locked
+        parinfo_1[p₁+1].limited = (1,1)
+        parinfo_1[p₁+1].limits = (minimum(cube_fitter.T_hot.prior), maximum(cube_fitter.T_hot.prior))
+        # Hot dust covering fraction
+        parinfo_1[p₁+2].fixed = cube_fitter.Cf_hot.locked
+        parinfo_1[p₁+2].limited = (1,1)
+        parinfo_1[p₁+2].limits = (minimum(cube_fitter.Cf_hot.prior), maximum(cube_fitter.Cf_hot.prior))
+        # Hot dust warm tau
+        parinfo_1[p₁+3].fixed = cube_fitter.τ_warm.locked
+        parinfo_1[p₁+3].limited = (1,1)
+        parinfo_1[p₁+3].limits = (minimum(cube_fitter.τ_warm.prior), maximum(cube_fitter.τ_warm.prior))
+        # Hot dust cold tau
+        parinfo_1[p₁+4].fixed = cube_fitter.τ_cold.locked
+        parinfo_1[p₁+4].limited = (1,1)
+        parinfo_1[p₁+4].limits = (minimum(cube_fitter.τ_cold.prior), maximum(cube_fitter.τ_cold.prior))
+        p₁ += 5
+    end
 
     # PAH template amplitudes
     # parinfo_1[p₁].fixed = !init
     parinfo_1[p₁].limited = (1,0)
-    parinfo_1[p₁].limits = (0., clamp(nanmaximum(I) / exp(-pars_1[end-9]), 1., Inf))
+    parinfo_1[p₁].limits = (0., clamp(nanmaximum(I) / exp(-τ_97_0), 1., Inf))
     parinfo_1[p₁+1].fixed = !init
     parinfo_1[p₁+1].limited = (1,0)
-    parinfo_1[p₁+1].limits = (0., clamp(nanmaximum(I) / exp(-pars_1[end-9]), 1., Inf))
+    parinfo_1[p₁+1].limits = (0., clamp(nanmaximum(I) / exp(-τ_97_0), 1., Inf))
+    p₁ += 2
 
     p₂ = 1
     # Dust feature amplitude, mean, fwhm
     for i ∈ 1:cube_fitter.n_dust_feat
         parinfo_2[p₂].limited = (1,1)
-        parinfo_2[p₂].limits = (0., clamp(nanmaximum(I) / exp(-pars_1[end-9]), 1., Inf))
+        parinfo_2[p₂].limits = (0., clamp(nanmaximum(I) / exp(-τ_97_0), 1., Inf))
         parinfo_2[p₂+1].fixed = mean_df[i].locked
         parinfo_2[p₂+1].limited = (1,1)
         parinfo_2[p₂+1].limits = (minimum(mean_df[i].prior), maximum(mean_df[i].prior))
@@ -1889,20 +1907,23 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
     @debug "Beginning continuum fitting with Levenberg-Marquardt least squares (CMPFit):"
 
     res_1 = cmpfit(λ, I, σ, (x, p) -> Util.fit_spectrum(x, p, cube_fitter.n_dust_cont,
-        cube_fitter.extinction_curve, cube_fitter.extinction_screen), pars_1, parinfo=parinfo_1, config=config)
+        cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission), 
+        pars_1, parinfo=parinfo_1, config=config)
 
     @debug "Continuum CMPFit status: $(res_1.status)"
 
     # Create continuum without the PAH features
     _, ccomps = Util.fit_spectrum(λ, res_1.param, cube_fitter.n_dust_cont, cube_fitter.extinction_curve, 
-        cube_fitter.extinction_screen, true)
+    cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, true)
 
     I_cont = ccomps["stellar"]
     for i ∈ 1:cube_fitter.n_dust_cont
         I_cont .+= ccomps["dust_cont_$i"]
     end
     I_cont .*= ccomps["extinction"]
-    I_cont .+= ccomps["hot_dust"]
+    if cube_fitter.fit_sil_emission
+        I_cont .+= ccomps["hot_dust"]
+    end
 
     # Count free parameters
     n_free_1 = 0
@@ -1949,11 +1970,10 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
 
     # Create the full model
     I_model, comps = Util.fit_full_continuum(λ, popt, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat,
-        cube_fitter.extinction_curve, cube_fitter.extinction_screen)
+        cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission)
 
     if init
         cube_fitter.p_init_cont[:] .= vcat(popt, res_1.param[end-1:end])
-
         # Save the results to a file 
         # save running best fit parameters in case the fitting is interrupted
         open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_cont.csv"), "w") do f
@@ -1984,21 +2004,23 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
         (cube_fitter.β.locked ? " (fixed)" : "") * "\n"
     msg *= "\n"
     pᵢ += 2
-    msg *= "\n#> HOT DUST <#\n"
-    msg *= "Hot_dust_amp: \t\t\t $(@sprintf "%.3e" popt[pᵢ]) +/- $(@sprintf "%.3e" perr[pᵢ]) MJy/sr \t Limits: (0, Inf)\n"
-    msg *= "Hot_dust_temp: \t\t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) K \t Limits: " *
-        "($(@sprintf "%.0f" minimum(cube_fitter.T_hot.prior)), $(@sprintf "%.0f" maximum(cube_fitter.T_hot.prior)))" *
-        (cube_fitter.T_hot.locked ? " (fixed)" : "") * "\n"
-    msg *= "Hot_dust_frac: \t\t\t $(@sprintf "%.3f" popt[pᵢ+2]) +/- $(@sprintf "%.3f" perr[pᵢ+2]) [-] \t Limits: " *
-        "($(@sprintf "%.3f" minimum(cube_fitter.Cf_hot.prior)), $(@sprintf "%.3f" maximum(cube_fitter.Cf_hot.prior)))" *
-        (cube_fitter.Cf_hot.locked ? " (fixed)" : "") * "\n"
-    msg *= "Hot_dust_τ: \t\t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3]) [-] \t Limits: " *
-        "($(@sprintf "%.3f" minimum(cube_fitter.τ_warm.prior)), $(@sprintf "%.3f" maximum(cube_fitter.τ_warm.prior)))" *
-        (cube_fitter.τ_warm.locked ? " (fixed)" : "") * "\n"
-    msg *= "Cold_dust_τ: \t\t\t $(@sprintf "%.3f" popt[pᵢ+4]) +/- $(@sprintf "%.3f" perr[pᵢ+4]) [-] \t Limits: " *
-        "($(@sprintf "%.3f" minimum(cube_fitter.τ_cold.prior)), $(@sprintf "%.3f" maximum(cube_fitter.τ_cold.prior)))" *
-        (cube_fitter.τ_cold.locked ? " (fixed)" : "") * "\n"
-    pᵢ += 5
+    if cube_fitter.fit_sil_emission
+        msg *= "\n#> HOT DUST <#\n"
+        msg *= "Hot_dust_amp: \t\t\t $(@sprintf "%.3e" popt[pᵢ]) +/- $(@sprintf "%.3e" perr[pᵢ]) MJy/sr \t Limits: (0, Inf)\n"
+        msg *= "Hot_dust_temp: \t\t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) K \t Limits: " *
+            "($(@sprintf "%.0f" minimum(cube_fitter.T_hot.prior)), $(@sprintf "%.0f" maximum(cube_fitter.T_hot.prior)))" *
+            (cube_fitter.T_hot.locked ? " (fixed)" : "") * "\n"
+        msg *= "Hot_dust_frac: \t\t\t $(@sprintf "%.3f" popt[pᵢ+2]) +/- $(@sprintf "%.3f" perr[pᵢ+2]) [-] \t Limits: " *
+            "($(@sprintf "%.3f" minimum(cube_fitter.Cf_hot.prior)), $(@sprintf "%.3f" maximum(cube_fitter.Cf_hot.prior)))" *
+            (cube_fitter.Cf_hot.locked ? " (fixed)" : "") * "\n"
+        msg *= "Hot_dust_τ: \t\t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3]) [-] \t Limits: " *
+            "($(@sprintf "%.3f" minimum(cube_fitter.τ_warm.prior)), $(@sprintf "%.3f" maximum(cube_fitter.τ_warm.prior)))" *
+            (cube_fitter.τ_warm.locked ? " (fixed)" : "") * "\n"
+        msg *= "Cold_dust_τ: \t\t\t $(@sprintf "%.3f" popt[pᵢ+4]) +/- $(@sprintf "%.3f" perr[pᵢ+4]) [-] \t Limits: " *
+            "($(@sprintf "%.3f" minimum(cube_fitter.τ_cold.prior)), $(@sprintf "%.3f" maximum(cube_fitter.τ_cold.prior)))" *
+            (cube_fitter.τ_cold.locked ? " (fixed)" : "") * "\n"
+        pᵢ += 5
+    end
     msg *= "\n#> DUST FEATURES <#\n"
     for (j, df) ∈ enumerate(cube_fitter.df_names)
         msg *= "$(df)_amp:\t\t\t $(@sprintf "%.1f" popt[pᵢ]) +/- $(@sprintf "%.1f" perr[pᵢ]) MJy/sr \t Limits: " *
@@ -2105,7 +2127,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     @debug "Adding statistical error of $σ_stat in quadrature"
 
     # Normalized flux and uncertainty by subtracting the cubic spline fit and dividing by the maximum
-    Inorm = (I .- spline_continuum) ./ N
+    Inorm = (I .- continuum) ./ N
     σnorm = σ ./ N
 
     # Organize the voff, FWHM, h3, h4, and η parameters for each line into vectors
@@ -2318,26 +2340,26 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     σ_masked = σnorm[line_mask]
     ext_masked = ext_curve[line_mask]
 
-    # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
-    # res = optimize(p -> _negln_probability(p, λ_masked, I_masked, σ_masked, cube_fitter, λ0_ln, ext_masked, priors), lower_bounds, upper_bounds, p₀, 
-    #    SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
-    # p₁ = res.minimizer
-    p₁ = p₀
+    First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
+    res = optimize(p -> _negln_probability(p, λ_masked, I_masked, σ_masked, cube_fitter, λ0_ln, ext_masked, priors), lower_bounds, upper_bounds, p₀, 
+       SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
+    p₁ = res.minimizer
+    # p₁ = p₀
 
     # Write convergence results to file, if specified
-    # if cube_fitter.track_convergence
-    #     global file_lock
-    #     # use the ReentrantLock to prevent multiple processes from trying to write to the same file at once
-    #     lock(file_lock) do 
-    #         open(joinpath("output_$(cube_fitter.name)", "loki.convergence.log"), "a") do conv
-    #             redirect_stdout(conv) do
-    #                 println("Spaxel ($(spaxel[1]),$(spaxel[2])) on worker $(myid()):")
-    #                 println(res)
-    #                 println("-------------------------------------------------------")
-    #             end
-    #         end
-    #     end
-    # end
+    if cube_fitter.track_convergence
+        global file_lock
+        # use the ReentrantLock to prevent multiple processes from trying to write to the same file at once
+        lock(file_lock) do 
+            open(joinpath("output_$(cube_fitter.name)", "loki.convergence.log"), "a") do conv
+                redirect_stdout(conv) do
+                    println("Spaxel ($(spaxel[1]),$(spaxel[2])) on worker $(myid()):")
+                    println(res)
+                    println("-------------------------------------------------------")
+                end
+            end
+        end
+    end
 
     @debug "Refining Line best fit with Levenberg-Marquardt:"
 
@@ -2660,7 +2682,7 @@ end
 
 
 """
-    plot_spaxel_fit(λ, I, I_cont, σ, line_mask, comps, n_dust_cont, n_dust_features, line_wave, line_names, screen, z, χ2red, 
+    plot_spaxel_fit(λ, I, I_cont, σ, comps, n_dust_cont, n_dust_features, line_wave, line_names, screen, z, χ2red, 
         name, label; backend=backend)
 
 Plot the fit for an individual spaxel, `I_cont`, and its individual components `comps`, using the given 
@@ -2685,7 +2707,7 @@ backend (`:pyplot` or `:plotly`).
 - `backend::Symbol`: The backend to use to plot, either `:pyplot` or `:plotly`
 """
 function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}, I_cont::Vector{<:AbstractFloat}, 
-    σ::Vector{<:AbstractFloat}, line_mask::BitVector, comps::Dict{String, Vector{T}}, n_dust_cont::Integer, n_dust_features::Integer, 
+    σ::Vector{<:AbstractFloat}, comps::Dict{String, Vector{T}}, n_dust_cont::Integer, n_dust_features::Integer, 
     line_wave::Vector{<:AbstractFloat}, line_names::Vector{Symbol}, screen::Bool, z::AbstractFloat, χ2red::AbstractFloat, 
     name::String, label::String; backend::Symbol=:pyplot) where {T<:AbstractFloat}
 
@@ -2730,8 +2752,8 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
                           :width => 0.5, :dash => "dash"))])
         end
         # Add the summed up continuum
-        append!(traces, [PlotlyJS.scatter(x=λ, y=comps["hot_dust"] .+ comps["extinction"] .* 
-            (sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] .+ comps["stellar"]),
+        append!(traces, [PlotlyJS.scatter(x=λ, y=("hot_dust" ∈ keys(comps) ? comps["hot_dust"] : zeros(length(λ))) .+ 
+            comps["extinction"] .* (sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] .+ comps["stellar"]),
             mode="lines", line=Dict(:color => "green", :width => 1), name="Dust+Stellar Continuum")])
         # axes labels / titles / fonts
         layout = PlotlyJS.Layout(
@@ -2755,9 +2777,9 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
     # Pyplot --> actually publication-quality plots finely tuned to be the most useful and visually appealing that I could make them
     if backend == :pyplot || backend == :both
 
-        # If max is above 10^4, normalize so the y axis labels aren't super wide
+        # If max is above 10^5, normalize so the y axis labels aren't super wide
         power = floor(Int, log10(maximum(I)))
-        if power ≥ 4
+        if power ≥ 5
             norm = 10^power
         else
             norm = 1
@@ -2811,7 +2833,7 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
         end
 
         # full continuum
-        ax1.plot(λ, (comps["hot_dust"] .+ comps["extinction"] .* 
+        ax1.plot(λ, (("hot_dust" ∈ keys(comps) ? comps["hot_dust"] : zeros(length(λ))) .+ comps["extinction"] .* 
             (sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] .+ comps["stellar"])) ./ norm ./ λ, "-", color=:forestgreen)
         # full PAH profile
         ax1.plot(λ, sum([comps["dust_feat_$i"] for i ∈ 1:n_dust_features], dims=1)[1] .* comps["extinction"] ./ norm ./ λ, "-", 
@@ -2820,7 +2842,8 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
         ax1.set_xlim(minimum(λ), maximum(λ))
         ax2.set_xlim(minimum(λ), maximum(λ))
         ax2.set_ylim(-1.1maximum((I.-I_cont) ./ norm ./ λ), 1.1maximum((I.-I_cont) ./ norm ./ λ))
-        ax3.set_ylim(0., 1.1)
+        ax3.set_yscale("log") # logarithmic extinction axis
+        ax3.set_ylim(1e-3, 1.)
         if screen
             ax3.set_ylabel(L"$e^{-\tau_{\lambda}}$")
         else
@@ -2832,8 +2855,13 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
         else
             ax1.set_ylabel(L"$I_{\nu}/\lambda$ (MJy sr$^{-1}$ $\mu$m$^{-1}$)")
         end
-        # ax1.set_ylim(0., nanmaximum(I[.!line_mask] ./ norm ./ λ[.!line_mask]))
-        ax1.set_ylim(0., 1.3*(I[end] ./ norm ./ λ[end]))
+        line_mask = falses(length(λ))
+        for ln ∈ line_wave
+            window_size = 3000. / Util.C_KMS * ln
+            window = (ln - window_size) .< λ .< (ln + window_size)
+            line_mask .|= window
+        end
+        ax1.set_ylim(0., 1.3nanmaximum(I[.!line_mask] ./ norm ./ λ[.!line_mask]))
         ax2.set_ylabel(L"$O-C$")  # ---> residuals, (O)bserved - (C)alculated
         ax2.set_xlabel(L"$\lambda_{\rm rest}$ ($\mu$m)")
         ax4.set_xlabel(L"$\lambda_{\rm obs}$ ($\mu$m)")
@@ -2891,8 +2919,7 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
     # (this is only used to calculate the peak location of the profiles, and thus the peak intensity)
     Δλ = mean(diff(λ)) / 10
 
-    # Perform a cubic spline fit to the continuum, masking out lines
-    # mask_lines, continuum, _ = continuum_cubic_spline(λ, I, σ)
+    # Normalization
     N = Float64(abs(nanmaximum(I)))
     N = N ≠ 0. ? N : 1.
     @debug "Normalization: $N"
@@ -2902,7 +2929,7 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
     p_dust_err = zeros(3cube_fitter.n_dust_feat)
     pₒ = 1
     # Initial parameter vector index where dust profiles start
-    pᵢ = 3 + 2cube_fitter.n_dust_cont + 2 + 5
+    pᵢ = 3 + 2cube_fitter.n_dust_cont + 2 + (cube_fitter.fit_sil_emission ? 5 : 0)
 
     for (ii, df) ∈ enumerate(cube_fitter.dust_features)
 
@@ -3281,7 +3308,7 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex)
             λ0_ln = [ln.λ₀ for ln ∈ cube_fitter.lines]
             if cube_fitter.plot_spaxels != :none
                 @debug "Plotting spaxel $spaxel best fit"
-                @timeit timer_output "plot_spaxel_fit" plot_spaxel_fit(λ, I, I_model, σ, mask_lines, comps, 
+                @timeit timer_output "plot_spaxel_fit" plot_spaxel_fit(λ, I, I_model, σ, comps, 
                     cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, λ0_ln, cube_fitter.line_names, cube_fitter.extinction_screen, 
                     cube_fitter.z, χ2red, cube_fitter.name, "spaxel_$(spaxel[1])_$(spaxel[2])", backend=cube_fitter.plot_spaxels)
             end
@@ -3366,7 +3393,7 @@ function fit_stack!(cube_fitter::CubeFitter)
     λ0_ln = [ln.λ₀ for ln ∈ cube_fitter.lines]
     if cube_fitter.plot_spaxels != :none
         @debug "Plotting spaxel sum initial fit"
-        plot_spaxel_fit(λ_init, I_sum_init, I_model_init, σ_init, mask_lines, comps_init,
+        plot_spaxel_fit(λ_init, I_sum_init, I_model_init, σ_init, comps_init,
             cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, λ0_ln, cube_fitter.line_names, cube_fitter.extinction_screen, 
             cube_fitter.z, χ2red_init, cube_fitter.name, "initial_sum_fit", backend=cube_fitter.plot_spaxels)
     end
@@ -3480,18 +3507,20 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
         param_maps.extinction[:beta][index] = out_params[index, pᵢ+1]
         param_errs.extinction[:beta][index] = out_errs[index, pᵢ+1]
         pᵢ += 2
-        # Hot dust parameters
-        param_maps.hot_dust[:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]-17) : -Inf
-        param_errs.hot_dust[:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / (log(10) * out_params[index, pᵢ]) : NaN
-        param_maps.hot_dust[:temp][index] = out_params[index, pᵢ+1]
-        param_errs.hot_dust[:temp][index] = out_errs[index, pᵢ+1]
-        param_maps.hot_dust[:frac][index] = out_params[index, pᵢ+2]
-        param_errs.hot_dust[:frac][index] = out_errs[index, pᵢ+2]
-        param_maps.hot_dust[:tau_warm][index] = out_params[index, pᵢ+3]
-        param_errs.hot_dust[:tau_warm][index] = out_errs[index, pᵢ+3]
-        param_maps.hot_dust[:tau_cold][index] = out_params[index, pᵢ+4]
-        param_errs.hot_dust[:tau_cold][index] = out_errs[index, pᵢ+4]
-        pᵢ += 5
+        if cube_fitter.fit_sil_emission
+            # Hot dust parameters
+            param_maps.hot_dust[:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]-17) : -Inf
+            param_errs.hot_dust[:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / (log(10) * out_params[index, pᵢ]) : NaN
+            param_maps.hot_dust[:temp][index] = out_params[index, pᵢ+1]
+            param_errs.hot_dust[:temp][index] = out_errs[index, pᵢ+1]
+            param_maps.hot_dust[:frac][index] = out_params[index, pᵢ+2]
+            param_errs.hot_dust[:frac][index] = out_errs[index, pᵢ+2]
+            param_maps.hot_dust[:tau_warm][index] = out_params[index, pᵢ+3]
+            param_errs.hot_dust[:tau_warm][index] = out_errs[index, pᵢ+3]
+            param_maps.hot_dust[:tau_cold][index] = out_params[index, pᵢ+4]
+            param_errs.hot_dust[:tau_cold][index] = out_errs[index, pᵢ+4]
+            pᵢ += 5
+        end
         # Dust feature log(amplitude), mean, FWHM
         for df ∈ cube_fitter.df_names
             param_maps.dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ])-17 : -Inf
@@ -3505,7 +3534,7 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
 
         # End of continuum parameters: recreate the continuum model
         I_cont, comps_c = Util.fit_full_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], cube_fitter.n_dust_cont, cube_fitter.n_dust_feat,
-            cube_fitter.extinction_curve, cube_fitter.extinction_screen)
+            cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission)
 
         # Tied line velocity offsets
         vᵢ = pᵢ
@@ -3732,6 +3761,9 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
         end
         for j ∈ 1:cube_fitter.n_dust_feat
             cube_model.dust_features[index, :, j] .= comps["dust_feat_$j"]
+        end
+        if cube_fitter.fit_sil_emission
+            cube_model.hot_dust[index, :] .= comps["hot_dust"]
         end
         for k ∈ 1:cube_fitter.n_lines
             cube_model.lines[index, :, k] .= comps["line_$k"]
@@ -3963,12 +3995,14 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
             cube_fitter.python_wcs)
     end
 
-    # Hot dust parameters
-    for parameter ∈ keys(param_maps.hot_dust)
-        data = param_maps.hot_dust[parameter]
-        name_i = join(["hot_dust", parameter], "_")
-        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
-            cube_fitter.python_wcs)
+    if cube_fitter.fit_sil_emission
+        # Hot dust parameters
+        for parameter ∈ keys(param_maps.hot_dust)
+            data = param_maps.hot_dust[parameter]
+            name_i = join(["hot_dust", parameter], "_")
+            plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
+                cube_fitter.python_wcs)
+        end
     end
 
     # Tied Voigt mixing parameter
@@ -4156,7 +4190,9 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
             write(f, cube_model.lines[:, :, :, k]; header=hdr, name="$line")                        # Emission line profiles
         end
         write(f, cube_model.extinction; header=hdr, name="EXTINCTION")                              # Extinction model
-        write(f, cube_model.hot_dust; header=hdr, name="HOT_DUST")                                  # Hot dust model
+        if cube_fitter.fit_sil_emission
+            write(f, cube_model.hot_dust; header=hdr, name="HOT_DUST")                              # Hot dust model
+        end
         
         write(f, ["wave_rest", "wave_obs"],                                                                     # 1D Rest frame and observed frame
                  [cube_fitter.cube.λ, Util.observed_frame(cube_fitter.cube.λ, cube_fitter.z)],                  # wavelength vectors
@@ -4178,7 +4214,9 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
             write_key(f["$line"], "BUNIT", "MJy/sr")
         end
         write_key(f["EXTINCTION"], "BUNIT", "unitless")
-        write_key(f["HOT_DUST"], "BUNIT", "MJy/sr")
+        if cube_fitter.fit_sil_emission
+            write_key(f["HOT_DUST"], "BUNIT", "MJy/sr")
+        end
     end
 
     # Create the 2D parameter map FITS file
@@ -4242,32 +4280,34 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
             end
         end
 
-        # Hot dust parameters
-        for parameter ∈ keys(param_maps.hot_dust)
-            data = param_maps.hot_dust[parameter]
-            name_i = join(["hot_dust", parameter], "_")
-            if occursin("amp", String(name_i))
-                bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
-            elseif occursin("temp", String(name_i))
-                bunit = "Kelvin"
-            elseif occursin("frac", String(name_i)) || occursin("tau", String(name_i))
-                bunit = "unitless"
+        if cube_fitter.fit_sil_emission
+            # Hot dust parameters
+            for parameter ∈ keys(param_maps.hot_dust)
+                data = param_maps.hot_dust[parameter]
+                name_i = join(["hot_dust", parameter], "_")
+                if occursin("amp", String(name_i))
+                    bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                elseif occursin("temp", String(name_i))
+                    bunit = "Kelvin"
+                elseif occursin("frac", String(name_i)) || occursin("tau", String(name_i))
+                    bunit = "unitless"
+                end
+                write(f, data; header=hdr, name=name_i)
+                write_key(f[name_i], "BUNIT", bunit)
             end
-            write(f, data; header=hdr, name=name_i)
-            write_key(f[name_i], "BUNIT", bunit)
-        end
-        for parameter ∈ keys(param_errs.hot_dust)
-            data = param_errs.hot_dust[parameter]
-            name_i = join(["hot_dust", parameter], "_")
-            if occursin("amp", String(name_i))
-                bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
-            elseif occursin("temp", String(name_i))
-                bunit = "Kelvin"
-            elseif occursin("frac", String(name_i)) || occursin("tau", String(name_i))
-                bunit = "unitless"
+            for parameter ∈ keys(param_errs.hot_dust)
+                data = param_errs.hot_dust[parameter]
+                name_i = join(["hot_dust", parameter], "_")
+                if occursin("amp", String(name_i))
+                    bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                elseif occursin("temp", String(name_i))
+                    bunit = "Kelvin"
+                elseif occursin("frac", String(name_i)) || occursin("tau", String(name_i))
+                    bunit = "unitless"
+                end
+                write(f, data; header=hdr, name=name_i)
+                write_key(f[name_i], "BUNIT", bunit)
             end
-            write(f, data; header=hdr, name=name_i)
-            write_key(f[name_i], "BUNIT", bunit)
         end
 
         # Dust feature (PAH) parameters
