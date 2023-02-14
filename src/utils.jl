@@ -63,13 +63,13 @@ const kvt_prof::Matrix{Float64} =  [8.0  0.06;
 """
     read_smith_temps()
 
-Setup function for reading in the PAH templates from Smith et al. 2006
+Setup function for reading in the PAH templates from Smith et al. 2006 used in Questfit (https://github.com/drupke/questfit/tree/v1.0)
 """
 function read_smith_temps()
     
     path3 = joinpath(@__DIR__, "smith_nftemp3.pah.ext.dat")
     path4 = joinpath(@__DIR__, "smith_nftemp4.pah.next.dat")
-    @debug "Reading in Smith et al. 2006 PAH template from: $path3 and $path4"
+    @debug "Reading in Smith et al. 2006 PAH templates from QUESTFIT: $path3 and $path4"
 
     temp3 = CSV.read(path3, DataFrame, delim=' ', ignorerepeated=true, stripwhitespace=true,
         header=["rest_wave", "flux"])
@@ -77,6 +77,25 @@ function read_smith_temps()
         header=["rest_wave", "flux"])
 
     temp3[!, "rest_wave"], temp3[!, "flux"], temp4[!, "rest_wave"], temp4[!, "flux"]
+end
+
+
+"""
+    read_ice_ch_temp()
+
+Setup function for reading in the Ice+CH absorption templates from Donnan's PAHDecomp (https://github.com/FergusDonnan/PAHDecomp/tree/main/Ice%20Templates)
+"""
+function read_ice_ch_temps()
+    path1 = joinpath(@__DIR__, "IceExt.txt")
+    path2 = joinpath(@__DIR__, "CHExt.txt")
+    @debug "Reading in Ice+CH templates from: $path1 and $path2"
+
+    temp1 = CSV.read(path1, DataFrame, delim=' ', comment="#", ignorerepeated=true, stripwhitespace=true,
+        header=["rest_wave", "tau"])
+    temp2 = CSV.read(path2, DataFrame, delim=' ', comment="#", ignorerepeated=true, stripwhitespace=true,
+        header=["rest_wave", "tau"])
+    
+    temp1[!, "rest_wave"], temp1[!, "tau"], temp2[!, "rest_wave"], temp2[!, "tau"]
 end
 
 
@@ -140,9 +159,6 @@ function silicate_dp()
     λ_irs, τ_λ
 end
 
-# Save the Donnan et al. 2022 profile as a constant
-const DPlus_prof = silicate_dp()
-const DP_interp = Spline1D(DPlus_prof[1], DPlus_prof[2]; k=3)
 
 # Setup function for creating the extinction profile from Chiar+Tielens 2006
 function silicate_ct()
@@ -150,6 +166,11 @@ function silicate_ct()
         ignorerepeated=true, header=["wave", "a_galcen", "a_local"])
     data[!, "wave"], data[!, "a_galcen"]
 end
+
+
+# Save the Donnan et al. 2022 profile as a constant
+const DP_prof = silicate_dp()
+const DP_interp = Spline1D(DP_prof[1], DP_prof[2]; k=3)
 
 # Save the Chiar+Tielens 2005 profile as a constant
 const CT_prof = silicate_ct()
@@ -160,6 +181,10 @@ const SmithTemps = read_smith_temps()
 const Smith3_interp = Spline1D(SmithTemps[1], SmithTemps[2]; k=3)
 const Smith4_interp = Spline1D(SmithTemps[3], SmithTemps[4]; k=3)
 
+# Save the Ice+CH optical depth template as a constant
+const IceCHTemp = read_ice_ch_temps()
+const Ice_interp = Spline1D(IceCHTemp[1], IceCHTemp[2]; k=3)
+const CH_interp = Spline1D(IceCHTemp[3], IceCHTemp[4]; k=3)
 
 ########################################### UTILITY FUNCTIONS ###############################################
 
@@ -413,7 +438,7 @@ julia> ln_likelihood([1.1, 1.9, 3.2], [1., 2., 3.], [0.1, 0.1, 0.1])
 ```
 """
 function ln_likelihood(data::Vector{<:AbstractFloat}, model::Vector{<:AbstractFloat}, 
-    err::Vector{<:AbstractFloat})::AbstractFloat
+    err::Vector{<:AbstractFloat})
     -0.5 * sum(@. (data - model)^2 / err^2 + log(2π * err^2))
 end
 
@@ -434,7 +459,7 @@ julia> hermite(2., 3)
 40.0
 ```
 """
-function hermite(x::AbstractFloat, n::Integer)::AbstractFloat
+function hermite(x::AbstractFloat, n::Integer)
     if iszero(n)
         1.
     elseif isone(n)
@@ -456,7 +481,7 @@ given a wavelength in μm and a temperature in Kelvins.
 
 Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 """
-function Blackbody_ν(λ::AbstractFloat, Temp::Real)::AbstractFloat
+function Blackbody_ν(λ::AbstractFloat, Temp::Real)
     Bν_1/λ^3 / (exp(Bν_2/(λ*Temp))-1)
 end
 
@@ -467,7 +492,7 @@ end
 Return the peak wavelength (in μm) of a Blackbody spectrum at a given temperature `Temp`,
 using Wein's Displacement Law.
 """
-function Wein(Temp::AbstractFloat)::AbstractFloat
+function Wein(Temp::AbstractFloat)
     b_Wein / Temp
 end
 
@@ -482,7 +507,7 @@ Calculate a Drude profile at location `x`, with amplitude `A`, central value `μ
 
 Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 """
-function Drude(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::AbstractFloat)::AbstractFloat
+function Drude(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::AbstractFloat)
     A * (FWHM/μ)^2 / ((x/μ - μ/x)^2 + (FWHM/μ)^2)
 end
 
@@ -497,7 +522,7 @@ Calculate the mixed silicate extinction profile based on Kemper, Vriend, & Tiele
 Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 (with modifications)
 """
-function τ_kvt(λ::AbstractFloat, β::AbstractFloat)::AbstractFloat
+function τ_kvt(λ::AbstractFloat, β::AbstractFloat)
 
     # Get limits of the values that we have datapoints for via the kvt_prof constant
     mx, mn = argmax(kvt_prof[:, 1]), argmin(kvt_prof[:, 1])
@@ -524,7 +549,7 @@ function τ_kvt(λ::AbstractFloat, β::AbstractFloat)::AbstractFloat
 end
 
 
-function τ_ct(λ::AbstractFloat)::AbstractFloat
+function τ_ct(λ::AbstractFloat)
 
     mx = argmax(CT_prof[1])
     λ_mx = CT_prof[1][mx]
@@ -546,7 +571,7 @@ end
 
 Calculate the mixed silicate extinction profile based on Donnan et al. (2022)
 """
-function τ_dp(λ::AbstractFloat, β::AbstractFloat)::AbstractFloat
+function τ_dp(λ::AbstractFloat, β::AbstractFloat)
 
     # Simple cubic spline interpolation
     ext = DP_interp(λ)
@@ -556,10 +581,42 @@ function τ_dp(λ::AbstractFloat, β::AbstractFloat)::AbstractFloat
 end
 
 
-function Extinction(ext::AbstractFloat, τ_97::AbstractFloat; screen::Bool=false)::AbstractFloat
-    """
-    Calculate the overall extinction factor
-    """
+"""
+    τ_ice(λ)
+
+Calculate the ice extinction profiles
+"""
+function τ_ice(λ::AbstractFloat)
+
+    # Simple cubic spline interpolation
+    ext = Ice_interp(λ)
+    ext /= maximum(IceCHTemp[2])
+
+    ext
+end
+
+
+"""
+    τ_ch(λ)
+
+Calculate the CH extinction profiles
+"""
+function τ_ch(λ::AbstractFloat)
+
+    # Simple cubic spline interpolation
+    ext = CH_interp(λ)
+    ext /= maximum(IceCHTemp[4])
+
+    ext
+end
+
+
+"""
+    Extinction(ext, τ_97; screen)
+
+Calculate the overall extinction factor
+"""
+function Extinction(ext::AbstractFloat, τ_97::AbstractFloat; screen::Bool=false)
     if screen
         exp(-τ_97*ext)
     else
@@ -615,17 +672,24 @@ function fit_spectrum(λ, params::Vector{<:AbstractFloat}, n_dust_cont::Integer,
 
     # Extinction 
     if extinction_curve == "d+"
-        ext_curve = τ_dp.(λ, params[pᵢ+1])
+        ext_curve = τ_dp.(λ, params[pᵢ+3])
     elseif extinction_curve == "kvt"
-        ext_curve = τ_kvt.(λ, params[pᵢ+1])
+        ext_curve = τ_kvt.(λ, params[pᵢ+3])
     elseif extinction_curve == "ct"
         ext_curve = τ_ct.(λ)
     else
         error("Unrecognized extinction curve: $extinction_curve")
     end
     comps["extinction"] = Extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
-    contin .*= comps["extinction"]
-    pᵢ += 2
+
+    # Ice+CH Absorption
+    ext_ice = τ_ice.(λ)
+    comps["abs_ice"] = Extinction.(ext_ice, params[pᵢ+1], screen=true)
+    ext_ch = τ_ch.(λ)
+    comps["abs_ch"] = Extinction.(ext_ch, params[pᵢ+2], screen=true)
+
+    contin .*= comps["extinction"] .* comps["abs_ice"] .* comps["abs_ch"]
+    pᵢ += 4
 
     if fit_sil_emission
         # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
@@ -644,6 +708,7 @@ function fit_spectrum(λ, params::Vector{<:AbstractFloat}, n_dust_cont::Integer,
     pah4 = Smith4_interp.(λ)
     comps["pah_temp_4"] = params[pᵢ+1] .* pah4 / maximum(pah4)
     contin .+= comps["pah_temp_4"] .* comps["extinction"]
+    # (Not affected by Ice+CH absorption)
     pᵢ += 2
 
     # Return components if necessary
@@ -674,17 +739,24 @@ function fit_spectrum(λ, params::Vector{<:AbstractFloat}, n_dust_cont::Integer,
 
     # Extinction 
     if extinction_curve == "d+"
-        ext_curve = τ_dp.(λ, params[pᵢ+1])
+        ext_curve = τ_dp.(λ, params[pᵢ+3])
     elseif extinction_curve == "kvt"
-        ext_curve = τ_kvt.(λ, params[pᵢ+1])
+        ext_curve = τ_kvt.(λ, params[pᵢ+3])
     elseif extinction_curve == "ct"
         ext_curve = τ_ct.(λ)
     else
         error("Unrecognized extinction curve: $extinction_curve")
     end
     ext = Extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
-    contin .*= ext
-    pᵢ += 2
+
+    # Ice+CH absorption
+    ext_ice = τ_ice.(λ)
+    abs_ice = Extinction.(ext_ice, params[pᵢ+1], screen=true)
+    ext_ch = τ_ch.(λ)
+    abs_ch = Extinction.(ext_ch, params[pᵢ+2], screen=true)
+
+    contin .*= ext .* abs_ice .* abs_ch
+    pᵢ += 4
 
     if fit_sil_emission
         # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
@@ -701,6 +773,7 @@ function fit_spectrum(λ, params::Vector{<:AbstractFloat}, n_dust_cont::Integer,
     contin .+= params[pᵢ] .* pah3 / maximum(pah3) .* ext
     pah4 = Smith4_interp.(λ)
     contin .+= params[pᵢ+1] .* pah4 / maximum(pah4) .* ext
+    # (Not affected by Ice+CH absorption)
     pᵢ += 2
 
     contin
@@ -774,8 +847,8 @@ end
 function fit_full_continuum(λ, params::Vector{<:AbstractFloat}, n_dust_cont::Integer,
     n_dust_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool)
 
-    pars_1 = vcat(params[1:(2+2n_dust_cont+2+(fit_sil_emission ? 5 : 0))], [0., 0.])
-    pars_2 = params[(3+2n_dust_cont+2+(fit_sil_emission ? 5 : 0)):end]
+    pars_1 = vcat(params[1:(2+2n_dust_cont+4+(fit_sil_emission ? 5 : 0))], [0., 0.])
+    pars_2 = params[(3+2n_dust_cont+4+(fit_sil_emission ? 5 : 0)):end]
 
     contin_1, ccomps = fit_spectrum(λ, pars_1, n_dust_cont, extinction_curve, extinction_screen, fit_sil_emission, true)
     contin_2, pcomps = fit_pah_residuals(λ, pars_2, n_dust_feat, ccomps["extinction"], true)

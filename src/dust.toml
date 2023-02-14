@@ -428,6 +428,20 @@ locked = false
 plim = [0.0, 100.0]
 locked = false
 
+# extinction.tau_ice: the optical depth from ice absorption
+# at ~6.9 microns (the peak). Default is 1.
+[extinction.tau_ice]
+val = 1.0
+plim = [0.0, 100.0]
+locked = false
+
+# extinction.tau_ch: the optical depth from CH absorption
+# at ~6.9 microns (the peak). Default is 1.
+[extinction.tau_ch]
+val = 1.0
+plim = [0.0, 100.0]
+locked = false
+
 # extinction.beta: the mixing ratio for the extinction profile,
 # between the profile specified in options.toml and a -1.7 index
 # power law on the wavelength, relative to 9.7 microns.
