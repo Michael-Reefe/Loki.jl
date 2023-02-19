@@ -805,7 +805,7 @@ function cube_rebin!(obs::Observation, channels::Union{Vector{S},Nothing}=nothin
         for wi ∈ 1:wi_size
             # 2D Cubic spline interpolations at each wavelength bin with flat boundary conditions
             interp_func_I = Spline2D(1:shape_in[1], 1:shape_in[2], ch_Iν[:, :, wi]; kx=3, ky=3)
-            interp_func_σ = Spline2D(1:shape_in[1], 1:shape_in[2], ch_Iν[:, :, wi]; kx=3, ky=3)
+            interp_func_σ = Spline2D(1:shape_in[1], 1:shape_in[2], ch_σI[:, :, wi]; kx=3, ky=3)
             # interp_func_I = extrapolate(interpolate(ch_Iν[:, :, wi], BSpline(Cubic(Interpolations.Flat(OnGrid())))), Interpolations.Flat())
             # interp_func_σ = extrapolate(interpolate(ch_σI[:, :, wi], BSpline(Cubic(Interpolations.Flat(OnGrid())))), Interpolations.Flat())
             

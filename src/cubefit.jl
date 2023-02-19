@@ -2355,7 +2355,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     # these are a bit loose since we're mainly just looking to get into the right global minimum region with SAMIN
     # before refining the fit later with a LevMar local minimum routine
     x_tol = 1e-5
-    f_tol = 0.01abs(_negln_probability(p₀, λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors) - 
+    f_tol = abs(_negln_probability(p₀, λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors) - 
                 _negln_probability(clamp.(p₀ .- x_tol, lower_bounds, upper_bounds), λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors))
 
     # Window around emission lines to make fitting more efficient
@@ -2899,12 +2899,15 @@ function plot_spaxel_fit(λ::Vector{<:AbstractFloat}, I::Vector{<:AbstractFloat}
         ax2.legend(loc="upper left")
 
         # Set minor ticks as multiples of 0.1 μm for x axis and automatic for y axis
-        ax1.xaxis.set_minor_locator(py_ticker.MultipleLocator(0.1))
+        ax1.xaxis.set_major_locator(py_ticker.MultipleLocator(2.))
+        ax1.xaxis.set_minor_locator(py_ticker.MultipleLocator(0.5))
         ax1.yaxis.set_minor_locator(py_ticker.AutoMinorLocator())
-        ax2.xaxis.set_minor_locator(py_ticker.MultipleLocator(0.1))
+        ax2.xaxis.set_major_locator(py_ticker.MultipleLocator(2.))
+        ax2.xaxis.set_minor_locator(py_ticker.MultipleLocator(0.5))
         ax2.yaxis.set_minor_locator(py_ticker.AutoMinorLocator())
         ax3.yaxis.set_minor_locator(py_ticker.MultipleLocator(0.1))
-        ax4.xaxis.set_minor_locator(py_ticker.MultipleLocator(0.1))
+        ax4.xaxis.set_major_locator(py_ticker.MultipleLocator(2.))
+        ax4.xaxis.set_minor_locator(py_ticker.MultipleLocator(0.5))
 
         # Set major ticks and formats
         ax1.set_xticklabels([]) # ---> will be covered up by the residuals plot
@@ -3928,9 +3931,11 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
     fig = plt.figure()
     ax = fig.add_subplot(111, projection=python_wcs)
     # Need to filter out any NaNs in order to use quantile
-    flatdata = filtered[isfinite.(filtered)]
-    vmin = length(flatdata) > 0 ? quantile(flatdata, 0.01) : 0.0
-    vmax = length(flatdata) > 0 ? quantile(flatdata, 0.99) : 0.0
+    # flatdata = filtered[isfinite.(filtered)]
+    # vmin = length(flatdata) > 0 ? quantile(flatdata, 0.01) : 0.0
+    # vmax = length(flatdata) > 0 ? quantile(flatdata, 0.99) : 0.0
+    vmin = nanminimum(filtered)
+    vmax = nanmaximum(filtered)
     # override vmin/vmax for mixing parameter
     if occursin("mixing", String(name_i))
         vmin = 0.

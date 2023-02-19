@@ -411,6 +411,9 @@ val = 0.359
 plim = [0.4, 1.4]
 locked = false
 
+# ~19.8 um PAH feature? https://www.aanda.org/articles/aa/full_html/2010/03/aa12714-09/aa12714-09.html
+# https://iopscience.iop.org/article/10.1088/0004-637X/712/1/69
+
 [dust_features."PAH_33.10".wave]
 val = 33.1
 plim = [-0.05, 0.05]
@@ -431,16 +434,16 @@ locked = false
 # extinction.tau_ice: the optical depth from ice absorption
 # at ~6.9 microns (the peak). Default is 1.
 [extinction.tau_ice]
-val = 1.0
+val = 1e-4
 plim = [0.0, 100.0]
-locked = false
+locked = true
 
 # extinction.tau_ch: the optical depth from CH absorption
 # at ~6.9 microns (the peak). Default is 1.
 [extinction.tau_ch]
-val = 1.0
+val = 1e-4
 plim = [0.0, 100.0]
-locked = false
+locked = true
 
 # extinction.beta: the mixing ratio for the extinction profile,
 # between the profile specified in options.toml and a -1.7 index

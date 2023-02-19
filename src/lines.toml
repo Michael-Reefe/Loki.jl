@@ -2,9 +2,9 @@
 # line model of the spectra.
 
 # Tying parameters
-tie_H2_voff = true         # tie all molecular H2 lines to the same velocity offset
+tie_H2_voff = false         # tie all molecular H2 lines to the same velocity offset
 tie_H2_acomp_voff = true    # tie all additional components of molecular H2 lines to the same velocity offset
-tie_ion_voff = true        # tie all ionization lines to the same velocity offset
+tie_ion_voff = false        # tie all ionization lines to the same velocity offset
 tie_ion_acomp_voff = true   # tie all additional components of ionization lines to the same velocity offset
 tie_voigt_mixing = true    # tie the Voigt mixing ratios of all lines
 
