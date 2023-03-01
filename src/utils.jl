@@ -201,7 +201,7 @@ julia> Σ([1 2; 3 NaN], 1)
  2.0
 ```
 """
-Σ(array, dims) = dropdims(nansum(array, dims=dims), dims=dims)
+Σ(array, dims; nan=true) = dropdims((nan ? nansum : sum)(array, dims=dims), dims=dims)
 
 
 """
@@ -437,8 +437,7 @@ julia> ln_likelihood([1.1, 1.9, 3.2], [1., 2., 3.], [0.1, 0.1, 0.1])
 1.1509396793681144
 ```
 """
-function ln_likelihood(data::Vector{<:AbstractFloat}, model::Vector{<:AbstractFloat}, 
-    err::Vector{<:AbstractFloat})
+function ln_likelihood(data::Vector{T}, model::Vector{T}, err::Vector{T}) where {T<:Real}
     -0.5 * sum(@. (data - model)^2 / err^2 + log(2π * err^2))
 end
 
@@ -459,7 +458,7 @@ julia> hermite(2., 3)
 40.0
 ```
 """
-function hermite(x::AbstractFloat, n::Integer)
+function hermite(x::Real, n::Integer)
     if iszero(n)
         1.
     elseif isone(n)
@@ -481,7 +480,7 @@ given a wavelength in μm and a temperature in Kelvins.
 
 Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 """
-function Blackbody_ν(λ::AbstractFloat, Temp::Real)
+function Blackbody_ν(λ::Real, Temp::Real)
     Bν_1/λ^3 / (exp(Bν_2/(λ*Temp))-1)
 end
 
@@ -492,7 +491,7 @@ end
 Return the peak wavelength (in μm) of a Blackbody spectrum at a given temperature `Temp`,
 using Wein's Displacement Law.
 """
-function Wein(Temp::AbstractFloat)
+function Wein(Temp::Real)
     b_Wein / Temp
 end
 
@@ -507,7 +506,7 @@ Calculate a Drude profile at location `x`, with amplitude `A`, central value `μ
 
 Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 """
-function Drude(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::AbstractFloat)
+function Drude(x::Real, A::Real, μ::Real, FWHM::Real)
     A * (FWHM/μ)^2 / ((x/μ - μ/x)^2 + (FWHM/μ)^2)
 end
 
@@ -522,7 +521,7 @@ Calculate the mixed silicate extinction profile based on Kemper, Vriend, & Tiele
 Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 (with modifications)
 """
-function τ_kvt(λ::AbstractFloat, β::AbstractFloat)
+function τ_kvt(λ::Real, β::Real)
 
     # Get limits of the values that we have datapoints for via the kvt_prof constant
     mx, mn = argmax(kvt_prof[:, 1]), argmin(kvt_prof[:, 1])
@@ -549,7 +548,7 @@ function τ_kvt(λ::AbstractFloat, β::AbstractFloat)
 end
 
 
-function τ_ct(λ::AbstractFloat)
+function τ_ct(λ::Real)
 
     mx = argmax(CT_prof[1])
     λ_mx = CT_prof[1][mx]
@@ -571,7 +570,7 @@ end
 
 Calculate the mixed silicate extinction profile based on Donnan et al. (2022)
 """
-function τ_dp(λ::AbstractFloat, β::AbstractFloat)
+function τ_dp(λ::Real, β::Real)
 
     # Simple cubic spline interpolation
     ext = DP_interp(λ)
@@ -586,7 +585,7 @@ end
 
 Calculate the ice extinction profiles
 """
-function τ_ice(λ::AbstractFloat)
+function τ_ice(λ::Real)
 
     # Simple cubic spline interpolation
     ext = Ice_interp(λ)
@@ -601,7 +600,7 @@ end
 
 Calculate the CH extinction profiles
 """
-function τ_ch(λ::AbstractFloat)
+function τ_ch(λ::Real)
 
     # Simple cubic spline interpolation
     ext = CH_interp(λ)
@@ -616,7 +615,7 @@ end
 
 Calculate the overall extinction factor
 """
-function Extinction(ext::AbstractFloat, τ_97::AbstractFloat; screen::Bool=false)
+function Extinction(ext::Real, τ_97::Real; screen::Bool=false)
     if screen
         exp(-τ_97*ext)
     else
@@ -651,8 +650,8 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
-function fit_spectrum(λ, params::Vector{<:AbstractFloat}, n_dust_cont::Integer,
-    extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, return_components::Bool)
+function fit_spectrum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer, extinction_curve::String, 
+    extinction_screen::Bool, fit_sil_emission::Bool, return_components::Bool) where {T<:Real}
 
     # Prepare outputs
     comps = Dict{String, Vector{Float64}}()
@@ -721,8 +720,8 @@ end
 
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
-function fit_spectrum(λ, params::Vector{<:AbstractFloat}, n_dust_cont::Integer,
-    extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool)
+function fit_spectrum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer, extinction_curve::String, 
+    extinction_screen::Bool, fit_sil_emission::Bool) where {T<:Real}
 
     # Prepare outputs
     contin = zeros(Float64, length(λ))
@@ -794,8 +793,8 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in
     addition to the overall fit
 """
-function fit_pah_residuals(λ, params::Vector{<:AbstractFloat}, n_dust_feat::Integer,
-    ext_curve::Vector{<:AbstractFloat}, return_components::Bool)
+function fit_pah_residuals(λ::Vector{T}, params::Vector{T}, n_dust_feat::Integer,
+    ext_curve::Vector{T}, return_components::Bool) where {T<:Real}
 
     # Prepare outputs
     comps = Dict{String, Vector{Float64}}()
@@ -822,8 +821,8 @@ end
 
 
 # Multiple dispatch for more efficiency
-function fit_pah_residuals(λ, params::Vector{<:AbstractFloat}, n_dust_feat::Integer,
-    ext_curve::Vector{<:AbstractFloat})
+function fit_pah_residuals(λ::Vector{T}, params::Vector{T}, n_dust_feat::Integer,
+    ext_curve::Vector{T}) where {T<:Real}
 
     # Prepare outputs
     contin = zeros(Float64, length(λ))
@@ -844,8 +843,8 @@ end
 
 
 # Combine fit_spectrum and fit_pah_residuals to get the full continuum in one function (after getting the optimized parameters)
-function fit_full_continuum(λ, params::Vector{<:AbstractFloat}, n_dust_cont::Integer,
-    n_dust_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool)
+function fit_full_continuum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer,
+    n_dust_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool) where {T<:Real}
 
     pars_1 = vcat(params[1:(2+2n_dust_cont+4+(fit_sil_emission ? 5 : 0))], [0., 0.])
     pars_2 = params[(3+2n_dust_cont+4+(fit_sil_emission ? 5 : 0)):end]
@@ -896,11 +895,11 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
-function fit_line_residuals(λ, params::Vector{<:AbstractFloat}, n_lines::Integer, n_voff_tied::Integer, 
+function fit_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::Integer, n_voff_tied::Integer, 
     voff_tied_key::Vector{String}, line_tied::Vector{Union{String,Nothing}}, line_profiles::Vector{Symbol}, 
     n_acomp_voff_tied::Integer, acomp_voff_tied_key::Vector{String}, line_acomp_tied::Vector{Union{String,Nothing}},
-    line_acomp_profiles::Vector{Union{Symbol,Nothing}}, line_restwave::Vector{<:AbstractFloat}, 
-    flexible_wavesol::Bool, tie_voigt_mixing::Bool, ext_curve::Vector{<:AbstractFloat}, return_components::Bool)
+    line_acomp_profiles::Vector{Union{Symbol,Nothing}}, line_restwave::Vector{T}, 
+    flexible_wavesol::Bool, tie_voigt_mixing::Bool, ext_curve::Vector{T}, return_components::Bool) where {T<:Real}
 
     # Prepare outputs
     comps = Dict{String, Vector{Float64}}()
@@ -1096,11 +1095,11 @@ end
 
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
-function fit_line_residuals(λ, params::Vector{<:AbstractFloat}, n_lines::Integer, n_voff_tied::Integer, 
+function fit_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::Integer, n_voff_tied::Integer, 
     voff_tied_key::Vector{String}, line_tied::Vector{Union{String,Nothing}}, line_profiles::Vector{Symbol}, 
     n_acomp_voff_tied::Integer, acomp_voff_tied_key::Vector{String}, line_acomp_tied::Vector{Union{String,Nothing}},
-    line_acomp_profiles::Vector{Union{Symbol,Nothing}}, line_restwave::Vector{<:AbstractFloat}, 
-    flexible_wavesol::Bool, tie_voigt_mixing::Bool, ext_curve::Vector{<:AbstractFloat})
+    line_acomp_profiles::Vector{Union{Symbol,Nothing}}, line_restwave::Vector{T}, 
+    flexible_wavesol::Bool, tie_voigt_mixing::Bool, ext_curve::Vector{T}) where {T<:Real}
 
     # Prepare outputs
     contin = zeros(Float64, length(λ))
@@ -1295,7 +1294,7 @@ end
 Evaluate a Gaussian profile at `x`, parameterized by the amplitude `A`, mean value `μ`, and 
 full-width at half-maximum `FWHM`
 """
-function Gaussian(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::AbstractFloat)::AbstractFloat
+function Gaussian(x::Real, A::Real, μ::Real, FWHM::Real)
     # Reparametrize FWHM as dispersion σ
     σ = FWHM / (2√(2log(2)))
     A * exp(-(x-μ)^2 / (2σ^2))
@@ -1310,8 +1309,7 @@ full-width at half-maximum `FWHM`, 3rd moment / skewness `h₃`, and 4th moment 
 
 See Riffel et al. (2010)
 """
-function GaussHermite(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::AbstractFloat, 
-    h₃::AbstractFloat, h₄::AbstractFloat)::AbstractFloat
+function GaussHermite(x::Real, A::Real, μ::Real, FWHM::Real, h₃::Real, h₄::Real)
 
     h = [h₃, h₄]
     # Reparametrize FWHM as dispersion σ
@@ -1342,7 +1340,7 @@ end
 Evaluate a Lorentzian profile at `x`, parametrized by the amplitude `A`, mean value `μ`,
 and full-width at half-maximum `FWHM`
 """
-function Lorentzian(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::AbstractFloat)::AbstractFloat
+function Lorentzian(x::Real, A::Real, μ::Real, FWHM::Real)
     A/π * (FWHM/2) / ((x-μ)^2 + (FWHM/2)^2)
 end
 
@@ -1355,8 +1353,7 @@ full-width at half-maximum `FWHM`, and mixing ratio `η`
 
 https://docs.mantidproject.org/nightly/fitting/fitfunctions/PseudoVoigt.html
 """
-function Voigt(x::AbstractFloat, A::AbstractFloat, μ::AbstractFloat, FWHM::AbstractFloat, 
-    η::AbstractFloat)::AbstractFloat
+function Voigt(x::Real, A::Real, μ::Real, FWHM::Real, η::Real)
 
     # Reparametrize FWHM as dispersion σ
     σ = FWHM / (2√(2log(2))) 
@@ -1381,7 +1378,7 @@ of the feature profile, using an analytic form if available, otherwise integrati
 """
 function calculate_intensity(profile::Symbol, amp::T, amp_err::T, peak::T, peak_err::T, fwhm::T, fwhm_err::T;
     h3::Union{T,Nothing}=nothing, h3_err::Union{T,Nothing}=nothing, h4::Union{T,Nothing}=nothing, 
-    h4_err::Union{T,Nothing}=nothing, η::Union{T,Nothing}=nothing, η_err::Union{T,Nothing}=nothing) where {T<:AbstractFloat}
+    h4_err::Union{T,Nothing}=nothing, η::Union{T,Nothing}=nothing, η_err::Union{T,Nothing}=nothing) where {T<:Real}
 
     # Evaluate the line profiles according to whether there is a simple analytic form
     # otherwise, integrate numerically with quadgk
@@ -1440,7 +1437,7 @@ function calculate_eqw(popt_c::Vector{T}, perr_c::Vector{T}, n_dust_cont::Intege
     extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, profile::Symbol, 
     amp::T, amp_err::T, peak::T, peak_err::T, fwhm::T, fwhm_err::T; h3::Union{T,Nothing}=nothing, h3_err::Union{T,Nothing}=nothing, 
     h4::Union{T,Nothing}=nothing, h4_err::Union{T,Nothing}=nothing, η::Union{T,Nothing}=nothing, 
-    η_err::Union{T,Nothing}=nothing) where {T<:AbstractFloat}
+    η_err::Union{T,Nothing}=nothing) where {T<:Real}
 
     # If the line is not present, the equivalent width is 0
     if iszero(amp)
@@ -1524,7 +1521,7 @@ function calculate_SNR(resolution::T, continuum::Vector{T}, prof::Symbol, amp::T
     η::Union{T,Nothing}=nothing, acomp_prof::Union{Symbol,Nothing}=nothing, 
     acomp_amp::Union{T,Nothing}=nothing, acomp_peak::Union{T,Nothing}=nothing, 
     acomp_fwhm::Union{T,Nothing}=nothing, acomp_h3::Union{T,Nothing}=nothing, 
-    acomp_h4::Union{T,Nothing}=nothing, acomp_η::Union{T,Nothing}=nothing) where {T<:AbstractFloat}
+    acomp_h4::Union{T,Nothing}=nothing, acomp_η::Union{T,Nothing}=nothing) where {T<:Real}
 
     # PAH / Drude profiles do not have extra components, so it's a simple A/RMS
     if prof == :Drude
