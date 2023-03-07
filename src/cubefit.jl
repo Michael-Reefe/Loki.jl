@@ -2366,7 +2366,6 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     x_tol = 1e-5
     f_tol = abs(_negln_probability(p₀, λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors) - 
                 _negln_probability(clamp.(p₀ .- x_tol, lower_bounds, upper_bounds), λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors))
-
     # Window around emission lines to make fitting more efficient
     line_mask = falses(length(λ))
     for (i, ln) ∈ enumerate(cube_fitter.lines)
@@ -2387,19 +2386,19 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     # p₁ = p₀
 
     # Write convergence results to file, if specified
-    if cube_fitter.track_convergence
-        global file_lock
-        # use the ReentrantLock to prevent multiple processes from trying to write to the same file at once
-        lock(file_lock) do 
-            open(joinpath("output_$(cube_fitter.name)", "loki.convergence.log"), "a") do conv
-                redirect_stdout(conv) do
-                    println("Spaxel ($(spaxel[1]),$(spaxel[2])) on worker $(myid()):")
-                    println(res)
-                    println("-------------------------------------------------------")
-                end
-            end
-        end
-    end
+    # if cube_fitter.track_convergence
+    #     global file_lock
+    #     # use the ReentrantLock to prevent multiple processes from trying to write to the same file at once
+    #     lock(file_lock) do 
+    #         open(joinpath("output_$(cube_fitter.name)", "loki.convergence.log"), "a") do conv
+    #             redirect_stdout(conv) do
+    #                 println("Spaxel ($(spaxel[1]),$(spaxel[2])) on worker $(myid()):")
+    #                 println(res)
+    #                 println("-------------------------------------------------------")
+    #             end
+    #         end
+    #     end
+    # end
 
     @debug "Refining Line best fit with Levenberg-Marquardt:"
 

@@ -15,14 +15,13 @@ end
 # n_procs = 1
 
 to = TimerOutput()
-
 # Load in data
 
-# obs = from_fits(["data/Level3_ch1-shortmediumlong_s3d.fits",
-#                  "data/Level3_ch2-shortmediumlong_s3d.fits",
-#                  "data/Level3_ch3-shortmediumlong_s3d.fits",
-#                  "data/Level3_ch4-shortmediumlong_s3d.fits"],
-#                  0.016317)
+obs = from_fits(["data/Level3_ch1-shortmediumlong_s3d.fits",
+                 "data/Level3_ch2-shortmediumlong_s3d.fits",
+                 "data/Level3_ch3-shortmediumlong_s3d.fits",
+                 "data/Level3_ch4-shortmediumlong_s3d.fits"],
+                 0.016317)
 
 obs = from_fits(["data/NGC_7469_Level3_ch1-shortmediumlong_s3d.fits",
                  "data/NGC_7469_Level3_ch2-shortmediumlong_s3d.fits",
