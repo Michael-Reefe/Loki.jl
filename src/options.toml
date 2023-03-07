@@ -8,7 +8,7 @@ overwrite = false
 # track_memory: This controls whether an additional log file is saved for each
 # spaxel which specifically tracks the memory usage / allocations during the
 # spaxel fitting. Useful if memory usage is higher than expected.
-track_memory = false
+track_memory = true
 
 # track_convergence: Similarly, this controls whether an additional log file is
 # generated which prints convergence information for each spaxel fit (but only
@@ -31,7 +31,10 @@ extinction_curve = "d+"
 
 # extinction_screen: Controls whether extinction is modeled as e^-tau (true) or
 # (1 - e^-tau) / tau (false), following PAHFIT.
-extinction_screen = true
+extinction_screen = false
+
+# whether or not to fit silicate emission
+fit_sil_emission = true
 
 # cosmology options: Controls the cosmology used for distance / luminosity calculations.
 # If h is set to 1, the distances in plot scale bars will be shown with h^-1 units.

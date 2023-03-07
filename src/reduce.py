@@ -362,8 +362,8 @@ def runspec3(filename):
     
     # Overrides for whether or not certain steps should be skipped
     #spec3.assign_mtwcs.skip = False
-    #spec3.master_background.skip = True
-    #spec3.outlier_detection.skip = True
+    spec3.master_background.skip = False
+    spec3.outlier_detection.skip = False
     #spec3.mrs_imatch.skip = True
     #spec3.cube_build.skip = False
     #spec3.extract_1d.skip = False

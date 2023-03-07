@@ -16,10 +16,10 @@ locked = true
 # dust_continuum_temps: the blackbody temperatures of the dust
 # continuum components of the model. Defaults: 500, 300, 200, 135,
 # 90, 65, 50, 40, and 35 K.
-# [[dust_continuum_temps]]
-# val = 500.0
-# plim = [499.9, 500.1]
-# locked = true
+[[dust_continuum_temps]]
+val = 500.0
+plim = [499.9, 500.1]
+locked = true
 [[dust_continuum_temps]]
 val = 300.0
 plim = [299.9, 300.1]
@@ -60,6 +60,16 @@ locked = true
 # are modeled using Drude profiles.  The names should follow the
 # general format of "PAH_X.XX", filling in X with the central wavelength
 # up to 2 decimal places (or more if necessary).
+
+[dust_features."PAH_3.29".wave]
+val = 3.29
+plim = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_3.29".fwhm]
+val = 0.060
+plim = [0.4, 1.4]
+locked = false
 
 [dust_features."PAH_5.24".wave]
 val = 5.24
@@ -170,6 +180,16 @@ locked = false
 val = 0.152
 plim = [0.4, 1.4]
 locked = false
+
+# [dust_features."PAH_7.60".wave]
+# val = 7.60
+# plim = [-0.05, 0.05]
+# locked = false
+
+# [dust_features."PAH_7.60".fwhm]
+# val = 0.334
+# plim = [0.4, 1.4]
+# locked = false
 
 [dust_features."PAH_7.85".wave]
 val = 7.85
@@ -401,6 +421,9 @@ val = 0.359
 plim = [0.4, 1.4]
 locked = false
 
+# ~19.8 um PAH feature? https://www.aanda.org/articles/aa/full_html/2010/03/aa12714-09/aa12714-09.html
+# https://iopscience.iop.org/article/10.1088/0004-637X/712/1/69
+
 [dust_features."PAH_33.10".wave]
 val = 33.1
 plim = [-0.05, 0.05]
@@ -415,8 +438,22 @@ locked = false
 # extinction.tau_9_7: the optical depth at 9.7 microns.
 # Default: gets estimated by the continuum at 9.7 microns.
 [extinction.tau_9_7]
-plim = [0.0, 10.0]
+plim = [0.0, 100.0]
 locked = false
+
+# extinction.tau_ice: the optical depth from ice absorption
+# at ~6.9 microns (the peak). Default is 1.
+[extinction.tau_ice]
+val = 1e-4
+plim = [0.0, 100.0]
+locked = true
+
+# extinction.tau_ch: the optical depth from CH absorption
+# at ~6.9 microns (the peak). Default is 1.
+[extinction.tau_ch]
+val = 1e-4
+plim = [0.0, 100.0]
+locked = true
 
 # extinction.beta: the mixing ratio for the extinction profile,
 # between the profile specified in options.toml and a -1.7 index
@@ -425,3 +462,27 @@ locked = false
 val = 0.1
 plim = [0.0, 1.0]
 locked = true
+
+
+# Hot dust components
+# Temperature, 800-1600 K
+[hot_dust.temp]
+val = 1200.0
+plim = [800.0, 1600.0]
+locked = false
+
+# Covering fraction (0-1) of cold clouds
+[hot_dust.frac]
+val = 0.5
+plim = [0.0, 1.0]
+locked = false
+
+# Optical depth of warm dust
+[hot_dust.tau_warm]
+plim = [0.0, 100.0]
+locked = false
+
+# Optical depth of cold dust
+[hot_dust.tau_cold]
+plim = [0.0, 100.0]
+locked = false

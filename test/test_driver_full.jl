@@ -15,18 +15,18 @@ end
 # n_procs = 1
 
 to = TimerOutput()
-channel = 0
 # Load in data
-# obs = from_fits(["data/jw01328-o015_t014_miri_ch1-mediumshortlong-_s3d.fits", 
-#     "data/jw01328-o015_t014_miri_ch2-mediumshortlong-_s3d.fits", 
-#     "data/jw01328-o015_t014_miri_ch3-mediumshortlong-_s3d.fits", 
-#     "data/jw01328-o015_t014_miri_ch4-mediumshortlong-_s3d.fits"], 
-#     0.016317)
 
 obs = from_fits(["data/Level3_ch1-shortmediumlong_s3d.fits",
                  "data/Level3_ch2-shortmediumlong_s3d.fits",
                  "data/Level3_ch3-shortmediumlong_s3d.fits",
                  "data/Level3_ch4-shortmediumlong_s3d.fits"],
+                 0.016317)
+
+obs = from_fits(["data/NGC_7469_Level3_ch1-shortmediumlong_s3d.fits",
+                 "data/NGC_7469_Level3_ch2-shortmediumlong_s3d.fits",
+                 "data/NGC_7469_Level3_ch3-shortmediumlong_s3d.fits",
+                 "data/NGC_7469_Level3_ch4-shortmediumlong_s3d.fits"],
                  0.016317)
 
 # obs = from_fits(["data/NGC_6552_Level3_ch1-shortmediumlong_s3d.fits",
@@ -52,11 +52,17 @@ obs = correct(obs)
 # Do the optical depth pre-fitting
 τ_guess = fit_optical_depth(obs)
 
-# rebin channels 2-4 onto channel 1
-cube_rebin!(obs; out_grid=1)
+# combine channels 1-3 onto the channel 1 grid
+cube_combine!(obs, [1,2,3]; out_grid=1, out_id=0)
+# rebin into a 4x4 grid
+cube_rebin!(obs, 4, 0; out_id=-1)
+
+# Channel to run the fitting on
+channel = -1
 
 # Create the cube fitting object
-cube_fitter = CubeFitter(obs.channels[channel], obs.z, τ_guess, obs.name * "_ch$(channel)_combcont", n_procs; 
+# plot_range=[(7.61, 7.69), (12.77, 12.85)]
+cube_fitter = CubeFitter(obs.channels[channel], obs.z, τ_guess, obs.name * "_ch$(channel)_fullrun_binned", n_procs; 
     parallel=true, plot_spaxels=:both, plot_maps=true, save_fits=true)
 
 # Perform the Levenberg-Marquardt least-squares fitting

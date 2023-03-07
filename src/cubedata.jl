@@ -15,7 +15,7 @@ module CubeData
 
 # Export only the functions that the user may want to call
 export DataCube, Observation, from_fits, to_rest_frame, apply_mask, correct, interpolate_cube!, 
-    plot_2d, plot_1d, cube_rebin!
+    plot_2d, plot_1d, cube_combine!, cube_rebin!
 
 # Import packages
 using Statistics
@@ -83,13 +83,13 @@ include("utils.jl")
 An object for holding 3D IFU spectroscopy data. 
 
 # Fields
-- `λ::Vector{<:AbstractFloat}`: 1D array of wavelengths, in Angstroms
-- `Iν::Array{<:AbstractFloat,3}`: 3D array of intensity, in MJy/sr
-- `σI::Array{<:AbstractFloat,3}`: 3D array of uncertainties, in MJy/sr
+- `λ::Vector{<:Real}`: 1D array of wavelengths, in Angstroms
+- `Iν::Array{<:Real,3}`: 3D array of intensity, in MJy/sr
+- `σI::Array{<:Real,3}`: 3D array of uncertainties, in MJy/sr
 - `mask::BitArray{3}=falses(size(Iν))`: 3D array of booleans acting as a mask for the flux/error data
-- `Ω::AbstractFloat=NaN`: the solid angle subtended by each spaxel, in steradians
-- `α::AbstractFloat=NaN`: the right ascension of the observation, in decimal degrees
-- `δ::AbstractFloat=NaN`: the declination of the observation, in decimal degrees
+- `Ω::Real=NaN`: the solid angle subtended by each spaxel, in steradians
+- `α::Real=NaN`: the right ascension of the observation, in decimal degrees
+- `δ::Real=NaN`: the declination of the observation, in decimal degrees
 - `wcs::Union{WCSTransform,Nothing}=nothing`: a World Coordinate System conversion object, optional
 - `channel::String="Generic Channel"`: the MIRI channel of the observation, from 1-4
 - `band::String="Generic Band"`: the MIRI band of the observation, i.e. 'MULTIPLE'
@@ -101,15 +101,15 @@ An object for holding 3D IFU spectroscopy data.
 """
 struct DataCube
 
-    λ::Vector{<:AbstractFloat}
-    Iν::Array{<:AbstractFloat,3}
-    σI::Array{<:AbstractFloat,3}
+    λ::Vector{<:Real}
+    Iν::Array{<:Real,3}
+    σI::Array{<:Real,3}
  
     mask::BitArray{3}
 
-    Ω::AbstractFloat
-    α::AbstractFloat
-    δ::AbstractFloat
+    Ω::Real
+    α::Real
+    δ::Real
 
     wcs::Union{WCSTransform,Nothing}
 
@@ -124,8 +124,8 @@ struct DataCube
     masked::Bool
 
     # This is the constructor for the DataCube struct; see the DataCube docstring for details
-    function DataCube(λ::Vector{<:AbstractFloat}, Iν::Array{<:AbstractFloat,3}, σI::Array{<:AbstractFloat,3}, mask::Union{BitArray{3},Nothing}=nothing, 
-        Ω::AbstractFloat=NaN, α::AbstractFloat=NaN, δ::AbstractFloat=NaN, wcs::Union{WCSTransform,Nothing}=nothing, channel::String="Generic Channel", 
+    function DataCube(λ::Vector{<:Real}, Iν::Array{<:Real,3}, σI::Array{<:Real,3}, mask::Union{BitArray{3},Nothing}=nothing, 
+        Ω::Real=NaN, α::Real=NaN, δ::Real=NaN, wcs::Union{WCSTransform,Nothing}=nothing, channel::String="Generic Channel", 
         band::String="Generic Band", rest_frame::Bool=false, masked::Bool=false)
 
         # Make sure inputs have the right dimensions
@@ -240,11 +240,11 @@ Convert a DataCube object's wavelength vector to the rest frame
 
 # Arguments
 - `cube::DataCube`: The DataCube object to be converted
-- `z::AbstractFloat`: The redshift to be used to convert to the rest frame
+- `z::Real`: The redshift to be used to convert to the rest frame
 
 See also [`DataCube`](@ref), [`Util.rest_frame`](@ref)
 """
-function to_rest_frame(cube::DataCube, z::AbstractFloat)::DataCube
+function to_rest_frame(cube::DataCube, z::Real)::DataCube
 
     # Only convert using redshift if it hasn't already been converted
     if !cube.rest_frame
@@ -372,7 +372,7 @@ A plotting utility function for 2D maps of the raw intensity / error
 - `name::Union{String,Nothing}=nothing`: Name to put in the title of the plot.
 - `slice::Union{Integer,Nothing}=nothing`: Index along the wavelength axis to plot. 
     If nothing, sums the data along the wavelength axis.
-- `z::Union{AbstractFloat,Nothing}=nothing`: The redshift of the source, used to calculate 
+- `z::Union{Real,Nothing}=nothing`: The redshift of the source, used to calculate 
     the distance and thus the spatial scale in kpc.
 - `marker::Union{Tuple{<:Real,<:Real},Nothing}=nothing`: Position in (x,y) coordinates to place a marker.
 
@@ -380,7 +380,7 @@ See also [`DataCube`](@ref), [`plot_1d`](@ref)
 """
 function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=true, logᵢ::Union{Integer,Nothing}=10,
     logₑ::Union{Integer,Nothing}=nothing, colormap::Symbol=:cubehelix, name::Union{String,Nothing}=nothing, 
-    slice::Union{Integer,Nothing}=nothing, z::Union{AbstractFloat,Nothing}=nothing, marker::Union{Tuple{<:Real,<:Real},Nothing}=nothing)
+    slice::Union{Integer,Nothing}=nothing, z::Union{Real,Nothing}=nothing, marker::Union{Tuple{<:Real,<:Real},Nothing}=nothing)
 
     @debug "Plotting 2D intensity/error map for cube with channel $(cube.channel), band $(cube.band)"
 
@@ -593,9 +593,9 @@ A struct for holding DataCube objects in different channels for the same observa
 - `channels::Dict{<:Integer,DataCube}=Dict{<:Integer,DataCube}()`: A dictionary containing the channel 
     numbers (1-4) as keys and the individual DataCube observations as values.
 - `name::String="Generic Observation"`: The label for the observation/data
-- `z::AbstractFloat=NaN`: the redshift of the source
-- `α::AbstractFloat=NaN`: the right ascension of the source, in decimal degrees
-- `δ::AbstractFloat=NaN`: the declination of the source, in decimal degrees
+- `z::Real=NaN`: the redshift of the source
+- `α::Real=NaN`: the right ascension of the source, in decimal degrees
+- `δ::Real=NaN`: the declination of the source, in decimal degrees
 - `instrument::String="Generic Instrument"`: the instrument name, i.e. "MIRI"
 - `detector::String="Generic Detector"`: the detector name, i.e. "MIRIFULONG"
 - `rest_frame::Bool=false`: whether or not the individual DataCubes have been converted to the rest frame
@@ -608,16 +608,16 @@ struct Observation
     channels::Dict{<:Integer,DataCube}
 
     name::String
-    z::AbstractFloat
-    α::AbstractFloat
-    δ::AbstractFloat
+    z::Real
+    α::Real
+    δ::Real
     instrument::String
     detector::String
     rest_frame::Bool
     masked::Bool
 
     function Observation(channels::Dict{<:Integer,DataCube}=Dict{<:Integer,DataCube}(), name::String="Generic Observation",
-        z::AbstractFloat=NaN, α::AbstractFloat=NaN, δ::AbstractFloat=NaN, instrument::String="Generic Instrument", 
+        z::Real=NaN, α::Real=NaN, δ::Real=NaN, instrument::String="Generic Instrument", 
         detector::String="Generic Detector", rest_frame::Bool=false, masked::Bool=false)
 
         new(channels, name, z, α, δ, instrument, detector, rest_frame, masked)
@@ -633,9 +633,9 @@ Create an Observation object from a series of fits files with IFU cubes in diffe
 
 # Arguments
 - `filenames::Vector{String}`: A vector of filepaths to the FITS files
-- `z::AbstractFloat`: The redshift of the object.
+- `z::Real`: The redshift of the object.
 """
-function from_fits(filenames::Vector{String}, z::AbstractFloat)::Observation
+function from_fits(filenames::Vector{String}, z::Real)::Observation
 
 
     # Grab object information from the FITS header of the first file
@@ -727,7 +727,7 @@ correct = apply_mask ∘ to_rest_frame
 
 
 """
-    cube_rebin!(obs[, channels])
+    cube_combine!(obs[, channels])
 
 Perform a 2D rebinning of the given channels such that all spaxels lie on the same grid. The grid is chosen to be
 the highest channel given (or, if no channels are given, the highest channel in the obs object) since this will also
@@ -740,8 +740,8 @@ be the coarsest grid.
 - `out_grid::S=1`: Index for the channel whose grid the other channels should be rebinned to, defaults to 1 (first in the channels array).
 - `out_id::S=0`: The dictionary key corresponding to the newly rebinned cube, defaults to 0.
 """
-function cube_rebin!(obs::Observation, channels::Union{Vector{S},Nothing}=nothing; 
-    out_grid::Integer=1, out_id::Integer=0) where {S<:Integer}
+function cube_combine!(obs::Observation, channels::Union{Vector{S},Nothing}=nothing; 
+    out_grid::S=1, out_id::S=0) where {S<:Integer}
 
     # Default channels to include
     if isnothing(channels)
@@ -805,7 +805,7 @@ function cube_rebin!(obs::Observation, channels::Union{Vector{S},Nothing}=nothin
         for wi ∈ 1:wi_size
             # 2D Cubic spline interpolations at each wavelength bin with flat boundary conditions
             interp_func_I = Spline2D(1:shape_in[1], 1:shape_in[2], ch_Iν[:, :, wi]; kx=3, ky=3)
-            interp_func_σ = Spline2D(1:shape_in[1], 1:shape_in[2], ch_Iν[:, :, wi]; kx=3, ky=3)
+            interp_func_σ = Spline2D(1:shape_in[1], 1:shape_in[2], ch_σI[:, :, wi]; kx=3, ky=3)
             # interp_func_I = extrapolate(interpolate(ch_Iν[:, :, wi], BSpline(Cubic(Interpolations.Flat(OnGrid())))), Interpolations.Flat())
             # interp_func_σ = extrapolate(interpolate(ch_σI[:, :, wi], BSpline(Cubic(Interpolations.Flat(OnGrid())))), Interpolations.Flat())
             
@@ -872,10 +872,89 @@ function cube_rebin!(obs::Observation, channels::Union{Vector{S},Nothing}=nothin
     # Define the rebinned cube as the zeroth channel (since this is not taken up by anything else)
     obs.channels[out_id] = DataCube(λ_out, I_out, σ_out, mask_out, 
         obs.channels[ch_ref].Ω, obs.α, obs.δ, obs.channels[ch_ref].wcs, obs.channels[ch_ref].channel, 
-        obs.channels[ch_ref].band, obs.rest_frame, true)
+        obs.channels[ch_ref].band, obs.rest_frame, obs.masked)
     
     @info "Done!"
     
+    obs.channels[out_id]
+
+end
+
+
+"""
+    cube_rebin!(obs, binsize, channel; out_id)
+
+Perform a 2D rebinning of spaxels in a single channel onto a square grid of size (binsize)x(binsize).  The purpose of this is
+to allow quicker test-runs of fits for a given cube.  The binned spaxels will have a higher S/N are coarser resolution,
+which is ideal for quickly seeing how well the fitting will do for a given cube without running the full modeling (which
+may be time-consuing).
+
+# Arguments
+`S<:Integer`
+- `obs::Observation`: The Observation object to rebin
+- `binsize::S`: The side length of the new (square) bins -- must be an integer > 1
+- `channel::S`: The channel to perform the binning on
+- `out_id::S=0`: The ID to assign the newly binned channel within the observation object's `channels` dictionary
+"""
+function cube_rebin!(obs::Observation, binsize::S, channel::S; out_id::S=0) where {S<:Integer}
+
+    @info "Rebinning channel $channel onto a $binsize x $binsize grid"
+
+    # Get input arrays
+    λ = obs.channels[channel].λ
+    I_in = obs.channels[channel].Iν
+    σ_in = obs.channels[channel].σI
+    mask_in = obs.channels[channel].mask
+
+    # Get the new dimensions for the binned arrays
+    dims = Tuple([Int.(cld.(size(I_in)[1:2], binsize))...; size(I_in, 3)])
+
+    # Create empty binned arrays
+    I_out = zeros(eltype(I_in), dims...)
+    σ_out = zeros(eltype(σ_in), dims...)
+    mask_out = falses(dims...)
+
+    @debug "Rebinned dimensions: $dims"
+
+    # Iterate over the binned dimensions
+    for x ∈ 1:dims[1]
+        for y ∈ 1:dims[2]
+            # Get the axes indices for the unbinned arrays
+            xmin = (x-1)*binsize+1
+            xmax = min(x*binsize, size(I_in, 1))
+            ymin = (y-1)*binsize+1
+            ymax = min(y*binsize, size(I_in, 2))
+
+            @debug "($xmin:$xmax, $ymin:$ymax) --> ($x,$y)"
+            # Sum fluxes within the bin
+            I_out[x,y,:] .= Util.Σ(I_in[xmin:xmax, ymin:ymax, :], (1,2), nan=false)
+            # Sum errors in quadrature within the bin
+            σ_out[x,y,:] .= .√(Util.Σ(σ_in[xmin:xmax, ymin:ymax, :].^2, (1,2), nan=false))
+            # Add masks with binary and
+            for z ∈ 1:dims[3]
+                mask_out[x,y,z] = sum(mask_in[xmin:xmax, ymin:ymax, z]) > binsize^2/2
+            end
+        end
+    end
+
+    # Apply mask
+    if obs.masked
+        I_out[mask_out] .= NaN
+        σ_out[mask_out] .= NaN
+    end
+
+    # New WCS (not tested)
+    wcs_out = obs.channels[channel].wcs
+    wcs_out.cdelt[1:2] .*= binsize
+    wcs_out.crpix[1:2] .-= (0.5 - 0.5/binsize)
+
+    # Set new binned channel
+    obs.channels[out_id] = DataCube(λ, I_out, σ_out, mask_out, 
+        obs.channels[channel].Ω * binsize^2, obs.α, obs.δ, obs.channels[channel].wcs, obs.channels[channel].channel,
+        obs.channels[channel].band, obs.rest_frame, obs.masked)
+
+    @info "Done!"
+
     obs.channels[out_id]
 
 end

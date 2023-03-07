@@ -2,20 +2,20 @@
 # line model of the spectra.
 
 # Tying parameters
-tie_H2_voff = true         # tie all molecular H2 lines to the same velocity offset
+tie_H2_voff = false         # tie all molecular H2 lines to the same velocity offset
 tie_H2_acomp_voff = true    # tie all additional components of molecular H2 lines to the same velocity offset
-tie_ion_voff = true        # tie all ionization lines to the same velocity offset
+tie_ion_voff = false        # tie all ionization lines to the same velocity offset
 tie_ion_acomp_voff = true   # tie all additional components of ionization lines to the same velocity offset
-tie_voigt_mixing = true    # tie the Voigt mixing ratios of all lines
+tie_voigt_mixing = true     # tie the Voigt mixing ratios of all lines
 
 # Line voff and FWHM limits
 voff_plim = [-500.0, 500.0]              # -500 to 500 km/s from the rest wavelength
 fwhm_pmax = 500.0                        # 500 km/s maximum FWHM -> lower limit is filled in by the spectral resolution (c/R)
 h3_plim = [-0.5, 0.5]                    # skewness (3rd moment) limits (-0.5, 0.5), to remain mostly gaussian
 h4_plim = [-0.5, 0.5]                    # kurtosis (4th moment) limits (-0.5, 0.5), to remain mostly gaussian
-acomp_voff_plim = [-500.0, 500.0]         # additive factor with the main line voff -> i.e. the additional component
-                                         # is allowed to have a voff within +/- 500 km/s from the main component
-acomp_fwhm_plim = [1.0, 10.0]             # multiplicative factor with the main line FWHM -> i.e. the additional component
+acomp_voff_plim = [-500.0, 500.0]        # additive factor with the main line voff -> i.e. the additional component
+                                         # is allowed to have a voff within +/-500 km/s from the main component
+acomp_fwhm_plim = [1.0, 10.0]            # multiplicative factor with the main line FWHM -> i.e. the additional component
                                          # is allowed to have a FWHM from 1-10x the main component
 
 # Uncertainty in the wavelength solution of the data
@@ -31,13 +31,24 @@ wavesol_unc = [50, 50, 50, 50]           # wavelength solution uncertainties in 
 # Central wavelengths of each line that should be included in the model, in microns
 [lines]
 
+# Brackett Series (Hydrogen, n -> 4) Lines
+Br_alpha     = 4.051
+
 # Pfund Series (Hydrogen, n -> 5) Lines
-Pf_alpha = 7.460
+Pf_alpha     = 7.460
+Pf_beta      = 4.654
+Pf_gamma     = 3.741
+# Disabled since these are uncommon and save fitting time:
+# Pf_delta     = 3.297
+# Pf_epsilon   = 3.039
 
 # Humphreys Series (Hydrogen, n -> 6) Lines
-Hu_alpha = 12.370
-Hu_beta  = 7.503
-Hu_gamma = 5.908
+Hu_alpha     = 12.370
+Hu_beta      = 7.503
+Hu_gamma     = 5.908
+# Disabled since these are uncommon and save fitting time:
+# Hu_delta     = 5.129
+# Hu_epsilon   = 4.673
 
 # Argon Lines
 ArII_6985    = 6.985
@@ -384,6 +395,10 @@ default = "Voigt"
 # of profile it should be.
 [acomps]
 NeVI_7652 = "Voigt"
+NeII_12813 = "Voigt"
+NeIII_15555 = "Voigt"
+NeV_14322 = "Voigt"
+ArIII_8991 = "Voigt"
 SIV_10511 = "Voigt"
 
 
