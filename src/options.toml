@@ -34,7 +34,7 @@ extinction_curve = "d+"
 extinction_screen = false
 
 # whether or not to fit silicate emission
-fit_sil_emission = false
+fit_sil_emission = true
 
 # cosmology options: Controls the cosmology used for distance / luminosity calculations.
 # If h is set to 1, the distances in plot scale bars will be shown with h^-1 units.

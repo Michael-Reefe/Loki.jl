@@ -61,6 +61,16 @@ locked = true
 # general format of "PAH_X.XX", filling in X with the central wavelength
 # up to 2 decimal places (or more if necessary).
 
+[dust_features."PAH_3.29".wave]
+val = 3.29
+plim = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_3.29".fwhm]
+val = 0.060
+plim = [0.4, 1.4]
+locked = false
+
 [dust_features."PAH_5.24".wave]
 val = 5.24
 plim = [-0.05, 0.05]

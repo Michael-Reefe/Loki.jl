@@ -31,13 +31,24 @@ wavesol_unc = [50, 50, 50, 50]           # wavelength solution uncertainties in 
 # Central wavelengths of each line that should be included in the model, in microns
 [lines]
 
+# Brackett Series (Hydrogen, n -> 4) Lines
+Br_alpha     = 4.051
+
 # Pfund Series (Hydrogen, n -> 5) Lines
-Pf_alpha = 7.460
+Pf_alpha     = 7.460
+Pf_beta      = 4.654
+Pf_gamma     = 3.741
+# Disabled since these are uncommon and save fitting time:
+# Pf_delta     = 3.297
+# Pf_epsilon   = 3.039
 
 # Humphreys Series (Hydrogen, n -> 6) Lines
-Hu_alpha = 12.370
-Hu_beta  = 7.503
-Hu_gamma = 5.908
+Hu_alpha     = 12.370
+Hu_beta      = 7.503
+Hu_gamma     = 5.908
+# Disabled since these are uncommon and save fitting time:
+# Hu_delta     = 5.129
+# Hu_epsilon   = 4.673
 
 # Argon Lines
 ArII_6985    = 6.985

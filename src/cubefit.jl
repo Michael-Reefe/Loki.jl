@@ -2865,7 +2865,7 @@ function plot_spaxel_fit(λ::Vector{T}, I::Vector{T}, I_cont::Vector{T}, σ::Vec
         ax3.plot(λ, comps["extinction"] .* comps["abs_ice"] .* comps["abs_ch"], "k:", alpha=0.5, label="Extinction")
         # plot hot dust
         if haskey(comps, "hot_dust")
-            ax1.plot(λ, comps["hot_dust"] ./ norm ./ λ, "-", color="goldenrod", label="Hot Dust")
+            ax1.plot(λ, comps["hot_dust"] ./ norm ./ λ, "-", color="#8ac800", alpha=0.6, label="Hot Dust")
         end
 
         # loop over and plot individual model components
@@ -3464,6 +3464,11 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; recalculate
         # Reconstruct the output and error vectors
         p_out = [popt_c; popt_l; p_dust; p_lines; p_out[end]]
         p_err = [perr_c; perr_l; p_dust_err; p_lines_err; p_err[end]]
+
+        # Rewrite outputs
+        open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).csv"), "w") do f 
+            @timeit timer_output "writedlm" writedlm(f, [p_out p_err], ',')
+        end
     end
 
     p_out, p_err
@@ -3892,7 +3897,7 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
                 param_errs.lines[ln][:acomp_intI][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / (log(10) * out_params[index, pᵢ]) : NaN
                 param_maps.lines[ln][:acomp_eqw][index] = out_params[index, pᵢ+1]
                 param_errs.lines[ln][:acomp_eqw][index] = out_params[index, pᵢ+1]
-                param_maps.lines[ln][:SNR][index] = out_params[index, pᵢ+2]
+                param_maps.lines[ln][:acomp_SNR][index] = out_params[index, pᵢ+2]
 
                 pᵢ += 3
             end
@@ -4193,7 +4198,10 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
     # Line parameters
     for line ∈ keys(param_maps.lines)
         snr = param_maps.lines[line][:SNR]
-        asnr = param_maps.lines[line][:acomp_SNR]
+        asnr = nothing
+        if haskey(param_maps.lines[line], :acomp_SNR)
+            asnr = param_maps.lines[line][:acomp_SNR]
+        end
         for parameter ∈ keys(param_maps.lines[line])
             data = param_maps.lines[line][parameter]
             name_i = join(["lines", line, parameter], "_")
