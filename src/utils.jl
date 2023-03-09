@@ -1084,9 +1084,6 @@ function fit_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::Integer, 
     # Apply extinction
     contin .*= ext_curve
 
-    # Apply extinction
-    contin .*= ext_curve
-
     # Return components if necessary
     if return_components
         return contin, comps

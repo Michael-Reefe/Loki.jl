@@ -438,21 +438,21 @@ locked = false
 # extinction.tau_9_7: the optical depth at 9.7 microns.
 # Default: gets estimated by the continuum at 9.7 microns.
 [extinction.tau_9_7]
-plim = [0.0, 100.0]
+plim = [0.0, 10.0]
 locked = false
 
 # extinction.tau_ice: the optical depth from ice absorption
 # at ~6.9 microns (the peak). Default is 1.
 [extinction.tau_ice]
 val = 1e-4
-plim = [0.0, 100.0]
+plim = [0.0, 10.0]
 locked = true
 
 # extinction.tau_ch: the optical depth from CH absorption
 # at ~6.9 microns (the peak). Default is 1.
 [extinction.tau_ch]
 val = 1e-4
-plim = [0.0, 100.0]
+plim = [0.0, 10.0]
 locked = true
 
 # extinction.beta: the mixing ratio for the extinction profile,
@@ -479,10 +479,10 @@ locked = false
 
 # Optical depth of warm dust
 [hot_dust.tau_warm]
-plim = [0.0, 100.0]
+plim = [0.0, 10.0]
 locked = false
 
 # Optical depth of cold dust
 [hot_dust.tau_cold]
-plim = [0.0, 100.0]
+plim = [0.0, 10.0]
 locked = false

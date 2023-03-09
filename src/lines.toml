@@ -2,6 +2,8 @@
 # line model of the spectra.
 
 # Tying parameters
+# tie_HI = true               # tie all atomic HI lines to the same kinematics
+# tie_HI_acomp = true
 tie_H2_voff = false         # tie all molecular H2 lines to the same velocity offset
 tie_H2_acomp_voff = true    # tie all additional components of molecular H2 lines to the same velocity offset
 tie_ion_voff = false        # tie all ionization lines to the same velocity offset

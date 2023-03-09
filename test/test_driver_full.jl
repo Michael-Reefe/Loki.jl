@@ -17,12 +17,6 @@ end
 to = TimerOutput()
 # Load in data
 
-obs = from_fits(["data/Level3_ch1-shortmediumlong_s3d.fits",
-                 "data/Level3_ch2-shortmediumlong_s3d.fits",
-                 "data/Level3_ch3-shortmediumlong_s3d.fits",
-                 "data/Level3_ch4-shortmediumlong_s3d.fits"],
-                 0.016317)
-
 obs = from_fits(["data/NGC_7469_Level3_ch1-shortmediumlong_s3d.fits",
                  "data/NGC_7469_Level3_ch2-shortmediumlong_s3d.fits",
                  "data/NGC_7469_Level3_ch3-shortmediumlong_s3d.fits",
@@ -62,7 +56,7 @@ channel = -1
 
 # Create the cube fitting object
 # plot_range=[(7.61, 7.69), (12.77, 12.85)]
-cube_fitter = CubeFitter(obs.channels[channel], obs.z, τ_guess, obs.name * "_ch$(channel)_fullrun_binned", n_procs; 
+cube_fitter = CubeFitter(obs.channels[channel], obs.z, τ_guess, obs.name * "_ch$(channel)_nlopt_test1", n_procs; 
     parallel=true, plot_spaxels=:both, plot_maps=true, save_fits=true)
 
 # Perform the Levenberg-Marquardt least-squares fitting

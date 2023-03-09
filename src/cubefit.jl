@@ -30,6 +30,7 @@ using Dierckx
 # Optimization packages
 using Optim
 using CMPFit
+using NLopt
 
 # Astronomy packages
 using FITSIO
@@ -1537,59 +1538,70 @@ end
 
 
 """
-    mask_emission_lines(λ, I, σ)
+    mask_emission_lines(λ, I)
 
-Mask out emission lines in a given spectrum using a series of median filters with varying
-window sizes, taking the standard deviation of the flux between each window size, and comparing it to 
-the RMS of the spectrum itself at each point.  
-
-This function has been adapted from the BADASS code (Sexton et al. 2020; https://github.com/remingtonsexton/BADASS3).
+Mask out emission lines in a given spectrum using a numerical second derivative and flagging 
+negative spikes (indicating strong concave-downness) up to some tolerance threshold (i.e. 3-sigma)
 
 # Arguments
 - `λ::Vector{<:Real}`: The wavelength vector of the spectrum
 - `I::Vector{<:Real}`: The flux vector of the spectrum
-- `σ::Vector{<:Real}`: The uncertainty vector of the spectrum
+- `Δ::Integer=3`: The half-width of the numerical second derivative approximation, in pixels
+- `W::Real=0.5`: The half-width of the window with which to calculate the standard deviation of the derivative of the spectrum
+    in comparison to the point in question
+- `thresh::Real=3`: The threshold by which to count a spike as a line that should be masked, in units
+    of sigma.
+- `n_iter::Integer=2`: How many iterations to perform the derivative test after masking the previous results
 
 See also [`continuum_cubic_spline`](@ref)
 """
-function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vector{<:Real})
+function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}; Δ::Integer=3, W::Real=0.5, 
+    thresh::Real=3., n_iter::Integer=1)
 
-    # Series of window sizes to perform median filtering
-    window_sizes = [2, 5, 10, 50, 100, 250, 500]
-    med_spec = zeros(length(λ), length(window_sizes))
+    # Numerical derivative width in microns
+    h = Δ * median(diff(λ))
+
+    # Calculate numerical second derivative
+    d2f = zeros(length(λ))
+    for i ∈ 1:length(λ)
+        d2f[i] = (I[min(length(λ), i+Δ)] - 2I[i] + I[max(1, i-Δ)]) / h^2
+    end
+    d2f_i = copy(d2f)
+    lines = Vector{Int64}()
     mask = falses(length(λ))
 
-    @debug "Masking emission lines with window sizes $window_sizes"
-
-    # cubic spline interpolation 
-    Δλ = mean(diff(λ))
-    scale = 0.05
-    offset = findfirst(λ .> (scale + λ[1]))
-    λknots = λ[offset+1]:scale:λ[end-offset-1]
-    I_cub = Spline1D(λ, I, λknots, k=3, bc="extrapolate")
-
-    # For each window size, do a sliding median filter
-    for i ∈ eachindex(window_sizes)
-        pix = eachindex(λ)
-        for p ∈ pix
-            i_sort = sortperm(abs.(p .- pix))
-            idx = pix[i_sort][1:window_sizes[i]]
-            med_spec[p, i] = nanmedian(I[idx] .- I_cub.(λ[idx]))
+    function iter_mask(d2f, lines, mask)
+        # Sigma-clip to find the lines based on the *local* noise level
+         for j ∈ 1:length(λ)
+            # Only consider the spectrum within +/- W microns from the point in question
+            wi = Int(fld(W, diff(λ)[min(length(λ)-1, j)]))
+            if d2f[j] < -thresh * nanstd(d2f[max(1, j-wi):min(length(λ), j+wi)])
+                append!(lines, j)
+            end
         end
+        # Mask out everything within the resolution of the second derivative calculations
+        for line ∈ lines
+            mask[max(1,line-2Δ):min(length(λ),line+2Δ)] .= 1
+        end
+        lines, mask
     end
-    # Check if the std between the window medians is larger than the noise -> if so, there is a line
-    for j ∈ eachindex(λ)
-        mask[j] = dropdims(std(med_spec, dims=2), dims=2)[j] > std(I[λ[j]-0.1 .< λ .< λ[j]+0.1] .- I_cub.(λ[λ[j]-0.1 .< λ .< λ[j]+0.1]))
+
+    # Use an iterative approach to repeat the process on the masked spectrum
+    # -> this can help if, for example, you have two significant lines very close to each other,
+    #    but one of them is much brighter and dominates the local stdev, which causes the fainter
+    #    line to be missed by the first iteration
+    # -> this is OFF by default (1 iteration)
+    for k ∈ 1:n_iter
+        lines, mask = iter_mask(d2f_i, lines, mask)
+        d2f_i[mask] .= 0
     end
-    # Extend mask edges by a few pixels
-    mask_edges = findall(x -> x == 1, diff(mask))
-    for me ∈ mask_edges
-        mask[max(1, me-10):min(length(mask), me+10)] .= 1
-    end
-    # Exclude this region from masking (it tends to get tricked by the strong PAH feature)
+
+    # Don't mask out this region that tends to trick this method sometimes
     mask[11.175 .< λ .< 11.355] .= 0
 
-    mask
+    # Return the line locations and the mask
+    lines, mask
+
 end
 
 
@@ -1614,7 +1626,7 @@ function continuum_cubic_spline(λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vecto
     σ_out = copy(σ)
 
     # Mask out emission lines so that they aren't included in the continuum fit
-    mask_lines = mask_emission_lines(λ, I, σ)
+    lines, mask_lines = mask_emission_lines(λ, I)
     I_out[mask_lines] .= NaN
     σ_out[mask_lines] .= NaN 
 
@@ -1634,7 +1646,7 @@ function continuum_cubic_spline(λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vecto
     I_out = Spline1D(λ[isfinite.(I_out)], I_out[isfinite.(I_out)], λknots, k=3, bc="extrapolate").(λ)
     σ_out = Spline1D(λ[isfinite.(σ_out)], σ_out[isfinite.(σ_out)], λknots, k=3, bc="extrapolate").(λ)
 
-    mask_lines, I_out, σ_out
+    lines, mask_lines, I_out, σ_out
 end
 
 
@@ -1724,14 +1736,26 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
     mean_df = [cdf[:wave] for cdf ∈ cube_fitter.dust_features]
     fwhm_df = [cdf[:fwhm] for cdf ∈ cube_fitter.dust_features]
 
-    # amp_dc_prior = amp_agn_prior = Uniform(0., 1e12)  # just set it arbitrarily large, otherwise infinity gives bad logpdfs
-    # amp_df_prior = Uniform(0., maximum(I) > 0. ? maximum(I) : 1e12)
+    amp_dc_prior = Uniform(0., Inf)  # dont actually use this for getting pdfs or logpdfs, it's just for min/max
+    amp_df_prior = Uniform(0., clamp(nanmaximum(I) / exp(-maximum(cube_fitter.τ_97.prior)), 1., Inf))
 
-    # stellar_priors = [amp_dc_prior, cube_fitter.T_s.prior]
-    # dc_priors = vcat([[amp_dc_prior, Ti.prior] for Ti ∈ cube_fitter.T_dc]...)
-    # df_priors = vcat([[amp_df_prior, mi.prior, fi.prior] for (mi, fi) ∈ zip(mean_df, fwhm_df)]...)
+    stellar_priors = [amp_dc_prior, cube_fitter.T_s.prior]
+    stellar_lock = [false, cube_fitter.T_s.locked]
+    dc_priors = vcat([[amp_dc_prior, Ti.prior] for Ti ∈ cube_fitter.T_dc]...)
+    dc_lock = vcat([[false, Ti.locked] for Ti ∈ cube_fitter.T_dc]...)
+    df_priors = vcat([[amp_df_prior, mi.prior, fi.prior] for (mi, fi) ∈ zip(mean_df, fwhm_df)]...)
+    df_lock = vcat([[false, mi.locked, fi.locked] for (mi, fi) ∈ zip(mean_df, fwhm_df)]...)
+    ext_priors = [cube_fitter.τ_97.prior, cube_fitter.τ_ice.prior, cube_fitter.τ_ch.prior, cube_fitter.β.prior]
+    ext_lock = [cube_fitter.τ_97.locked, cube_fitter.τ_ice.locked, cube_fitter.τ_ch.locked, cube_fitter.β.locked]
+    hd_priors = cube_fitter.fit_sil_emission ? [amp_dc_prior, cube_fitter.T_hot.prior, cube_fitter.Cf_hot.prior, 
+        cube_fitter.τ_warm.prior, cube_fitter.τ_cold.prior] : []
+    hd_lock = cube_fitter.fit_sil_emission ? [false, cube_fitter.T_hot.locked, cube_fitter.Cf_hot.locked,
+        cube_fitter.τ_warm.locked, cube_fitter.τ_cold.locked] : []
 
-    # priors = vcat(stellar_priors, dc_priors, df_priors, [cube_fitter.τ_97.prior, cube_fitter.β.prior])
+    priors_1 = vcat(stellar_priors, dc_priors, ext_priors, hd_priors, [amp_df_prior, amp_df_prior])
+    lock_1 = vcat(stellar_lock, dc_lock, ext_lock, hd_lock, [false, false])
+    priors_2 = df_priors
+    lock_2 = df_lock
 
     # Check if the cube fitter has initial fit parameters 
     if !init
@@ -1813,10 +1837,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
             hd_pars = []
         end
 
-        τ_97_0 = cube_fitter.τ_97.value
-
         # Initial parameter vector
-        p₀ = Vector{Float64}(vcat(stellar_pars, dc_pars, [τ_97_0, cube_fitter.τ_ice.value, cube_fitter.τ_ch.value, 
+        p₀ = Vector{Float64}(vcat(stellar_pars, dc_pars, [cube_fitter.τ_97.value, cube_fitter.τ_ice.value, cube_fitter.τ_ch.value, 
             cube_fitter.β.value], hd_pars, df_pars))
         # p₀ = Vector{Float64}(vcat(stellar_pars, dc_pars, df_pars, [cube_fitter.τ_97[0][parse(Int, cube_fitter.cube.channel)], 
             # cube_fitter.τ_ice.value, cube_fitter.τ_ch.value, cube_fitter.β.value]))
@@ -1843,87 +1865,103 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
     parinfo_1 = CMPFit.Parinfo(length(pars_1))
     parinfo_2 = CMPFit.Parinfo(length(pars_2))
 
-    # Stellar amplitude
-    parinfo_1[1].limited = (1,0)
-    parinfo_1[1].limits = (0., 0.)
-
-    # Stellar temp
-    parinfo_1[2].fixed = cube_fitter.T_s.locked
-    parinfo_1[2].limited = (1,1)
-    parinfo_1[2].limits = (minimum(cube_fitter.T_s.prior), maximum(cube_fitter.T_s.prior))
-
-    # Dust cont amplitudes and temps
-    p₁ = 3
-    for i ∈ 1:cube_fitter.n_dust_cont
-        parinfo_1[p₁].limited = (1,0)
-        parinfo_1[p₁].limits = (0., 0.)
-        parinfo_1[p₁+1].fixed = cube_fitter.T_dc[i].locked
-        parinfo_1[p₁+1].limited = (1,1)
-        parinfo_1[p₁+1].limits = (minimum(cube_fitter.T_dc[i].prior), maximum(cube_fitter.T_dc[i].prior))
-        p₁ += 2
+    for pᵢ ∈ 1:length(pars_1)
+        parinfo_1[pᵢ].fixed = lock_1[pᵢ]
+        if iszero(parinfo_1[pᵢ].fixed)
+            parinfo_1[pᵢ].limited = (1,1)
+            parinfo_1[pᵢ].limits = (minimum(priors_1[pᵢ]), maximum(priors_1[pᵢ]))
+        end
     end
 
-    # Extinction
-    parinfo_1[p₁].fixed = cube_fitter.τ_97.locked
-    parinfo_1[p₁].limited = (1,1)
-    parinfo_1[p₁].limits = (minimum(cube_fitter.τ_97.prior), maximum(cube_fitter.τ_97.prior))
-    # parinfo_1[p₁].limits = (0.0, 10.0)
-    parinfo_1[p₁+1].fixed = cube_fitter.τ_ice.locked
-    parinfo_1[p₁+1].limited = (1,1)
-    parinfo_1[p₁+1].limits = (minimum(cube_fitter.τ_ice.prior), maximum(cube_fitter.τ_ice.prior))
-    parinfo_1[p₁+2].fixed = cube_fitter.τ_ch.locked
-    parinfo_1[p₁+2].limited = (1,1)
-    parinfo_1[p₁+2].limits = (minimum(cube_fitter.τ_ch.prior), maximum(cube_fitter.τ_ch.prior))
-    parinfo_1[p₁+3].fixed = cube_fitter.β.locked
-    parinfo_1[p₁+3].limited = (1,1)
-    parinfo_1[p₁+3].limits = (minimum(cube_fitter.β.prior), maximum(cube_fitter.β.prior))
-    p₁ += 4
-
-    if cube_fitter.fit_sil_emission
-        # Hot dust amplitude
-        parinfo_1[p₁].limited = (1,0)
-        parinfo_1[p₁].limits = (0., 0.)
-        # Hot dust temp
-        parinfo_1[p₁+1].fixed = cube_fitter.T_hot.locked
-        parinfo_1[p₁+1].limited = (1,1)
-        parinfo_1[p₁+1].limits = (minimum(cube_fitter.T_hot.prior), maximum(cube_fitter.T_hot.prior))
-        # Hot dust covering fraction
-        parinfo_1[p₁+2].fixed = cube_fitter.Cf_hot.locked
-        parinfo_1[p₁+2].limited = (1,1)
-        parinfo_1[p₁+2].limits = (minimum(cube_fitter.Cf_hot.prior), maximum(cube_fitter.Cf_hot.prior))
-        # Hot dust warm tau
-        parinfo_1[p₁+3].fixed = cube_fitter.τ_warm.locked
-        parinfo_1[p₁+3].limited = (1,1)
-        parinfo_1[p₁+3].limits = (minimum(cube_fitter.τ_warm.prior), maximum(cube_fitter.τ_warm.prior))
-        # Hot dust cold tau
-        parinfo_1[p₁+4].fixed = cube_fitter.τ_cold.locked
-        parinfo_1[p₁+4].limited = (1,1)
-        parinfo_1[p₁+4].limits = (minimum(cube_fitter.τ_cold.prior), maximum(cube_fitter.τ_cold.prior))
-        p₁ += 5
+    for pᵢ ∈ 1:length(pars_2)
+        parinfo_2[pᵢ].fixed = lock_2[pᵢ]
+        if iszero(parinfo_2[pᵢ].fixed)
+            parinfo_2[pᵢ].limited = (1,1)
+            parinfo_2[pᵢ].limits = (minimum(priors_2[pᵢ]), maximum(priors_2[pᵢ]))
+        end
     end
 
-    # PAH template amplitudes
-    # parinfo_1[p₁].fixed = !init
-    parinfo_1[p₁].limited = (1,0)
-    parinfo_1[p₁].limits = (0., clamp(nanmaximum(I) / exp(-τ_97_0), 1., Inf))
-    parinfo_1[p₁+1].fixed = !init
-    parinfo_1[p₁+1].limited = (1,0)
-    parinfo_1[p₁+1].limits = (0., clamp(nanmaximum(I) / exp(-τ_97_0), 1., Inf))
-    p₁ += 2
+    # # Stellar amplitude
+    # parinfo_1[1].limited = (1,0)
+    # parinfo_1[1].limits = (0., 0.)
 
-    p₂ = 1
-    # Dust feature amplitude, mean, fwhm
-    for i ∈ 1:cube_fitter.n_dust_feat
-        parinfo_2[p₂].limited = (1,1)
-        parinfo_2[p₂].limits = (0., clamp(nanmaximum(I) / exp(-τ_97_0), 1., Inf))
-        parinfo_2[p₂+1].fixed = mean_df[i].locked
-        parinfo_2[p₂+1].limited = (1,1)
-        parinfo_2[p₂+1].limits = (minimum(mean_df[i].prior), maximum(mean_df[i].prior))
-        parinfo_2[p₂+2].fixed = fwhm_df[i].locked
-        parinfo_2[p₂+2].limited = (1,1)
-        parinfo_2[p₂+2].limits = (minimum(fwhm_df[i].prior), maximum(fwhm_df[i].prior))
-        p₂ += 3
-    end
+    # # Stellar temp
+    # parinfo_1[2].fixed = cube_fitter.T_s.locked
+    # parinfo_1[2].limited = (1,1)
+    # parinfo_1[2].limits = (minimum(cube_fitter.T_s.prior), maximum(cube_fitter.T_s.prior))
+
+    # # Dust cont amplitudes and temps
+    # p₁ = 3
+    # for i ∈ 1:cube_fitter.n_dust_cont
+    #     parinfo_1[p₁].limited = (1,0)
+    #     parinfo_1[p₁].limits = (0., 0.)
+    #     parinfo_1[p₁+1].fixed = cube_fitter.T_dc[i].locked
+    #     parinfo_1[p₁+1].limited = (1,1)
+    #     parinfo_1[p₁+1].limits = (minimum(cube_fitter.T_dc[i].prior), maximum(cube_fitter.T_dc[i].prior))
+    #     p₁ += 2
+    # end
+
+    # # Extinction
+    # parinfo_1[p₁].fixed = cube_fitter.τ_97.locked
+    # parinfo_1[p₁].limited = (1,1)
+    # parinfo_1[p₁].limits = (minimum(cube_fitter.τ_97.prior), maximum(cube_fitter.τ_97.prior))
+    # # parinfo_1[p₁].limits = (0.0, 10.0)
+    # parinfo_1[p₁+1].fixed = cube_fitter.τ_ice.locked
+    # parinfo_1[p₁+1].limited = (1,1)
+    # parinfo_1[p₁+1].limits = (minimum(cube_fitter.τ_ice.prior), maximum(cube_fitter.τ_ice.prior))
+    # parinfo_1[p₁+2].fixed = cube_fitter.τ_ch.locked
+    # parinfo_1[p₁+2].limited = (1,1)
+    # parinfo_1[p₁+2].limits = (minimum(cube_fitter.τ_ch.prior), maximum(cube_fitter.τ_ch.prior))
+    # parinfo_1[p₁+3].fixed = cube_fitter.β.locked
+    # parinfo_1[p₁+3].limited = (1,1)
+    # parinfo_1[p₁+3].limits = (minimum(cube_fitter.β.prior), maximum(cube_fitter.β.prior))
+    # p₁ += 4
+
+    # if cube_fitter.fit_sil_emission
+    #     # Hot dust amplitude
+    #     parinfo_1[p₁].limited = (1,0)
+    #     parinfo_1[p₁].limits = (0., 0.)
+    #     # Hot dust temp
+    #     parinfo_1[p₁+1].fixed = cube_fitter.T_hot.locked
+    #     parinfo_1[p₁+1].limited = (1,1)
+    #     parinfo_1[p₁+1].limits = (minimum(cube_fitter.T_hot.prior), maximum(cube_fitter.T_hot.prior))
+    #     # Hot dust covering fraction
+    #     parinfo_1[p₁+2].fixed = cube_fitter.Cf_hot.locked
+    #     parinfo_1[p₁+2].limited = (1,1)
+    #     parinfo_1[p₁+2].limits = (minimum(cube_fitter.Cf_hot.prior), maximum(cube_fitter.Cf_hot.prior))
+    #     # Hot dust warm tau
+    #     parinfo_1[p₁+3].fixed = cube_fitter.τ_warm.locked
+    #     parinfo_1[p₁+3].limited = (1,1)
+    #     parinfo_1[p₁+3].limits = (minimum(cube_fitter.τ_warm.prior), maximum(cube_fitter.τ_warm.prior))
+    #     # Hot dust cold tau
+    #     parinfo_1[p₁+4].fixed = cube_fitter.τ_cold.locked
+    #     parinfo_1[p₁+4].limited = (1,1)
+    #     parinfo_1[p₁+4].limits = (minimum(cube_fitter.τ_cold.prior), maximum(cube_fitter.τ_cold.prior))
+    #     p₁ += 5
+    # end
+
+    # # PAH template amplitudes
+    # # parinfo_1[p₁].fixed = !init
+    # parinfo_1[p₁].limited = (1,0)
+    # parinfo_1[p₁].limits = (0., clamp(nanmaximum(I) / exp(-τ_97_0), 1., Inf))
+    # parinfo_1[p₁+1].fixed = !init
+    # parinfo_1[p₁+1].limited = (1,0)
+    # parinfo_1[p₁+1].limits = (0., clamp(nanmaximum(I) / exp(-τ_97_0), 1., Inf))
+    # p₁ += 2
+
+    # p₂ = 1
+    # # Dust feature amplitude, mean, fwhm
+    # for i ∈ 1:cube_fitter.n_dust_feat
+    #     parinfo_2[p₂].limited = (1,1)
+    #     parinfo_2[p₂].limits = (0., clamp(nanmaximum(I) / exp(-τ_97_0), 1., Inf))
+    #     parinfo_2[p₂+1].fixed = mean_df[i].locked
+    #     parinfo_2[p₂+1].limited = (1,1)
+    #     parinfo_2[p₂+1].limits = (minimum(mean_df[i].prior), maximum(mean_df[i].prior))
+    #     parinfo_2[p₂+2].fixed = fwhm_df[i].locked
+    #     parinfo_2[p₂+2].limited = (1,1)
+    #     parinfo_2[p₂+2].limits = (minimum(fwhm_df[i].prior), maximum(fwhm_df[i].prior))
+    #     p₂ += 3
+    # end
 
     # Create a `config` structure
     config = CMPFit.Config()
@@ -2096,14 +2134,18 @@ end
 
 
 """
-    _negln_probability(p, λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors)
+    _negln_probability(p, grad, λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors)
 
 Internal helper function to calculate the negative of the log of the probability,
 for the line residual fitting.
 
 ln(probability) = ln(likelihood) + ln(prior)
 """
-function _negln_probability(p, λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors)
+function _negln_probability(p, grad, λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors)
+    # Check for gradient
+    if length(grad) > 0
+        error("Gradient-based solvers are not currently supported!")
+    end
     # First compute the model
     model = Util.fit_line_residuals(λ, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
         cube_fitter.voff_tied_key, cube_fitter.line_tied, cube_fitter.line_profiles, cube_fitter.n_acomp_voff_tied,
@@ -2139,7 +2181,7 @@ See Smith, Draine, et al. 2007; http://tir.astro.utoledo.edu/jdsmith/research/pa
     the initial parameter vector for individual spaxel fits
 """
 function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, continuum::Vector{<:Real}, 
-    ext_curve::Vector{<:Real}, mask_lines::BitVector, I_spline::Vector{<:Real}, σ_spline::Vector{<:Real}; 
+    ext_curve::Vector{<:Real}, line_locs::Vector{<:Integer}, mask_lines::BitVector, I_spline::Vector{<:Real}, σ_spline::Vector{<:Real}; 
     init::Bool=false)
 
     @debug """\n
@@ -2154,7 +2196,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     σ = !init ? cube_fitter.cube.σI[spaxel, :] : sqrt.(Util.Σ(cube_fitter.cube.σI.^2, (1,2))) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2))
 
     # Perform a cubic spline continuum fit
-    # mask_lines, spline_continuum, _ = continuum_cubic_spline(λ, I, σ)
+    # line_locs, mask_lines, spline_continuum, _ = continuum_cubic_spline(λ, I, σ)
     N = Float64(abs(nanmaximum(I)))
     N = N ≠ 0. ? N : 1.
 
@@ -2204,6 +2246,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     prof_ln = Vector{Symbol}()
     acomp_prof_ln = Vector{Union{Symbol,Nothing}}()
     ln_priors = Vector{Any}()
+    ln_lock = Vector{Bool}()
     param_names = Vector{String}()
     # Loop through each line and append the new components
     for (i, ln) ∈ enumerate(cube_fitter.lines)
@@ -2213,21 +2256,25 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
         if isnothing(ln.tied) || cube_fitter.flexible_wavesol
             # amplitude, voff, FWHM
             append!(ln_priors, [amp_ln_prior, voff_ln[i].prior, fwhm_ln[i].prior])
+            append!(ln_lock, [false, voff_ln[i].locked, fwhm_ln[i].locked])
             append!(param_names, ["$(ln_name)_amp", "$(ln_name)_voff", "$(ln_name)_fwhm"])
         else
             # just amplitude & FWHM (since voff is tied)
             append!(ln_priors, [amp_ln_prior, fwhm_ln[i].prior])
+            append!(ln_lock, [false, fwhm_ln[i].locked])
             append!(param_names, ["$(ln_name)_amp", "$(ln_name)_fwhm"])
         end
         # check for additional profile parameters
         if ln.profile == :GaussHermite
             # add h3 and h4 moments
             append!(ln_priors, [h3_ln[i].prior, h4_ln[i].prior])
+            append!(ln_lock, [h3_ln[i].locked, h4_ln[i].locked])
             append!(param_names, ["$(ln_name)_h3", "$(ln_name)_h4"])
         elseif ln.profile == :Voigt
             # add voigt mixing parameter, but only if it's not tied
             if !cube_fitter.tie_voigt_mixing
                 append!(ln_priors, [η_ln[i].prior])
+                append!(ln_lock, [η_ln[i].locked])
                 append!(param_names, ["$(ln_name)_eta"])
             end
         end
@@ -2237,21 +2284,25 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
             if isnothing(ln.acomp_tied)
                 # amplitude, voff, FWHM
                 append!(ln_priors, [amp_acomp_prior, acomp_voff_ln[i].prior, acomp_fwhm_ln[i].prior])
+                append!(ln_lock, [false, acomp_voff_ln[i].locked, acomp_fwhm_ln[i].locked])
                 append!(param_names, ["$(ln_name)_acomp_amp", "$(ln_name)_acomp_voff", "$(ln_name)_acomp_fwhm"])
             else
                 # just amplitude & FWHM (voff tied)
                 append!(ln_priors, [amp_acomp_prior, acomp_fwhm_ln[i].prior])
+                append!(ln_lock, [false, acomp_fwhm_ln[i].locked])
                 append!(param_names, ["$(ln_name)_acomp_amp", "$(ln_name)_acomp_fwhm"])
             end
             # check for additional profile parameters
             if ln.acomp_profile == :GaussHermite
                 # h3 and h4 moments
                 append!(ln_priors, [acomp_h3_ln[i].prior, acomp_h4_ln[i].prior])
+                append!(ln_lock, [acomp_h3_ln[i].locked, acomp_h4_ln[i].locked])
                 append!(param_names, ["$(ln_name)_acomp_h3", "$(ln_name)_acomp_h4"])
             elseif ln.acomp_profile == :Voigt
                 # voigt mixing parameter, only if untied
                 if !cube_fitter.tie_voigt_mixing
                     append!(ln_prior, [acomp_η_ln[i].prior])
+                    append!(ln_lock, [acomp_η_ln[i].locked])
                     append!(param_names, ["$(ln_name)_acomp_eta"])
                 end
             end
@@ -2263,12 +2314,15 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     end
     # Set up the tied voff parameters as vectors
     voff_tied_priors = [cube_fitter.voff_tied[i].prior for i ∈ 1:cube_fitter.n_voff_tied]
+    voff_tied_lock = [cube_fitter.voff_tied[i].locked for i ∈ 1:cube_fitter.n_voff_tied]
     acomp_voff_tied_priors = [cube_fitter.acomp_voff_tied[i].prior for i ∈ 1:cube_fitter.n_acomp_voff_tied]
+    acomp_voff_tied_lock = [cube_fitter.acomp_voff_tied[i].locked for i ∈ 1:cube_fitter.n_acomp_voff_tied]
 
     # Initial prior vector
     if !cube_fitter.tie_voigt_mixing
         # If the voigt mixing parameters are untied, place them sequentially in the ln_priors
         priors = vcat(voff_tied_priors, acomp_voff_tied_priors, ln_priors)
+        param_lock = vcat(voff_tied_lock, acomp_voff_tied_lock, ln_lock)
         param_names = vcat(["voff_tied_$k" for k ∈ cube_fitter.voff_tied_key], 
                            ["acomp_voff_tied_$k" for k ∈ cube_fitter.acomp_voff_tied_key], param_names)
     else
@@ -2277,6 +2331,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
         # If the sum has already been fit, keep eta fixed for the individual spaxels
         η_prior = init ? η_ln.prior : Uniform(cube_fitter.p_init_line[ηᵢ]-1e-10, cube_fitter.p_init_line[ηᵢ]+1e-10)
         priors = vcat(voff_tied_priors, acomp_voff_tied_priors, η_prior, ln_priors)
+        param_lock = vcat(voff_tied_lock, acomp_voff_tied_lock, [cube_fitter.voigt_mix_tied.locked || !init], ln_lock)
         param_names = vcat(["voff_tied_$k" for k ∈ cube_fitter.voff_tied_key], 
                            ["acomp_voff_tied_$k" for k ∈ cube_fitter.acomp_voff_tied_key], ["eta_tied"], param_names)
     end
@@ -2293,6 +2348,66 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
 
         @debug "Calculating initial starting points..."
 
+        # Intelligently pick starting positions for voffs based on the locations of lines found with the line masking
+        voff_inits = zeros(cube_fitter.n_lines)
+        for (i, ln) ∈ enumerate(cube_fitter.lines)
+            # Constrain to the line fitting region (+/- maximum voff)
+            if length(voff_tied_priors) > 0
+                max_kms = maximum(voff_tied_priors[1])
+            else
+                max_kms = maximum(voff_ln[i].prior)
+            end
+            minw = ln.λ₀ * (1 - max_kms / Util.C_KMS)
+            maxw = ln.λ₀ * (1 + max_kms / Util.C_KMS)
+            # Match with any lines flagged by the line masking algorithm
+            candidates = findall(minw .< λ[line_locs] .< maxw)
+            # For each candidate, make sure it's not closer to another line's nominal position
+            good = trues(length(candidates))
+            for j ∈ 1:length(candidates)
+                if !(λ0_ln[argmin(abs.(λ[line_locs][candidates[j]] .- λ0_ln))] ≈ ln.λ₀)
+                    good[j] = false
+                end
+            end
+            candidates = candidates[good]
+            # Check if we're out of candidates
+            if length(candidates) == 0
+                voff_inits[i] = 0.
+                continue
+            end
+            # Finally, of the remaining candidates (if there's still more than one), pick the brightest one
+            ind = candidates[argmax(I[line_locs][candidates])]
+            pos = λ[line_locs][ind]
+            voff_inits[i] = (pos/ln.λ₀ - 1) * Util.C_KMS
+        end
+        @debug "Initial individual voff parameter vector: $voff_inits"
+        voff_inits_tied = zeros(cube_fitter.n_voff_tied)
+        # For tied velocities, take the averages
+        for j ∈ 1:cube_fitter.n_voff_tied
+            # consider the lines within the tied group
+            tied_group = BitVector([ln.tied == cube_fitter.voff_tied_key[j] for ln ∈ cube_fitter.lines])
+            voff_inits_tied[j] = mean(voff_inits[tied_group])
+        end
+        @debug "Initial tied voff parameter vector: $voff_inits_tied"
+        # Double back and make sure all of the voff_inits are consistent with any tied lines
+        for (i, ln) ∈ enumerate(cube_fitter.lines)
+            if !isnothing(ln.tied)
+                vwhere = findfirst(cube_fitter.voff_tied_key == ln.tied)
+                voff_group = voff_inits_tied[vwhere]
+                voff_inits[i] -= voff_group
+                if cube_fitter.flexible_wavesol
+                    # Ensure the individual voff is consistent with the tied voff
+                    if voff_inits[i] < minimum(voff_ln[i].prior) 
+                        @debug "initial voff for line $i at $(ln.λ₀) is inconsistent with the group: $(voff_inits[i]), adjusting" 
+                        voff_inits[i] = minimum(voff_ln[i].prior) + 1
+                    elseif voff_inits[i] > maximum(voff_ln[i].prior)
+                        @debug "initial voff for line $i at $(ln.λ₀) is inconsistent with the group: $(voff_inits[i]), adjusting" 
+                        voff_inits[i] = maximum(voff_ln[i].prior) - 1
+                    end
+                end
+            end
+        end
+        @debug "Individual voff parameter vector corrected for ties: $voff_inits"
+
         # Start the ampltiudes at 1/2 and 1/4 (in normalized units)
         A_ln = ones(cube_fitter.n_lines) .* 0.5
         A_fl = ones(cube_fitter.n_lines) .* 0.5     # (acomp amp is multiplied with main amp)
@@ -2302,7 +2417,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
         for (i, ln) ∈ enumerate(cube_fitter.lines)
             if isnothing(ln.tied) || cube_fitter.flexible_wavesol
                 # 3 parameters: amplitude, voff, FWHM
-                append!(ln_pars, [A_ln[i], voff_ln[i].value, fwhm_ln[i].value])
+                append!(ln_pars, [A_ln[i], voff_inits[i], fwhm_ln[i].value])
             else
                 # 2 parameters: amplitude, FWHM (since voff is tied)
                 append!(ln_pars, [A_ln[i], fwhm_ln[i].value])
@@ -2363,27 +2478,45 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     # Parameter and function tolerance levels for convergence with SAMIN,
     # these are a bit loose since we're mainly just looking to get into the right global minimum region with SAMIN
     # before refining the fit later with a LevMar local minimum routine
-    x_tol = 1e-5
-    f_tol = abs(_negln_probability(p₀, λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors) - 
-                _negln_probability(clamp.(p₀ .- x_tol, lower_bounds, upper_bounds), λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors))
-    # Window around emission lines to make fitting more efficient
-    line_mask = falses(length(λ))
-    for (i, ln) ∈ enumerate(cube_fitter.lines)
-        window_size = (maximum(voff_ln[i].prior) + 5maximum(fwhm_ln[i].prior)) / Util.C_KMS * ln.λ₀
-        window = (ln.λ₀ - window_size) .< λ .< (ln.λ₀ + window_size)
-        line_mask .|= window
-    end
-    # Apply the mask to all relevant vectors
-    λ_masked = λ[line_mask]
-    I_masked = Inorm[line_mask]
-    σ_masked = σnorm[line_mask]
-    ext_masked = ext_curve[line_mask]
+    # x_tol = 1e-5
+    # f_tol = abs(_negln_probability(p₀, [], λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors) -
+    #             _negln_probability(clamp.(p₀ .- x_tol, lower_bounds, upper_bounds), [], λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors))
+    # # Window around emission lines to make fitting more efficient
+    # line_mask = falses(length(λ))
+    # for (i, ln) ∈ enumerate(cube_fitter.lines)
+    #     window_size = (maximum(voff_ln[i].prior) + 5maximum(fwhm_ln[i].prior)) / Util.C_KMS * ln.λ₀
+    #     window = (ln.λ₀ - window_size) .< λ .< (ln.λ₀ + window_size)
+    #     line_mask .|= window
+    # end
+    # # Apply the mask to all relevant vectors
+    # λ_masked = λ[line_mask]
+    # I_masked = Inorm[line_mask]
+    # σ_masked = σnorm[line_mask]
+    # ext_masked = ext_curve[line_mask]
 
     # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
-    res = optimize(p -> _negln_probability(p, λ_masked, I_masked, σ_masked, cube_fitter, λ0_ln, ext_masked, priors), lower_bounds, upper_bounds, p₀, 
-       SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
-    p₁ = res.minimizer
-    # p₁ = p₀
+    # res = Optim.optimize(p -> _negln_probability(p, [], λ_masked, I_masked, σ_masked, cube_fitter, λ0_ln, ext_masked, priors), lower_bounds, upper_bounds, p₀, 
+    #    SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
+    # p₁ = res.minimizer
+    p₁ = p₀
+
+    # println("Beginning NLopt minimization...")
+    # println(x_tol)
+    # println(f_tol)
+    # opt = Opt(:G_MLSL_LDS, length(p₀))
+    # opt.lower_bounds = lower_bounds
+    # opt.upper_bounds = upper_bounds
+    # opt.local_optimizer = Opt(:LN_SBPLX, length(p₀))
+    # opt.min_objective = (p,g) -> _negln_probability(p, g, λ_masked, I_masked, σ_masked, cube_fitter, λ0_ln, ext_masked, priors)
+    # # xtol_rel, xtol_abs, ftol_rel, ftol_abs
+    # # opt.xtol_abs = x_tol
+    # # opt.ftol_abs = f_tol
+    # opt.xtol_rel = x_tol
+    # opt.ftol_rel = f_tol
+    # opt.maxeval = 10^6
+    # (lnL,p₁,ret) = @time optimize!(opt, p₀)
+
+    # println(ret)
 
     # Write convergence results to file, if specified
     # if cube_fitter.track_convergence
@@ -2406,183 +2539,30 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
 
     # Convert parameter limits into CMPFit object
     parinfo = CMPFit.Parinfo(length(p₀))
-
-    # Tied velocity offsets
-    pᵢ = 1
-    for i ∈ 1:cube_fitter.n_voff_tied
-        parinfo[pᵢ].fixed = cube_fitter.voff_tied[i].locked
-        if !(cube_fitter.voff_tied[i].locked)
-            parinfo[pᵢ].limited = (1,1)
-            parinfo[pᵢ].limits = (minimum(cube_fitter.voff_tied[i].prior), maximum(cube_fitter.voff_tied[i].prior))
-        end
-        pᵢ += 1
-    end
-
-    # Tied additional component velocity offsets
-    for j ∈ 1:cube_fitter.n_acomp_voff_tied
-        parinfo[pᵢ].fixed = cube_fitter.acomp_voff_tied[j].locked
-        if !(cube_fitter.acomp_voff_tied[j].locked)
-            parinfo[pᵢ].limited = (1,1)
-            parinfo[pᵢ].limits = (minimum(cube_fitter.acomp_voff_tied[j].prior), maximum(cube_fitter.acomp_voff_tied[j].prior))
-        end
-        pᵢ += 1
-    end
-
-    # Tied voigt mixing
-    if cube_fitter.tie_voigt_mixing
-        parinfo[pᵢ].fixed = cube_fitter.voigt_mix_tied.locked || !init
+    for pᵢ ∈ 1:length(p₀)
+        parinfo[pᵢ].fixed = param_lock[pᵢ]
         if iszero(parinfo[pᵢ].fixed)
             parinfo[pᵢ].limited = (1,1)
-            parinfo[pᵢ].limits = (minimum(cube_fitter.voigt_mix_tied.prior), maximum(cube_fitter.voigt_mix_tied.prior))
-        end
-        pᵢ += 1
-    end
-
-    # Emission line amplitude, voff, fwhm
-    for i ∈ 1:cube_fitter.n_lines
-        parinfo[pᵢ].limited = (1,1)
-        parinfo[pᵢ].limits = (0., 1.)
-        if isnothing(cube_fitter.line_tied[i]) || cube_fitter.flexible_wavesol
-            parinfo[pᵢ+1].fixed = voff_ln[i].locked
-            if !(voff_ln[i].locked)
-                parinfo[pᵢ+1].limited = (1,1)
-                parinfo[pᵢ+1].limits = (minimum(voff_ln[i].prior), maximum(voff_ln[i].prior))
-            end
-            line_fwhm = p₀[pᵢ+2]
-            parinfo[pᵢ+2].fixed = fwhm_ln[i].locked
-            if !(fwhm_ln[i].locked)
-                parinfo[pᵢ+2].limited = (1,1)
-                parinfo[pᵢ+2].limits = (minimum(fwhm_ln[i].prior), maximum(fwhm_ln[i].prior))
-            end
-            if prof_ln[i] == :GaussHermite
-                parinfo[pᵢ+3].fixed = h3_ln[i].locked
-                if !(h3_ln[i].locked)
-                    parinfo[pᵢ+3].limited = (1,1)
-                    parinfo[pᵢ+3].limits = (minimum(h3_ln[i].prior), maximum(h3_ln[i].prior))
-                end
-                parinfo[pᵢ+4].fixed = h4_ln[i].locked
-                if !(h4_ln[i].locked)
-                    parinfo[pᵢ+4].limited = (1,1)
-                    parinfo[pᵢ+4].limits = (minimum(h4_ln[i].prior), maximum(h4_ln[i].prior))
-                end
-                pᵢ += 2
-            elseif prof_ln[i] == :Voigt && !cube_fitter.tie_voigt_mixing
-                parinfo[pᵢ+3].fixed = η_ln[i].locked
-                if !(η_ln[i].locked)
-                    parinfo[pᵢ+3].limited = (1,1)
-                    parinfo[pᵢ+3].limits = (minimum(η_ln[i].prior), maximum(η_ln[i].prior))
-                end
-                pᵢ += 1
-            end
-            pᵢ += 3
-        else
-            line_fwhm = p₀[pᵢ+1]
-            parinfo[pᵢ+1].fixed = fwhm_ln[i].locked
-            if !(fwhm_ln[i].locked)
-                parinfo[pᵢ+1].limited = (1,1)
-                parinfo[pᵢ+1].limits = (minimum(fwhm_ln[i].prior), maximum(fwhm_ln[i].prior))
-            end
-            if prof_ln[i] == :GaussHermite
-                parinfo[pᵢ+2].fixed = h3_ln[i].locked
-                if !(h3_ln[i].locked)
-                    parinfo[pᵢ+2].limited = (1,1)
-                    parinfo[pᵢ+2].limits = (minimum(h3_ln[i].prior), maximum(h3_ln[i].prior))
-                end
-                parinfo[pᵢ+3].fixed = h4_ln[i].locked
-                if !(h4_ln[i].locked)
-                    parinfo[pᵢ+3].limited = (1,1)
-                    parinfo[pᵢ+3].limits = (minimum(h4_ln[i].prior), maximum(h4_ln[i].prior))
-                end
-                pᵢ += 2       
-            elseif prof_ln[i] == :Voigt && !cube_fitter.tie_voigt_mixing
-                parinfo[pᵢ+2].fixed = η_ln[i].locked
-                if !(η_ln[i].locked)
-                    parinfo[pᵢ+2].limited = (1,1)
-                    parinfo[pᵢ+2].limits = (minimum(η_ln[i].prior), maximum(η_ln[i].prior))
-                end
-                pᵢ += 1
-            end
-            pᵢ += 2
-        end
-        if !isnothing(acomp_prof_ln[i])
-            parinfo[pᵢ].limited = (1,1)
-            parinfo[pᵢ].limits = (0., 1.)
-            if isnothing(cube_fitter.line_acomp_tied[i])
-                parinfo[pᵢ+1].fixed = acomp_voff_ln[i].locked
-                if !(acomp_voff_ln[i].locked)
-                    parinfo[pᵢ+1].limited = (1,1)
-                    parinfo[pᵢ+1].limits = (minimum(acomp_voff_ln[i].prior), maximum(acomp_voff_ln[i].prior))
-                end
-                parinfo[pᵢ+2].fixed = acomp_fwhm_ln[i].locked
-                if !(acomp_fwhm_ln[i].locked)
-                    parinfo[pᵢ+2].limited = (1,1)
-                    parinfo[pᵢ+2].limits = (minimum(acomp_fwhm_ln[i].prior), maximum(acomp_fwhm_ln[i].prior))
-                end
-                if acomp_prof_ln[i] == :GaussHermite
-                    parinfo[pᵢ+3].fixed = acomp_h3_ln[i].locked
-                    if !(acomp_h3_ln[i].locked)
-                        parinfo[pᵢ+3].limited = (1,1)
-                        parinfo[pᵢ+3].limits = (minimum(acomp_h3_ln[i].prior), maximum(acomp_h3_ln[i].prior))
-                    end
-                    parinfo[pᵢ+4].fixed = acomp_h4_ln[i].locked
-                    if !(acomp_h4_ln[i].locked)
-                        parinfo[pᵢ+4].limited = (1,1)
-                        parinfo[pᵢ+4].limits = (minimum(acomp_h4_ln[i].prior), maximum(acomp_h4_ln[i].prior))
-                    end
-                    pᵢ += 2
-                elseif acomp_prof_ln[i] == :Voigt && !cube_fitter.tie_voigt_mixing
-                    parinfo[pᵢ+3].fixed = acomp_η_ln[i].locked
-                    if !(acomp_η_ln[i].locked)
-                        parinfo[pᵢ+3].limited = (1,1)
-                        parinfo[pᵢ+3].limits = (minimum(acomp_η_ln[i].prior), maximum(acomp_η_ln[i].prior))
-                    end
-                    pᵢ += 1
-                end
-                pᵢ += 3
-            else
-                parinfo[pᵢ+1].fixed = acomp_fwhm_ln[i].locked
-                if !(acomp_fwhm_ln[i].locked)
-                    parinfo[pᵢ+1].limited = (1,1)
-                    parinfo[pᵢ+1].limits = (minimum(acomp_fwhm_ln[i].prior), maximum(acomp_fwhm_ln[i].prior))
-                end
-                if acomp_prof_ln[i] == :GaussHermite
-                    parinfo[pᵢ+2].fixed = acomp_h3_ln[i].locked
-                    if !(acomp_h3_ln[i].locked)
-                        parinfo[pᵢ+2].limited = (1,1)
-                        parinfo[pᵢ+2].limits = (minimum(acomp_h3_ln[i].prior), maximum(acomp_h3_ln[i].prior))
-                    end
-                    parinfo[pᵢ+3].fixed = acomp_h4_ln[i].locked
-                    if !(acomp_h4_ln[i].locked)
-                        parinfo[pᵢ+3].limited = (1,1)
-                        parinfo[pᵢ+3].limits = (minimum(acomp_h4_ln[i].prior), maximum(acomp_h4_ln[i].prior))
-                    end
-                    pᵢ += 2       
-                elseif acomp_prof_ln[i] == :Voigt && !cube_fitter.tie_voigt_mixing
-                    parinfo[pᵢ+2].fixed = acomp_η_ln[i].locked
-                    if !(acomp_η_ln[i].locked)
-                        parinfo[pᵢ+2].limited = (1,1)
-                        parinfo[pᵢ+2].limits = (minimum(acomp_η_ln[i].prior), maximum(acomp_η_ln[i].prior))
-                    end
-                    pᵢ += 1
-                end
-                pᵢ += 2
-            end
+            parinfo[pᵢ].limits = (minimum(priors[pᵢ]), maximum(priors[pᵢ]))
         end
     end
 
     # Create a `config` structure
     config = CMPFit.Config()
 
-    # Same procedure as with the continuum fit
+    # # Same procedure as with the continuum fit
     res = cmpfit(λ, Inorm, σnorm, (x, p) -> Util.fit_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
         cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, cube_fitter.n_acomp_voff_tied, cube_fitter.acomp_voff_tied_key,
         cube_fitter.line_acomp_tied, acomp_prof_ln, λ0_ln, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, ext_curve), p₁, 
         parinfo=parinfo, config=config)
 
-    # Get the results
+    # # Get the results
     popt = res.param
     perr = res.perror
     covar = res.covar
+    # popt = p₁
+    # perr = zeros(length(popt))
+    # covar = zeros(length(popt), length(popt))
 
     # Count free parameters
     n_free = 0
@@ -2729,26 +2709,26 @@ backend (`:pyplot` or `:plotly`).
 
 # Arguments
 `T<:Real,S<:Integer`
-- `λ::Vector{T}`: The wavelength vector of the spaxel to be plotted
-- `I::Vector{T}`: The intensity data vector of the spaxel to be plotted
-- `I_cont::Vector{T}`: The intensity model vector of the spaxel to be plotted
-- `σ::Vector{T}`: The uncertainty vector of the spaxel to be plotted
+- `λ::Vector{<:Real}`: The wavelength vector of the spaxel to be plotted
+- `I::Vector{<:Real}`: The intensity data vector of the spaxel to be plotted
+- `I_cont::Vector{<:Real}`: The intensity model vector of the spaxel to be plotted
+- `σ::Vector{<:Real}`: The uncertainty vector of the spaxel to be plotted
 - `comps::Dict{String, Vector{T}}`: The dictionary of individual components of the model intensity
-- `n_dust_cont::S`: The number of dust continuum components in the fit
-- `n_dust_features::S`: The number of PAH features in the fit
-- `line_wave::Vector{T}`: List of nominal central wavelengths for each line in the fit
+- `n_dust_cont::Integer`: The number of dust continuum components in the fit
+- `n_dust_features::Integer`: The number of PAH features in the fit
+- `line_wave::Vector{<:Real}`: List of nominal central wavelengths for each line in the fit
 - `line_names::Vector{Symbol}`: List of names for each line in the fit
 - `screen::Bool`: The type of model used for extinction screening
-- `z::T`: The redshift of the object being fit
-- `χ2red::T`: The reduced χ^2 value of the fit
+- `z::Real`: The redshift of the object being fit
+- `χ2red::Real`: The reduced χ^2 value of the fit
 - `name::String`: The name of the object being fit
 - `label::String`: A label for the individual spaxel being plotted, to be put in the file name
 - `backend::Symbol`: The backend to use to plot, either `:pyplot` or `:plotly`
 """
-function plot_spaxel_fit(λ::Vector{T}, I::Vector{T}, I_cont::Vector{T}, σ::Vector{T}, comps::Dict{String, Vector{T}}, 
-    n_dust_cont::S, n_dust_features::S, line_wave::Vector{T}, line_names::Vector{Symbol}, screen::Bool, 
-    z::T, χ2red::T, name::String, label::String; backend::Symbol=:pyplot, 
-    range::Union{Tuple,Nothing}=nothing) where {T<:Real,S<:Integer}
+function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<:Real}, σ::Vector{<:Real}, comps::Dict{String, Vector{T}}, 
+    n_dust_cont::Integer, n_dust_features::Integer, line_wave::Vector{<:Real}, line_names::Vector{Symbol}, screen::Bool, 
+    z::Real, χ2red::Real, name::String, label::String; backend::Symbol=:pyplot, 
+    range::Union{Tuple,Nothing}=nothing) where {T<:Real}
 
     # Plotly ---> useful interactive plots for visually inspecting data, but not publication-quality
     if (backend == :plotly || backend == :both) && isnothing(range)
@@ -3348,14 +3328,14 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; recalculate
 
         with_logger(logger) do
 
-            mask_lines, I_spline, σ_spline = continuum_cubic_spline(λ, I, σ)
+            line_locs, mask_lines, I_spline, σ_spline = continuum_cubic_spline(λ, I, σ)
 
             # Fit the spaxel
             σ, popt_c, I_cont, comps_cont, n_free_c, perr_c, covar_c = 
                 @timeit timer_output "continuum_fit_spaxel" continuum_fit_spaxel(cube_fitter, spaxel, mask_lines, I_spline, σ_spline)
             _, popt_l, I_line, comps_line, n_free_l, perr_l, covar_l = 
-                @timeit timer_output "line_fit_spaxel" line_fit_spaxel(cube_fitter, spaxel, I_cont, comps_cont["extinction"], mask_lines,
-                    I_spline, σ_spline)
+                @timeit timer_output "line_fit_spaxel" line_fit_spaxel(cube_fitter, spaxel, I_cont, comps_cont["extinction"], line_locs, 
+                    mask_lines, I_spline, σ_spline)
 
             # Combine the continuum and line models
             I_model = I_cont .+ I_line
@@ -3432,7 +3412,7 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; recalculate
     # if requested, recalculate the extra parameters obtained with the calculate_extra_parameters function
     if recalculate_params
         # Get the line mask and cubic spline continuum
-        mask_lines, I_spline, σ_spline = continuum_cubic_spline(λ, I, σ)
+        line_locs, mask_lines, I_spline, σ_spline = continuum_cubic_spline(λ, I, σ)
 
         # Separate the fit parameters
         popt_c = p_out[1:cube_fitter.n_params_cont]
@@ -3490,13 +3470,13 @@ function fit_stack!(cube_fitter::CubeFitter)
     I_sum_init = Util.Σ(cube_fitter.cube.Iν, (1,2)) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2))
     σ_sum_init = sqrt.(Util.Σ(cube_fitter.cube.σI.^2, (1,2))) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2))
 
-    mask_lines, I_spline_init, σ_spline_init = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init)
+    line_locs, mask_lines, I_spline_init, σ_spline_init = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init)
 
     # Continuum and line fits
     σ_init, popt_c_init, I_c_init, comps_c_init, n_free_c_init, _, _ = continuum_fit_spaxel(cube_fitter, CartesianIndex(0,0),
         mask_lines, I_spline_init, σ_spline_init; init=true)
     _, popt_l_init, I_l_init, comps_l_init, n_free_l_init, _, _ = line_fit_spaxel(cube_fitter, CartesianIndex(0,0), I_c_init, 
-        comps_c_init["extinction"], mask_lines, I_spline_init, σ_spline_init; init=true)
+        comps_c_init["extinction"], line_locs, mask_lines, I_spline_init, σ_spline_init; init=true)
 
     # Get the overall models
     I_model_init = I_c_init .+ I_l_init
