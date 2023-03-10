@@ -420,9 +420,8 @@ function parse_lines(channel::Integer, interp_R::Function, λ::Vector{<:Real})
     lines = TOML.parsefile(joinpath(@__DIR__, "lines.toml"))
     lines_out = Param.LineDict()
 
-    keylist1 = ["tie_H2_voff", "tie_ion_voff", "tie_H2_acomp_voff", "tie_ion_acomp_voff", "tie_voigt_mixing", 
-        "voff_plim", "fwhm_pmax", "h3_plim", "h4_plim", "acomp_voff_plim", "acomp_fwhm_plim", 
-        "flexible_wavesol", "wavesol_unc", "lines", "profiles", "acomps"]
+    keylist1 = ["tie_voigt_mixing", "voff_plim", "fwhm_pmax", "h3_plim", "h4_plim", "acomp_voff_plim", 
+        "acomp_fwhm_plim", "flexible_wavesol", "wavesol_unc", "lines", "profiles", "acomps"]
 
     # Loop through all the required keys that should be in the file and confirm that they are there
     for key ∈ keylist1
@@ -461,6 +460,14 @@ function parse_lines(channel::Integer, interp_R::Function, λ::Vector{<:Real})
     h3_init = "h3_init" ∈ keys(lines) ? lines["h3_init"] : 0.0        # gauss-hermite series start fully gaussian,
     h4_init = "h4_init" ∈ keys(lines) ? lines["h4_init"] : 0.0        # with both h3 and h4 moments starting at 0
     η_init = "eta_init" ∈ keys(lines) ? lines["eta_init"] : 0.5       # Voigts start half gaussian, half lorentzian
+
+    # Create the kinematic groups
+    kinematic_groups = []
+    for key ∈ keys(lines)
+        if occursin("kinematic_group_", key)
+            append!(kinematic_groups, [replace(key, "kinematic_group_" => "")])
+        end
+    end
 
     # Loop through all the lines
     for line ∈ keys(lines["lines"])
@@ -559,42 +566,37 @@ function parse_lines(channel::Integer, interp_R::Function, λ::Vector{<:Real})
             end
         end
 
-        # Check if the voff should be tied to other voffs based on the line type (H2 or IP)
-        tied = nothing
-        if lines["tie_H2_voff"] && occursin("H2", line)
-            # String representing what lines are tied together, will be the same for all tied lines
-            # and `nothing` for untied lines
-            tied = "H2"
-            @debug "Tying voff to the group: $tied"
-            # If the wavelength solution is bad, allow the voff to still be flexible based on 
-            # the accuracy of it
-            if lines["flexible_wavesol"]
-                δv = lines["wavesol_unc"][channel]
-                voff_prior = Uniform(-δv, δv)
-                @debug "(Using flexible tied voff with lenience of +/-$δv km/s)"
+        # Check if the kinematics should be tied to other lines based on the kinematic groups
+        tied = acomp_tied = nothing
+        for group ∈ kinematic_groups
+            for groupmember ∈ lines["kinematic_group_" * group]
+                #= Loop through the items in the "kinematic_group_*" list and see if the line name matches any of them.
+                 It needn't be a perfect match, the line name just has to contain the value in the kinematic group list.
+                 i.e. if you want to automatically tie all FeII lines together, instead of manually listing out each one,
+                 you can just include an item "FeII" and it will automatically catch all the FeII lines
+                =#
+                if occursin(groupmember, line)
+                    # Make sure line is not already a member of another group
+                    if !isnothing(tied)
+                        error("Line $line is already part of the kinematic group $tied, but it also passed filtering criteria"
+                            * "to be included in the group $group. Make sure your filters are not too lenient!")
+                    end
+                    @debug "Tying kinematics for $line to the group: $group"
+                    # Use the group label (which can be anything you want) to categorize what lines are tied together
+                    tied = group
+                    # Only set acomp_tied if the line actually *has* an acomp
+                    if !isnothing(acomp_profiles[line])
+                        acomp_tied = group
+                    end
+                    # If the wavelength solution is bad, allow the kinematics to still be flexible based on its accuracy
+                    if lines["flexible_wavesol"]
+                        δv = lines["wavesol_unc"][channel]
+                        voff_prior = Uniform(-δv, δv)
+                        @debug "Using flexible tied voff with lenience of +/-$δv km/s"
+                    end
+                    break
+                end
             end
-        end
-        if lines["tie_ion_voff"] && !occursin("H2", line)
-            tied = "ion"
-            @debug "Tying voff to the group: $tied"
-            if lines["flexible_wavesol"]
-                δv = lines["wavesol_unc"][channel]
-                voff_prior = Uniform(-δv, δv)
-                @debug "(Using flexible tied voff with lenience of +/-$δv km/s)"
-            end
-        end
-        # Check if the additional component voff should be tied to other additional component voffs based on the line type (H2 or IP)
-        acomp_tied = nothing
-        if lines["tie_H2_acomp_voff"] && occursin("H2", line) && !isnothing(acomp_profiles[line])
-            # String representing what lines are tied together, will be the same for all tied lines
-            # and `nothing` for untied lines
-            acomp_tied = "H2"
-            @debug "Tying acomp voff to the group: $acomp_tied"
-            # dont allow tied additional component voffs to vary, even with flexible_wavesol
-        end
-        if lines["tie_ion_acomp_voff"] && !occursin("H2", line) && !isnothing(acomp_profiles[line])
-            acomp_tied = "ion"
-            @debug "Tying acomp voff to the group: $acomp_tied"
         end
 
         @debug "Profile: $(profiles[line])"
@@ -643,7 +645,8 @@ function parse_lines(channel::Integer, interp_R::Function, λ::Vector{<:Real})
 
         # Create the TransitionLine object using the above parameters, and add it to the dictionary
         lines_out[Symbol(line)] = Param.TransitionLine(lines["lines"][line], 
-            Symbol(profiles[line]), !isnothing(acomp_profiles[line]) ? Symbol(acomp_profiles[line]) : nothing, params, tied, acomp_tied)
+            Symbol(profiles[line]), !isnothing(acomp_profiles[line]) ? Symbol(acomp_profiles[line]) : nothing, params, 
+            tied, acomp_tied)
 
     end
 
@@ -652,46 +655,58 @@ function parse_lines(channel::Integer, interp_R::Function, λ::Vector{<:Real})
 
     # Create a dictionary containing all of the unique `tie` keys, and the tied voff parameters 
     # corresponding to that tied key
-    voff_tied_key = unique([lines_out[line].tied for line ∈ keys(lines_out)])
-    voff_tied_key = voff_tied_key[.!isnothing.(voff_tied_key)]
-    @debug "voff_tied_key: $voff_tied_key"
+    kin_tied_key = unique([lines_out[line].tied for line ∈ keys(lines_out)])
+    kin_tied_key = kin_tied_key[.!isnothing.(kin_tied_key)]
+    @debug "kin_tied_key: $kin_tied_key"
 
     voff_tied = Dict{String, Param.Parameter}()
+    fwhm_tied = Dict{String, Param.Parameter}()
     msg = ""
-    for (i, voff_tie) ∈ enumerate(voff_tied_key)
-        prior = Uniform(lines["voff_plim"]...)
-        locked = false
+    for (i, kin_tie) ∈ enumerate(kin_tied_key)
+        v_prior = Uniform(lines["voff_plim"]...)
+        f_prior = Uniform(fwhm_pmin, lines["fwhm_pmax"])
+        v_locked = f_locked = false
         # Check if there is an overwrite option in the lines file
         if haskey(lines, "priors")
-            if haskey(lines["priors"], voff_tie)
-                prior = lines["priors"][voff_tie]["pstr"]
-                locked = lines["priors"][voff_tie]["locked"]
+            if haskey(lines["priors"], kin_tie)
+                v_prior = lines["priors"][kin_tie]["voff_pstr"]
+                v_locked = lines["priors"][kin_tie]["voff_locked"]
+                f_prior = lines["priors"][kin_tie]["fwhm_pstr"]
+                f_locked = lines["priors"][kin_tie]["fwhm_locked"]
             end
         end
-        voff_tied[voff_tie] = Param.Parameter(voff_init, locked, prior)
-        msg *= "\nvoff_tied_$i $(voff_tied[voff_tie])"
+        voff_tied[kin_tie] = Param.Parameter(voff_init, v_locked, v_prior)
+        fwhm_tied[kin_tie] = Param.Parameter(fwhm_init, f_locked, f_prior)
+        msg *= "\nvoff_tied_$i $(voff_tied[kin_tie])"
+        msg *= "\nfwhm_tied_$i $(fwhm_tied[kin_tie])"
     end
     @debug msg
 
-    # ^^^ do the same for the additional component tied velocities 
-    acomp_voff_tied_key = unique([lines_out[line].acomp_tied for line ∈ keys(lines_out)])
-    acomp_voff_tied_key = acomp_voff_tied_key[.!isnothing.(acomp_voff_tied_key)]
-    @debug "acomp_voff_tied_key: $acomp_voff_tied_key"
+    # ^^^ do the same for the additional tied kinematics
+    acomp_kin_tied_key = unique([lines_out[line].acomp_tied for line ∈ keys(lines_out)])
+    acomp_kin_tied_key = acomp_kin_tied_key[.!isnothing.(acomp_kin_tied_key)]
+    @debug "acomp_kin_tied_key: $acomp_kin_tied_key"
 
     acomp_voff_tied = Dict{String, Param.Parameter}()
+    acomp_fwhm_tied = Dict{String, Param.Parameter}()
     msg = ""
-    for (j, acomp_voff_tie) ∈ enumerate(acomp_voff_tied_key)
-        acomp_prior = Uniform(lines["acomp_voff_plim"]...)
-        acomp_locked = false
+    for (i, acomp_kin_tie) ∈ enumerate(acomp_kin_tied_key)
+        av_prior = Uniform(lines["acomp_voff_plim"]...)
+        af_prior = Uniform(lines["acomp_fwhm_plim"]...)
+        av_locked = af_locked = false
         # Check if there is an overwrite option in the lines file
         if haskey(lines, "priors")
-            if haskey(lines["priors"], acomp_voff_tie)
-                acomp_prior = lines["priors"][acomp_voff_tie]["pstr"]
-                acomp_locked = lines["priors"][acomp_voff_tie]["locked"]
+            if haskey(lines["priors"], acomp_kin_tie)
+                av_prior = lines["priors"][acomp_kin_tie]["voff_pstr"]
+                av_locked = lines["priors"][acomp_kin_tie]["voff_locked"]
+                af_prior = lines["priors"][acomp_kin_tie]["fwhm_pstr"]
+                af_locked = lines["priors"][acomp_kin_tie]["fwhm_locked"]
             end
         end
-        acomp_voff_tied[acomp_voff_tie] = Param.Parameter(voff_init, acomp_locked, acomp_prior)
-        msg *= "\nacomp_voff_tied_$j $(acomp_voff_tied[acomp_voff_tie])"
+        acomp_voff_tied[acomp_kin_tie] = Param.Parameter(0., av_locked, av_prior)
+        acomp_fwhm_tied[acomp_kin_tie] = Param.Parameter(1., af_locked, af_prior)
+        msg *= "\nacomp_voff_tied_$i $(acomp_voff_tied[acomp_kin_tie])"
+        msg *= "\nacomp_fwhm_tied_$i $(acomp_fwhm_tied[acomp_kin_tie])"
     end
     @debug msg
 
@@ -704,7 +719,8 @@ function parse_lines(channel::Integer, interp_R::Function, λ::Vector{<:Real})
         @debug "voigt_mix_tied is $voigt_mix_tied (untied)"
     end
 
-    lines_out, voff_tied, acomp_voff_tied, lines["flexible_wavesol"], lines["tie_voigt_mixing"], voigt_mix_tied
+    lines_out, voff_tied, fwhm_tied, acomp_voff_tied, acomp_fwhm_tied, lines["flexible_wavesol"], lines["tie_voigt_mixing"], 
+        voigt_mix_tied
 end
 
 
@@ -833,7 +849,9 @@ in the parameter map.
 - `lines::Dict{Symbol, Dict{Symbol, Array{Float64, 2}}}`: The emission line parameters: amplitude, voff, FWHM, and any additional 
     line profile parameters for each line
 - `tied_voffs::Dict{String, Array{Float64, 2}}`: Tied line velocity offsets
+- `tied_fwhms::Dict{String, Array{Float64, 2}}`: Tied line velocity fwhms
 - `acomp_tied_voffs::Dict{String, Array{Float64, 2}}`: additional component tied velocity offsets
+- `acomp_tied_fwhms::Dict{String, Array{Float64, 2}}`: additional component tied velocity fwhms
 - `tied_voigt_mix::Union{Array{Float64, 2}, Nothing}`: Tied Voigt mixing parameter
 - `extinction::Dict{Symbol, Array{Float64, 2}}`: Extinction parameters: optical depth at 9.7 μm and mixing ratio
 - `hot_dust::Dict{Symbol, Array{Float64, 2}}`: Hot dust parameters: amplitude, temperature, covering fraction, warm tau, and cold tau
@@ -848,7 +866,9 @@ struct ParamMaps{T<:Real}
     dust_features::Dict{String, Dict{Symbol, Array{T, 2}}}
     lines::Dict{Symbol, Dict{Symbol, Array{T, 2}}}
     tied_voffs::Dict{String, Array{T, 2}}
+    tied_fwhms::Dict{String, Array{T, 2}}
     acomp_tied_voffs::Dict{String, Array{T, 2}}
+    acomp_tied_fwhms::Dict{String, Array{T, 2}}
     tied_voigt_mix::Union{Array{T, 2}, Nothing}
     extinction::Dict{Symbol, Array{T, 2}}
     hot_dust::Dict{Symbol, Array{T, 2}}
@@ -859,7 +879,7 @@ end
 
 """
     parammaps_empty(shape, n_dust_cont, df_names, line_names, line_tied, line_profiles,
-        line_acomp_tied, line_acomp_profiles, voff_tied_key, acomp_voff_tied_key, flexible_wavesol, 
+        line_acomp_tied, line_acomp_profiles, kin_tied_key, acomp_kin_tied_key, flexible_wavesol, 
         tie_voigt_mixing)
 
 A constructor function for making a default empty ParamMaps structure with all necessary fields for a given
@@ -881,8 +901,8 @@ fit of a DataCube.
 - `line_acomp_tied::Vector{Union{String,Nothing}}`: Same as line_tied, but for additional line components
 - `line_acomp_profiles::Vector{Union{String,Nothing}}`: Same as line_profiles, but for additional line components. An element
     may be `nothing` if the line in question has no additional component.
-- `voff_tied_key::Vector{String}`: List of only the unique keys in line_tied (not including `nothing`)
-- `acomp_voff_tied_key::Vector{String}`: Same as voff_tied_key, but for additional line components
+- `kin_tied_key::Vector{String}`: List of only the unique keys in line_tied (not including `nothing`)
+- `acomp_kin_tied_key::Vector{String}`: Same as kin_tied_key, but for additional line components
 - `flexible_wavesol::Bool`: Fitting option on whether to allow a small variation in voff components even when they are tied,
     in case the wavelength solution of the data is not calibrated very well
 - `tie_voigt_mixing::Bool`: Whether or not to tie the mixing parameters of any Voigt line profiles
@@ -890,7 +910,7 @@ fit of a DataCube.
 function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, df_names::Vector{String}, 
     line_names::Vector{Symbol}, line_tied::Vector{Union{String,Nothing}}, line_profiles::Vector{Symbol},
     line_acomp_tied::Vector{Union{String,Nothing}}, line_acomp_profiles::Vector{Union{Symbol,Nothing}},
-    voff_tied_key::Vector{String}, acomp_voff_tied_key::Vector{String}, flexible_wavesol::Bool, 
+    kin_tied_key::Vector{String}, acomp_kin_tied_key::Vector{String}, flexible_wavesol::Bool, 
     tie_voigt_mixing::Bool)::ParamMaps where {S<:Integer}
 
     @debug """\n
@@ -935,7 +955,13 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, df_names::Ve
     for (line, tie, prof, acomptie, acompprof) ∈ zip(line_names, line_tied, line_profiles, line_acomp_tied, line_acomp_profiles)
         lines[line] = Dict{Symbol, Array{Float64, 2}}()
         # If tied and NOT using a flexible solution, don't include a voff parameter
-        pnames = isnothing(tie) || flexible_wavesol ? [:amp, :voff, :fwhm] : [:amp, :fwhm]
+        if isnothing(tie)
+            pnames = [:amp, :voff, :fwhm]
+        elseif flexible_wavesol
+            pnames = [:amp, :voff]
+        else
+            pnames = [:amp]
+        end
         # Add 3rd and 4th order moments (skewness and kurtosis) for Gauss-Hermite profiles
         if prof == :GaussHermite
             pnames = [pnames; :h3; :h4]
@@ -945,7 +971,7 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, df_names::Ve
         end
         # Repeat the above but for additional components
         if !isnothing(acompprof)
-            pnames = isnothing(acomptie) ? [pnames; :acomp_amp; :acomp_voff; :acomp_fwhm] : [pnames; :acomp_amp; :acomp_fwhm]
+            pnames = isnothing(acomptie) ? [pnames; :acomp_amp; :acomp_voff; :acomp_fwhm] : [pnames; :acomp_amp]
             if acompprof == :GaussHermite
                 pnames = [pnames; :acomp_h3; :acomp_h4]
             elseif acompprof == :Voigt && !tie_voigt_mixing
@@ -965,16 +991,28 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, df_names::Ve
 
     # Tied voff parameters
     tied_voffs = Dict{String, Array{Float64, 2}}()
-    for vk ∈ voff_tied_key
+    for vk ∈ kin_tied_key
         tied_voffs[vk] = copy(nan_arr)
         @debug "tied voff map for group $vk"
+    end
+    # Tied fwhm parameters
+    tied_fwhms = Dict{String, Array{Float64, 2}}()
+    for vk ∈ kin_tied_key
+        tied_fwhms[vk] = copy(nan_arr)
+        @debug "tied fwhm map for group $vk"
     end
 
     # Tied additional component voff parameters
     acomp_tied_voffs = Dict{String, Array{Float64, 2}}()
-    for fvk ∈ acomp_voff_tied_key
+    for fvk ∈ acomp_kin_tied_key
         acomp_tied_voffs[fvk] = copy(nan_arr)
         @debug "tied acomp voff map for group $fvk"
+    end
+    # Tied additional component fwhm parameters
+    acomp_tied_fwhms = Dict{String, Array{Float64, 2}}()
+    for fvk ∈ acomp_kin_tied_key
+        acomp_tied_fwhms[fvk] = copy(nan_arr)
+        @debug "tied acomp fwhm map for group $fvk"
     end
 
     # Tied voigt mixing ratio parameter, if appropriate
@@ -1006,8 +1044,8 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, df_names::Ve
     reduced_χ2 = copy(nan_arr)
     @debug "reduced chi^2 map"
 
-    ParamMaps{Float64}(stellar_continuum, dust_continuum, dust_features, lines, tied_voffs, acomp_tied_voffs,
-        tied_voigt_mix, extinction, hot_dust, reduced_χ2)
+    ParamMaps{Float64}(stellar_continuum, dust_continuum, dust_features, lines, tied_voffs, tied_fwhms, 
+        acomp_tied_voffs, acomp_tied_fwhms, tied_voigt_mix, extinction, hot_dust, reduced_χ2)
 end
 
 
@@ -1141,16 +1179,18 @@ Read from the options files:
 - `line_profiles::Vector{Symbol}`: The profiles of each line being fit
 - `line_acomp_profiles::Vector{Union{Nothing,Symbol}}`: Same as `line_profiles`, but for the additional components
 - `lines::Vector{Param.TransitionLine}`: All of the fitting parameters for each line
-- `n_voff_tied::Integer`: The number of tied velocity offsets
+- `n_kin_tied::Integer`: The number of tied velocity offsets
 - `line_tied::Vector{Union{String,Nothing}}`: List of line tie keys which specify whether the voff of the given line should be
     tied to other lines. The line tie key itself may be either `nothing` (untied), or a String specifying the group of lines
     being tied, i.e. "H2"
-- `voff_tied_key::Vector{String}`: List of only the unique keys in line_tied (not including `nothing`)
-- `voff_tied::Vector{Param.Parameter}`: The actual tied voff parameter objects, corresponding to the `voff_tied_key`
-- `n_acomp_voff_tied::Integer`: Same as `n_voff_tied`, but for additional components
+- `kin_tied_key::Vector{String}`: List of only the unique keys in line_tied (not including `nothing`)
+- `voff_tied::Vector{Param.Parameter}`: The actual tied voff parameter objects, corresponding to the `kin_tied_key`
+- `fwhm_tied::Vector{Param.Parameter}`: The actual tied fwhm parameter objects, corresponding to the `kin_tied_key`
+- `n_acomp_kin_tied::Integer`: Same as `n_kin_tied`, but for additional components
 - `line_acomp_tied::Vector{Union{String,Nothing}}`: Same as `line_tied`, but for additional components
-- `acomp_voff_tied_key::Vector{String}`: Same as `voff_tied_key`, but for additional components
+- `acomp_kin_tied_key::Vector{String}`: Same as `kin_tied_key`, but for additional components
 - `acomp_voff_tied::Vector{Param.Parameter}`: Same as `voff_tied`, but for additional components
+- `acomp_fwhm_tied::Vector{Param.Parameter}`: Same as `fwhm_tied`, but for additional components
 - `tie_voigt_mixing::Bool`: Whether or not the Voigt mixing parameter is tied between all the lines with Voigt profiles
 - `voigt_mix_tied::Param.Parameter`: The actual tied Voigt mixing parameter object, given `tie_voigt_mixing` is true
 - `n_params_cont::Integer`: The total number of free fitting parameters for the continuum fit (not including emission lines)
@@ -1223,16 +1263,18 @@ struct CubeFitter{T<:Real,S<:Integer}
     lines::Vector{Param.TransitionLine}
 
     # Tied voffs
-    n_voff_tied::S
+    n_kin_tied::S
     line_tied::Vector{Union{String,Nothing}}
-    voff_tied_key::Vector{String}
+    kin_tied_key::Vector{String}
     voff_tied::Vector{Param.Parameter}
+    fwhm_tied::Vector{Param.Parameter}
 
     # Tied additional component voffs
-    n_acomp_voff_tied::S
+    n_acomp_kin_tied::S
     line_acomp_tied::Vector{Union{String,Nothing}}
-    acomp_voff_tied_key::Vector{String}
+    acomp_kin_tied_key::Vector{String}
     acomp_voff_tied::Vector{Param.Parameter}
+    acomp_fwhm_tied::Vector{Param.Parameter}
 
     # Tied voigt mixing
     tie_voigt_mixing::Bool
@@ -1308,8 +1350,8 @@ struct CubeFitter{T<:Real,S<:Integer}
         #############################################################
 
         @debug """\n
-        Creating CubeFitter struct for $name at z=$z, with tau_9.7=$τ_guess
-        ###################################################################
+        Creating CubeFitter struct for $name at z=$z
+        ############################################
         """
 
         # Get shape
@@ -1321,8 +1363,8 @@ struct CubeFitter{T<:Real,S<:Integer}
         interp_R = parse_resolving(z, parse(Int, cube.channel))
         dust = parse_dust(τ_guess[0][parse(Int, cube.channel)])
         options = parse_options()
-        line_list, voff_tied, acomp_voff_tied, flexible_wavesol, tie_voigt_mixing, 
-            voigt_mix_tied = parse_lines(parse(Int, cube.channel), interp_R, λ)
+        line_list, voff_tied, fwhm_tied, acomp_voff_tied, acomp_fwhm_tied, flexible_wavesol, tie_voigt_mixing, voigt_mix_tied = 
+            parse_lines(parse(Int, cube.channel), interp_R, λ)
 
         # Check that number of processes doesn't exceed first dimension, so the rolling best fit can work as intended
         if n_procs > shape[1]
@@ -1386,33 +1428,35 @@ struct CubeFitter{T<:Real,S<:Integer}
         end
         @debug msg
 
-        # Unpack the voff_tied dictionary
-        voff_tied_key = collect(keys(voff_tied))
-        voff_tied = [voff_tied[voff] for voff ∈ voff_tied_key]
-        n_voff_tied = length(voff_tied)
-        # Also store the "tied" parameter for each line, which will need to be checked against the voff_tied_key
+        # Unpack the kin_tied dictionary
+        kin_tied_key = collect(keys(voff_tied))
+        voff_tied = [voff_tied[kin] for kin ∈ kin_tied_key]
+        fwhm_tied = [fwhm_tied[kin] for kin ∈ kin_tied_key]
+        n_kin_tied = length(voff_tied)
+        # Also store the "tied" parameter for each line, which will need to be checked against the kin_tied_key
         # during fitting to find the proper location of the tied voff parameter to use
         line_tied = Vector{Union{Nothing,String}}([line.tied for line ∈ lines])
-        msg = "### Model will include $n_voff_tied tied voff parameters ###"
-        for lt ∈ voff_tied_key
+        msg = "### Model will include $(2n_kin_tied) tied voff parameters ###"
+        for lt ∈ kin_tied_key
             msg *= "\n### for group $lt ###"
         end
         @debug msg
 
         # Repeat for additional component velocity offsets, same logic
-        acomp_voff_tied_key = collect(keys(acomp_voff_tied))
-        acomp_voff_tied = [acomp_voff_tied[acomp_voff] for acomp_voff ∈ acomp_voff_tied_key]
-        n_acomp_voff_tied = length(acomp_voff_tied)
+        acomp_kin_tied_key = collect(keys(acomp_voff_tied))
+        acomp_voff_tied = [acomp_voff_tied[akin] for akin ∈ acomp_kin_tied_key]
+        acomp_fwhm_tied = [acomp_fwhm_tied[akin] for akin ∈ acomp_kin_tied_key]
+        n_acomp_kin_tied = length(acomp_voff_tied)
         line_acomp_tied = Vector{Union{Nothing,String}}([line.acomp_tied for line ∈ lines])
-        msg = "### Model will include $n_acomp_voff_tied tied acomp voff parameters ###"
-        for lft ∈ acomp_voff_tied_key
+        msg = "### Model will include $(2n_acomp_kin_tied) tied acomp kinematic parameters ###"
+        for lft ∈ acomp_kin_tied_key
             msg *= "\n### for group $lft ###"
         end
         @debug msg
 
         # Total number of parameters for the continuum and line fits
         n_params_cont = (2+4) + 2n_dust_cont + 3n_dust_features + (options[:fit_sil_emission] ? 5 : 0)
-        n_params_lines = n_voff_tied + n_acomp_voff_tied
+        n_params_lines = 2n_kin_tied + 2n_acomp_kin_tied
         # One η for all voigt profiles
         if (any(line_profiles .== :Voigt) || any(line_acomp_profiles .== :Voigt)) && tie_voigt_mixing
             n_params_lines += 1
@@ -1420,11 +1464,11 @@ struct CubeFitter{T<:Real,S<:Integer}
         end
         for i ∈ 1:n_lines
             if isnothing(line_tied[i]) || flexible_wavesol
-                # amplitude, voff, and FWHM parameters
-                n_params_lines += 3
-            else
-                # no voff parameter, since it's tied
+                # amplitude and voff parameters
                 n_params_lines += 2
+            else
+                # no voff or FWHM parameter, since they're tied
+                n_params_lines += 1
             end
             if line_profiles[i] == :GaussHermite
                 # extra h3 and h4 parmeters
@@ -1438,9 +1482,9 @@ struct CubeFitter{T<:Real,S<:Integer}
             # Repeat above for the additional components
             if !isnothing(line_acomp_profiles[i])
                 if isnothing(line_acomp_tied[i])
-                    n_params_lines += 3
-                else
                     n_params_lines += 2
+                else
+                    n_params_lines += 1
                 end
                 if line_acomp_profiles[i] == :GaussHermite
                     n_params_lines += 2
@@ -1490,9 +1534,10 @@ struct CubeFitter{T<:Real,S<:Integer}
         new{typeof(z), typeof(n_procs)}(cube, z, τ_guess, name, n_procs, plot_spaxels, plot_maps, plot_range, 
             parallel, save_fits, overwrite, track_memory, track_convergence, make_movies, extinction_curve, extinction_screen, 
             fit_sil_emission, T_s, T_dc, τ_97, τ_ice, τ_ch, β, T_hot, Cf_hot, τ_warm, τ_cold, n_dust_cont, n_dust_features, df_names, 
-            dust_features, n_lines, n_acomps, line_names, line_profiles, line_acomp_profiles, lines, n_voff_tied, line_tied, voff_tied_key, 
-            voff_tied, n_acomp_voff_tied, line_acomp_tied, acomp_voff_tied_key, acomp_voff_tied, tie_voigt_mixing, voigt_mix_tied, 
-            n_params_cont, n_params_lines, n_params_extra, cosmo, interp_R, flexible_wavesol, p_init_cont, p_init_line, cube_wcs)
+            dust_features, n_lines, n_acomps, line_names, line_profiles, line_acomp_profiles, lines, n_kin_tied, line_tied, kin_tied_key, 
+            voff_tied, fwhm_tied, n_acomp_kin_tied, line_acomp_tied, acomp_kin_tied_key, acomp_voff_tied, acomp_fwhm_tied, tie_voigt_mixing, 
+            voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, cosmo, interp_R, flexible_wavesol, p_init_cont, p_init_line, 
+            cube_wcs)
     end
 
 end
@@ -1523,12 +1568,12 @@ function generate_parammaps(cube_fitter::CubeFitter)::Tuple{ParamMaps, ParamMaps
     @debug "Generating 2D parameter value & error maps"
     param_maps = parammaps_empty(shape, cube_fitter.n_dust_cont, cube_fitter.df_names, cube_fitter.line_names, cube_fitter.line_tied,
                                  cube_fitter.line_profiles, cube_fitter.line_acomp_tied, cube_fitter.line_acomp_profiles,
-                                 cube_fitter.voff_tied_key, cube_fitter.acomp_voff_tied_key, cube_fitter.flexible_wavesol,
+                                 cube_fitter.kin_tied_key, cube_fitter.acomp_kin_tied_key, cube_fitter.flexible_wavesol,
                                  cube_fitter.tie_voigt_mixing)
     # 2D maps of fitting parameter 1-sigma errors
     param_errs = parammaps_empty(shape, cube_fitter.n_dust_cont, cube_fitter.df_names, cube_fitter.line_names, cube_fitter.line_tied,
                                  cube_fitter.line_profiles, cube_fitter.line_acomp_tied, cube_fitter.line_acomp_profiles,
-                                 cube_fitter.voff_tied_key, cube_fitter.acomp_voff_tied_key, cube_fitter.flexible_wavesol,
+                                 cube_fitter.kin_tied_key, cube_fitter.acomp_kin_tied_key, cube_fitter.flexible_wavesol,
                                  cube_fitter.tie_voigt_mixing)
     param_maps, param_errs
 end
@@ -1881,88 +1926,6 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
         end
     end
 
-    # # Stellar amplitude
-    # parinfo_1[1].limited = (1,0)
-    # parinfo_1[1].limits = (0., 0.)
-
-    # # Stellar temp
-    # parinfo_1[2].fixed = cube_fitter.T_s.locked
-    # parinfo_1[2].limited = (1,1)
-    # parinfo_1[2].limits = (minimum(cube_fitter.T_s.prior), maximum(cube_fitter.T_s.prior))
-
-    # # Dust cont amplitudes and temps
-    # p₁ = 3
-    # for i ∈ 1:cube_fitter.n_dust_cont
-    #     parinfo_1[p₁].limited = (1,0)
-    #     parinfo_1[p₁].limits = (0., 0.)
-    #     parinfo_1[p₁+1].fixed = cube_fitter.T_dc[i].locked
-    #     parinfo_1[p₁+1].limited = (1,1)
-    #     parinfo_1[p₁+1].limits = (minimum(cube_fitter.T_dc[i].prior), maximum(cube_fitter.T_dc[i].prior))
-    #     p₁ += 2
-    # end
-
-    # # Extinction
-    # parinfo_1[p₁].fixed = cube_fitter.τ_97.locked
-    # parinfo_1[p₁].limited = (1,1)
-    # parinfo_1[p₁].limits = (minimum(cube_fitter.τ_97.prior), maximum(cube_fitter.τ_97.prior))
-    # # parinfo_1[p₁].limits = (0.0, 10.0)
-    # parinfo_1[p₁+1].fixed = cube_fitter.τ_ice.locked
-    # parinfo_1[p₁+1].limited = (1,1)
-    # parinfo_1[p₁+1].limits = (minimum(cube_fitter.τ_ice.prior), maximum(cube_fitter.τ_ice.prior))
-    # parinfo_1[p₁+2].fixed = cube_fitter.τ_ch.locked
-    # parinfo_1[p₁+2].limited = (1,1)
-    # parinfo_1[p₁+2].limits = (minimum(cube_fitter.τ_ch.prior), maximum(cube_fitter.τ_ch.prior))
-    # parinfo_1[p₁+3].fixed = cube_fitter.β.locked
-    # parinfo_1[p₁+3].limited = (1,1)
-    # parinfo_1[p₁+3].limits = (minimum(cube_fitter.β.prior), maximum(cube_fitter.β.prior))
-    # p₁ += 4
-
-    # if cube_fitter.fit_sil_emission
-    #     # Hot dust amplitude
-    #     parinfo_1[p₁].limited = (1,0)
-    #     parinfo_1[p₁].limits = (0., 0.)
-    #     # Hot dust temp
-    #     parinfo_1[p₁+1].fixed = cube_fitter.T_hot.locked
-    #     parinfo_1[p₁+1].limited = (1,1)
-    #     parinfo_1[p₁+1].limits = (minimum(cube_fitter.T_hot.prior), maximum(cube_fitter.T_hot.prior))
-    #     # Hot dust covering fraction
-    #     parinfo_1[p₁+2].fixed = cube_fitter.Cf_hot.locked
-    #     parinfo_1[p₁+2].limited = (1,1)
-    #     parinfo_1[p₁+2].limits = (minimum(cube_fitter.Cf_hot.prior), maximum(cube_fitter.Cf_hot.prior))
-    #     # Hot dust warm tau
-    #     parinfo_1[p₁+3].fixed = cube_fitter.τ_warm.locked
-    #     parinfo_1[p₁+3].limited = (1,1)
-    #     parinfo_1[p₁+3].limits = (minimum(cube_fitter.τ_warm.prior), maximum(cube_fitter.τ_warm.prior))
-    #     # Hot dust cold tau
-    #     parinfo_1[p₁+4].fixed = cube_fitter.τ_cold.locked
-    #     parinfo_1[p₁+4].limited = (1,1)
-    #     parinfo_1[p₁+4].limits = (minimum(cube_fitter.τ_cold.prior), maximum(cube_fitter.τ_cold.prior))
-    #     p₁ += 5
-    # end
-
-    # # PAH template amplitudes
-    # # parinfo_1[p₁].fixed = !init
-    # parinfo_1[p₁].limited = (1,0)
-    # parinfo_1[p₁].limits = (0., clamp(nanmaximum(I) / exp(-τ_97_0), 1., Inf))
-    # parinfo_1[p₁+1].fixed = !init
-    # parinfo_1[p₁+1].limited = (1,0)
-    # parinfo_1[p₁+1].limits = (0., clamp(nanmaximum(I) / exp(-τ_97_0), 1., Inf))
-    # p₁ += 2
-
-    # p₂ = 1
-    # # Dust feature amplitude, mean, fwhm
-    # for i ∈ 1:cube_fitter.n_dust_feat
-    #     parinfo_2[p₂].limited = (1,1)
-    #     parinfo_2[p₂].limits = (0., clamp(nanmaximum(I) / exp(-τ_97_0), 1., Inf))
-    #     parinfo_2[p₂+1].fixed = mean_df[i].locked
-    #     parinfo_2[p₂+1].limited = (1,1)
-    #     parinfo_2[p₂+1].limits = (minimum(mean_df[i].prior), maximum(mean_df[i].prior))
-    #     parinfo_2[p₂+2].fixed = fwhm_df[i].locked
-    #     parinfo_2[p₂+2].limited = (1,1)
-    #     parinfo_2[p₂+2].limits = (minimum(fwhm_df[i].prior), maximum(fwhm_df[i].prior))
-    #     p₂ += 3
-    # end
-
     # Create a `config` structure
     config = CMPFit.Config()
 
@@ -2147,9 +2110,9 @@ function _negln_probability(p, grad, λ, Inorm, σnorm, cube_fitter, λ0_ln, ext
         error("Gradient-based solvers are not currently supported!")
     end
     # First compute the model
-    model = Util.fit_line_residuals(λ, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
-        cube_fitter.voff_tied_key, cube_fitter.line_tied, cube_fitter.line_profiles, cube_fitter.n_acomp_voff_tied,
-        cube_fitter.acomp_voff_tied_key, cube_fitter.line_acomp_tied, cube_fitter.line_acomp_profiles, 
+    model = Util.fit_line_residuals(λ, p, cube_fitter.n_lines, cube_fitter.n_kin_tied, 
+        cube_fitter.kin_tied_key, cube_fitter.line_tied, cube_fitter.line_profiles, cube_fitter.n_acomp_kin_tied,
+        cube_fitter.acomp_kin_tied_key, cube_fitter.line_acomp_tied, cube_fitter.line_acomp_profiles, 
         λ0_ln, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, ext_curve)
     # Add the log of the likelihood (based on the model) and the prior distribution functions
     lnP = Util.ln_likelihood(Inorm, model, σnorm) + _ln_prior(p, priors)
@@ -2253,16 +2216,21 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
         # name
         ln_name = cube_fitter.line_names[i]
         # check if voff should be tied or untied
-        if isnothing(ln.tied) || cube_fitter.flexible_wavesol
+        if isnothing(ln.tied)
             # amplitude, voff, FWHM
             append!(ln_priors, [amp_ln_prior, voff_ln[i].prior, fwhm_ln[i].prior])
             append!(ln_lock, [false, voff_ln[i].locked, fwhm_ln[i].locked])
             append!(param_names, ["$(ln_name)_amp", "$(ln_name)_voff", "$(ln_name)_fwhm"])
+        elseif cube_fitter.flexible_wavesol
+            # amplitude, voff (since FWHM is tied)
+            append!(ln_priors, [amp_ln_prior, voff_ln[i].prior])
+            append!(ln_lock, [false, voff_ln[i].locked])
+            append!(param_names, ["$(ln_name)_amp", "$(ln_name)_voff"])
         else
-            # just amplitude & FWHM (since voff is tied)
-            append!(ln_priors, [amp_ln_prior, fwhm_ln[i].prior])
-            append!(ln_lock, [false, fwhm_ln[i].locked])
-            append!(param_names, ["$(ln_name)_amp", "$(ln_name)_fwhm"])
+            # just amplitude (since voff & FWHM are tied)
+            append!(ln_priors, [amp_ln_prior])
+            append!(ln_lock, [false])
+            append!(param_names, ["$(ln_name)_amp"])
         end
         # check for additional profile parameters
         if ln.profile == :GaussHermite
@@ -2287,10 +2255,10 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
                 append!(ln_lock, [false, acomp_voff_ln[i].locked, acomp_fwhm_ln[i].locked])
                 append!(param_names, ["$(ln_name)_acomp_amp", "$(ln_name)_acomp_voff", "$(ln_name)_acomp_fwhm"])
             else
-                # just amplitude & FWHM (voff tied)
-                append!(ln_priors, [amp_acomp_prior, acomp_fwhm_ln[i].prior])
-                append!(ln_lock, [false, acomp_fwhm_ln[i].locked])
-                append!(param_names, ["$(ln_name)_acomp_amp", "$(ln_name)_acomp_fwhm"])
+                # just amplitude (voff & FWHM tied)
+                append!(ln_priors, [amp_acomp_prior])
+                append!(ln_lock, [false])
+                append!(param_names, ["$(ln_name)_acomp_amp"])
             end
             # check for additional profile parameters
             if ln.acomp_profile == :GaussHermite
@@ -2312,28 +2280,41 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
         append!(prof_ln, [ln.profile])
         append!(acomp_prof_ln, [ln.acomp_profile])
     end
-    # Set up the tied voff parameters as vectors
-    voff_tied_priors = [cube_fitter.voff_tied[i].prior for i ∈ 1:cube_fitter.n_voff_tied]
-    voff_tied_lock = [cube_fitter.voff_tied[i].locked for i ∈ 1:cube_fitter.n_voff_tied]
-    acomp_voff_tied_priors = [cube_fitter.acomp_voff_tied[i].prior for i ∈ 1:cube_fitter.n_acomp_voff_tied]
-    acomp_voff_tied_lock = [cube_fitter.acomp_voff_tied[i].locked for i ∈ 1:cube_fitter.n_acomp_voff_tied]
+    # Set up the tied voff and fwhm parameters as vectors
+    voff_tied_priors = [cube_fitter.voff_tied[i].prior for i ∈ 1:cube_fitter.n_kin_tied]
+    voff_tied_lock = [cube_fitter.voff_tied[i].locked for i ∈ 1:cube_fitter.n_kin_tied]
+    fwhm_tied_priors = [cube_fitter.fwhm_tied[i].prior for i ∈ 1:cube_fitter.n_kin_tied]
+    fwhm_tied_lock = [cube_fitter.fwhm_tied[i].locked for i ∈ 1:cube_fitter.n_kin_tied]
+
+    acomp_voff_tied_priors = [cube_fitter.acomp_voff_tied[i].prior for i ∈ 1:cube_fitter.n_acomp_kin_tied]
+    acomp_voff_tied_lock = [cube_fitter.acomp_voff_tied[i].locked for i ∈ 1:cube_fitter.n_acomp_kin_tied]
+    acomp_fwhm_tied_priors = [cube_fitter.acomp_fwhm_tied[i].prior for i ∈ 1:cube_fitter.n_acomp_kin_tied]
+    acomp_fwhm_tied_lock = [cube_fitter.acomp_fwhm_tied[i].locked for i ∈ 1:cube_fitter.n_acomp_kin_tied]
 
     # Initial prior vector
     if !cube_fitter.tie_voigt_mixing
         # If the voigt mixing parameters are untied, place them sequentially in the ln_priors
-        priors = vcat(voff_tied_priors, acomp_voff_tied_priors, ln_priors)
-        param_lock = vcat(voff_tied_lock, acomp_voff_tied_lock, ln_lock)
-        param_names = vcat(["voff_tied_$k" for k ∈ cube_fitter.voff_tied_key], 
-                           ["acomp_voff_tied_$k" for k ∈ cube_fitter.acomp_voff_tied_key], param_names)
+        priors = vcat(voff_tied_priors, fwhm_tied_priors, acomp_voff_tied_priors, acomp_fwhm_tied_priors, ln_priors)
+        param_lock = vcat(voff_tied_lock, fwhm_tied_lock, acomp_voff_tied_lock, acomp_fwhm_tied_lock, ln_lock)
+        param_names = vcat(["voff_tied_$k" for k ∈ cube_fitter.kin_tied_key], 
+                           ["fwhm_tied_$k" for k ∈ cube_fitter.kin_tied_key],
+                           ["acomp_voff_tied_$k" for k ∈ cube_fitter.acomp_kin_tied_key], 
+                           ["acomp_fwhm_tied_$k" for k ∈ cube_fitter.acomp_kin_tied_key],
+                           param_names)
     else
         # If the voigt mixing parameters are tied, just add the single mixing parameter before the rest of the line parameters
-        ηᵢ = cube_fitter.n_voff_tied + cube_fitter.n_acomp_voff_tied + 1
+        ηᵢ = 2cube_fitter.n_kin_tied + 2cube_fitter.n_acomp_kin_tied + 1
         # If the sum has already been fit, keep eta fixed for the individual spaxels
         η_prior = init ? η_ln.prior : Uniform(cube_fitter.p_init_line[ηᵢ]-1e-10, cube_fitter.p_init_line[ηᵢ]+1e-10)
-        priors = vcat(voff_tied_priors, acomp_voff_tied_priors, η_prior, ln_priors)
-        param_lock = vcat(voff_tied_lock, acomp_voff_tied_lock, [cube_fitter.voigt_mix_tied.locked || !init], ln_lock)
-        param_names = vcat(["voff_tied_$k" for k ∈ cube_fitter.voff_tied_key], 
-                           ["acomp_voff_tied_$k" for k ∈ cube_fitter.acomp_voff_tied_key], ["eta_tied"], param_names)
+        priors = vcat(voff_tied_priors, fwhm_tied_priors, acomp_voff_tied_priors, acomp_fwhm_tied_priors, η_prior, ln_priors)
+        param_lock = vcat(voff_tied_lock, fwhm_tied_lock, acomp_voff_tied_lock, acomp_fwhm_tied_lock, 
+            [cube_fitter.voigt_mix_tied.locked || !init], ln_lock)
+        param_names = vcat(["voff_tied_$k" for k ∈ cube_fitter.kin_tied_key], 
+                           ["fwhm_tied_$k" for k ∈ cube_fitter.kin_tied_key],
+                           ["acomp_voff_tied_$k" for k ∈ cube_fitter.acomp_kin_tied_key], 
+                           ["acomp_fwhm_tied_$k" for k ∈ cube_fitter.acomp_kin_tied_key],
+                           ["eta_tied"], 
+                           param_names)
     end
 
     # Check if there are previous best fit parameters
@@ -2380,18 +2361,18 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
             voff_inits[i] = (pos/ln.λ₀ - 1) * Util.C_KMS
         end
         @debug "Initial individual voff parameter vector: $voff_inits"
-        voff_inits_tied = zeros(cube_fitter.n_voff_tied)
+        voff_inits_tied = zeros(cube_fitter.n_kin_tied)
         # For tied velocities, take the averages
-        for j ∈ 1:cube_fitter.n_voff_tied
+        for j ∈ 1:cube_fitter.n_kin_tied
             # consider the lines within the tied group
-            tied_group = BitVector([ln.tied == cube_fitter.voff_tied_key[j] for ln ∈ cube_fitter.lines])
+            tied_group = BitVector([ln.tied == cube_fitter.kin_tied_key[j] for ln ∈ cube_fitter.lines])
             voff_inits_tied[j] = mean(voff_inits[tied_group])
         end
         @debug "Initial tied voff parameter vector: $voff_inits_tied"
         # Double back and make sure all of the voff_inits are consistent with any tied lines
         for (i, ln) ∈ enumerate(cube_fitter.lines)
             if !isnothing(ln.tied)
-                vwhere = findfirst(cube_fitter.voff_tied_key == ln.tied)
+                vwhere = findfirst(cube_fitter.kin_tied_key .== ln.tied)
                 voff_group = voff_inits_tied[vwhere]
                 voff_inits[i] -= voff_group
                 if cube_fitter.flexible_wavesol
@@ -2415,12 +2396,15 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
         # Initial parameter vector
         ln_pars = Vector{Float64}()
         for (i, ln) ∈ enumerate(cube_fitter.lines)
-            if isnothing(ln.tied) || cube_fitter.flexible_wavesol
+            if isnothing(ln.tied)
                 # 3 parameters: amplitude, voff, FWHM
                 append!(ln_pars, [A_ln[i], voff_inits[i], fwhm_ln[i].value])
+            elseif cube_fitter.flexible_wavesol
+                # 2 parameters: amplitude, voff (since FWHM is tied but voff is only restricted)
+                append!(ln_pars, [A_ln[i], voff_inits[i]])
             else
-                # 2 parameters: amplitude, FWHM (since voff is tied)
-                append!(ln_pars, [A_ln[i], fwhm_ln[i].value])
+                # 1 parameter: amplitude (since FWHM and voff are tied)
+                append!(ln_pars, [A_ln[i]])
             end
             if ln.profile == :GaussHermite
                 # 2 extra parameters: h3 and h4
@@ -2436,7 +2420,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
                 if isnothing(ln.acomp_tied)
                     append!(ln_pars, [A_fl[i], acomp_voff_ln[i].value, acomp_fwhm_ln[i].value])
                 else
-                    append!(ln_pars, [A_fl[i], acomp_fwhm_ln[i].value])
+                    append!(ln_pars, [A_fl[i]])
                 end
                 if ln.acomp_profile == :GaussHermite
                     append!(ln_pars, [acomp_h3_ln[i].value, acomp_h4_ln[i].value])
@@ -2447,17 +2431,23 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
                 end
             end
         end
-        # Set up tied voff and acomp voff parameter vectors
-        voff_tied_pars = [cube_fitter.voff_tied[i].value for i ∈ 1:cube_fitter.n_voff_tied]
-        acomp_voff_tied_pars = [cube_fitter.acomp_voff_tied[i].value for i ∈ 1:cube_fitter.n_acomp_voff_tied]
+        # Set up tied voff and fwhm parameter vectors
+        # voff_tied_pars = [cube_fitter.voff_tied[i].value for i ∈ 1:cube_fitter.n_kin_tied]
+        voff_tied_pars = voff_inits_tied
+        fwhm_tied_pars = [cube_fitter.fwhm_tied[i].value for i ∈ 1:cube_fitter.n_kin_tied]
+
+        acomp_voff_tied_pars = [cube_fitter.acomp_voff_tied[i].value for i ∈ 1:cube_fitter.n_acomp_kin_tied]
+        acomp_fwhm_tied_pars = [cube_fitter.acomp_fwhm_tied[i].value for i ∈ 1:cube_fitter.n_acomp_kin_tied]
 
         # Set up the parameter vector in the proper order: 
         # (tied voffs, tied acomp voffs, tied voigt mixing, [amp, voff, FWHM, h3, h4, eta,
         #     acomp_amp, acomp_voff, acomp_FWHM, acomp_h3, acomp_h4, acomp_eta] for each line)
         if !cube_fitter.tie_voigt_mixing
-            p₀ = Vector{Float64}(vcat(voff_tied_pars, acomp_voff_tied_pars, ln_pars))
+            p₀ = Vector{Float64}(vcat(voff_tied_pars, fwhm_tied_pars, 
+                acomp_voff_tied_pars, acomp_fwhm_tied_pars, ln_pars))
         else
-            p₀ = Vector{Float64}(vcat(voff_tied_pars, acomp_voff_tied_pars, η_ln.value, ln_pars))
+            p₀ = Vector{Float64}(vcat(voff_tied_pars, fwhm_tied_pars, 
+                acomp_voff_tied_pars, acomp_fwhm_tied_pars, η_ln.value, ln_pars))
         end
 
     end
@@ -2473,67 +2463,40 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     @debug "Line Lower limits: \n $lower_bounds"
     @debug "Line Upper Limits: \n $upper_bounds"
 
-    @debug "Beginning Line fitting with Simulated Annealing:"
+    if init
+        @debug "Beginning Line fitting with Simulated Annealing:"
 
-    # Parameter and function tolerance levels for convergence with SAMIN,
-    # these are a bit loose since we're mainly just looking to get into the right global minimum region with SAMIN
-    # before refining the fit later with a LevMar local minimum routine
-    # x_tol = 1e-5
-    # f_tol = abs(_negln_probability(p₀, [], λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors) -
-    #             _negln_probability(clamp.(p₀ .- x_tol, lower_bounds, upper_bounds), [], λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors))
-    # # Window around emission lines to make fitting more efficient
-    # line_mask = falses(length(λ))
-    # for (i, ln) ∈ enumerate(cube_fitter.lines)
-    #     window_size = (maximum(voff_ln[i].prior) + 5maximum(fwhm_ln[i].prior)) / Util.C_KMS * ln.λ₀
-    #     window = (ln.λ₀ - window_size) .< λ .< (ln.λ₀ + window_size)
-    #     line_mask .|= window
-    # end
-    # # Apply the mask to all relevant vectors
-    # λ_masked = λ[line_mask]
-    # I_masked = Inorm[line_mask]
-    # σ_masked = σnorm[line_mask]
-    # ext_masked = ext_curve[line_mask]
+        # Parameter and function tolerance levels for convergence with SAMIN,
+        # these are a bit loose since we're mainly just looking to get into the right global minimum region with SAMIN
+        # before refining the fit later with a LevMar local minimum routine
+        x_tol = 1e-5
+        f_tol = abs(_negln_probability(p₀, [], λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors) -
+                    _negln_probability(clamp.(p₀ .- x_tol, lower_bounds, upper_bounds), [], λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors))
 
-    # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
-    # res = Optim.optimize(p -> _negln_probability(p, [], λ_masked, I_masked, σ_masked, cube_fitter, λ0_ln, ext_masked, priors), lower_bounds, upper_bounds, p₀, 
-    #    SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
-    # p₁ = res.minimizer
-    p₁ = p₀
+        # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
+        res = Optim.optimize(p -> _negln_probability(p, [], λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors), lower_bounds, upper_bounds, p₀, 
+           SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
+        p₁ = res.minimizer
 
-    # println("Beginning NLopt minimization...")
-    # println(x_tol)
-    # println(f_tol)
-    # opt = Opt(:G_MLSL_LDS, length(p₀))
-    # opt.lower_bounds = lower_bounds
-    # opt.upper_bounds = upper_bounds
-    # opt.local_optimizer = Opt(:LN_SBPLX, length(p₀))
-    # opt.min_objective = (p,g) -> _negln_probability(p, g, λ_masked, I_masked, σ_masked, cube_fitter, λ0_ln, ext_masked, priors)
-    # # xtol_rel, xtol_abs, ftol_rel, ftol_abs
-    # # opt.xtol_abs = x_tol
-    # # opt.ftol_abs = f_tol
-    # opt.xtol_rel = x_tol
-    # opt.ftol_rel = f_tol
-    # opt.maxeval = 10^6
-    # (lnL,p₁,ret) = @time optimize!(opt, p₀)
-
-    # println(ret)
-
-    # Write convergence results to file, if specified
-    # if cube_fitter.track_convergence
-    #     global file_lock
-    #     # use the ReentrantLock to prevent multiple processes from trying to write to the same file at once
-    #     lock(file_lock) do 
-    #         open(joinpath("output_$(cube_fitter.name)", "loki.convergence.log"), "a") do conv
-    #             redirect_stdout(conv) do
-    #                 println("Spaxel ($(spaxel[1]),$(spaxel[2])) on worker $(myid()):")
-    #                 println(res)
-    #                 println("-------------------------------------------------------")
-    #             end
-    #         end
-    #     end
-    # end
-
-    @debug "Refining Line best fit with Levenberg-Marquardt:"
+        # Write convergence results to file, if specified
+        if cube_fitter.track_convergence
+            global file_lock
+            # use the ReentrantLock to prevent multiple processes from trying to write to the same file at once
+            lock(file_lock) do 
+                open(joinpath("output_$(cube_fitter.name)", "loki.convergence.log"), "a") do conv
+                    redirect_stdout(conv) do
+                        println("Spaxel ($(spaxel[1]),$(spaxel[2])) on worker $(myid()):")
+                        println(res)
+                        println("-------------------------------------------------------")
+                    end
+                end
+            end
+        end
+    else
+        p₁ = p₀
+    end    
+    
+    @debug "Beginning Line fitting with Levenberg-Marquardt:"
 
     ############################################# FIT WITH LEVMAR ###################################################
 
@@ -2551,18 +2514,15 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     config = CMPFit.Config()
 
     # # Same procedure as with the continuum fit
-    res = cmpfit(λ, Inorm, σnorm, (x, p) -> Util.fit_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
-        cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, cube_fitter.n_acomp_voff_tied, cube_fitter.acomp_voff_tied_key,
+    res = cmpfit(λ, Inorm, σnorm, (x, p) -> Util.fit_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_kin_tied, 
+        cube_fitter.kin_tied_key, cube_fitter.line_tied, prof_ln, cube_fitter.n_acomp_kin_tied, cube_fitter.acomp_kin_tied_key,
         cube_fitter.line_acomp_tied, acomp_prof_ln, λ0_ln, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, ext_curve), p₁, 
         parinfo=parinfo, config=config)
 
-    # # Get the results
+    # Get the results
     popt = res.param
     perr = res.perror
     covar = res.covar
-    # popt = p₁
-    # perr = zeros(length(popt))
-    # covar = zeros(length(popt), length(popt))
 
     # Count free parameters
     n_free = 0
@@ -2579,9 +2539,9 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     @debug "Line covariance matrix: \n $covar"
 
     # Final optimized fit
-    I_model, comps = Util.fit_line_residuals(λ, popt, cube_fitter.n_lines, cube_fitter.n_voff_tied, 
-        cube_fitter.voff_tied_key, cube_fitter.line_tied, prof_ln, cube_fitter.n_acomp_voff_tied,
-        cube_fitter.acomp_voff_tied_key, cube_fitter.line_acomp_tied, acomp_prof_ln, λ0_ln, 
+    I_model, comps = Util.fit_line_residuals(λ, popt, cube_fitter.n_lines, cube_fitter.n_kin_tied, 
+        cube_fitter.kin_tied_key, cube_fitter.line_tied, prof_ln, cube_fitter.n_acomp_kin_tied,
+        cube_fitter.acomp_kin_tied_key, cube_fitter.line_acomp_tied, acomp_prof_ln, λ0_ln, 
         cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, ext_curve, true)
     
     # Renormalize
@@ -2603,14 +2563,24 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     msg *= "######################################################################\n"
     pᵢ = 1
     msg *= "\n#> TIED VELOCITY OFFSETS <#\n"
-    for (i, vk) ∈ enumerate(cube_fitter.voff_tied_key)
+    for (i, vk) ∈ enumerate(cube_fitter.kin_tied_key)
         msg *= "$(vk)_tied_voff: \t\t\t $(@sprintf "%.0f" popt[pᵢ]) +/- $(@sprintf "%.0f" perr[pᵢ]) km/s \t " *
             "Limits: ($(@sprintf "%.0f" minimum(cube_fitter.voff_tied[i].prior)), $(@sprintf "%.0f" maximum(cube_fitter.voff_tied[i].prior)))\n"
         pᵢ += 1
     end
-    for (j, fvk) ∈ enumerate(cube_fitter.acomp_voff_tied_key)
+    for (ii, vk) ∈ enumerate(cube_fitter.kin_tied_key)
+        msg *= "$(vk)_tied_fwhm: \t\t\t $(@sprintf "%.0f" popt[pᵢ]) +/- $(@sprintf "%.0f" perr[pᵢ]) km/s \t " *
+            "Limits: ($(@sprintf "%.0f" minimum(cube_fitter.fwhm_tied[ii].prior)), $(@sprintf "%.0f" maximum(cube_fitter.fwhm_tied[ii].prior)))\n"
+        pᵢ += 1
+    end
+    for (j, fvk) ∈ enumerate(cube_fitter.acomp_kin_tied_key)
         msg *= "$(fvk)_acomp_tied_voff:\t\t\t $(@sprintf "%.0f" popt[pᵢ]) +/- $(@sprintf "%.0f" perr[pᵢ]) km/s \t " *
             "Limits: ($(@sprintf "%.0f" minimum(cube_fitter.acomp_voff_tied[j].prior)), $(@sprintf "%.0f" maximum(cube_fitter.acomp_voff_tied[j].prior)))\n"
+        pᵢ += 1
+    end
+    for (jj, fvk) ∈ enumerate(cube_fitter.acomp_kin_tied_key)
+        msg *= "$(fvk)_acomp_tied_fwhm:\t\t\t $(@sprintf "%.0f" popt[pᵢ]) +/- $(@sprintf "%.0f" perr[pᵢ]) kmk/s \t " *
+            "Limits: ($(@sprintf "%.0f" minimum(cube_fitter.acomp_fwhm_tied[jj].prior)), $(@sprintf "%.0f" maximum(cube_fitter.acomp_fwhm_tied[jj].prior)))\n"
         pᵢ += 1
     end
     msg *= "\n#> TIED VOIGT MIXING <#\n"
@@ -2622,7 +2592,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     msg *= "\n#> EMISSION LINES <#\n"
     for (k, (ln, nm)) ∈ enumerate(zip(cube_fitter.lines, cube_fitter.line_names))
         msg *= "$(nm)_amp:\t\t\t $(@sprintf "%.3f" popt[pᵢ]) +/- $(@sprintf "%.3f" perr[pᵢ]) [x norm] \t Limits: (0, 1)\n"
-        if isnothing(cube_fitter.line_tied[k]) || cube_fitter.flexible_wavesol
+        if isnothing(cube_fitter.line_tied[k])
             msg *= "$(nm)_voff:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) km/s \t " *
                 "Limits: ($(@sprintf "%.0f" minimum(voff_ln[k].prior)), $(@sprintf "%.0f" maximum(voff_ln[k].prior)))\n"
             msg *= "$(nm)_fwhm:   \t\t $(@sprintf "%.0f" popt[pᵢ+2]) +/- $(@sprintf "%.0f" perr[pᵢ+2]) km/s \t " *
@@ -2639,21 +2609,23 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
                 pᵢ += 1
             end
             pᵢ += 3
-        else
-            msg *= "$(nm)_fwhm:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) km/s \t " *
-                "Limits: ($(@sprintf "%.0f" minimum(fwhm_ln[k].prior)), $(@sprintf "%.0f" maximum(fwhm_ln[k].prior)))\n"
+        elseif cube_fitter.flexible_wavesol
+            msg *= "$(nm)_voff:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) km/s \t " *
+                "Limits: ($(@sprintf "%.0f" minimum(voff_ln[k].prior)), $(@sprintf "%.0f" maximum(voff_ln[k].prior)))\n"
             if prof_ln[k] == :GaussHermite
-                msg *= "$(nm)_h3:    \t\t $(@sprintf "%.3f" popt[pᵢ+2]) +/- $(@sprintf "%.3f" perr[pᵢ+2])      \t " *
+                msg *= "$(nm)_h3:    \t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3])      \t " *
                     "Limits: ($(@sprintf "%.3f" minimum(h3_ln[k].prior)), $(@sprintf "%.3f" maximum(h3_ln[k].prior)))\n"
-                msg *= "$(nm)_h4:    \t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3])      \t " *
+                msg *= "$(nm)_h4:    \t\t $(@sprintf "%.3f" popt[pᵢ+4]) +/- $(@sprintf "%.3f" perr[pᵢ+4])      \t " *
                     "Limits: ($(@sprintf "%.3f" minimum(h4_ln[k].prior)), $(@sprintf "%.3f" maximum(h4_ln[k].prior)))\n"
                 pᵢ += 2
             elseif prof_ln[k] == :Voigt && !cube_fitter.tie_voigt_mixing
-                msg *= "$(nm)_η:     \t\t $(@sprintf "%.3f" popt[pᵢ+2]) +/- $(@sprintf "%.3f" perr[pᵢ+2])      \t " *
+                msg *= "$(nm)_η:     \t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3])      \t " *
                     "Limits: ($(@sprintf "%.3f" minimum(η_ln[k].prior)), $(@sprintf "%.3f" maximum(η_ln[k].prior)))\n"
                 pᵢ += 1
             end
             pᵢ += 2
+        else
+            pᵢ += 1
         end
         if !isnothing(acomp_prof_ln[k])
             msg *= "\n$(nm)_acomp_amp:\t\t\t $(@sprintf "%.3f" popt[pᵢ]) +/- $(@sprintf "%.3f" perr[pᵢ]) [x amp] \t Limits: (0, 1)\n"
@@ -2675,20 +2647,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
                 end
                 pᵢ += 3
             else
-                msg *= "$(nm)_acomp_fwhm:   \t\t $(@sprintf "%.3f" popt[pᵢ+1]) +/- $(@sprintf "%.3f" perr[pᵢ+1]) [x fwhm] \t " *
-                    "Limits: ($(@sprintf "%.0f" minimum(fwhm_ln[k].prior)), $(@sprintf "%.0f" maximum(fwhm_ln[k].prior)))\n"
-                if acomp_prof_ln[k] == :GaussHermite
-                    msg *= "$(nm)_acomp_h3:    \t\t $(@sprintf "%.3f" popt[pᵢ+2]) +/- $(@sprintf "%.3f" perr[pᵢ+2])      \t " *
-                        "Limits: ($(@sprintf "%.3f" minimum(h3_ln[k].prior)), $(@sprintf "%.3f" maximum(h3_ln[k].prior)))\n"
-                    msg *= "$(nm)_acomp_h4:    \t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3])      \t " *
-                        "Limits: ($(@sprintf "%.3f" minimum(h4_ln[k].prior)), $(@sprintf "%.3f" maximum(h4_ln[k].prior)))\n"
-                    pᵢ += 2
-                elseif acomp_prof_ln[k] == :Voigt && !cube_fitter.tie_voigt_mixing
-                    msg *= "$(nm)_acomp_η:     \t\t $(@sprintf "%.3f" popt[pᵢ+2]) +/- $(@sprintf "%.3f" perr[pᵢ+2])      \t " *
-                        "Limits: ($(@sprintf "%.3f" minimum(η_ln[k].prior)), $(@sprintf "%.3f" maximum(η_ln[k].prior)))\n"
-                    pᵢ += 1
-                end
-                pᵢ += 2
+                pᵢ += 1
             end
         end
         msg *= "\n"
@@ -2869,14 +2828,10 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
         # end
 
         # plot vertical dashed lines for emission line wavelengths
-        # for (lw, ln) ∈ zip(line_wave, line_names)
-        #     ax1.axvline(lw, linestyle="--", 
-        #         color=occursin("H2", String(ln)) ? :red : 
-        #         (any(occursin.(["alpha", "beta", "gamma", "delta"], String(ln))) ? "#ff7f0e" : :rebeccapurple), lw=0.5, alpha=0.5)
-        #     ax2.axvline(lw, linestyle="--", 
-        #         color=occursin("H2", String(ln)) ? :red : 
-        #         (any(occursin.(["alpha", "beta", "gamma", "delta"], String(ln))) ? "#ff7f0e" : :rebeccapurple), lw=0.5, alpha=0.5)
-        # end
+        for (lw, ln) ∈ zip(line_wave, line_names)
+            ax1.axvline(lw, linestyle="--", color="k", lw=0.5, alpha=0.5)
+            ax2.axvline(lw, linestyle="--", color="k", lw=0.5, alpha=0.5)
+        end
 
         line_mask = falses(length(λ))
         for ln ∈ line_wave
@@ -3032,7 +2987,7 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
     p_lines_err = zeros(3cube_fitter.n_lines+3cube_fitter.n_acomps)
     pₒ = 1
     # Skip over the tied velocity offsets
-    pᵢ = cube_fitter.n_voff_tied + cube_fitter.n_acomp_voff_tied + 1
+    pᵢ = 2cube_fitter.n_kin_tied + 2cube_fitter.n_acomp_kin_tied + 1
     # Skip over the tied voigt mixing parameter, saving its index
     if cube_fitter.tie_voigt_mixing
         ηᵢ = pᵢ
@@ -3053,76 +3008,47 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
             voff_err = perr_l[pᵢ+1]
             fwhm = popt_l[pᵢ+2]
             fwhm_err = perr_l[pᵢ+2]
-            if cube_fitter.line_profiles[k] == :GaussHermite
-                # Get additional h3, h4 components
-                h3 = popt_l[pᵢ+3]
-                h3_err = perr_l[pᵢ+3]
-                h4 = popt_l[pᵢ+4]
-                h4_err = perr_l[pᵢ+4]
-            elseif cube_fitter.line_profiles[k] == :Voigt
-                # Get additional mixing component, either from the tied position or the 
-                # individual position
-                if !cube_fitter.tie_voigt_mixing
-                    η = popt_l[pᵢ+3]
-                    η_err = perr_l[pᵢ+3]
-                else
-                    η = popt_l[ηᵢ]
-                    η_err = perr_l[ηᵢ]
-                end
-            end
+            pᵢ += 3
         elseif !isnothing(cube_fitter.line_tied[k]) && cube_fitter.flexible_wavesol
             # Find the position of the tied velocity offset that should be used
-            # based on matching the keys in line_tied and voff_tied_key
-            vwhere = findfirst(x -> x == cube_fitter.line_tied[k], cube_fitter.voff_tied_key)
+            # based on matching the keys in line_tied and kin_tied_key
+            vwhere = findfirst(x -> x == cube_fitter.line_tied[k], cube_fitter.kin_tied_key)
             voff_series = popt_l[vwhere]
             voff_indiv = popt_l[pᵢ+1]
             # Add velocity shifts of the tied lines and the individual offsets together
             voff = voff_series + voff_indiv
             voff_err = √(perr_l[vwhere]^2 + perr_l[pᵢ+1]^2)
-            fwhm = popt_l[pᵢ+2]
-            fwhm_err = perr_l[pᵢ+2]
-            if cube_fitter.line_profiles[k] == :GaussHermite
-                # Get additional h3, h4 components
-                h3 = popt_l[pᵢ+3]
-                h3_err = perr_l[pᵢ+3]
-                h4 = popt_l[pᵢ+4]
-                h4_err = perr_l[pᵢ+4]
-            elseif cube_fitter.line_profiles[k] == :Voigt
-                # Get additional mixing component, either from the tied position or the 
-                # individual position
-                if !cube_fitter.tie_voigt_mixing
-                    η = popt_l[pᵢ+3]
-                    η_err = perr_l[pᵢ+3]
-                else
-                    η = popt_l[ηᵢ]
-                    η_err = perr_l[ηᵢ]
-                end
-            end
+            fwhm = popt_l[cube_fitter.n_kin_tied+vwhere]
+            fwhm_err = perr_l[cube_fitter.n_kin_tied+vwhere]
+            pᵢ += 2
         else
             # Find the position of the tied velocity offset that should be used
-            # based on matching the keys in line_tied and voff_tied_key
-            vwhere = findfirst(x -> x == cube_fitter.line_tied[k], cube_fitter.voff_tied_key)
+            # based on matching the keys in line_tied and kin_tied_key
+            vwhere = findfirst(x -> x == cube_fitter.line_tied[k], cube_fitter.kin_tied_key)
             voff = popt_l[vwhere]
             voff_err = perr_l[vwhere]
-            fwhm = popt_l[pᵢ+1]
-            fwhm_err = perr_l[pᵢ+1]
-            # (dont add any individual voff components)
-            if cube_fitter.line_profiles[k] == :GaussHermite
-                # Get additional h3, h4 components
-                h3 = popt_l[pᵢ+2]
-                h3_err = perr_l[pᵢ+2]
-                h4 = popt_l[pᵢ+3]
-                h4_err = perr_l[pᵢ+3]
-            elseif cube_fitter.line_profiles[k] == :Voigt
-                # Get additional mixing component, either from the tied position or the 
-                # individual position
-                if !cube_fitter.tie_voigt_mixing
-                    η = popt_l[pᵢ+2]
-                    η_err = perr_l[pᵢ+2]
-                else
-                    η = popt_l[ηᵢ]
-                    η_err = perr_l[ηᵢ]
-                end
+            fwhm = popt_l[cube_fitter.n_kin_tied+vwhere]
+            fwhm_err = perr_l[cube_fitter.n_kin_tied+vwhere]
+            pᵢ += 1
+        end
+
+        if cube_fitter.line_profiles[k] == :GaussHermite
+            # Get additional h3, h4 components
+            h3 = popt_l[pᵢ]
+            h3_err = perr_l[pᵢ]
+            h4 = popt_l[pᵢ+1]
+            h4_err = perr_l[pᵢ+1]
+            pᵢ += 2
+        elseif cube_fitter.line_profiles[k] == :Voigt
+            # Get additional mixing component, either from the tied position or the 
+            # individual position
+            if !cube_fitter.tie_voigt_mixing
+                η = popt_l[pᵢ]
+                η_err = perr_l[pᵢ]
+                pᵢ += 1
+            else
+                η = popt_l[ηᵢ]
+                η_err = perr_l[ηᵢ]
             end
         end
 
@@ -3164,18 +3090,6 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
         @debug "Line $(cube_fitter.line_names[k]) with integrated intensity $(p_lines[pₒ]) +/- $(p_lines_err[pₒ]) " *
             "(erg s^-1 cm^-2 sr^-1), equivalent width $(p_lines[pₒ+1]) +/- $(p_lines_err[pₒ+1]) um, and SNR $(p_lines[pₒ+1])"
 
-        # Advance the parameter vector index -> 3 if untied (or tied + flexible_wavesol) or 2 if tied
-        pᵢ += isnothing(cube_fitter.line_tied[k]) || cube_fitter.flexible_wavesol ? 3 : 2
-        if cube_fitter.line_profiles[k] == :GaussHermite
-            # advance and extra 2 if GaussHermite profile
-            pᵢ += 2
-        elseif cube_fitter.line_profiles[k] == :Voigt
-            # advance another extra 1 if untied Voigt profile
-            if !cube_fitter.tie_voigt_mixing
-                pᵢ += 1
-            end
-        end
-
         # Advance the output vector index by 3
         pₒ += 3
 
@@ -3191,39 +3105,32 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
                 acomp_voff_err = √(voff_err^2 + perr_l[pᵢ+1]^2)
                 acomp_fwhm = fwhm * popt_l[pᵢ+2]
                 acomp_fwhm_err = √(acomp_fwhm^2 * ((fwhm_err / fwhm)^2 + (perr_l[pᵢ+2] / acomp_fwhm)^2))
-                if cube_fitter.line_acomp_profiles[k] == :GaussHermite
-                    acomp_h3 = popt_l[pᵢ+3]
-                    acomp_h3_err = perr_l[pᵢ+3]
-                    acomp_h4 = popt_l[pᵢ+4]
-                    acomp_h4_err = perr_l[pᵢ+4]
-                elseif cube_fitter.line_acomp_profiles[k] == :Voigt
-                    if !cube_fitter.tie_voigt_mixing
-                        acomp_η = popt_l[pᵢ+3]
-                        acomp_η_err = perr_l[pᵢ+3]
-                    else
-                        acomp_η = popt_l[ηᵢ]
-                        acomp_η_err = perr_l[ηᵢ+3]
-                    end
-                end
+                pᵢ += 3
+
             else
-                vwhere = findfirst(x -> x == cube_fitter.line_acomp_tied[k], cube_fitter.acomp_voff_tied_key)
-                acomp_voff = voff + popt_l[cube_fitter.n_voff_tied+vwhere]
-                acomp_voff_err = √(voff_err^2 + perr_l[cube_fitter.n_voff_tied+vwhere]^2)
-                acomp_fwhm = fwhm * popt_l[pᵢ+1]
-                acomp_fwhm_err = √(acomp_fwhm^2 * ((fwhm_err / fwhm)^2 + (perr_l[pᵢ+1] / acomp_fwhm)^2))
-                if cube_fitter.line_acomp_profiles[k] == :GaussHermite
-                    acomp_h3 = popt_l[pᵢ+2]
-                    acomp_h3_err = perr_l[pᵢ+2]
-                    acomp_h4 = popt_l[pᵢ+3]
-                    acomp_h4_err = perr_l[pᵢ+3]
-                elseif cube_fitter.line_acomp_profiles[k] == :Voigt
-                    if !cube_fitter.tie_voigt_mixing
-                        acomp_η = popt_l[pᵢ+2]
-                        acomp_η_err = perr_l[pᵢ+2]
-                    else
-                        acomp_η = popt_l[ηᵢ]
-                        acomp_η_err = perr_l[ηᵢ]
-                    end
+                vwhere = findfirst(x -> x == cube_fitter.line_acomp_tied[k], cube_fitter.acomp_kin_tied_key)
+                acomp_voff = voff + popt_l[2cube_fitter.n_kin_tied+vwhere]
+                acomp_voff_err = √(voff_err^2 + perr_l[2cube_fitter.n_kin_tied+vwhere]^2)
+                acomp_fwhm = fwhm * popt_l[2cube_fitter.n_kin_tied+cube_fitter.n_acomp_kin_tied+vwhere]
+                acomp_fwhm_err = √(acomp_fwhm^2 * ((fwhm_err / fwhm)^2 + 
+                    (perr_l[2cube_fitter.n_kin_tied+cube_fitter.n_acomp_kin_tied+vwhere] / acomp_fwhm)^2))      
+                pᵢ += 1
+            end
+
+            if cube_fitter.line_acomp_profiles[k] == :GaussHermite
+                acomp_h3 = popt_l[pᵢ]
+                acomp_h3_err = perr_l[pᵢ]
+                acomp_h4 = popt_l[pᵢ+1]
+                acomp_h4_err = perr_l[pᵢ+1]
+                pᵢ += 2
+            elseif cube_fitter.line_acomp_profiles[k] == :Voigt
+                if !cube_fitter.tie_voigt_mixing
+                    acomp_η = popt_l[pᵢ]
+                    acomp_η_err = perr_l[pᵢ]
+                    pᵢ += 1
+                else
+                    acomp_η = popt_l[ηᵢ]
+                    acomp_η_err = perr_l[ηᵢ]
                 end
             end
 
@@ -3257,16 +3164,6 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, spaxel::CartesianIn
 
             @debug "Acomp line for $(cube_fitter.line_names[k]) with integrated intensity $(p_lines[pₒ]) +/- $(p_lines_err[pₒ]) " *
                 "(erg s^-1 cm^-2 sr^-1), equivalent width $(p_lines[pₒ+1]) +/- $(p_lines_err[pₒ+1]) um, and SNR $(p_lines[pₒ+1])"
-
-            # Advance the parameter vector index by the appropriate amount        
-            pᵢ += isnothing(cube_fitter.line_acomp_tied[k]) ? 3 : 2
-            if cube_fitter.line_acomp_profiles[k] == :GaussHermite
-                pᵢ += 2
-            elseif cube_fitter.line_acomp_profiles[k] == :Voigt
-                if !cube_fitter.tie_voigt_mixing
-                    pᵢ += 1
-                end
-            end
 
             # Advance the output vector index by 3
             pₒ += 3
@@ -3655,18 +3552,28 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
         I_cont, comps_c = Util.fit_full_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], cube_fitter.n_dust_cont, cube_fitter.n_dust_feat,
             cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission)
 
-        # Tied line velocity offsets
+        # Tied line kinematics
         vᵢ = pᵢ
-        for vk ∈ cube_fitter.voff_tied_key
+        for vk ∈ cube_fitter.kin_tied_key
             param_maps.tied_voffs[vk][index] = out_params[index, pᵢ]
             param_errs.tied_voffs[vk][index] = out_errs[index, pᵢ]
             pᵢ += 1
         end
+        for vk ∈ cube_fitter.kin_tied_key
+            param_maps.tied_fwhms[vk][index] = out_params[index, pᵢ]
+            param_errs.tied_fwhms[vk][index] = out_errs[index, pᵢ]
+            pᵢ += 1
+        end
 
-        # Tied acomp velocity offsets
-        for fvk ∈ cube_fitter.acomp_voff_tied_key
+        # Tied acomp kinematics
+        for fvk ∈ cube_fitter.acomp_kin_tied_key
             param_maps.acomp_tied_voffs[fvk][index] = out_params[index, pᵢ]
             param_errs.acomp_tied_voffs[fvk][index] = out_errs[index, pᵢ]
+            pᵢ += 1
+        end
+        for fvk ∈ cube_fitter.acomp_kin_tied_key
+            param_maps.acomp_tied_fwhms[fvk][index] = out_params[index, pᵢ]
+            param_errs.acomp_tied_fwhms[fvk][index] = out_errs[index, pᵢ]
             pᵢ += 1
         end
 
@@ -3685,17 +3592,11 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
             param_errs.lines[ln][:amp][index] = amp_err
             fwhm_res = Util.C_KMS / cube_fitter.interp_R(cube_fitter.lines[k].λ₀)
 
-            if isnothing(cube_fitter.line_tied[k]) || cube_fitter.flexible_wavesol
+            if isnothing(cube_fitter.line_tied[k])
 
                 # Individual shift
                 voff = out_params[index, pᵢ+1]
                 voff_err = out_errs[index, pᵢ+1]
-                if !isnothing(cube_fitter.line_tied[k])
-                    # If velocity is tied while flexible, add the overall shift and the individual shift together
-                    vwhere = findfirst(x -> x == cube_fitter.line_tied[k], cube_fitter.voff_tied_key)
-                    voff += out_params[index, vᵢ+vwhere-1]
-                    voff_err = √(voff_err^2 + out_errs[index, vᵢ+vwhere-1]^2)
-                end
                 param_maps.lines[ln][:voff][index] = voff
                 param_errs.lines[ln][:voff][index] = voff_err
 
@@ -3709,53 +3610,46 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
                     param_maps.lines[ln][:fwhm][index] = √(fwhm^2 - fwhm_res^2)
                     param_errs.lines[ln][:fwhm][index] = fwhm / √(fwhm^2 - fwhm_res^2) * fwhm_err
                 end
-
-                # Get Gauss-Hermite 3rd and 4th order moments
-                if cube_fitter.line_profiles[k] == :GaussHermite
-                    param_maps.lines[ln][:h3][index] = out_params[index, pᵢ+3]
-                    param_errs.lines[ln][:h3][index] = out_errs[index, pᵢ+3]
-                    param_maps.lines[ln][:h4][index] = out_params[index, pᵢ+4]
-                    param_errs.lines[ln][:h4][index] = out_errs[index, pᵢ+4]
-                    pᵢ += 2
-                # Get Voigt mixing
-                elseif cube_fitter.line_profiles[k] == :Voigt && !cube_fitter.tie_voigt_mixing
-                    param_maps.lines[ln][:mixing][index] = out_params[index, pᵢ+3]
-                    param_errs.lines[ln][:mixing][index] = out_errs[index, pᵢ+3]
-                    pᵢ += 1
-                end
                 pᵢ += 3
+
+            elseif cube_fitter.flexible_wavesol
+                voff = out_params[index, pᵢ+1]
+                voff_err = out_errs[index, pᵢ+1]
+                # If velocity is tied while flexible, add the overall shift and the individual shift together
+                vwhere = findfirst(x -> x == cube_fitter.line_tied[k], cube_fitter.kin_tied_key)
+                voff += out_params[index, vᵢ+vwhere-1]
+                voff_err = √(voff_err^2 + out_errs[index, vᵢ+vwhere-1]^2)
+                param_maps.lines[ln][:voff][index] = voff
+                param_errs.lines[ln][:voff][index] = voff_err
+
+                # FWHM -> subtract instrumental resolution in quadrature
+                fwhm = out_params[index, vᵢ+cube_fitter.n_kin_tied+vwhere-1]
+                fwhm_err = out_errs[index, vᵢ+cube_fitter.n_kin_tied+vwhere-1]
+                pᵢ += 2
 
             else
                 # Tied shift only
-                vwhere = findfirst(x -> x == cube_fitter.line_tied[k], cube_fitter.voff_tied_key)
+                vwhere = findfirst(x -> x == cube_fitter.line_tied[k], cube_fitter.kin_tied_key)
                 voff = out_params[index, vᵢ+vwhere-1]
                 voff_err = out_errs[index, vᵢ+vwhere-1]
-
                 # FWHM -> subtract instrumental resolution in quadrature
-                fwhm = out_params[index, pᵢ+1]
-                fwhm_err = out_errs[index, pᵢ+1]
-                if fwhm_res > out_params[index, pᵢ+1]
-                    param_maps.lines[ln][:fwhm][index] = 0.
-                    param_errs.lines[ln][:fwhm][index] = fwhm_err
-                else
-                    param_maps.lines[ln][:fwhm][index] = √(fwhm^2 - fwhm_res^2)
-                    param_errs.lines[ln][:fwhm][index] = fwhm / √(fwhm^2 - fwhm_res^2) * fwhm_err
-                end
+                fwhm = out_params[index, vᵢ+cube_fitter.n_kin_tied+vwhere-1]
+                fwhm_err = out_errs[index, vᵢ+cube_fitter.n_kin_tied+vwhere-1]
+                pᵢ += 1
 
-                # Get Gauss-Hermite 3rd and 4th order moments
-                if cube_fitter.line_profiles[k] == :GaussHermite
-                    param_maps.lines[ln][:h3][index] = out_params[index, pᵢ+2]
-                    param_errs.lines[ln][:h3][index] = out_errs[index, pᵢ+2]
-                    param_maps.lines[ln][:h4][index] = out_params[index, pᵢ+3]
-                    param_errs.lines[ln][:h4][index] = out_errs[index, pᵢ+3]
-                    pᵢ += 2
-                elseif cube_fitter.line_profiles[k] == :Voigt && !cube_fitter.tie_voigt_mixing
-                    param_maps.lines[k][:mixing][index] = out_params[index, pᵢ+2]
-                    param_errs.lines[k][:mixing][index] = out_errs[index, pᵢ+2]
-                    pᵢ += 1
-                end
+            end
+
+            # Get Gauss-Hermite 3rd and 4th order moments
+            if cube_fitter.line_profiles[k] == :GaussHermite
+                param_maps.lines[ln][:h3][index] = out_params[index, pᵢ]
+                param_errs.lines[ln][:h3][index] = out_errs[index, pᵢ]
+                param_maps.lines[ln][:h4][index] = out_params[index, pᵢ+1]
+                param_errs.lines[ln][:h4][index] = out_errs[index, pᵢ+1]
                 pᵢ += 2
-
+            elseif cube_fitter.line_profiles[k] == :Voigt && !cube_fitter.tie_voigt_mixing
+                param_maps.lines[k][:mixing][index] = out_params[index, pᵢ]
+                param_errs.lines[k][:mixing][index] = out_errs[index, pᵢ]
+                pᵢ += 1
             end
 
             if !isnothing(cube_fitter.line_acomp_profiles[k])
@@ -3780,51 +3674,29 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
                         param_maps.lines[ln][:acomp_fwhm][index] = √(acomp_fwhm^2 - fwhm_res^2)
                         param_errs.lines[ln][:acomp_fwhm][index] = acomp_fwhm / √(acomp_fwhm^2 - fwhm_res^2) * acomp_fwhm_err
                     end
-                    # Get Gauss-Hermite 3rd and 4th order moments
-                    if cube_fitter.line_acomp_profiles[k] == :GaussHermite
-                        param_maps.lines[ln][:acomp_h3][index] = out_params[index, pᵢ+3]
-                        param_errs.lines[ln][:acomp_h3][index] = out_errs[index, pᵢ+3]
-                        param_maps.lines[ln][:acomp_h4][index] = out_params[index, pᵢ+4]
-                        param_errs.lines[ln][:acomp_h4][index] = out_errs[index, pᵢ+4]
-                        pᵢ += 2
-                    elseif cube_fitter.line_acomp_profiles[k] == :Voigt && !cube_fitter.tie_voigt_mixing
-                        param_maps.lines[ln][:acomp_mixing][index] = out_params[index, pᵢ+3]
-                        param_errs.lines[ln][:acomp_mixing][index] = out_errs[index, pᵢ+3]
-                        pᵢ += 1
-                    end
                     pᵢ += 3
                 else
-                    acomp_fwhm = fwhm * out_params[index, pᵢ+1]
-                    acomp_fwhm_err = √(acomp_fwhm^2 * ((fwhm_err / fwhm)^2 + (out_errs[index, pᵢ+1] / out_params[index, pᵢ+1])^2))
-                    # FWHM -> subtract instrumental resolution in quadrature
-                    if fwhm_res > acomp_fwhm
-                        param_maps.lines[ln][:acomp_fwhm][index] = 0.
-                        param_errs.lines[ln][:acomp_fwhm][index] = acomp_fwhm
-                    else
-                        param_maps.lines[ln][:acomp_fwhm][index] = √(acomp_fwhm^2 - fwhm_res^2)
-                        param_errs.lines[ln][:acomp_fwhm][index] = acomp_fwhm / √(acomp_fwhm^2 - fwhm_res^2) * acomp_fwhm_err
-                    end
-                    # Get Gauss-Hermite 3rd and 4th order moments
-                    if cube_fitter.line_acomp_profiles[k] == :GaussHermite
-                        param_maps.lines[ln][:acomp_h3][index] = out_params[index, pᵢ+2]
-                        param_errs.lines[ln][:acomp_h3][index] = out_errs[index, pᵢ+2]
-                        param_maps.lines[ln][:acomp_h4][index] = out_params[index, pᵢ+3]
-                        param_errs.lines[ln][:acomp_h4][index] = out_errs[index, pᵢ+3]
-                        pᵢ += 2
-                    elseif cube_fitter.line_acomp_profiles[k] == :Voigt && !cube_fitter.tie_voigt_mixing
-                        param_maps.lines[k][:acomp_mixing][index] = out_params[index, pᵢ+2]
-                        param_errs.lines[k][:acomp_mixing][index] = out_errs[index, pᵢ+2]
-                        pᵢ += 1
-                    end
+                    pᵢ += 1
+                end
+                # Get Gauss-Hermite 3rd and 4th order moments
+                if cube_fitter.line_acomp_profiles[k] == :GaussHermite
+                    param_maps.lines[ln][:acomp_h3][index] = out_params[index, pᵢ]
+                    param_errs.lines[ln][:acomp_h3][index] = out_errs[index, pᵢ]
+                    param_maps.lines[ln][:acomp_h4][index] = out_params[index, pᵢ+1]
+                    param_errs.lines[ln][:acomp_h4][index] = out_errs[index, pᵢ+1]
                     pᵢ += 2
+                elseif cube_fitter.line_acomp_profiles[k] == :Voigt && !cube_fitter.tie_voigt_mixing
+                    param_maps.lines[ln][:acomp_mixing][index] = out_params[index, pᵢ]
+                    param_errs.lines[ln][:acomp_mixing][index] = out_errs[index, pᵢ]
+                    pᵢ += 1
                 end
             end
 
         end
 
         # End of line parameters: recreate the un-extincted (intrinsic) line model
-        I_line, comps_l = Util.fit_line_residuals(cube_fitter.cube.λ, out_params[index, vᵢ:pᵢ-1], cube_fitter.n_lines, cube_fitter.n_voff_tied,
-            cube_fitter.voff_tied_key, cube_fitter.line_tied, cube_fitter.line_profiles, cube_fitter.n_acomp_voff_tied, cube_fitter.acomp_voff_tied_key,
+        I_line, comps_l = Util.fit_line_residuals(cube_fitter.cube.λ, out_params[index, vᵢ:pᵢ-1], cube_fitter.n_lines, cube_fitter.n_kin_tied,
+            cube_fitter.kin_tied_key, cube_fitter.line_tied, cube_fitter.line_profiles, cube_fitter.n_acomp_kin_tied, cube_fitter.acomp_kin_tied_key,
             cube_fitter.line_acomp_tied, cube_fitter.line_acomp_profiles, [ln.λ₀ for ln ∈ cube_fitter.lines], 
             cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, comps_c["extinction"], true)
 
@@ -4098,7 +3970,7 @@ and creating 2D maps of them.
 - `param_maps::ParamMaps`: The ParamMaps object containing the parameter values
 - `snr_thresh::Real`: The S/N threshold to be used when filtering the parameter maps by S/N, for those applicable
 """
-function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr_thresh::Real=1.)
+function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr_thresh::Real=3.)
 
     # Iterate over model parameters and make 2D maps
     @debug "Using solid angle $(cube_fitter.cube.Ω), redshift $(cube_fitter.z), cosmology $(cube_fitter.cosmology)"
@@ -4151,27 +4023,99 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
     end
 
     # Tied Voigt mixing parameter
-    if cube_fitter.tie_voigt_mixing
-        data = param_maps.tied_voigt_mix
-        name_i = "tied_voigt_mixing"
-        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
-            cube_fitter.python_wcs)
-    end
+    # if cube_fitter.tie_voigt_mixing
+    #     data = param_maps.tied_voigt_mix
+    #     name_i = "tied_voigt_mixing"
+    #     plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
+    #         cube_fitter.python_wcs)
+    # end
 
-    # Tied velocity offsets
-    for vk ∈ cube_fitter.voff_tied_key
+    # Tied kinematics
+    for vk ∈ cube_fitter.kin_tied_key
         data = param_maps.tied_voffs[vk]
         name_i = join(["tied_voffs", vk], "_")
+        # Get the SNRs of each line in the tied kinematic group
+        snr = nothing
+        for (name, line) ∈ zip(cube_fitter.line_names, cube_fitter.lines)
+            if line.tied == vk
+                if isnothing(snr)
+                    snr = param_maps.lines[name][:SNR]
+                    continue
+                end
+                snr = cat(snr, param_maps.lines[name][:SNR], dims=3)
+            end
+        end
+        # Take the maximum SNR along the 3rd axis
+        if ndims(snr) == 3
+            snr = dropdims(nanmaximum(snr, dims=3), dims=3)
+        end
         plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
-            cube_fitter.python_wcs)
+            cube_fitter.python_wcs, snr_filter=snr, snr_thresh=snr_thresh)
+    end
+    for vk ∈ cube_fitter.kin_tied_key
+        data = param_maps.tied_fwhms[vk]
+        name_i = join(["tied_fwhms", vk], "_")
+        # Get the SNRs of each line in the tied kinematic group
+        snr = nothing
+        for (name, line) ∈ zip(cube_fitter.line_names, cube_fitter.lines)
+            if line.tied == vk
+                if isnothing(snr)
+                    snr = param_maps.lines[name][:SNR]
+                    continue
+                end
+                snr = cat(snr, param_maps.lines[name][:SNR], dims=3)
+            end
+        end
+        # Take the maximum SNR along the 3rd axis
+        if ndims(snr) == 3
+            snr = dropdims(nanmaximum(snr, dims=3), dims=3)
+        end
+        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
+            cube_fitter.python_wcs, snr_filter=snr, snr_thresh=snr_thresh)
     end
 
-    # Tied acomp velocity offsets
-    for fvk ∈ cube_fitter.acomp_voff_tied_key
+    # Tied acomp kinematics
+    for fvk ∈ cube_fitter.acomp_kin_tied_key
         data = param_maps.acomp_tied_voffs[fvk]
         name_i = join(["acomp_tied_voffs", fvk], "_")
+        # Get the SNRs of each line in the tied kinematic group
+        snr = nothing
+        for (name, line) ∈ zip(cube_fitter.line_names, cube_fitter.lines)
+            if line.acomp_tied == fvk
+                if isnothing(snr)
+                    snr = param_maps.lines[name][:acomp_SNR]
+                    continue
+                end
+                snr = cat(snr, param_maps.lines[name][:acomp_SNR], dims=3)
+            end
+        end
+        # Take the maximum SNR along the 3rd axis
+        if ndims(snr) == 3
+            snr = dropdims(nanmaximum(snr, dims=3), dims=3)
+        end
         plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
-            cube_fitter.python_wcs)
+            cube_fitter.python_wcs, snr_filter=snr, snr_thresh=snr_thresh)
+    end
+    for fvk ∈ cube_fitter.acomp_kin_tied_key
+        data = param_maps.acomp_tied_fwhms[fvk]
+        name_i = join(["acomp_tied_fwhms", fvk], "_")
+        # Get the SNRs of each line in the tied kinematic group
+        snr = nothing
+        for (name, line) ∈ zip(cube_fitter.line_names, cube_fitter.lines)
+            if line.acomp_tied == fvk
+                if isnothing(snr)
+                    snr = param_maps.lines[name][:acomp_SNR]
+                    continue
+                end
+                snr = cat(snr, param_maps.lines[name][:acomp_SNR], dims=3)
+            end
+        end
+        # Take the maximum SNR along the 3rd axis
+        if ndims(snr) == 3
+            snr = dropdims(nanmaximum(snr, dims=3), dims=3)
+        end
+        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
+            cube_fitter.python_wcs, snr_filter=snr, snr_thresh=snr_thresh)
     end
 
     # Line parameters
@@ -4580,14 +4524,14 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
         end
 
         # Tied velocity offsets
-        for vk ∈ cube_fitter.voff_tied_key
+        for vk ∈ cube_fitter.kin_tied_key
             data = param_maps.tied_voffs[vk]
             name_i = join(["tied_voffs", vk], "_")
             bunit = "km/s"
             write(f, data; header=hdr, name=name_i)
             write_key(f[name_i], "BUNIT", bunit)
         end
-        for vk ∈ cube_fitter.voff_tied_key
+        for vk ∈ cube_fitter.kin_tied_key
             data = param_errs.tied_voffs[vk]
             name_i = join(["tied_voffs", vk, "err"], "_")
             bunit = "km/s"
@@ -4596,14 +4540,14 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
         end
 
         # Tied acomp velocity offsets
-        for fvk ∈ cube_fitter.acomp_voff_tied_key
+        for fvk ∈ cube_fitter.acomp_kin_tied_key
             data = param_maps.acomp_tied_voffs[fvk]
             name_i = join(["acomp_tied_voffs", fvk], "_")
             bunit = "km/s"
             write(f, data; header=hdr, name=name_i)
             write_key(f[name_i], "BUNIT", bunit)
         end
-        for fvk ∈ cube_fitter.acomp_voff_tied_key
+        for fvk ∈ cube_fitter.acomp_kin_tied_key
             data = param_errs.acomp_tied_voffs[fvk]
             name_i = join(["acomp_tied_voffs", fvk, "err"], "_")
             bunit = "km/s"

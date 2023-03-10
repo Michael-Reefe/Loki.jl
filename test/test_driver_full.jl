@@ -49,15 +49,15 @@ obs = correct(obs)
 # combine channels 1-3 onto the channel 1 grid
 cube_combine!(obs, [1,2,3]; out_grid=1, out_id=0)
 # rebin into a 4x4 grid
-cube_rebin!(obs, 4, 0; out_id=-1)
+# cube_rebin!(obs, 4, 0; out_id=-1)
 
 # Channel to run the fitting on
-channel = -1
+channel = 0
 
 # Create the cube fitting object
 # plot_range=[(7.61, 7.69), (12.77, 12.85)]
-cube_fitter = CubeFitter(obs.channels[channel], obs.z, τ_guess, obs.name * "_ch$(channel)_nlopt_test1", n_procs; 
-    parallel=true, plot_spaxels=:both, plot_maps=true, save_fits=true)
+cube_fitter = CubeFitter(obs.channels[channel], obs.z, τ_guess, obs.name * "_ch$(channel)_full_tied", n_procs; 
+    parallel=true, plot_spaxels=:pyplot, plot_maps=true, save_fits=true)
 
 # Perform the Levenberg-Marquardt least-squares fitting
 @timeit to "Full Fitting Procedure for Channel $channel" fit_cube!(cube_fitter)

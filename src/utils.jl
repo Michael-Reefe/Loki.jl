@@ -861,8 +861,8 @@ end
 
 
 """
-    fit_line_residuals(λ, params, n_lines, n_voff_tied, voff_tied_key, line_tied, line_profiles,
-        n_acomp_voff_tied, acomp_voff_tied_key, line_acomp_tied, line_acomp_profiles, line_restwave,
+    fit_line_residuals(λ, params, n_lines, n_kin_tied, kin_tied_key, line_tied, line_profiles,
+        n_acomp_kin_tied, acomp_kin_tied_key, line_acomp_tied, line_acomp_profiles, line_restwave,
         flexible_wavesol, tie_voigt_mixing, ext_curve; return_components=return_components) 
 
 Create a model of the emission lines at the given wavelengths `λ`, given the parameter vector `params`.
@@ -876,15 +876,15 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
     `[tied velocity offsets, tied acomp velocity offsets, tied voigt mixing, 
     (amp[, voff], FWHM[, h3, h4, η], [acomp_amp, acomp_voff, acomp_FWHM, acomp_h3, acomp_h4, acomp_η] for each line)]`
 - `n_lines::Integer`: Number of lines being fit
-- `n_voff_tied::Integer`: Number of tied velocity offsets
-- `voff_tied_key::Vector{String}`: Unique identifiers for each tied velocity offset parameter
+- `n_kin_tied::Integer`: Number of tied velocity offsets
+- `kin_tied_key::Vector{String}`: Unique identifiers for each tied velocity offset parameter
 - `line_tied::Vector{Union{String,Nothing}}`: Vector, length of n_lines, giving the identifier corresponding to
-    the values in `voff_tied_key` that corresponds to which tied velocity offset should be used for a given line,
+    the values in `kin_tied_key` that corresponds to which tied velocity offset should be used for a given line,
     if any.
 - `line_profiles::Vector{Symbol}`: Vector, length of n_lines, that gives the profile type that should be used to
     fit each line. The profiles should be one of `:Gaussian`, `:Lorentzian`, `:GaussHermite`, or `:Voigt`
-- `n_acomp_voff_tied::Integer`: Same as `n_voff_tied`, but for additional line components
-- `acomp_voff_tied_key::Vector{String}`: Same as `voff_tied_key`, but for additional line components
+- `n_acomp_kin_tied::Integer`: Same as `n_kin_tied`, but for additional line components
+- `acomp_kin_tied_key::Vector{String}`: Same as `kin_tied_key`, but for additional line components
 - `line_acomp_tied::Vector{Union{String,Nothing}}`: Same as `line_tied`, but for additional line components
 - `line_acomp_profiles::Vector{Union{Symbol,Nothing}}`: Same as `line_profiles`, but for additional line components
 - `line_restwave::Vector{<:AbstractFloat}`: Vector, length of n_lines, giving the rest wavelengths of each line
@@ -895,9 +895,9 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
-function fit_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::Integer, n_voff_tied::Integer, 
-    voff_tied_key::Vector{String}, line_tied::Vector{Union{String,Nothing}}, line_profiles::Vector{Symbol}, 
-    n_acomp_voff_tied::Integer, acomp_voff_tied_key::Vector{String}, line_acomp_tied::Vector{Union{String,Nothing}},
+function fit_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::Integer, n_kin_tied::Integer, 
+    kin_tied_key::Vector{String}, line_tied::Vector{Union{String,Nothing}}, line_profiles::Vector{Symbol}, 
+    n_acomp_kin_tied::Integer, acomp_kin_tied_key::Vector{String}, line_acomp_tied::Vector{Union{String,Nothing}},
     line_acomp_profiles::Vector{Union{Symbol,Nothing}}, line_restwave::Vector{T}, 
     flexible_wavesol::Bool, tie_voigt_mixing::Bool, ext_curve::Vector{T}, return_components::Bool) where {T<:Real}
 
@@ -905,8 +905,8 @@ function fit_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::Integer, 
     comps = Dict{String, Vector{Float64}}()
     contin = zeros(Float64, length(λ))
 
-    # Skip ahead of the tied velocity offsets of the lines and acomp components
-    pᵢ = n_voff_tied + n_acomp_voff_tied + 1
+    # Skip ahead of the tied kinematics of the lines and acomp components
+    pᵢ = 2n_kin_tied + 2n_acomp_kin_tied + 1
     # If applicable, skip ahead of the tied voigt mixing
     if tie_voigt_mixing
         ηᵢ = pᵢ
@@ -921,60 +921,43 @@ function fit_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::Integer, 
             # Unpack the components of the line
             voff = params[pᵢ+1]
             fwhm = params[pᵢ+2]
-            if line_profiles[k] == :GaussHermite
-                # Get additional h3, h4 components
-                h3 = params[pᵢ+3]
-                h4 = params[pᵢ+4]
-            elseif line_profiles[k] == :Voigt
-                # Get additional mixing component, either from the tied position or the 
-                # individual position
-                if !tie_voigt_mixing
-                    η = params[pᵢ+3]
-                else
-                    η = params[ηᵢ]
-                end
-            end
+            pᵢ += 3
+
         elseif !isnothing(line_tied[k]) && flexible_wavesol
             # Find the position of the tied velocity offset that should be used
-            # based on matching the keys in line_tied and voff_tied_key
-            vwhere = findfirst(x -> x == line_tied[k], voff_tied_key)
+            # based on matching the keys in line_tied and kin_tied_key
+            vwhere = findfirst(x -> x == line_tied[k], kin_tied_key)
             voff_series = params[vwhere]
             voff_indiv = params[pᵢ+1]
             # Add velocity shifts of the tied lines and the individual offsets together
             voff = voff_series + voff_indiv
-            fwhm = params[pᵢ+2]
-            if line_profiles[k] == :GaussHermite
-                # Get additional h3, h4 components
-                h3 = params[pᵢ+3]
-                h4 = params[pᵢ+4]
-            elseif line_profiles[k] == :Voigt
-                # Get additional mixing component, either from the tied position or the 
-                # individual position
-                if !tie_voigt_mixing
-                    η = params[pᵢ+3]
-                else
-                    η = params[ηᵢ]
-                end
-            end
+            # Position of the tied fwhm that should be used
+            fwhm = params[n_kin_tied+vwhere]
+            pᵢ += 2
+
         else
             # Find the position of the tied velocity offset that should be used
-            # based on matching the keys in line_tied and voff_tied_key
-            vwhere = findfirst(x -> x == line_tied[k], voff_tied_key)
+            # based on matching the keys in line_tied and kin_tied_key
+            vwhere = findfirst(x -> x == line_tied[k], kin_tied_key)
             voff = params[vwhere]
-            fwhm = params[pᵢ+1]
-            # (dont add any individual voff components)
-            if line_profiles[k] == :GaussHermite
-                # Get additional h3, h4 components
-                h3 = params[pᵢ+2]
-                h4 = params[pᵢ+3]
-            elseif line_profiles[k] == :Voigt
-                # Get additional mixing component, either from the tied position or the 
-                # individual position
-                if !tie_voigt_mixing
-                    η = params[pᵢ+2]
-                else
-                    η = params[ηᵢ]
-                end
+            fwhm = params[n_kin_tied+vwhere]
+            pᵢ += 1
+
+        end
+
+        if line_profiles[k] == :GaussHermite
+            # Get additional h3, h4 components
+            h3 = params[pᵢ]
+            h4 = params[pᵢ+1]
+            pᵢ += 2
+        elseif line_profiles[k] == :Voigt
+            # Get additional mixing component, either from the tied position or the 
+            # individual position
+            if !tie_voigt_mixing
+                η = params[pᵢ]
+                pᵢ += 1
+            else
+                η = params[ηᵢ]
             end
         end
 
@@ -996,18 +979,7 @@ function fit_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::Integer, 
         end
 
         # Add the line profile into the overall model
-        contin .+= comps["line_$k"]        
-        # Advance the parameter vector index -> 3 if untied (or tied + flexible_wavesol) or 2 if tied
-        pᵢ += isnothing(line_tied[k]) || flexible_wavesol ? 3 : 2
-        if line_profiles[k] == :GaussHermite
-            # advance and extra 2 if GaussHermite profile
-            pᵢ += 2
-        elseif line_profiles[k] == :Voigt
-            # advance another extra 1 if untied Voigt profile
-            if !tie_voigt_mixing
-                pᵢ += 1
-            end
-        end
+        contin .+= comps["line_$k"]
 
         # Repeat EVERYTHING, minus the flexible_wavesol, for the additional components
         if !isnothing(line_acomp_profiles[k])
@@ -1024,29 +996,26 @@ function fit_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::Integer, 
                 # this way, we can constrain the acomp_fwhm parameter to be > 0 to ensure the acomp FWHM is always
                 # greater than the line FWHM
                 acomp_fwhm = fwhm * params[pᵢ+2]
-                if line_acomp_profiles[k] == :GaussHermite
-                    acomp_h3 = params[pᵢ+3]
-                    acomp_h4 = params[pᵢ+4]
-                elseif line_acomp_profiles[k] == :Voigt
-                    if !tie_voigt_mixing
-                        acomp_η = params[pᵢ+3]
-                    else
-                        acomp_η = params[ηᵢ]
-                    end
-                end
+                pᵢ += 3
+
             else
-                vwhere = findfirst(x -> x == line_acomp_tied[k], acomp_voff_tied_key)
-                acomp_voff = voff + params[n_voff_tied + vwhere]
-                acomp_fwhm = fwhm * params[pᵢ+1]
-                if line_acomp_profiles[k] == :GaussHermite
-                    acomp_h3 = params[pᵢ+2]
-                    acomp_h4 = params[pᵢ+3]
-                elseif line_acomp_profiles[k] == :Voigt
-                    if !tie_voigt_mixing
-                        acomp_η = params[pᵢ+2]
-                    else
-                        acomp_η = params[ηᵢ]
-                    end
+                vwhere = findfirst(x -> x == line_acomp_tied[k], acomp_kin_tied_key)
+                acomp_voff = voff + params[2n_kin_tied+vwhere]
+                acomp_fwhm = fwhm * params[2n_kin_tied+n_acomp_kin_tied+vwhere]
+                pᵢ += 1
+
+            end
+
+            if line_acomp_profiles[k] == :GaussHermite
+                acomp_h3 = params[pᵢ]
+                acomp_h4 = params[pᵢ+1]
+                pᵢ += 2
+            elseif line_acomp_profiles[k] == :Voigt
+                if !tie_voigt_mixing
+                    acomp_η = params[pᵢ]
+                    pᵢ += 1
+                else
+                    acomp_η = params[ηᵢ]
                 end
             end
 
@@ -1069,15 +1038,7 @@ function fit_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::Integer, 
 
             # Add the additional component into the overall model
             contin .+= comps["line_$(k)_acomp"]
-            # Advance the parameter vector index by the appropriate amount        
-            pᵢ += isnothing(line_acomp_tied[k]) ? 3 : 2
-            if line_acomp_profiles[k] == :GaussHermite
-                pᵢ += 2
-            elseif line_acomp_profiles[k] == :Voigt
-                if !tie_voigt_mixing
-                    pᵢ += 1
-                end
-            end
+
         end
 
     end
@@ -1094,17 +1055,17 @@ end
 
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
-function fit_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::Integer, n_voff_tied::Integer, 
-    voff_tied_key::Vector{String}, line_tied::Vector{Union{String,Nothing}}, line_profiles::Vector{Symbol}, 
-    n_acomp_voff_tied::Integer, acomp_voff_tied_key::Vector{String}, line_acomp_tied::Vector{Union{String,Nothing}},
+function fit_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::Integer, n_kin_tied::Integer, 
+    kin_tied_key::Vector{String}, line_tied::Vector{Union{String,Nothing}}, line_profiles::Vector{Symbol}, 
+    n_acomp_kin_tied::Integer, acomp_kin_tied_key::Vector{String}, line_acomp_tied::Vector{Union{String,Nothing}},
     line_acomp_profiles::Vector{Union{Symbol,Nothing}}, line_restwave::Vector{T}, 
     flexible_wavesol::Bool, tie_voigt_mixing::Bool, ext_curve::Vector{T}) where {T<:Real}
 
     # Prepare outputs
     contin = zeros(Float64, length(λ))
 
-    # Skip ahead of the tied velocity offsets of the lines and acomp components
-    pᵢ = n_voff_tied + n_acomp_voff_tied + 1
+    # Skip ahead of the tied kinematics of the lines and acomp components
+    pᵢ = 2n_kin_tied + 2n_acomp_kin_tied + 1
     # If applicable, skip ahead of the tied voigt mixing
     if tie_voigt_mixing
         ηᵢ = pᵢ
@@ -1119,60 +1080,44 @@ function fit_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::Integer, 
             # Unpack the components of the line
             voff = params[pᵢ+1]
             fwhm = params[pᵢ+2]
-            if line_profiles[k] == :GaussHermite
-                # Get additional h3, h4 components
-                h3 = params[pᵢ+3]
-                h4 = params[pᵢ+4]
-            elseif line_profiles[k] == :Voigt
-                # Get additional mixing component, either from the tied position or the 
-                # individual position
-                if !tie_voigt_mixing
-                    η = params[pᵢ+3]
-                else
-                    η = params[ηᵢ]
-                end
-            end
+            pᵢ += 3
+
         elseif !isnothing(line_tied[k]) && flexible_wavesol
             # Find the position of the tied velocity offset that should be used
-            # based on matching the keys in line_tied and voff_tied_key
-            vwhere = findfirst(x -> x == line_tied[k], voff_tied_key)
+            # based on matching the keys in line_tied and kin_tied_key
+            vwhere = findfirst(x -> x == line_tied[k], kin_tied_key)
             voff_series = params[vwhere]
             voff_indiv = params[pᵢ+1]
             # Add velocity shifts of the tied lines and the individual offsets together
             voff = voff_series + voff_indiv
-            fwhm = params[pᵢ+2]
-            if line_profiles[k] == :GaussHermite
-                # Get additional h3, h4 components
-                h3 = params[pᵢ+3]
-                h4 = params[pᵢ+4]
-            elseif line_profiles[k] == :Voigt
-                # Get additional mixing component, either from the tied position or the 
-                # individual position
-                if !tie_voigt_mixing
-                    η = params[pᵢ+3]
-                else
-                    η = params[ηᵢ]
-                end
-            end
+            # Position of the tied fwhm that should be used
+            fwhm = params[n_kin_tied+vwhere]
+            pᵢ += 2
+
         else
             # Find the position of the tied velocity offset that should be used
-            # based on matching the keys in line_tied and voff_tied_key
-            vwhere = findfirst(x -> x == line_tied[k], voff_tied_key)
+            # based on matching the keys in line_tied and kin_tied_key
+            vwhere = findfirst(x -> x == line_tied[k], kin_tied_key)
             voff = params[vwhere]
-            fwhm = params[pᵢ+1]
+            fwhm = params[n_kin_tied+vwhere]
             # (dont add any individual voff components)
-            if line_profiles[k] == :GaussHermite
-                # Get additional h3, h4 components
-                h3 = params[pᵢ+2]
-                h4 = params[pᵢ+3]
-            elseif line_profiles[k] == :Voigt
-                # Get additional mixing component, either from the tied position or the 
-                # individual position
-                if !tie_voigt_mixing
-                    η = params[pᵢ+2]
-                else
-                    η = params[ηᵢ]
-                end
+            pᵢ += 1
+
+        end
+
+        if line_profiles[k] == :GaussHermite
+            # Get additional h3, h4 components
+            h3 = params[pᵢ]
+            h4 = params[pᵢ+1]
+            pᵢ += 2
+        elseif line_profiles[k] == :Voigt
+            # Get additional mixing component, either from the tied position or the 
+            # individual position
+            if !tie_voigt_mixing
+                η = params[pᵢ]
+                pᵢ += 1
+            else
+                η = params[ηᵢ]
             end
         end
 
@@ -1193,18 +1138,6 @@ function fit_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::Integer, 
             error("Unrecognized line profile $(line_profiles[k])!")
         end
 
-        # Advance the parameter vector index -> 3 if untied (or tied + flexible_wavesol) or 2 if tied
-        pᵢ += isnothing(line_tied[k]) || flexible_wavesol ? 3 : 2
-        if line_profiles[k] == :GaussHermite
-            # advance and extra 2 if GaussHermite profile
-            pᵢ += 2
-        elseif line_profiles[k] == :Voigt
-            # advance another extra 1 if untied Voigt profile
-            if !tie_voigt_mixing
-                pᵢ += 1
-            end
-        end
-
         # Repeat EVERYTHING, minus the flexible_wavesol, for the additional components
         if !isnothing(line_acomp_profiles[k])
             # Parametrize acomp amplitude in terms of the default line amplitude times some fractional value
@@ -1220,29 +1153,26 @@ function fit_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::Integer, 
                 # this way, we can constrain the acomp_fwhm parameter to be > 0 to ensure the acomp FWHM is always
                 # greater than the line FWHM
                 acomp_fwhm = fwhm * params[pᵢ+2]
-                if line_acomp_profiles[k] == :GaussHermite
-                    acomp_h3 = params[pᵢ+3]
-                    acomp_h4 = params[pᵢ+4]
-                elseif line_acomp_profiles[k] == :Voigt
-                    if !tie_voigt_mixing
-                        acomp_η = params[pᵢ+3]
-                    else
-                        acomp_η = params[ηᵢ]
-                    end
-                end
+                pᵢ += 3
+
             else
-                vwhere = findfirst(x -> x == line_acomp_tied[k], acomp_voff_tied_key)
-                acomp_voff = voff + params[n_voff_tied + vwhere]
-                acomp_fwhm = fwhm * params[pᵢ+1]
-                if line_acomp_profiles[k] == :GaussHermite
-                    acomp_h3 = params[pᵢ+2]
-                    acomp_h4 = params[pᵢ+3]
-                elseif line_acomp_profiles[k] == :Voigt
-                    if !tie_voigt_mixing
-                        acomp_η = params[pᵢ+2]
-                    else
-                        acomp_η = params[ηᵢ]
-                    end
+                vwhere = findfirst(x -> x == line_acomp_tied[k], acomp_kin_tied_key)
+                acomp_voff = voff + params[2n_kin_tied+vwhere]
+                acomp_fwhm = fwhm * params[2n_kin_tied+n_acomp_kin_tied+vwhere]
+                pᵢ += 1
+
+            end
+
+            if line_acomp_profiles[k] == :GaussHermite
+                acomp_h3 = params[pᵢ]
+                acomp_h4 = params[pᵢ+1]
+                pᵢ += 2
+            elseif line_acomp_profiles[k] == :Voigt
+                if !tie_voigt_mixing
+                    acomp_η = params[pᵢ]
+                    pᵢ += 1
+                else
+                    acomp_η = params[ηᵢ]
                 end
             end
 
@@ -1262,18 +1192,7 @@ function fit_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::Integer, 
             else
                 error("Unrecognized acomp line profile $(line_profiles[k])!")
             end
-
-            # Advance the parameter vector index by the appropriate amount        
-            pᵢ += isnothing(line_acomp_tied[k]) ? 3 : 2
-            if line_acomp_profiles[k] == :GaussHermite
-                pᵢ += 2
-            elseif line_acomp_profiles[k] == :Voigt
-                if !tie_voigt_mixing
-                    pᵢ += 1
-                end
-            end
         end
-
     end
 
     # Apply extinction
