@@ -14,7 +14,6 @@ module Param
 
 # Import packages
 using Distributions
-using JSON
 
 """
     Parameter(value, locked, prior)

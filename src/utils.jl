@@ -25,10 +25,16 @@ const C_KMS::Float64 = 299792.458          # Speed of light in km/s
 const h_ERGS::Float64 = 6.62607015e-27     # Planck constant in erg*s
 const kB_ERGK::Float64 = 1.380649e-16      # Boltzmann constant in erg/K
 
-const Bν_1::Float64 = 3.97289e13           # First constant for Planck function, in MJy/sr/μm
-const Bν_2::Float64 = 1.4387752e4          # Second constant for Planck function, in μm*K
+# First constant for Planck function, in MJy/sr/μm:
+# 2hν^3/c^2 = 2h(c/λ)^3/c^2 = (2h/c^2 erg/s/cm^2/Hz/sr) * (1e23 Jy per erg/s/cm^2/Hz) / (1e6 MJy/Jy) * (c * 1e9 μm/km)^3 / (λ μm)^3
+const Bν_1::Float64 = 2h_ERGS/(C_KMS*1e5)^2 * 1e23 / 1e6 * (C_KMS * 1e9)^3
 
-const b_Wein::Float64 = 2897.771955        # Wein's law constant of proportionality in μm*K
+# Second constant for Planck function, in μm*K  
+# hν/kT = hc/λkT = (hc/k cm*K) * (1e4 μm/cm) / (λ μm)
+const Bν_2::Float64 = h_ERGS*(C_KMS*1e5) / kB_ERGK * 1e4
+
+# Wein's law constant of proportionality in μm*K
+const b_Wein::Float64 = 2897.771955        
 
 # Saved Kemper, Vriend, & Tielens (2004) extinction profile
 const kvt_prof::Matrix{Float64} =  [8.0  0.06;
@@ -201,7 +207,7 @@ julia> Σ([1 2; 3 NaN], 1)
  2.0
 ```
 """
-Σ(array, dims; nan=true) = dropdims((nan ? nansum : sum)(array, dims=dims), dims=dims)
+@inline Σ(array, dims; nan=true) = dropdims((nan ? nansum : sum)(array, dims=dims), dims=dims)
 
 
 """
@@ -232,7 +238,7 @@ julia> extend([1,2,3], (4,5))
  3  3  3  3  3
 ```
 """
-extend(array1d, shape) = repeat(reshape(array1d, (1,1,length(array1d))), outer=[shape...,1])
+@inline extend(array1d, shape) = repeat(reshape(array1d, (1,1,length(array1d))), outer=[shape...,1])
 
 
 """
@@ -249,7 +255,7 @@ julia> rest_frame([5, 5.1, 5.2], 0.1)
  4.727272727272727
 ```
 """
-rest_frame(λ, z) = @. λ / (1 + z)
+@inline rest_frame(λ, z) = @. λ / (1 + z)
 
 
 """
@@ -266,7 +272,7 @@ julia> observed_frame([5, 5.1, 5.2], 0.1)
  5.720000000000001
 ```
 """
-observed_frame(λ, z) = @. λ * (1 + z)
+@inline observed_frame(λ, z) = @. λ * (1 + z)
 
 
 """
@@ -285,7 +291,7 @@ julia> Doppler_shift_λ(10, 0)
 10.0
 ```
 """
-Doppler_shift_λ(λ₀, v) = λ₀ * √((1+v/C_KMS)/(1-v/C_KMS))
+@inline Doppler_shift_λ(λ₀, v) = λ₀ * √((1+v/C_KMS)/(1-v/C_KMS))
 
 
 """
@@ -304,7 +310,7 @@ julia> Doppler_shift_v(10, 10)
 0.0
 ```
 """
-Doppler_shift_v(λ, λ₀) = ((λ/λ₀)^2 - 1)/((λ/λ₀)^2 + 1) * C_KMS
+@inline Doppler_shift_v(λ, λ₀) = ((λ/λ₀)^2 - 1)/((λ/λ₀)^2 + 1) * C_KMS
 
 
 """
@@ -321,7 +327,7 @@ julia> Doppler_width_v(0.0, 10)
 0.0
 ```
 """
-Doppler_width_v(Δλ, λ₀) = Δλ / λ₀ * C_KMS
+@inline Doppler_width_v(Δλ, λ₀) = Δλ / λ₀ * C_KMS
 
 
 """
@@ -338,7 +344,7 @@ julia> Doppler_width_λ(0, 10)
 0.0
 ```
 """
-Doppler_width_λ(Δv, λ₀) = Δv / C_KMS * λ₀
+@inline Doppler_width_λ(Δv, λ₀) = Δv / C_KMS * λ₀
 
 
 """
@@ -354,7 +360,7 @@ julia> ∫Gaussian(600, 1.2)
 766.4162539904829
 ```
 """
-∫Gaussian(A, FWHM) = √(π / (4log(2))) * A * FWHM
+@inline ∫Gaussian(A, FWHM) = √(π / (4log(2))) * A * FWHM
 
 
 """
@@ -369,7 +375,7 @@ julia> ∫Lorentzian(1000)
 julia> ∫Lorentzian(600)
 600
 """
-∫Lorentzian(A) = A
+@inline ∫Lorentzian(A) = A
 
 
 """
@@ -387,7 +393,7 @@ julia> ∫Drude(600, 1.2)
 See CAFE (Marshall et al. 2007), PAHFIT (Smith, Draine et al. 2007) 
 ```
 """
-∫Drude(A, FWHM) = π/2 * A * FWHM
+@inline ∫Drude(A, FWHM) = π/2 * A * FWHM
 
 
 """
@@ -398,7 +404,7 @@ Convert specific intensity in MegaJanskys per steradian to CGS units
 
 This converts from intensity per unit frequency to per unit wavelength (Fλ = Fν|dλ/dν| = Fν * c/λ^2)
 """
-MJysr_to_cgs(MJy, λ) = MJy * 1e6 * 1e-23 * (C_KMS * 1e9) / λ^2
+@inline MJysr_to_cgs(MJy, λ) = MJy * 1e6 * 1e-23 * (C_KMS * 1e9) / λ^2
 
 
 """
@@ -437,7 +443,7 @@ julia> ln_likelihood([1.1, 1.9, 3.2], [1., 2., 3.], [0.1, 0.1, 0.1])
 1.1509396793681144
 ```
 """
-function ln_likelihood(data::Vector{T}, model::Vector{T}, err::Vector{T}) where {T<:Real}
+@inline function ln_likelihood(data::Vector{T}, model::Vector{T}, err::Vector{T}) where {T<:Real}
     -0.5 * sum(@. (data - model)^2 / err^2 + log(2π * err^2))
 end
 
@@ -480,7 +486,7 @@ given a wavelength in μm and a temperature in Kelvins.
 
 Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 """
-function Blackbody_ν(λ::Real, Temp::Real)
+@inline function Blackbody_ν(λ::Real, Temp::Real)
     Bν_1/λ^3 / (exp(Bν_2/(λ*Temp))-1)
 end
 
@@ -491,7 +497,7 @@ end
 Return the peak wavelength (in μm) of a Blackbody spectrum at a given temperature `Temp`,
 using Wein's Displacement Law.
 """
-function Wein(Temp::Real)
+@inline function Wein(Temp::Real)
     b_Wein / Temp
 end
 
@@ -506,7 +512,7 @@ Calculate a Drude profile at location `x`, with amplitude `A`, central value `μ
 
 Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 """
-function Drude(x::Real, A::Real, μ::Real, FWHM::Real)
+@inline function Drude(x::Real, A::Real, μ::Real, FWHM::Real)
     A * (FWHM/μ)^2 / ((x/μ - μ/x)^2 + (FWHM/μ)^2)
 end
 
@@ -723,21 +729,23 @@ end
 function fit_spectrum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer, extinction_curve::String, 
     extinction_screen::Bool, fit_sil_emission::Bool) where {T<:Real}
 
+    @fastmath @inbounds begin
+
     # Prepare outputs
     contin = zeros(Float64, length(λ))
 
     # Stellar blackbody continuum (usually at 5000 K)
-    @fastmath @inbounds contin .+= params[1] .* Blackbody_ν.(λ, params[2])
+    contin .+= params[1] .* Blackbody_ν.(λ, params[2])
     pᵢ = 3
 
     # Add dust continua at various temperatures
-    @fastmath @inbounds for i ∈ 1:n_dust_cont
+    for i ∈ 1:n_dust_cont
         contin .+= params[pᵢ] .* (9.7 ./ λ).^2 .* Blackbody_ν.(λ, params[pᵢ+1])
         pᵢ += 2
     end
 
     # Extinction 
-    @fastmath @inbounds if extinction_curve == "d+"
+    if extinction_curve == "d+"
         ext_curve = τ_dp.(λ, params[pᵢ+3])
     elseif extinction_curve == "kvt"
         ext_curve = τ_kvt.(λ, params[pᵢ+3])
@@ -749,17 +757,15 @@ function fit_spectrum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer, ex
     ext = Extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
 
     # Ice+CH absorption
-    @fastmath @inbounds begin
-        ext_ice = τ_ice.(λ)
-        abs_ice = Extinction.(ext_ice, params[pᵢ+1], screen=true)
-        ext_ch = τ_ch.(λ)
-        abs_ch = Extinction.(ext_ch, params[pᵢ+2], screen=true)
-    end
+    ext_ice = τ_ice.(λ)
+    abs_ice = Extinction.(ext_ice, params[pᵢ+1], screen=true)
+    ext_ch = τ_ch.(λ)
+    abs_ch = Extinction.(ext_ch, params[pᵢ+2], screen=true)
 
-    @fastmath contin .*= ext .* abs_ice .* abs_ch
+    contin .*= ext .* abs_ice .* abs_ch
     pᵢ += 4
 
-    @fastmath @inbounds if fit_sil_emission
+    if fit_sil_emission
         # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
         # Ref: Gallimore et al. 2010
         hot_dust = params[pᵢ] .* Blackbody_ν.(λ, params[pᵢ+1])
@@ -770,13 +776,13 @@ function fit_spectrum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer, ex
     end
 
     # Add Smith+2006 PAH templates
-    @fastmath @inbounds begin
-        pah3 = Smith3_interp.(λ)
-        contin .+= params[pᵢ] .* pah3 / maximum(pah3) .* ext
-        pah4 = Smith4_interp.(λ)
-        contin .+= params[pᵢ+1] .* pah4 / maximum(pah4) .* ext
-        # (Not affected by Ice+CH absorption)
-        pᵢ += 2
+    pah3 = Smith3_interp.(λ)
+    contin .+= params[pᵢ] .* pah3 / maximum(pah3) .* ext
+    pah4 = Smith4_interp.(λ)
+    contin .+= params[pᵢ+1] .* pah4 / maximum(pah4) .* ext
+    # (Not affected by Ice+CH absorption)
+    pᵢ += 2
+
     end
 
     contin
@@ -828,18 +834,22 @@ end
 function fit_pah_residuals(λ::Vector{T}, params::Vector{T}, n_dust_feat::Integer,
     ext_curve::Vector{T}) where {T<:Real}
 
+    @fastmath @inbounds begin
+
     # Prepare outputs
     contin = zeros(Float64, length(λ))
 
     # Add dust features with drude profiles
     pᵢ = 1
-    @fastmath @inbounds for j ∈ 1:n_dust_feat
+    for j ∈ 1:n_dust_feat
         contin .+= Drude.(λ, params[pᵢ:pᵢ+2]...)
         pᵢ += 3
     end
 
     # Apply extinction
     contin .*= ext_curve
+
+    end
 
     contin
 
@@ -1065,6 +1075,8 @@ function fit_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::Integer, 
     line_acomp_profiles::Vector{Union{Symbol,Nothing}}, line_restwave::Vector{T}, 
     flexible_wavesol::Bool, tie_voigt_mixing::Bool, ext_curve::Vector{T}) where {T<:Real}
 
+    @fastmath @inbounds begin
+
     # Prepare outputs
     contin = zeros(Float64, length(λ))
 
@@ -1077,7 +1089,7 @@ function fit_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::Integer, 
     end
 
     # Add emission lines
-    @fastmath @inbounds for k ∈ 1:n_lines
+    for k ∈ 1:n_lines
         # Check if voff is tied: if so, use the tied voff parameter, otherwise, use the line's own voff parameter
         amp = params[pᵢ]
         if isnothing(line_tied[k])
@@ -1201,6 +1213,9 @@ function fit_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::Integer, 
 
     # Apply extinction
     contin .*= ext_curve
+
+    end
+
     contin
 
 end
@@ -1215,7 +1230,7 @@ end
 Evaluate a Gaussian profile at `x`, parameterized by the amplitude `A`, mean value `μ`, and 
 full-width at half-maximum `FWHM`
 """
-function Gaussian(x::Real, A::Real, μ::Real, FWHM::Real)
+@inline function Gaussian(x::Real, A::Real, μ::Real, FWHM::Real)
     # Reparametrize FWHM as dispersion σ
     σ = FWHM / (2√(2log(2)))
     A * exp(-(x-μ)^2 / (2σ^2))
@@ -1261,7 +1276,7 @@ end
 Evaluate a Lorentzian profile at `x`, parametrized by the amplitude `A`, mean value `μ`,
 and full-width at half-maximum `FWHM`
 """
-function Lorentzian(x::Real, A::Real, μ::Real, FWHM::Real)
+@inline function Lorentzian(x::Real, A::Real, μ::Real, FWHM::Real)
     A/π * (FWHM/2) / ((x-μ)^2 + (FWHM/2)^2)
 end
 

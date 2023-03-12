@@ -788,7 +788,7 @@ function cube_combine!(obs::Observation, channels::Union{Vector{S},Nothing}=noth
 
         # Function to transform output coordinates into input coordinates
         # Add in the wavelength coordinate, which doesn't change
-        function pix_transform(x, y)
+        @inline function pix_transform(x, y)
             coords3d = [x, y, 1.]
             cprime = world_to_pix(obs.channels[ch_in].wcs, pix_to_world(obs.channels[ch_ref].wcs, coords3d))
             cprime[1], cprime[2]
@@ -812,15 +812,14 @@ function cube_combine!(obs::Observation, channels::Union{Vector{S},Nothing}=noth
             # Loop through all pairs of coordinates in the refrerence grid and set the intensity and error
             # at that point to the interpolated values of the corresponding location in the input grid, given by
             # the pix_transform function
-            for (xᵣ, yᵣ) ∈ collect(Iterators.product(1:shape_ref[1], 1:shape_ref[2]))
-                xᵢ, yᵢ = pix_transform(xᵣ, yᵣ)
-                # Fill with zeros for any points outside the boundaries of the input data
-                if (xᵢ > shape_in[1]) || (xᵢ < 1) || (yᵢ > shape_in[2]) || (yᵢ < 1)
-                    I_out[xᵣ, yᵣ, cumsum+wi] = 0.
-                    σ_out[xᵣ, yᵣ, cumsum+wi] = 0.
-                else
-                    I_out[xᵣ, yᵣ, cumsum+wi] = interp_func_I(xᵢ, yᵢ)
-                    σ_out[xᵣ, yᵣ, cumsum+wi] = interp_func_σ(xᵢ, yᵢ)
+            # @inbounds for (xᵣ, yᵣ) ∈ collect(Iterators.product(1:shape_ref[1], 1:shape_ref[2]))
+            @inbounds @simd for xᵣ ∈ 1:shape_ref[1]
+                @simd for yᵣ ∈ 1:shape_ref[2]
+                    xᵢ, yᵢ = pix_transform(xᵣ, yᵣ)
+                    # Fill with zeros for any points outside the boundaries of the input data
+                    oob = (xᵢ > shape_in[1]) || (xᵢ < 1) || (yᵢ > shape_in[2]) || (yᵢ < 1)
+                    I_out[xᵣ, yᵣ, cumsum+wi] = oob ? 0. : interp_func_I(xᵢ, yᵢ)
+                    σ_out[xᵣ, yᵣ, cumsum+wi] = oob ? 0. : interp_func_σ(xᵢ, yᵢ)
                 end
             end
             # Iterate the progress bar
@@ -858,10 +857,13 @@ function cube_combine!(obs::Observation, channels::Union{Vector{S},Nothing}=noth
     mask_out = falses(size(I_out))
     # 1e-3 from empirically testing what works well
     atol = median(I_out[I_out .> 0]) * 1e-3
-    for (i, j) ∈ collect(Iterators.product(1:shape_ref[1], 1:shape_ref[2]))
-        # Has to have  significant number close to 0 to make sure that an entire channel has been cut out
-        # (as opposed to single-pixel noise dips)
-        mask_out[i, j, :] .= sum(isapprox.(I_out[i, j, :], 0.; atol=atol)) > 100
+    # @fastmath @inbounds for (i, j) ∈ collect(Iterators.product(1:shape_ref[1], 1:shape_ref[2]))
+    @fastmath @inbounds @simd for i ∈ 1:shape_ref[1]
+        @simd for j ∈ 1:shape_ref[2]
+            # Has to have  significant number close to 0 to make sure that an entire channel has been cut out
+            # (as opposed to single-pixel noise dips)
+            mask_out[i, j, :] .= sum(isapprox.(I_out[i, j, :], 0.; atol=atol)) > 100
+        end
     end
 
     if obs.masked
@@ -925,13 +927,13 @@ function cube_rebin!(obs::Observation, binsize::S, channel::S; out_id::S=0) wher
             ymin = (y-1)*binsize+1
             ymax = min(y*binsize, size(I_in, 2))
 
-            @debug "($xmin:$xmax, $ymin:$ymax) --> ($x,$y)"
-            # Sum fluxes within the bin
-            I_out[x,y,:] .= Util.Σ(I_in[xmin:xmax, ymin:ymax, :], (1,2), nan=false)
-            # Sum errors in quadrature within the bin
-            σ_out[x,y,:] .= .√(Util.Σ(σ_in[xmin:xmax, ymin:ymax, :].^2, (1,2), nan=false))
-            # Add masks with binary and
-            for z ∈ 1:dims[3]
+            # @debug "($xmin:$xmax, $ymin:$ymax) --> ($x,$y)"
+            @inbounds @simd for z ∈ 1:dims[3]
+                # Sum fluxes within the bin
+                I_out[x,y,z] = Util.Σ(I_in[xmin:xmax, ymin:ymax, z], (1,2), nan=false)
+                # Sum errors in quadrature within the bin
+                σ_out[x,y,z] = √(Util.Σ(σ_in[xmin:xmax, ymin:ymax, z].^2, (1,2), nan=false))
+                # Add masks with binary and
                 mask_out[x,y,z] = sum(mask_in[xmin:xmax, ymin:ymax, z]) > binsize^2/2
             end
         end

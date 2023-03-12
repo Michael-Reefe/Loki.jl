@@ -1620,13 +1620,13 @@ function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}; Δ::Integer=
 
     function iter_mask(d2f, lines, mask)
         # Sigma-clip to find the lines based on the *local* noise level
-         for j ∈ 1:length(λ)
+        li = falses(length(λ))
+        for j ∈ 1:length(λ)
             # Only consider the spectrum within +/- W microns from the point in question
             wi = Int(fld(W, diff(λ)[min(length(λ)-1, j)]))
-            if d2f[j] < -thresh * nanstd(d2f[max(1, j-wi):min(length(λ), j+wi)])
-                append!(lines, j)
-            end
+            li[j] = d2f[j] < -thresh * nanstd(d2f[max(1, j-wi):min(length(λ), j+wi)])
         end
+        lines = collect(1:length(λ))[li]
         # Mask out everything within the resolution of the second derivative calculations
         for line ∈ lines
             mask[max(1,line-2Δ):min(length(λ),line+2Δ)] .= 1
@@ -1966,9 +1966,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
     # Count free parameters
     n_free_1 = 0
     for p₁ ∈ eachindex(pars_1)
-        if iszero(parinfo_1[p₁].fixed)
-            n_free_1 += 1
-        end
+        n_free_1 += iszero(parinfo_1[p₁].fixed)
     end
 
     @debug """\n
@@ -1991,9 +1989,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
     # Count free parameters
     n_free_2 = 0
     for p₂ ∈ eachindex(pars_2)
-        if iszero(parinfo_2[p₂].fixed)
-            n_free_2 += 1
-        end
+        n_free_2 += iszero(parinfo_2[p₂].fixed)
     end
 
     # Get combined best fit results
@@ -2530,9 +2526,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     # Count free parameters
     n_free = 0
     for pᵢ ∈ eachindex(popt)
-        if iszero(parinfo[pᵢ].fixed)
-            n_free += 1
-        end
+        n_free += iszero(parinfo[pᵢ].fixed)
     end
 
     ######################################################################################################################
@@ -2873,17 +2867,10 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
         ax2.legend(loc="upper left")
 
         # Set minor ticks as multiples of 0.1 μm for x axis and automatic for y axis
-        # ax1.xaxis.set_major_locator(py_ticker.MultipleLocator(2.))
-        # ax1.xaxis.set_minor_locator(py_ticker.MultipleLocator(0.5))
         ax1.xaxis.set_minor_locator(py_ticker.AutoMinorLocator())
         ax1.yaxis.set_minor_locator(py_ticker.AutoMinorLocator())
-        # ax2.xaxis.set_major_locator(py_ticker.MultipleLocator(2.))
-        # ax2.xaxis.set_minor_locator(py_ticker.MultipleLocator(0.5))
         ax2.xaxis.set_minor_locator(py_ticker.AutoMinorLocator())
         ax2.yaxis.set_minor_locator(py_ticker.AutoMinorLocator())
-        # ax3.yaxis.set_minor_locator(py_ticker.MultipleLocator(0.1))
-        # ax4.xaxis.set_major_locator(py_ticker.MultipleLocator(2.))
-        # ax4.xaxis.set_minor_locator(py_ticker.MultipleLocator(0.5))
         ax4.xaxis.set_minor_locator(py_ticker.AutoMinorLocator())
 
         # Set major ticks and formats
@@ -3493,7 +3480,8 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
     # Loop over each spaxel and fill in the associated fitting parameters into the ParamMaps and CubeModel
     # I know this is long and ugly and looks stupid but it works for now and I'll make it pretty later
     prog = Progress(length(spaxels); showspeed=true)
-    @inbounds for index ∈ spaxels
+    @inbounds @simd for index ∈ spaxels
+
         # Set the 2D parameter map outputs
 
         # Conversion factor from MJy sr^-1 to erg s^-1 cm^-2 Hz^-1 sr^-1 = 10^6 * 10^-23 = 10^-17
