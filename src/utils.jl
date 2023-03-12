@@ -727,17 +727,17 @@ function fit_spectrum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer, ex
     contin = zeros(Float64, length(λ))
 
     # Stellar blackbody continuum (usually at 5000 K)
-    contin .+= params[1] .* Blackbody_ν.(λ, params[2])
+    @fastmath @inbounds contin .+= params[1] .* Blackbody_ν.(λ, params[2])
     pᵢ = 3
 
     # Add dust continua at various temperatures
-    for i ∈ 1:n_dust_cont
+    @fastmath @inbounds for i ∈ 1:n_dust_cont
         contin .+= params[pᵢ] .* (9.7 ./ λ).^2 .* Blackbody_ν.(λ, params[pᵢ+1])
         pᵢ += 2
     end
 
     # Extinction 
-    if extinction_curve == "d+"
+    @fastmath @inbounds if extinction_curve == "d+"
         ext_curve = τ_dp.(λ, params[pᵢ+3])
     elseif extinction_curve == "kvt"
         ext_curve = τ_kvt.(λ, params[pᵢ+3])
@@ -749,15 +749,17 @@ function fit_spectrum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer, ex
     ext = Extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
 
     # Ice+CH absorption
-    ext_ice = τ_ice.(λ)
-    abs_ice = Extinction.(ext_ice, params[pᵢ+1], screen=true)
-    ext_ch = τ_ch.(λ)
-    abs_ch = Extinction.(ext_ch, params[pᵢ+2], screen=true)
+    @fastmath @inbounds begin
+        ext_ice = τ_ice.(λ)
+        abs_ice = Extinction.(ext_ice, params[pᵢ+1], screen=true)
+        ext_ch = τ_ch.(λ)
+        abs_ch = Extinction.(ext_ch, params[pᵢ+2], screen=true)
+    end
 
-    contin .*= ext .* abs_ice .* abs_ch
+    @fastmath contin .*= ext .* abs_ice .* abs_ch
     pᵢ += 4
 
-    if fit_sil_emission
+    @fastmath @inbounds if fit_sil_emission
         # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
         # Ref: Gallimore et al. 2010
         hot_dust = params[pᵢ] .* Blackbody_ν.(λ, params[pᵢ+1])
@@ -768,12 +770,14 @@ function fit_spectrum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer, ex
     end
 
     # Add Smith+2006 PAH templates
-    pah3 = Smith3_interp.(λ)
-    contin .+= params[pᵢ] .* pah3 / maximum(pah3) .* ext
-    pah4 = Smith4_interp.(λ)
-    contin .+= params[pᵢ+1] .* pah4 / maximum(pah4) .* ext
-    # (Not affected by Ice+CH absorption)
-    pᵢ += 2
+    @fastmath @inbounds begin
+        pah3 = Smith3_interp.(λ)
+        contin .+= params[pᵢ] .* pah3 / maximum(pah3) .* ext
+        pah4 = Smith4_interp.(λ)
+        contin .+= params[pᵢ+1] .* pah4 / maximum(pah4) .* ext
+        # (Not affected by Ice+CH absorption)
+        pᵢ += 2
+    end
 
     contin
 
@@ -829,7 +833,7 @@ function fit_pah_residuals(λ::Vector{T}, params::Vector{T}, n_dust_feat::Intege
 
     # Add dust features with drude profiles
     pᵢ = 1
-    for j ∈ 1:n_dust_feat
+    @fastmath @inbounds for j ∈ 1:n_dust_feat
         contin .+= Drude.(λ, params[pᵢ:pᵢ+2]...)
         pᵢ += 3
     end
@@ -1073,7 +1077,7 @@ function fit_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::Integer, 
     end
 
     # Add emission lines
-    for k ∈ 1:n_lines
+    @fastmath @inbounds for k ∈ 1:n_lines
         # Check if voff is tied: if so, use the tied voff parameter, otherwise, use the line's own voff parameter
         amp = params[pᵢ]
         if isnothing(line_tied[k])

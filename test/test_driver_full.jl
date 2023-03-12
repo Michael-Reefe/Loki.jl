@@ -56,7 +56,7 @@ channel = 0
 
 # Create the cube fitting object
 # plot_range=[(7.61, 7.69), (12.77, 12.85)]
-cube_fitter = CubeFitter(obs.channels[channel], obs.z, τ_guess, obs.name * "_ch$(channel)_full_tied", n_procs; 
+cube_fitter = CubeFitter(obs.channels[channel], obs.z, τ_guess, obs.name * "_ch$(channel)_full_flexible", n_procs; 
     parallel=true, plot_spaxels=:pyplot, plot_maps=true, save_fits=true)
 
 # Perform the Levenberg-Marquardt least-squares fitting

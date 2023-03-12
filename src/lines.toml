@@ -25,18 +25,20 @@ kinematic_group_low = [
     "PIII_",
     "SIII_"
 ]
-kinematic_group_high = [
+kinematic_group_med = [
     "ArV_",
+    "NaIII_",
+    "NeIII_",
+    "OIV_",
+    "SIV_"
+]
+kinematic_group_high = [
     "FeVII_",
     "FeVIII_",
     "MgV_",
     "MgVII_",
-    "NaIII_",
-    "NeIII_",
     "NeV_",
     "NeVI_",
-    "OIV_",
-    "SIV_"
 ]
 
 # Line voff and FWHM limits
@@ -50,8 +52,8 @@ acomp_fwhm_plim = [1.0, 5.0]             # multiplicative factor with the main l
                                          # is allowed to have a FWHM from 1-5x the main component
 
 # Uncertainty in the wavelength solution of the data
-flexible_wavesol = false                  # allow tied voffs to vary slightly based on wavelength solution uncertainty
-wavesol_unc = [50, 50, 50, 50]           # wavelength solution uncertainties in each of the 4 MIRI channels (<30 km/s)
+flexible_wavesol = true                  # allow tied voffs to vary slightly based on wavelength solution uncertainty
+wavesol_unc = [30, 30, 30, 30]           # wavelength solution uncertainties in each of the 4 MIRI channels (<30 km/s)
 
 # [channels]
 # 1 = [4.9, 7.65]

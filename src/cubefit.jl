@@ -30,7 +30,6 @@ using Dierckx
 # Optimization packages
 using Optim
 using CMPFit
-using NLopt
 
 # Astronomy packages
 using FITSIO
@@ -215,7 +214,7 @@ function parse_options()::Dict
     options = TOML.parsefile(joinpath(@__DIR__, "options.toml"))
     options_out = Dict()
     keylist1 = ["extinction_curve", "extinction_screen", "fit_sil_emission", "overwrite", "track_memory", "track_convergence", 
-                "make_movies", "cosmology"]
+                "save_full_model", "make_movies", "cosmology"]
     keylist2 = ["h", "omega_m", "omega_K", "omega_r"]
 
     # Loop through the keys that should be in the file and confirm that they are there
@@ -243,6 +242,8 @@ function parse_options()::Dict
     @debug "Track memory allocations? - $(options["track_memory"])"
     options_out[:track_convergence] = options["track_convergence"]
     @debug "Track SAMIN convergence? - $(options["track_convergence"])"
+    options_out[:save_full_model] = options["save_full_model"]
+    @debug "Save full model? - $(options["save_full_model"])"
     options_out[:make_movies] = options["make_movies"]
     @debug "Make movies? - $(options["make_movies"])"
 
@@ -1230,6 +1231,7 @@ struct CubeFitter{T<:Real,S<:Integer}
     plot_range::Union{Vector{<:Tuple},Nothing}
     parallel::Bool
     save_fits::Bool
+    save_full_model::Bool
     overwrite::Bool
     track_memory::Bool
     track_convergence::Bool
@@ -1507,6 +1509,7 @@ struct CubeFitter{T<:Real,S<:Integer}
         overwrite = options[:overwrite]
         track_memory = options[:track_memory]
         track_convergence = options[:track_convergence]
+        save_full_model = options[:save_full_model]
         make_movies = options[:make_movies]
         cosmo = options[:cosmology]
 
@@ -1532,7 +1535,7 @@ struct CubeFitter{T<:Real,S<:Integer}
         cube_wcs.wcs.pc = cube.wcs.pc[1:2, 1:2]
 
         new{typeof(z), typeof(n_procs)}(cube, z, τ_guess, name, n_procs, plot_spaxels, plot_maps, plot_range, 
-            parallel, save_fits, overwrite, track_memory, track_convergence, make_movies, extinction_curve, extinction_screen, 
+            parallel, save_fits, save_full_model, overwrite, track_memory, track_convergence, make_movies, extinction_curve, extinction_screen, 
             fit_sil_emission, T_s, T_dc, τ_97, τ_ice, τ_ch, β, T_hot, Cf_hot, τ_warm, τ_cold, n_dust_cont, n_dust_features, df_names, 
             dust_features, n_lines, n_acomps, line_names, line_profiles, line_acomp_profiles, lines, n_kin_tied, line_tied, kin_tied_key, 
             voff_tied, fwhm_tied, n_acomp_kin_tied, line_acomp_tied, acomp_kin_tied_key, acomp_voff_tied, acomp_fwhm_tied, tie_voigt_mixing, 
@@ -3489,7 +3492,8 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
 
     # Loop over each spaxel and fill in the associated fitting parameters into the ParamMaps and CubeModel
     # I know this is long and ugly and looks stupid but it works for now and I'll make it pretty later
-    for index ∈ spaxels
+    prog = Progress(length(spaxels); showspeed=true)
+    @inbounds for index ∈ spaxels
         # Set the 2D parameter map outputs
 
         # Conversion factor from MJy sr^-1 to erg s^-1 cm^-2 Hz^-1 sr^-1 = 10^6 * 10^-23 = 10^-17
@@ -3548,9 +3552,11 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
             pᵢ += 3
         end
 
-        # End of continuum parameters: recreate the continuum model
-        I_cont, comps_c = Util.fit_full_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], cube_fitter.n_dust_cont, cube_fitter.n_dust_feat,
-            cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission)
+        if cube_fitter.save_full_model
+            # End of continuum parameters: recreate the continuum model
+            I_cont, comps_c = Util.fit_full_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], cube_fitter.n_dust_cont, cube_fitter.n_dust_feat,
+                cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission)
+        end
 
         # Tied line kinematics
         vᵢ = pᵢ
@@ -3617,8 +3623,8 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
                 voff_err = out_errs[index, pᵢ+1]
                 # If velocity is tied while flexible, add the overall shift and the individual shift together
                 vwhere = findfirst(x -> x == cube_fitter.line_tied[k], cube_fitter.kin_tied_key)
-                voff += out_params[index, vᵢ+vwhere-1]
-                voff_err = √(voff_err^2 + out_errs[index, vᵢ+vwhere-1]^2)
+                # voff += out_params[index, vᵢ+vwhere-1]
+                # voff_err = √(voff_err^2 + out_errs[index, vᵢ+vwhere-1]^2)
                 param_maps.lines[ln][:voff][index] = voff
                 param_errs.lines[ln][:voff][index] = voff_err
 
@@ -3694,24 +3700,26 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
 
         end
 
-        # End of line parameters: recreate the un-extincted (intrinsic) line model
-        I_line, comps_l = Util.fit_line_residuals(cube_fitter.cube.λ, out_params[index, vᵢ:pᵢ-1], cube_fitter.n_lines, cube_fitter.n_kin_tied,
-            cube_fitter.kin_tied_key, cube_fitter.line_tied, cube_fitter.line_profiles, cube_fitter.n_acomp_kin_tied, cube_fitter.acomp_kin_tied_key,
-            cube_fitter.line_acomp_tied, cube_fitter.line_acomp_profiles, [ln.λ₀ for ln ∈ cube_fitter.lines], 
-            cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, comps_c["extinction"], true)
-
-        # Renormalize
         N = Float64(abs(nanmaximum(cube_fitter.cube.Iν[index, :])))
         N = N ≠ 0. ? N : 1.
-        for comp ∈ keys(comps_l)
-            # (dont include extinction correction here since it's already included in the fitted line amplitudes)
-            comps_l[comp] .*= N
+        if cube_fitter.save_full_model
+            # End of line parameters: recreate the un-extincted (intrinsic) line model
+            I_line, comps_l = Util.fit_line_residuals(cube_fitter.cube.λ, out_params[index, vᵢ:pᵢ-1], cube_fitter.n_lines, cube_fitter.n_kin_tied,
+                cube_fitter.kin_tied_key, cube_fitter.line_tied, cube_fitter.line_profiles, cube_fitter.n_acomp_kin_tied, cube_fitter.acomp_kin_tied_key,
+                cube_fitter.line_acomp_tied, cube_fitter.line_acomp_profiles, [ln.λ₀ for ln ∈ cube_fitter.lines], 
+                cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, comps_c["extinction"], true)
+
+            # Renormalize
+            for comp ∈ keys(comps_l)
+                # (dont include extinction correction here since it's already included in the fitted line amplitudes)
+                comps_l[comp] .*= N
+            end
+            I_line .*= N
+            
+            # Combine the continuum and line models, which both have the extinction profile already applied to them 
+            I_model = I_cont .+ I_line
+            comps = merge(comps_c, comps_l)
         end
-        I_line .*= N
-        
-        # Combine the continuum and line models, which both have the extinction profile already applied to them 
-        I_model = I_cont .+ I_line
-        comps = merge(comps_c, comps_l)
 
         # Dust feature intensity, EQW, and SNR, from calculate_extra_parameters
         for df ∈ cube_fitter.df_names
@@ -3759,28 +3767,67 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
         # Reduced χ^2
         param_maps.reduced_χ2[index] = out_params[index, pᵢ]
 
-        # Set 3D model cube outputs
-        cube_model.model[index, :] .= I_model
-        cube_model.stellar[index, :] .= comps["stellar"]
-        for i ∈ 1:cube_fitter.n_dust_cont
-            cube_model.dust_continuum[index, :, i] .= comps["dust_cont_$i"]
+        if cube_fitter.save_full_model
+            # Set 3D model cube outputs
+            cube_model.model[index, :] .= I_model
+            cube_model.stellar[index, :] .= comps["stellar"]
+            for i ∈ 1:cube_fitter.n_dust_cont
+                cube_model.dust_continuum[index, :, i] .= comps["dust_cont_$i"]
+            end
+            for j ∈ 1:cube_fitter.n_dust_feat
+                cube_model.dust_features[index, :, j] .= comps["dust_feat_$j"]
+            end
+            if cube_fitter.fit_sil_emission
+                cube_model.hot_dust[index, :] .= comps["hot_dust"]
+            end
+            for k ∈ 1:cube_fitter.n_lines
+                cube_model.lines[index, :, k] .= comps["line_$k"]
+                if haskey(comps, "line_$(k)_acomp")
+                    cube_model.lines[index, :, k] .+= comps["line_$(k)_acomp"]
+                end
+            end
+            cube_model.extinction[index, :] .= comps["extinction"]
+            cube_model.abs_ice[index, :] .= comps["abs_ice"]
+            cube_model.abs_ch[index, :] .= comps["abs_ch"]
         end
-        for j ∈ 1:cube_fitter.n_dust_feat
-            cube_model.dust_features[index, :, j] .= comps["dust_feat_$j"]
-        end
-        if cube_fitter.fit_sil_emission
-            cube_model.hot_dust[index, :] .= comps["hot_dust"]
-        end
-        for k ∈ 1:cube_fitter.n_lines
-            cube_model.lines[index, :, k] .= comps["line_$k"]
-            if haskey(comps, "line_$(k)_acomp")
-                cube_model.lines[index, :, k] .+= comps["line_$(k)_acomp"]
+
+        next!(prog)
+
+    end
+
+    # Subtract the average of the individual voffs from the tied voffs, based on the SNR, for each group
+    if cube_fitter.flexible_wavesol
+        @debug "Adjusting individual voffs due to the flexible_wavesol option"
+        for vk ∈ cube_fitter.kin_tied_key
+            indiv_voffs = nothing
+            snrs = nothing
+            # Loop through and create 3D arrays of the voffs and SNRs of each line in the tied kinematic group
+            for (name, ln) ∈ zip(cube_fitter.line_names, cube_fitter.lines)
+                if ln.tied == vk
+                    if isnothing(indiv_voffs)
+                        indiv_voffs = param_maps.lines[name][:voff]
+                        snrs = param_maps.lines[name][:SNR]
+                        continue
+                    end
+                    indiv_voffs = cat(indiv_voffs, param_maps.lines[name][:voff], dims=3)
+                    snrs = cat(snrs, param_maps.lines[name][:SNR], dims=3)
+                end
+            end
+            # Collapse the voff array into an average along the 3rd dimension, ignoring any with an SNR < 3
+            if !isnothing(indiv_voffs) && !isnothing(snrs)
+                indiv_voffs[snrs .< 3] .= NaN
+                avg_offset = dropdims(nanmean(indiv_voffs, dims=3), dims=3)
+                # Subtract the average offset from the individual voffs
+                # (the goal is to have the average offset of the individual voffs be 0, relative to the tied voff)
+                for (name, ln) ∈ zip(cube_fitter.line_names, cube_fitter.lines)
+                    if ln.tied == vk
+                        param_maps.lines[name][:voff] .-= avg_offset
+                    end
+                end
+                # and add it to the tied voff
+                param_maps.tied_voffs[vk] .+= avg_offset
             end
         end
-        cube_model.extinction[index, :] .= comps["extinction"]
-        cube_model.abs_ice[index, :] .= comps["abs_ice"]
-        cube_model.abs_ch[index, :] .= comps["abs_ch"]
-
     end
 
     if cube_fitter.plot_maps
@@ -3895,13 +3942,16 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
     if occursin("eqw", String(name_i))
         filtered[filtered .> 100] .= NaN
     end
+    if occursin("voff", String(name_i))
+        # Perform a 5-sigma clip to remove outliers
+        f_avg = nanmean(filtered)
+        f_std = nanstd(filtered)
+        filtered[abs.(filtered .- f_avg) .> 5f_std] .= NaN
+    end
 
     fig = plt.figure()
     ax = fig.add_subplot(111, projection=python_wcs)
     # Need to filter out any NaNs in order to use quantile
-    # flatdata = filtered[isfinite.(filtered)]
-    # vmin = length(flatdata) > 0 ? quantile(flatdata, 0.01) : 0.0
-    # vmax = length(flatdata) > 0 ? quantile(flatdata, 0.99) : 0.0
     vmin = nanminimum(filtered)
     vmax = nanmaximum(filtered)
     # override vmin/vmax for mixing parameter
@@ -4269,56 +4319,58 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
         "linear transformation matrix element", "linear transformation matrix element", "linear transformation matrix element"]
     )
 
-    # Create the 3D intensity model FITS file
-    FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_3D_model.fits"), "w") do f
+    if cube_fitter.save_full_model
+        # Create the 3D intensity model FITS file
+        FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_3D_model.fits"), "w") do f
 
-        @debug "Writing 3D model FITS HDUs"
+            @debug "Writing 3D model FITS HDUs"
 
-        write(f, Vector{Int}())                                                                     # Primary HDU (empty)
-        write(f, cube_fitter.cube.Iν; header=hdr, name="DATA")                                      # Raw data with nans inserted
-        write(f, cube_model.model; header=hdr, name="MODEL")                                        # Full intensity model
-        write(f, cube_fitter.cube.Iν .- cube_model.model; header=hdr, name="RESIDUALS")             # Residuals (data - model)
-        write(f, cube_model.stellar; header=hdr, name="STELLAR_CONTINUUM")                          # Stellar continuum model
-        for i ∈ 1:size(cube_model.dust_continuum, 4)
-            write(f, cube_model.dust_continuum[:, :, :, i]; header=hdr, name="DUST_CONTINUUM_$i")   # Dust continuum models
-        end
-        for (j, df) ∈ enumerate(cube_fitter.df_names)
-            write(f, cube_model.dust_features[:, :, :, j]; header=hdr, name="$df")                  # Dust feature profiles
-        end
-        for (k, line) ∈ enumerate(cube_fitter.line_names)
-            write(f, cube_model.lines[:, :, :, k]; header=hdr, name="$line")                        # Emission line profiles
-        end
-        write(f, cube_model.extinction; header=hdr, name="EXTINCTION")                              # Extinction model
-        write(f, cube_model.abs_ice; header=hdr, name="ABS_ICE")                                    # Ice Absorption model
-        write(f, cube_model.abs_ch; header=hdr, name="ABS_CH")                                      # CH Absorption model
-        if cube_fitter.fit_sil_emission
-            write(f, cube_model.hot_dust; header=hdr, name="HOT_DUST")                              # Hot dust model
-        end
-        
-        write(f, ["wave_rest", "wave_obs"],                                                                     # 1D Rest frame and observed frame
-                 [cube_fitter.cube.λ, Util.observed_frame(cube_fitter.cube.λ, cube_fitter.z)],                  # wavelength vectors
-              hdutype=TableHDU, name="WAVELENGTH", units=Dict(:wave_rest => "um", :wave_obs => "um"))
+            write(f, Vector{Int}())                                                                     # Primary HDU (empty)
+            write(f, cube_fitter.cube.Iν; header=hdr, name="DATA")                                      # Raw data with nans inserted
+            write(f, cube_model.model; header=hdr, name="MODEL")                                        # Full intensity model
+            write(f, cube_fitter.cube.Iν .- cube_model.model; header=hdr, name="RESIDUALS")             # Residuals (data - model)
+            write(f, cube_model.stellar; header=hdr, name="STELLAR_CONTINUUM")                          # Stellar continuum model
+            for i ∈ 1:size(cube_model.dust_continuum, 4)
+                write(f, cube_model.dust_continuum[:, :, :, i]; header=hdr, name="DUST_CONTINUUM_$i")   # Dust continuum models
+            end
+            for (j, df) ∈ enumerate(cube_fitter.df_names)
+                write(f, cube_model.dust_features[:, :, :, j]; header=hdr, name="$df")                  # Dust feature profiles
+            end
+            for (k, line) ∈ enumerate(cube_fitter.line_names)
+                write(f, cube_model.lines[:, :, :, k]; header=hdr, name="$line")                        # Emission line profiles
+            end
+            write(f, cube_model.extinction; header=hdr, name="EXTINCTION")                              # Extinction model
+            write(f, cube_model.abs_ice; header=hdr, name="ABS_ICE")                                    # Ice Absorption model
+            write(f, cube_model.abs_ch; header=hdr, name="ABS_CH")                                      # CH Absorption model
+            if cube_fitter.fit_sil_emission
+                write(f, cube_model.hot_dust; header=hdr, name="HOT_DUST")                              # Hot dust model
+            end
+            
+            write(f, ["wave_rest", "wave_obs"],                                                                     # 1D Rest frame and observed frame
+                    [cube_fitter.cube.λ, Util.observed_frame(cube_fitter.cube.λ, cube_fitter.z)],                  # wavelength vectors
+                hdutype=TableHDU, name="WAVELENGTH", units=Dict(:wave_rest => "um", :wave_obs => "um"))
 
-        # Insert physical units into the headers of each HDU -> MegaJansky per steradian for all except
-        # the extinction profile, which is a multiplicative constant
-        write_key(f["DATA"], "BUNIT", "MJy/sr")
-        write_key(f["MODEL"], "BUNIT", "MJy/sr")
-        write_key(f["RESIDUALS"], "BUNIT", "MJy/sr")
-        write_key(f["STELLAR_CONTINUUM"], "BUNIT", "MJy/sr")
-        for i ∈ 1:size(cube_model.dust_continuum, 4)
-            write_key(f["DUST_CONTINUUM_$i"], "BUNIT", "MJy/sr")
-        end
-        for df ∈ cube_fitter.df_names
-            write_key(f["$df"], "BUNIT", "MJy/sr")
-        end
-        for line ∈ cube_fitter.line_names
-            write_key(f["$line"], "BUNIT", "MJy/sr")
-        end
-        write_key(f["EXTINCTION"], "BUNIT", "unitless")
-        write_key(f["ABS_ICE"], "BUNIT", "unitless")
-        write_key(f["ABS_CH"], "BUNIT", "unitless")
-        if cube_fitter.fit_sil_emission
-            write_key(f["HOT_DUST"], "BUNIT", "MJy/sr")
+            # Insert physical units into the headers of each HDU -> MegaJansky per steradian for all except
+            # the extinction profile, which is a multiplicative constant
+            write_key(f["DATA"], "BUNIT", "MJy/sr")
+            write_key(f["MODEL"], "BUNIT", "MJy/sr")
+            write_key(f["RESIDUALS"], "BUNIT", "MJy/sr")
+            write_key(f["STELLAR_CONTINUUM"], "BUNIT", "MJy/sr")
+            for i ∈ 1:size(cube_model.dust_continuum, 4)
+                write_key(f["DUST_CONTINUUM_$i"], "BUNIT", "MJy/sr")
+            end
+            for df ∈ cube_fitter.df_names
+                write_key(f["$df"], "BUNIT", "MJy/sr")
+            end
+            for line ∈ cube_fitter.line_names
+                write_key(f["$line"], "BUNIT", "MJy/sr")
+            end
+            write_key(f["EXTINCTION"], "BUNIT", "unitless")
+            write_key(f["ABS_ICE"], "BUNIT", "unitless")
+            write_key(f["ABS_CH"], "BUNIT", "unitless")
+            if cube_fitter.fit_sil_emission
+                write_key(f["HOT_DUST"], "BUNIT", "MJy/sr")
+            end
         end
     end
 

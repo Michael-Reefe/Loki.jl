@@ -24,6 +24,12 @@ track_convergence = true
 # These are not necessarily scientifically useful, but they're pretty to watch.
 make_movies = false
 
+# save_full_model: Whether or not to save the full model of each spaxel in IFU cube
+# format. If false, the model parameters will still be saved (the model can be
+# easily reconstructed by simply rerunning the code with this option enabled, as the
+# fitting data for each spaxel will already be saved)
+save_full_model = false
+
 # extinction_curve: May be "kvt" for the Kemper, Vriend, & Tielens (2004) 
 # extinction profile, "ct" for the Chiar & Tielens (2005) extinction profile,
 # or "d+" for the Donnan et al. (2022) extinction profile.
