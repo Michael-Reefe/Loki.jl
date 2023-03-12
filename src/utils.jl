@@ -27,7 +27,7 @@ const kB_ERGK::Float64 = 1.380649e-16      # Boltzmann constant in erg/K
 
 # First constant for Planck function, in MJy/sr/μm:
 # 2hν^3/c^2 = 2h(c/λ)^3/c^2 = (2h/c^2 erg/s/cm^2/Hz/sr) * (1e23 Jy per erg/s/cm^2/Hz) / (1e6 MJy/Jy) * (c * 1e9 μm/km)^3 / (λ μm)^3
-const Bν_1::Float64 = 2h_ERGS/(C_KMS*1e5)^2 * 1e23 / 1e6 * (C_KMS * 1e9)^3
+const Bν_1::Float64 = 2h_ERGS/(C_KMS*1e5)^2 * 1e23 / 1e6 * (C_KMS*1e9)^3
 
 # Second constant for Planck function, in μm*K  
 # hν/kT = hc/λkT = (hc/k cm*K) * (1e4 μm/cm) / (λ μm)
@@ -729,7 +729,7 @@ end
 function fit_spectrum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer, extinction_curve::String, 
     extinction_screen::Bool, fit_sil_emission::Bool) where {T<:Real}
 
-    @fastmath @inbounds begin
+    @inbounds begin
 
     # Prepare outputs
     contin = zeros(Float64, length(λ))
@@ -834,7 +834,7 @@ end
 function fit_pah_residuals(λ::Vector{T}, params::Vector{T}, n_dust_feat::Integer,
     ext_curve::Vector{T}) where {T<:Real}
 
-    @fastmath @inbounds begin
+    @inbounds begin
 
     # Prepare outputs
     contin = zeros(Float64, length(λ))
@@ -1075,7 +1075,7 @@ function fit_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::Integer, 
     line_acomp_profiles::Vector{Union{Symbol,Nothing}}, line_restwave::Vector{T}, 
     flexible_wavesol::Bool, tie_voigt_mixing::Bool, ext_curve::Vector{T}) where {T<:Real}
 
-    @fastmath @inbounds begin
+    @inbounds begin
 
     # Prepare outputs
     contin = zeros(Float64, length(λ))

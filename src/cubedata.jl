@@ -801,6 +801,9 @@ function cube_combine!(obs::Observation, channels::Union{Vector{S},Nothing}=noth
         ch_σI[.!isfinite.(ch_σI)] .= 0.
         shape_in = size(ch_Iν)
 
+        # Heaviside step function
+        @inline θ(x) = 0.5 * (sign(x) + 1)
+
         prog = Progress(wi_size, dt=0.01, showspeed=true)
         for wi ∈ 1:wi_size
             # 2D Cubic spline interpolations at each wavelength bin with flat boundary conditions
@@ -817,9 +820,9 @@ function cube_combine!(obs::Observation, channels::Union{Vector{S},Nothing}=noth
                 @simd for yᵣ ∈ 1:shape_ref[2]
                     xᵢ, yᵢ = pix_transform(xᵣ, yᵣ)
                     # Fill with zeros for any points outside the boundaries of the input data
-                    oob = (xᵢ > shape_in[1]) || (xᵢ < 1) || (yᵢ > shape_in[2]) || (yᵢ < 1)
-                    I_out[xᵣ, yᵣ, cumsum+wi] = oob ? 0. : interp_func_I(xᵢ, yᵢ)
-                    σ_out[xᵣ, yᵣ, cumsum+wi] = oob ? 0. : interp_func_σ(xᵢ, yᵢ)
+                    inb = θ(shape_in[1] - xᵢ) * θ(xᵢ - 1) * θ(shape_in[2] - yᵢ) * θ(yᵢ - 1)
+                    I_out[xᵣ, yᵣ, cumsum+wi] = inb * interp_func_I(xᵢ, yᵢ)
+                    σ_out[xᵣ, yᵣ, cumsum+wi] = inb * interp_func_σ(xᵢ, yᵢ)
                 end
             end
             # Iterate the progress bar
@@ -857,13 +860,10 @@ function cube_combine!(obs::Observation, channels::Union{Vector{S},Nothing}=noth
     mask_out = falses(size(I_out))
     # 1e-3 from empirically testing what works well
     atol = median(I_out[I_out .> 0]) * 1e-3
-    # @fastmath @inbounds for (i, j) ∈ collect(Iterators.product(1:shape_ref[1], 1:shape_ref[2]))
-    @fastmath @inbounds @simd for i ∈ 1:shape_ref[1]
-        @simd for j ∈ 1:shape_ref[2]
-            # Has to have  significant number close to 0 to make sure that an entire channel has been cut out
-            # (as opposed to single-pixel noise dips)
-            mask_out[i, j, :] .= sum(isapprox.(I_out[i, j, :], 0.; atol=atol)) > 100
-        end
+    @inbounds for (i, j) ∈ collect(Iterators.product(1:shape_ref[1], 1:shape_ref[2]))
+        # Has to have  significant number close to 0 to make sure that an entire channel has been cut out
+        # (as opposed to single-pixel noise dips)
+        mask_out[i, j, :] .= sum(isapprox.(I_out[i, j, :], 0.; atol=atol)) > 100
     end
 
     if obs.masked

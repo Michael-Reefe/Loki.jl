@@ -1611,7 +1611,7 @@ function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}; Δ::Integer=
 
     # Calculate numerical second derivative
     d2f = zeros(length(λ))
-    for i ∈ 1:length(λ)
+    @inbounds @simd for i ∈ 1:length(λ)
         d2f[i] = (I[min(length(λ), i+Δ)] - 2I[i] + I[max(1, i-Δ)]) / h^2
     end
     d2f_i = copy(d2f)
@@ -1621,14 +1621,14 @@ function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}; Δ::Integer=
     function iter_mask(d2f, lines, mask)
         # Sigma-clip to find the lines based on the *local* noise level
         li = falses(length(λ))
-        for j ∈ 1:length(λ)
+        @inbounds @simd for j ∈ 1:length(λ)
             # Only consider the spectrum within +/- W microns from the point in question
             wi = Int(fld(W, diff(λ)[min(length(λ)-1, j)]))
             li[j] = d2f[j] < -thresh * nanstd(d2f[max(1, j-wi):min(length(λ), j+wi)])
         end
         lines = collect(1:length(λ))[li]
         # Mask out everything within the resolution of the second derivative calculations
-        for line ∈ lines
+        @inbounds for line ∈ lines
             mask[max(1,line-2Δ):min(length(λ),line+2Δ)] .= 1
         end
         lines, mask
@@ -3480,7 +3480,7 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
     # Loop over each spaxel and fill in the associated fitting parameters into the ParamMaps and CubeModel
     # I know this is long and ugly and looks stupid but it works for now and I'll make it pretty later
     prog = Progress(length(spaxels); showspeed=true)
-    @inbounds @simd for index ∈ spaxels
+    @inbounds for index ∈ spaxels
 
         # Set the 2D parameter map outputs
 
