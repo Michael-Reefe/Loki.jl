@@ -1,5 +1,10 @@
 # options.toml: This file contains general options for the code
 
+# subtract_cubic: This controls how the continuum will be subtracted during the
+# line fitting step. If true, a cubic spline fit to the continuum will be subtracted.
+# Otherwise, the actual fit to the continuum will be subtracted.
+subtract_cubic = true
+
 # overwrite: This controls what to do in case the fit for a certain spaxel
 # has already been performed / saved.  If true, the fit will be performed again
 # and the old one will be overwritten.  Otherwise, it won't.

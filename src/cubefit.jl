@@ -64,7 +64,6 @@ const plt::PyObject = PyNULL()
 const py_anchored_artists::PyObject = PyNULL()
 const py_ticker::PyObject = PyNULL()
 const py_animation::PyObject = PyNULL()
-const py_wcs::PyObject = PyNULL()
 
 # Some constants for setting matplotlib font sizes
 const SMALL::UInt8 = 12
@@ -83,8 +82,6 @@ function __init__()
     copy!(py_ticker, pyimport_conda("matplotlib.ticker", "matplotlib"))
     # animation --> used for making mp4 movie files (optional)
     copy!(py_animation, pyimport_conda("matplotlib.animation", "matplotlib"))
-    # Import astropy's WCS module to work with matplotlib
-    copy!(py_wcs, pyimport_conda("astropy.wcs", "astropy"))
 
     # Matplotlib settings to make plots look pretty :)
     plt.switch_backend("Agg")                  # agg backend just saves to file, no GUI display
@@ -213,20 +210,16 @@ function parse_options()::Dict
     # Read in the options file
     options = TOML.parsefile(joinpath(@__DIR__, "options.toml"))
     options_out = Dict()
-    keylist1 = ["extinction_curve", "extinction_screen", "fit_sil_emission", "overwrite", "track_memory", "track_convergence", 
-                "save_full_model", "make_movies", "cosmology"]
+    keylist1 = ["extinction_curve", "extinction_screen", "fit_sil_emission", "subtract_cubic", 
+                "overwrite", "track_memory", "track_convergence", "save_full_model", "make_movies", "cosmology"]
     keylist2 = ["h", "omega_m", "omega_K", "omega_r"]
 
     # Loop through the keys that should be in the file and confirm that they are there
     for key ∈ keylist1 
-        if !(key ∈ keys(options))
-            error("Missing option $key in options file!")
-        end
+        @assert key ∈ keys(options) "Missing option $key in options file!"
     end
     for key ∈ keylist2
-        if !(key ∈ keys(options["cosmology"]))
-            error("Missing option $key in cosmology options!")
-        end
+        @assert key ∈ keys(options["cosmology"]) "Missing option $key in cosmology options!"
     end
     
     # Set the keys in the options file to our output dictionary
@@ -236,6 +229,8 @@ function parse_options()::Dict
     @debug "Extinction screening? - $(options["extinction_screen"])"
     options_out[:fit_sil_emission] = options["fit_sil_emission"]
     @debug "Fit Silicate Emission? - $(options["fit_sil_emission"])"
+    options_out[:subtract_cubic] = options["subtract_cubic"]
+    @debug "Subtract cubic spline? - $(options["subtract_cubic"])"
     options_out[:overwrite] = options["overwrite"]
     @debug "Overwrite old fits? - $(options["overwrite"])"
     options_out[:track_memory] = options["track_memory"]
@@ -290,50 +285,26 @@ function parse_dust(τ_guess::Real)::Dict
 
     # Loop through all of the required keys that should be in the file and confirm that they are there
     for key ∈ keylist1
-        if !(key ∈ keys(dust))
-            error("Missing option $key in dust file!")
-        end
+        @assert haskey(dust, key) "Missing option $key in dust file!"
     end
     for key ∈ keylist5
-        if !(key ∈ keys(dust["stellar_continuum_temp"]))
-            error("Missing option $key in stellar continuum temp options!")
-        end
+        @assert haskey(dust["stellar_continuum_temp"], key) "Missing option $key in stellar continuum temp options!"
         for dc ∈ dust["dust_continuum_temps"]
-            if !(key ∈ keys(dc))
-                error("Missing option $key in dust continuum temp options!")
-            end
+            @assert haskey(dc, key) "Missing option $key in dust continuum temp options!"
         end
         for df_key ∈ keys(dust["dust_features"])
             for df_key2 ∈ keylist2
-                if !(df_key2 ∈ keys(dust["dust_features"][df_key]))
-                    error("Missing option $df_key2 in dust feature $df_key options!")
-                end
-                if !(key ∈ keys(dust["dust_features"][df_key][df_key2]))
-                    error("Missing option $key in dust features $df_key, $df_key2 options!")
-                end
+                @assert haskey(dust["dust_features"][df_key], df_key2) "Missing option $df_key2 in dust feature $df_key options!"
+                @assert haskey(dust["dust_features"][df_key][df_key2], key) "Missing option $key in dust features $df_key, $df_key2 options!"
             end
         end
         for ex_key ∈ keylist3
-            if !(ex_key ∈ keys(dust["extinction"]))
-                error("Missing option $ex_key in extinction options!")
-            end
-            if !(key ∈ keys(dust["extinction"][ex_key]))
-                if (ex_key == "tau_9_7") && (key == "val")
-                    continue
-                end
-                error("Missing option $key in $ex_key options!")
-            end
+            @assert haskey(dust["extinction"], ex_key) "Missing option $ex_key in extinction options!"
+            @assert haskey(dust["extinction"][ex_key], key) || ((ex_key == "tau_9_7") && (key == "val")) "Missing option $key in $ex_key options!"
         end
         for hd_key ∈ keylist4
-            if !(hd_key ∈ keys(dust["hot_dust"]))
-                error("Missing option $hd_key in hot dust options!")
-            end
-            if !(key ∈ keys(dust["hot_dust"][hd_key]))
-                if (hd_key ∈ ("tau_warm", "tau_cold")) && (key == "val")
-                    continue
-                end
-                error("Missing option $key in $hd_key options!")
-            end
+            @assert haskey(dust["hot_dust"], hd_key) "Missing option $hd_key in hot dust options!"
+            @assert haskey(dust["hot_dust"][hd_key], key) || ((hd_key ∈ ("tau_warm", "tau_cold")) && (key == "val")) "Missing option $key in $hd_key options!"
         end
     end
 
@@ -426,13 +397,9 @@ function parse_lines(channel::Integer, interp_R::Function, λ::Vector{<:Real})
 
     # Loop through all the required keys that should be in the file and confirm that they are there
     for key ∈ keylist1
-        if !haskey(lines, key)
-            error("$key not found in line options!")
-        end
+        @assert haskey(lines, key) "$key not found in line options!"
     end
-    if !haskey(lines["profiles"], "default")
-        error("default not found in line profile options!")
-    end
+    @assert haskey(lines["profiles"], "default") "default not found in line profile options!"
     profiles = Dict(ln => lines["profiles"]["default"] for ln ∈ keys(lines["lines"]))
     if haskey(lines, "profiles")
         for line ∈ keys(lines["lines"])
@@ -578,10 +545,8 @@ function parse_lines(channel::Integer, interp_R::Function, λ::Vector{<:Real})
                 =#
                 if occursin(groupmember, line)
                     # Make sure line is not already a member of another group
-                    if !isnothing(tied)
-                        error("Line $line is already part of the kinematic group $tied, but it also passed filtering criteria"
-                            * "to be included in the group $group. Make sure your filters are not too lenient!")
-                    end
+                    @assert isnothing(tied) "Line $line is already part of the kinematic group $tied, but it also passed filtering criteria" * 
+                        "to be included in the group $group. Make sure your filters are not too lenient!"
                     @debug "Tying kinematics for $line to the group: $group"
                     # Use the group label (which can be anything you want) to categorize what lines are tied together
                     tied = group
@@ -1232,6 +1197,7 @@ struct CubeFitter{T<:Real,S<:Integer}
     parallel::Bool
     save_fits::Bool
     save_full_model::Bool
+    subtract_cubic::Bool
     overwrite::Bool
     track_memory::Bool
     track_convergence::Bool
@@ -1294,10 +1260,6 @@ struct CubeFitter{T<:Real,S<:Integer}
 
     p_init_cont::Vector{T}
     p_init_line::Vector{T}
-
-    # Store the astropy version of the 2D WCS transformation object,
-    # for nice plotting with matplotlib
-    python_wcs::PyObject
 
     #= Constructor function --> the inputs taken map directly to fields in the CubeFitter object,
     the rest of the fields are generated in the function from these inputs =#
@@ -1369,9 +1331,7 @@ struct CubeFitter{T<:Real,S<:Integer}
             parse_lines(parse(Int, cube.channel), interp_R, λ)
 
         # Check that number of processes doesn't exceed first dimension, so the rolling best fit can work as intended
-        if n_procs > shape[1]
-            error("Number of processes ($n_procs) must be ≤ the size of the first cube dimension ($(shape[1]))!")
-        end
+        @assert n_procs ≤ shape[1] "Number of processes ($n_procs) must be ≤ the size of the first cube dimension ($(shape[1]))!"
 
         # Get dust options from the dictionary
         T_s = dust[:stellar_continuum_temp]
@@ -1506,6 +1466,7 @@ struct CubeFitter{T<:Real,S<:Integer}
         extinction_curve = options[:extinction_curve]
         extinction_screen = options[:extinction_screen]
         fit_sil_emission = options[:fit_sil_emission]
+        subtract_cubic = options[:subtract_cubic]
         overwrite = options[:overwrite]
         track_memory = options[:track_memory]
         track_convergence = options[:track_convergence]
@@ -1525,22 +1486,13 @@ struct CubeFitter{T<:Real,S<:Integer}
             p_init_line = readdlm(joinpath("output_$name", "spaxel_binaries", "init_fit_line.csv"), ',', Float64, '\n')[:, 1]
         end
 
-        # Get WCS transformation as a python object
-        cube_wcs = py_wcs.WCS(naxis=2)
-        cube_wcs.wcs.cdelt = cube.wcs.cdelt[1:2]
-        cube_wcs.wcs.ctype = cube.wcs.ctype[1:2]
-        cube_wcs.wcs.crpix = cube.wcs.crpix[1:2]
-        cube_wcs.wcs.crval = cube.wcs.crval[1:2]
-        cube_wcs.wcs.cunit = cube.wcs.cunit[1:2]
-        cube_wcs.wcs.pc = cube.wcs.pc[1:2, 1:2]
-
-        new{typeof(z), typeof(n_procs)}(cube, z, τ_guess, name, n_procs, plot_spaxels, plot_maps, plot_range, 
-            parallel, save_fits, save_full_model, overwrite, track_memory, track_convergence, make_movies, extinction_curve, extinction_screen, 
-            fit_sil_emission, T_s, T_dc, τ_97, τ_ice, τ_ch, β, T_hot, Cf_hot, τ_warm, τ_cold, n_dust_cont, n_dust_features, df_names, 
-            dust_features, n_lines, n_acomps, line_names, line_profiles, line_acomp_profiles, lines, n_kin_tied, line_tied, kin_tied_key, 
-            voff_tied, fwhm_tied, n_acomp_kin_tied, line_acomp_tied, acomp_kin_tied_key, acomp_voff_tied, acomp_fwhm_tied, tie_voigt_mixing, 
-            voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, cosmo, interp_R, flexible_wavesol, p_init_cont, p_init_line, 
-            cube_wcs)
+        new{typeof(z), typeof(n_procs)}(cube, z, τ_guess, name, n_procs, plot_spaxels, plot_maps, plot_range, parallel, 
+            save_fits, save_full_model, subtract_cubic, overwrite, track_memory, track_convergence, make_movies, extinction_curve, 
+            extinction_screen, fit_sil_emission, T_s, T_dc, τ_97, τ_ice, τ_ch, β, T_hot, Cf_hot, τ_warm, τ_cold, n_dust_cont, 
+            n_dust_features, df_names, dust_features, n_lines, n_acomps, line_names, line_profiles, line_acomp_profiles, lines, 
+            n_kin_tied, line_tied, kin_tied_key, voff_tied, fwhm_tied, n_acomp_kin_tied, line_acomp_tied, acomp_kin_tied_key, 
+            acomp_voff_tied, acomp_fwhm_tied, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, cosmo, 
+            interp_R, flexible_wavesol, p_init_cont, p_init_line)
     end
 
 end
@@ -1606,49 +1558,48 @@ See also [`continuum_cubic_spline`](@ref)
 function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}; Δ::Integer=3, W::Real=0.5, 
     thresh::Real=3., n_iter::Integer=1)
 
+    diffs = diff(λ)
     # Numerical derivative width in microns
-    h = Δ * median(diff(λ))
+    h = Δ * median(diffs)
 
-    # Calculate numerical second derivative
+    # Calculate numerical first and second derivatives
+    df = zeros(length(λ))
+    @inbounds @simd for i ∈ 1:length(λ)
+        df[i] = (I[min(length(λ), i+fld(Δ, 2))] - I[max(1, i-fld(Δ, 2))]) / h
+    end
     d2f = zeros(length(λ))
     @inbounds @simd for i ∈ 1:length(λ)
         d2f[i] = (I[min(length(λ), i+Δ)] - 2I[i] + I[max(1, i-Δ)]) / h^2
     end
     d2f_i = copy(d2f)
-    lines = Vector{Int64}()
     mask = falses(length(λ))
 
-    function iter_mask(d2f, lines, mask)
-        # Sigma-clip to find the lines based on the *local* noise level
-        li = falses(length(λ))
-        @inbounds @simd for j ∈ 1:length(λ)
-            # Only consider the spectrum within +/- W microns from the point in question
-            wi = Int(fld(W, diff(λ)[min(length(λ)-1, j)]))
-            li[j] = d2f[j] < -thresh * nanstd(d2f[max(1, j-wi):min(length(λ), j+wi)])
-        end
-        lines = collect(1:length(λ))[li]
-        # Mask out everything within the resolution of the second derivative calculations
-        @inbounds for line ∈ lines
-            mask[max(1,line-2Δ):min(length(λ),line+2Δ)] .= 1
-        end
-        lines, mask
-    end
+    # Sigma-clip to find the lines based on the *local* noise level
+    li = falses(length(λ))
+    @inbounds @simd for j ∈ 1:length(λ)
+        # Only consider the spectrum within +/- W microns from the point in question
+        wi = Int(W ÷ diffs[min(length(λ)-1, j)])
+        wl = Int(0.1 ÷ diffs[min(length(λ)-1, j)])
+        if d2f[j] < -thresh * nanstd(d2f[max(1, j-wi):min(length(λ), j+wi)])
 
-    # Use an iterative approach to repeat the process on the masked spectrum
-    # -> this can help if, for example, you have two significant lines very close to each other,
-    #    but one of them is much brighter and dominates the local stdev, which causes the fainter
-    #    line to be missed by the first iteration
-    # -> this is OFF by default (1 iteration)
-    for k ∈ 1:n_iter
-        lines, mask = iter_mask(d2f_i, lines, mask)
-        d2f_i[mask] .= 0
+            # Count how many pixels are above the local RMS level
+            slope = (I[min(length(λ), j+wl)] - I[max(1, j-wl)]) / (λ[min(length(λ), j+wl)] - λ[max(1, j-wl)])
+            cont_lin = x -> I[max(1, j-wl)] .+ slope .* (x .- λ[max(1, j-wl)])
+            s_noline = [I[max(1, j-wl):max(1, j-fld(wl, 2))]; I[min(length(λ), j+fld(wl, 2)):min(length(λ), j+wl)]]
+            rms = nanstd(s_noline .- cont_lin.([λ[max(1, j-wl):max(1, j-fld(wl, 2))]; λ[min(length(λ), j+fld(wl, 2)):min(length(λ), j+wl)]]))
+            
+            n_pix = length(findall((I[max(1, j-wl):min(length(λ), j+wl)] .- cont_lin.(λ[max(1, j-wl):min(length(λ), j+wl)])) .> 3*rms))
+
+            # Mask out half this many pixels to the left and right
+            mask[j-n_pix:j+n_pix] .= 1
+        end
     end
 
     # Don't mask out this region that tends to trick this method sometimes
     mask[11.175 .< λ .< 11.355] .= 0
 
     # Return the line locations and the mask
-    lines, mask
+    mask
 
 end
 
@@ -1674,7 +1625,7 @@ function continuum_cubic_spline(λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vecto
     σ_out = copy(σ)
 
     # Mask out emission lines so that they aren't included in the continuum fit
-    lines, mask_lines = mask_emission_lines(λ, I)
+    mask_lines = mask_emission_lines(λ, I)
     I_out[mask_lines] .= NaN
     σ_out[mask_lines] .= NaN 
 
@@ -1690,11 +1641,14 @@ function continuum_cubic_spline(λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vecto
     λknots = λ[offset+1]:scale:λ[end-offset-1]
     @debug "Performing cubic spline continuum fit with knots at $λknots"
 
+    # Remove knots that dont satisfy Schoenberg-Whitney conditions
+
+
     # Do a full cubic spline remapping of the data
     I_out = Spline1D(λ[isfinite.(I_out)], I_out[isfinite.(I_out)], λknots, k=3, bc="extrapolate").(λ)
     σ_out = Spline1D(λ[isfinite.(σ_out)], σ_out[isfinite.(σ_out)], λknots, k=3, bc="extrapolate").(λ)
 
-    lines, mask_lines, I_out, σ_out
+    mask_lines, I_out, σ_out
 end
 
 
@@ -2105,9 +2059,7 @@ ln(probability) = ln(likelihood) + ln(prior)
 """
 function _negln_probability(p, grad, λ, Inorm, σnorm, cube_fitter, λ0_ln, ext_curve, priors)
     # Check for gradient
-    if length(grad) > 0
-        error("Gradient-based solvers are not currently supported!")
-    end
+    @assert length(grad) == 0 "Gradient-based solvers are not currently supported!"
     # First compute the model
     model = Util.fit_line_residuals(λ, p, cube_fitter.n_lines, cube_fitter.n_kin_tied, 
         cube_fitter.kin_tied_key, cube_fitter.line_tied, cube_fitter.line_profiles, cube_fitter.n_acomp_kin_tied,
@@ -2143,7 +2095,7 @@ See Smith, Draine, et al. 2007; http://tir.astro.utoledo.edu/jdsmith/research/pa
     the initial parameter vector for individual spaxel fits
 """
 function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, continuum::Vector{<:Real}, 
-    ext_curve::Vector{<:Real}, line_locs::Vector{<:Integer}, mask_lines::BitVector, I_spline::Vector{<:Real}, σ_spline::Vector{<:Real}; 
+    ext_curve::Vector{<:Real}, mask_lines::BitVector, I_spline::Vector{<:Real}, σ_spline::Vector{<:Real}; 
     init::Bool=false)
 
     @debug """\n
@@ -2329,64 +2281,65 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
         @debug "Calculating initial starting points..."
 
         # Intelligently pick starting positions for voffs based on the locations of lines found with the line masking
-        voff_inits = zeros(cube_fitter.n_lines)
-        for (i, ln) ∈ enumerate(cube_fitter.lines)
-            # Constrain to the line fitting region (+/- maximum voff)
-            if length(voff_tied_priors) > 0
-                max_kms = maximum(voff_tied_priors[1])
-            else
-                max_kms = maximum(voff_ln[i].prior)
-            end
-            minw = ln.λ₀ * (1 - max_kms / Util.C_KMS)
-            maxw = ln.λ₀ * (1 + max_kms / Util.C_KMS)
-            # Match with any lines flagged by the line masking algorithm
-            candidates = findall(minw .< λ[line_locs] .< maxw)
-            # For each candidate, make sure it's not closer to another line's nominal position
-            good = trues(length(candidates))
-            for j ∈ 1:length(candidates)
-                if !(λ0_ln[argmin(abs.(λ[line_locs][candidates[j]] .- λ0_ln))] ≈ ln.λ₀)
-                    good[j] = false
-                end
-            end
-            candidates = candidates[good]
-            # Check if we're out of candidates
-            if length(candidates) == 0
-                voff_inits[i] = 0.
-                continue
-            end
-            # Finally, of the remaining candidates (if there's still more than one), pick the brightest one
-            ind = candidates[argmax(I[line_locs][candidates])]
-            pos = λ[line_locs][ind]
-            voff_inits[i] = (pos/ln.λ₀ - 1) * Util.C_KMS
-        end
-        @debug "Initial individual voff parameter vector: $voff_inits"
-        voff_inits_tied = zeros(cube_fitter.n_kin_tied)
-        # For tied velocities, take the averages
-        for j ∈ 1:cube_fitter.n_kin_tied
-            # consider the lines within the tied group
-            tied_group = BitVector([ln.tied == cube_fitter.kin_tied_key[j] for ln ∈ cube_fitter.lines])
-            voff_inits_tied[j] = mean(voff_inits[tied_group])
-        end
-        @debug "Initial tied voff parameter vector: $voff_inits_tied"
-        # Double back and make sure all of the voff_inits are consistent with any tied lines
-        for (i, ln) ∈ enumerate(cube_fitter.lines)
-            if !isnothing(ln.tied)
-                vwhere = findfirst(cube_fitter.kin_tied_key .== ln.tied)
-                voff_group = voff_inits_tied[vwhere]
-                voff_inits[i] -= voff_group
-                if cube_fitter.flexible_wavesol
-                    # Ensure the individual voff is consistent with the tied voff
-                    if voff_inits[i] < minimum(voff_ln[i].prior) 
-                        @debug "initial voff for line $i at $(ln.λ₀) is inconsistent with the group: $(voff_inits[i]), adjusting" 
-                        voff_inits[i] = minimum(voff_ln[i].prior) + 1
-                    elseif voff_inits[i] > maximum(voff_ln[i].prior)
-                        @debug "initial voff for line $i at $(ln.λ₀) is inconsistent with the group: $(voff_inits[i]), adjusting" 
-                        voff_inits[i] = maximum(voff_ln[i].prior) - 1
-                    end
-                end
-            end
-        end
-        @debug "Individual voff parameter vector corrected for ties: $voff_inits"
+        # voff_inits = zeros(cube_fitter.n_lines)
+        # for (i, ln) ∈ enumerate(cube_fitter.lines)
+        #     # Constrain to the line fitting region (+/- maximum voff)
+        #     if length(voff_tied_priors) > 0
+        #         max_kms = maximum(voff_tied_priors[1])
+        #     else
+        #         max_kms = maximum(voff_ln[i].prior)
+        #     end
+        #     minw = ln.λ₀ * (1 - max_kms / Util.C_KMS)
+        #     maxw = ln.λ₀ * (1 + max_kms / Util.C_KMS)
+        #     # Match with any lines flagged by the line masking algorithm
+        #     candidates = findall(minw .< λ[line_locs] .< maxw)
+        #     # For each candidate, make sure it's not closer to another line's nominal position
+        #     good = trues(length(candidates))
+        #     for j ∈ 1:length(candidates)
+        #         if !(λ0_ln[argmin(abs.(λ[line_locs][candidates[j]] .- λ0_ln))] ≈ ln.λ₀)
+        #             good[j] = false
+        #         end
+        #     end
+        #     candidates = candidates[good]
+        #     # Check if we're out of candidates
+        #     if length(candidates) == 0
+        #         voff_inits[i] = 0.
+        #         continue
+        #     end
+        #     # Finally, of the remaining candidates (if there's still more than one), pick the brightest one
+        #     ind = candidates[argmax(I[line_locs][candidates])]
+        #     pos = λ[line_locs][ind]
+        #     voff_inits[i] = (pos/ln.λ₀ - 1) * Util.C_KMS
+        # end
+        # @debug "Initial individual voff parameter vector: $voff_inits"
+        # voff_inits_tied = zeros(cube_fitter.n_kin_tied)
+        # # For tied velocities, take the averages
+        # for j ∈ 1:cube_fitter.n_kin_tied
+        #     # consider the lines within the tied group
+        #     tied_group = BitVector([ln.tied == cube_fitter.kin_tied_key[j] for ln ∈ cube_fitter.lines])
+        #     voff_inits_tied[j] = mean(voff_inits[tied_group])
+        # end
+        # @debug "Initial tied voff parameter vector: $voff_inits_tied"
+        # # Double back and make sure all of the voff_inits are consistent with any tied lines
+        # for (i, ln) ∈ enumerate(cube_fitter.lines)
+        #     if !isnothing(ln.tied)
+        #         vwhere = findfirst(cube_fitter.kin_tied_key .== ln.tied)
+        #         voff_group = voff_inits_tied[vwhere]
+        #         voff_inits[i] -= voff_group
+        #         if cube_fitter.flexible_wavesol
+        #             # Ensure the individual voff is consistent with the tied voff
+        #             if voff_inits[i] < minimum(voff_ln[i].prior) 
+        #                 @debug "initial voff for line $i at $(ln.λ₀) is inconsistent with the group: $(voff_inits[i]), adjusting" 
+        #                 voff_inits[i] = minimum(voff_ln[i].prior) + 1
+        #             elseif voff_inits[i] > maximum(voff_ln[i].prior)
+        #                 @debug "initial voff for line $i at $(ln.λ₀) is inconsistent with the group: $(voff_inits[i]), adjusting" 
+        #                 voff_inits[i] = maximum(voff_ln[i].prior) - 1
+        #             end
+        #         end
+        #     end
+        # end
+        # @debug "Individual voff parameter vector corrected for ties: $voff_inits"
+        voff_inits = [vi.value for vi ∈ voff_ln]
 
         # Start the ampltiudes at 1/2 and 1/4 (in normalized units)
         A_ln = ones(cube_fitter.n_lines) .* 0.5
@@ -2683,8 +2636,8 @@ backend (`:pyplot` or `:plotly`).
 """
 function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<:Real}, σ::Vector{<:Real}, comps::Dict{String, Vector{T}}, 
     n_dust_cont::Integer, n_dust_features::Integer, line_wave::Vector{<:Real}, line_names::Vector{Symbol}, screen::Bool, 
-    z::Real, χ2red::Real, name::String, label::String; backend::Symbol=:pyplot, 
-    range::Union{Tuple,Nothing}=nothing) where {T<:Real}
+    z::Real, χ2red::Real, name::String, label::String; backend::Symbol=:pyplot, range::Union{Tuple,Nothing}=nothing,
+    spline::Union{Vector{<:Real},Nothing}=nothing) where {T<:Real}
 
     # Plotly ---> useful interactive plots for visually inspecting data, but not publication-quality
     if (backend == :plotly || backend == :both) && isnothing(range)
@@ -2732,6 +2685,7 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
             mode="lines", line=Dict(:color => "green", :width => 1), name="Dust+Stellar Continuum")])
         append!(traces, [PlotlyJS.scatter(x=λ, y=sum([comps["dust_feat_$i"] for i ∈ 1:n_dust_features], dims=1)[1] .* comps["extinction"],
             mode="lines", line=Dict(:color => "blue", :width => 1), name="PAHs")])
+        append!(traces, [PlotlyJS.scatter(x=λ, y=spline, mode="lines", line=Dict(:color => "red", :width => 1, :dash => "dash"), name="Cubic Spline")])
         # axes labels / titles / fonts
         layout = PlotlyJS.Layout(
             xaxis_title=L"$\lambda\ (\mu{\rm m})$",
@@ -2776,6 +2730,10 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
         # ax2 is the residuals plot
         ax2 = fig.add_subplot(py"$(gs)[-1, :]")
         ax1.plot(λ, I ./ norm ./ λ, "k-", label="Data")
+        # plot cubic spline
+        if !isnothing(spline)
+            ax1.plot(λ, spline ./ norm ./ λ, color="#2ca02c", linestyle="--", label="Cubic Spline")
+        end
         ax1.plot(λ, I_cont ./ norm ./ λ, "-", color="#ff5d00", label="Model")
         ax2.plot(λ, (I.-I_cont) ./ norm ./ λ, "k-")
         χ2_str = @sprintf "%.3f" χ2red
@@ -3184,7 +3142,7 @@ of a crash.
 - `cube_fitter::CubeFitter`: The CubeFitter object containing the data, parameters, and options for the fit
 - `spaxel::CartesianIndex`: The coordinates of the spaxel to be fit
 """
-function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; recalculate_params=false)
+function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; recalculate_params=false, plot_spline=true)
 
     local p_out
     local p_err
@@ -3215,14 +3173,14 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; recalculate
 
         with_logger(logger) do
 
-            line_locs, mask_lines, I_spline, σ_spline = continuum_cubic_spline(λ, I, σ)
+            mask_lines, I_spline, σ_spline = continuum_cubic_spline(λ, I, σ)
 
             # Fit the spaxel
             σ, popt_c, I_cont, comps_cont, n_free_c, perr_c, covar_c = 
                 @timeit timer_output "continuum_fit_spaxel" continuum_fit_spaxel(cube_fitter, spaxel, mask_lines, I_spline, σ_spline)
             _, popt_l, I_line, comps_line, n_free_l, perr_l, covar_l = 
-                @timeit timer_output "line_fit_spaxel" line_fit_spaxel(cube_fitter, spaxel, I_cont, comps_cont["extinction"], line_locs, 
-                    mask_lines, I_spline, σ_spline)
+                @timeit timer_output "line_fit_spaxel" line_fit_spaxel(cube_fitter, spaxel, cube_fitter.subtract_cubic ? I_spline : I_cont,
+                comps_cont["extinction"], mask_lines, I_spline, σ_spline)
 
             # Combine the continuum and line models
             I_model = I_cont .+ I_line
@@ -3248,13 +3206,14 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; recalculate
                 @debug "Plotting spaxel $spaxel best fit"
                 @timeit timer_output "plot_spaxel_fit" plot_spaxel_fit(λ, I, I_model, σ, comps, 
                     cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, λ0_ln, cube_fitter.line_names, cube_fitter.extinction_screen, 
-                    cube_fitter.z, χ2red, cube_fitter.name, "spaxel_$(spaxel[1])_$(spaxel[2])", backend=cube_fitter.plot_spaxels)
+                    cube_fitter.z, χ2red, cube_fitter.name, "spaxel_$(spaxel[1])_$(spaxel[2])", backend=cube_fitter.plot_spaxels,
+                    spline=plot_spline ? I_spline : nothing)
                 if !isnothing(cube_fitter.plot_range)
                     for (i, plot_range) ∈ enumerate(cube_fitter.plot_range)
                         @timeit timer_output "plot_line_fit" plot_spaxel_fit(λ, I, I_model, σ, comps,
                             cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, λ0_ln, cube_fitter.line_names, cube_fitter.extinction_screen,
                             cube_fitter.z, χ2red, cube_fitter.name, "lines_$(spaxel[1])_$(spaxel[2])_$i", backend=cube_fitter.plot_spaxels,
-                            range=plot_range)
+                            range=plot_range, spline=plot_spline ? I_spline : nothing)
                     end
                 end
             end
@@ -3299,7 +3258,7 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; recalculate
     # if requested, recalculate the extra parameters obtained with the calculate_extra_parameters function
     if recalculate_params
         # Get the line mask and cubic spline continuum
-        line_locs, mask_lines, I_spline, σ_spline = continuum_cubic_spline(λ, I, σ)
+        mask_lines, I_spline, σ_spline = continuum_cubic_spline(λ, I, σ)
 
         # Separate the fit parameters
         popt_c = p_out[1:cube_fitter.n_params_cont]
@@ -3349,7 +3308,7 @@ Perform an initial fit to the sum of all spaxels (the stack) to get an estimate 
 vector to use with all of the individual spaxel fits.  The only input is the CubeFitter object, which is
 modified with the resultant fit parameters.  There is no output.
 """
-function fit_stack!(cube_fitter::CubeFitter)
+function fit_stack!(cube_fitter::CubeFitter; plot_spline=true)
 
     @info "===> Performing initial fit to the sum of all spaxels... <==="
     # Collect the data
@@ -3357,13 +3316,14 @@ function fit_stack!(cube_fitter::CubeFitter)
     I_sum_init = Util.Σ(cube_fitter.cube.Iν, (1,2)) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2))
     σ_sum_init = sqrt.(Util.Σ(cube_fitter.cube.σI.^2, (1,2))) ./ Util.Σ(Array{Int}(.~cube_fitter.cube.mask), (1,2))
 
-    line_locs, mask_lines, I_spline_init, σ_spline_init = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init)
+    mask_lines, I_spline_init, σ_spline_init = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init)
 
     # Continuum and line fits
     σ_init, popt_c_init, I_c_init, comps_c_init, n_free_c_init, _, _ = continuum_fit_spaxel(cube_fitter, CartesianIndex(0,0),
         mask_lines, I_spline_init, σ_spline_init; init=true)
-    _, popt_l_init, I_l_init, comps_l_init, n_free_l_init, _, _ = line_fit_spaxel(cube_fitter, CartesianIndex(0,0), I_c_init, 
-        comps_c_init["extinction"], line_locs, mask_lines, I_spline_init, σ_spline_init; init=true)
+    _, popt_l_init, I_l_init, comps_l_init, n_free_l_init, _, _ = line_fit_spaxel(cube_fitter, CartesianIndex(0,0), 
+        cube_fitter.subtract_cubic ? I_spline_init : I_c_init, comps_c_init["extinction"], mask_lines, 
+        I_spline_init, σ_spline_init; init=true)
 
     # Get the overall models
     I_model_init = I_c_init .+ I_l_init
@@ -3381,13 +3341,14 @@ function fit_stack!(cube_fitter::CubeFitter)
         @debug "Plotting spaxel sum initial fit"
         plot_spaxel_fit(λ_init, I_sum_init, I_model_init, σ_init, comps_init,
             cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, λ0_ln, cube_fitter.line_names, cube_fitter.extinction_screen, 
-            cube_fitter.z, χ2red_init, cube_fitter.name, "initial_sum_fit", backend=cube_fitter.plot_spaxels)
+            cube_fitter.z, χ2red_init, cube_fitter.name, "initial_sum_fit", backend=cube_fitter.plot_spaxels, 
+            spline=plot_spline ? I_spline_init : nothing)
         if !isnothing(cube_fitter.plot_range)
             for (i, plot_range) ∈ enumerate(cube_fitter.plot_range)
                 plot_spaxel_fit(λ_init, I_sum_init, I_model_init, σ_init, comps_init,
                     cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, λ0_ln, cube_fitter.line_names, cube_fitter.extinction_screen, 
                     cube_fitter.z, χ2red_init, cube_fitter.name, "initial_sum_line_$i", backend=cube_fitter.plot_spaxels;
-                    range=plot_range)
+                    range=plot_range, spline=plot_spline ? I_spline_init : nothing)
             end
         end
             
@@ -3416,8 +3377,6 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
     """
 
     shape = size(cube_fitter.cube.Iν)
-    # Interpolate NaNs in the cube
-    interpolate_cube!(cube_fitter.cube)
 
     # Prepare output array
     @info "===> Preparing output data structures... <==="
@@ -3480,7 +3439,7 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
     # Loop over each spaxel and fill in the associated fitting parameters into the ParamMaps and CubeModel
     # I know this is long and ugly and looks stupid but it works for now and I'll make it pretty later
     prog = Progress(length(spaxels); showspeed=true)
-    @inbounds for index ∈ spaxels
+    @inbounds @simd for index ∈ spaxels
 
         # Set the 2D parameter map outputs
 
@@ -3860,6 +3819,7 @@ Plotting function for 2D parameter maps which are output by `fit_cube!`
 - `name_i::String`: The name of the individual parameter being plotted, i.e. "dust_features_PAH_5.24_amp"
 - `Ω::Float64`: The solid angle subtended by each pixel, in steradians (used for angular scalebar)
 - `z::Float64`: The redshift of the object (used for physical scalebar)
+- `psf_fwhm::Float64`: The FWHM of the point-spread function in arcseconds (used to add a circular patch with this size)
 - `cosmo::Cosmology.AbstractCosmology`: The cosmology to use to calculate distance for the physical scalebar
 - `python_wcs::PyObject`: The astropy WCS object used to project the maps onto RA/Dec space
 - `snr_filter::Matrix{Float64}=Matrix{Float64}(undef,0,0)`: A 2D array of S/N values to
@@ -3867,7 +3827,7 @@ Plotting function for 2D parameter maps which are output by `fit_cube!`
 - `snr_thresh::Float64=3.`: The S/N threshold below which to cut out any spaxels using the values in snr_filter
 - `cmap::Symbol=:cubehelix`: The colormap used in the plot, defaults to the cubehelix map
 """
-function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String, Ω::Float64, z::Float64, 
+function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String, Ω::Float64, z::Float64, psf_fwhm::Float64,
     cosmo::Cosmology.AbstractCosmology, python_wcs::PyObject; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, 
     snr_thresh::Float64=3., cmap::Symbol=:cubehelix)
 
@@ -3938,7 +3898,7 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
     end
 
     fig = plt.figure()
-    ax = fig.add_subplot(111, projection=python_wcs)
+    ax = fig.add_subplot(111, projection=python_wcs[0])  # slice the WCS to remove the wavelength axis
     # Need to filter out any NaNs in order to use quantile
     vmin = nanminimum(filtered)
     vmax = nanmaximum(filtered)
@@ -3967,7 +3927,8 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
     ax.set_ylabel("Dec.")
 
     # Angular and physical scalebars
-    n_pix = 1/(sqrt(Ω) * 180/π * 3600)
+    pix_as = sqrt(Ω) * 180/π * 3600
+    n_pix = 1/pix_as
     @debug "Using angular diameter distance $(angular_diameter_dist(cosmo, z))"
     # Calculate in Mpc
     dA = angular_diameter_dist(u"pc", cosmo, z)
@@ -3987,6 +3948,10 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
             frameon=false, size_vertical=0.4, label_top=false)
     end
     ax.add_artist(scalebar)
+
+    # Add circle for the PSF FWHM
+    psf = plt.Circle(size(data) .* 0.9, psf_fwhm / pix_as / 2, color="k")
+    ax.add_patch(psf)
 
     fig.colorbar(cdata, ax=ax, label=bunit)
     plt.savefig(joinpath("output_$(name)", "param_maps", "$(name_i).pdf"), dpi=300, bbox_inches=:tight)
@@ -4017,8 +3982,8 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
     for parameter ∈ keys(param_maps.stellar_continuum)
         data = param_maps.stellar_continuum[parameter]
         name_i = join(["stellar_continuum", parameter], "_")
-        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
-            cube_fitter.python_wcs)
+        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf_fwhm), 
+            cube_fitter.cosmology, cube_fitter.cube.wcs)
     end
 
     # Dust continuum parameters
@@ -4026,19 +3991,23 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
         for parameter ∈ keys(param_maps.dust_continuum[i])
             data = param_maps.dust_continuum[i][parameter]
             name_i = join(["dust_continuum", i, parameter], "_")
-            plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
-                cube_fitter.python_wcs)
+            plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf_fwhm), 
+                cube_fitter.cosmology, cube_fitter.cube.wcs)
         end
     end
 
     # Dust feature (PAH) parameters
     for df ∈ keys(param_maps.dust_features)
         snr = param_maps.dust_features[df][:SNR]
+        # Find the wavelength/index at which to get the PSF FWHM for the circle in the plot
+        wave_i = nanmedian(param_maps.dust_features[df][:mean])
+        _, ind_i = findmin(abs.(cube_fitter.cube.λ .- wave_i))
+
         for parameter ∈ keys(param_maps.dust_features[df])
             data = param_maps.dust_features[df][parameter]
             name_i = join(["dust_features", df, parameter], "_")
-            plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
-                cube_fitter.python_wcs, snr_filter=parameter !== :SNR ? snr : nothing, snr_thresh=snr_thresh)
+            plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cube.psf_fwhm[ind_i],
+                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=parameter !== :SNR ? snr : nothing, snr_thresh=snr_thresh)
         end
     end
 
@@ -4046,8 +4015,8 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
     for parameter ∈ keys(param_maps.extinction)
         data = param_maps.extinction[parameter]
         name_i = join(["extinction", parameter], "_")
-        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
-            cube_fitter.python_wcs)
+        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf_fwhm), 
+            cube_fitter.cosmology, cube_fitter.cube.wcs)
     end
 
     if cube_fitter.fit_sil_emission
@@ -4055,8 +4024,8 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
         for parameter ∈ keys(param_maps.hot_dust)
             data = param_maps.hot_dust[parameter]
             name_i = join(["hot_dust", parameter], "_")
-            plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
-                cube_fitter.python_wcs)
+            plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf_fwhm), 
+                cube_fitter.cosmology, cube_fitter.cube.wcs)
         end
     end
 
@@ -4065,7 +4034,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
     #     data = param_maps.tied_voigt_mix
     #     name_i = "tied_voigt_mixing"
     #     plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
-    #         cube_fitter.python_wcs)
+    #         cube_fitter.cube.wcs)
     # end
 
     # Tied kinematics
@@ -4087,8 +4056,8 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
         if ndims(snr) == 3
             snr = dropdims(nanmaximum(snr, dims=3), dims=3)
         end
-        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
-            cube_fitter.python_wcs, snr_filter=snr, snr_thresh=snr_thresh)
+        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf_fwhm), 
+            cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr, snr_thresh=snr_thresh)
     end
     for vk ∈ cube_fitter.kin_tied_key
         data = param_maps.tied_fwhms[vk]
@@ -4108,8 +4077,8 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
         if ndims(snr) == 3
             snr = dropdims(nanmaximum(snr, dims=3), dims=3)
         end
-        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
-            cube_fitter.python_wcs, snr_filter=snr, snr_thresh=snr_thresh)
+        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf_fwhm), 
+            cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr, snr_thresh=snr_thresh)
     end
 
     # Tied acomp kinematics
@@ -4131,8 +4100,8 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
         if ndims(snr) == 3
             snr = dropdims(nanmaximum(snr, dims=3), dims=3)
         end
-        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
-            cube_fitter.python_wcs, snr_filter=snr, snr_thresh=snr_thresh)
+        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf_fwhm), 
+            cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr, snr_thresh=snr_thresh)
     end
     for fvk ∈ cube_fitter.acomp_kin_tied_key
         data = param_maps.acomp_tied_fwhms[fvk]
@@ -4152,8 +4121,8 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
         if ndims(snr) == 3
             snr = dropdims(nanmaximum(snr, dims=3), dims=3)
         end
-        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
-            cube_fitter.python_wcs, snr_filter=snr, snr_thresh=snr_thresh)
+        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf_fwhm), 
+            cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr, snr_thresh=snr_thresh)
     end
 
     # Line parameters
@@ -4163,6 +4132,11 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
         if haskey(param_maps.lines[line], :acomp_SNR)
             asnr = param_maps.lines[line][:acomp_SNR]
         end
+        # Find the wavelength/index at which to get the PSF FWHM for the circle in the plot
+        line_i = findfirst(cube_fitter.line_names .== line)
+        wave_i = cube_fitter.lines[line_i].λ₀
+        _, ind_i = findmin(abs.(cube_fitter.cube.λ .- wave_i))
+
         for parameter ∈ keys(param_maps.lines[line])
             data = param_maps.lines[line][parameter]
             name_i = join(["lines", line, parameter], "_")
@@ -4172,16 +4146,16 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
             elseif contains(String(parameter), "acomp")
                 snr_filter = asnr
             end
-            plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
-                cube_fitter.python_wcs, snr_filter=snr_filter, snr_thresh=snr_thresh)
+            plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cube.psf_fwhm[ind_i], 
+                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh)
         end
     end
 
     # Reduced chi^2 
     data = param_maps.reduced_χ2
     name_i = "reduced_chi2"
-    plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cosmology,
-        cube_fitter.python_wcs)
+    plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf_fwhm), 
+        cube_fitter.cosmology, cube_fitter.cube.wcs)
 
     return
 
@@ -4218,7 +4192,7 @@ function make_movie(cube_fitter::CubeFitter, cube_model::CubeModel; cmap::Symbol
         # Set up plots with gridspec
         fig = plt.figure()
         gs = fig.add_gridspec(ncols=20,  nrows=10)
-        ax1 = fig.add_subplot(py"$(gs)[0:8, 0:18]", projection=cube_fitter.python_wcs)
+        ax1 = fig.add_subplot(py"$(gs)[0:8, 0:18]", projection=cube_fitter.cube.wcs[0])
         ax2 = fig.add_subplot(py"$(gs)[9:10, :]")
         ax3 = fig.add_subplot(py"$(gs)[0:8, 18:19]")
 
@@ -4287,12 +4261,12 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
 
         # Check if the redshift correction is right for the third WCS axis?
         [cube_fitter.name, cube_fitter.z, cube_fitter.cube.channel, cube_fitter.cube.band, cube_fitter.cube.Ω, cube_fitter.cube.α, cube_fitter.cube.δ, 
-         cube_fitter.cube.wcs.naxis, cube_fitter.cube.wcs.cdelt[1], cube_fitter.cube.wcs.cdelt[2], cube_fitter.cube.wcs.cdelt[3], 
-         cube_fitter.cube.wcs.ctype[1], cube_fitter.cube.wcs.ctype[2], cube_fitter.cube.wcs.ctype[3], cube_fitter.cube.wcs.crpix[1], 
-         cube_fitter.cube.wcs.crpix[2], cube_fitter.cube.wcs.crpix[3], cube_fitter.cube.wcs.crval[1], cube_fitter.cube.wcs.crval[2], 
-         cube_fitter.cube.wcs.crval[3], cube_fitter.cube.wcs.cunit[1], cube_fitter.cube.wcs.cunit[2], cube_fitter.cube.wcs.cunit[3], 
-         cube_fitter.cube.wcs.pc[1,1], cube_fitter.cube.wcs.pc[1,2], cube_fitter.cube.wcs.pc[1,3], cube_fitter.cube.wcs.pc[2,1], cube_fitter.cube.wcs.pc[2,2], 
-         cube_fitter.cube.wcs.pc[2,3], cube_fitter.cube.wcs.pc[3,1], cube_fitter.cube.wcs.pc[3,2], cube_fitter.cube.wcs.pc[3,3]],
+         cube_fitter.cube.wcs.wcs.naxis, cube_fitter.cube.wcs.wcs.cdelt[1], cube_fitter.cube.wcs.wcs.cdelt[2], cube_fitter.cube.wcs.wcs.cdelt[3], 
+         cube_fitter.cube.wcs.wcs.ctype[1], cube_fitter.cube.wcs.wcs.ctype[2], cube_fitter.cube.wcs.wcs.ctype[3], cube_fitter.cube.wcs.wcs.crpix[1], 
+         cube_fitter.cube.wcs.wcs.crpix[2], cube_fitter.cube.wcs.wcs.crpix[3], cube_fitter.cube.wcs.wcs.crval[1], cube_fitter.cube.wcs.wcs.crval[2], 
+         cube_fitter.cube.wcs.wcs.crval[3], cube_fitter.cube.wcs.wcs.cunit[1], cube_fitter.cube.wcs.wcs.cunit[2], cube_fitter.cube.wcs.wcs.cunit[3], 
+         cube_fitter.cube.wcs.wcs.pc[1,1], cube_fitter.cube.wcs.wcs.pc[1,2], cube_fitter.cube.wcs.wcs.pc[1,3], cube_fitter.cube.wcs.wcs.pc[2,1], cube_fitter.cube.wcs.wcs.pc[2,2], 
+         cube_fitter.cube.wcs.wcs.pc[2,3], cube_fitter.cube.wcs.wcs.pc[3,1], cube_fitter.cube.wcs.wcs.pc[3,2], cube_fitter.cube.wcs.wcs.pc[3,3]],
 
         ["Target name", "Target redshift", "MIRI channel", "MIRI band",
         "Solid angle per pixel (rad.)", "Right ascension of target (deg.)", "Declination of target (deg.)",

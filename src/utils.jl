@@ -18,6 +18,7 @@ using Dierckx
 using CSV
 using DataFrames
 using QuadGK
+using EllipsisNotation
 
 # CONSTANTS
 
@@ -627,6 +628,146 @@ function Extinction(ext::Real, τ_97::Real; screen::Bool=false)
     else
         iszero(τ_97) ? 1. : (1 - exp(-τ_97*ext)) / (τ_97*ext)
     end
+end
+
+
+"""
+    make_bins(array)
+
+Calculate the bin edges and bin widths for an array given the distances between each entry
+
+NOTES:
+This function has been taken and adapted from the SpectRes python package, https://github.com/ACCarnall/SpectRes
+"""
+function make_bins(array::AbstractArray)
+    # Get the bin edges 
+    edges = zeros(size(array,1)+1)
+    edges[1] = array[1] - (array[2] - array[1])/2
+    edges[end] = array[end] + (array[end] - array[end-1])/2
+    edges[2:end-1] .= (array[2:end] + array[1:end-1])/2
+    # Get the bin widths
+    widths = zeros(size(array,1))
+    widths[end] = array[end] - array[end-1]
+    widths[1:end-1] = edges[2:end-1] - edges[1:end-2]
+    # Return the edges and widths
+    edges, widths
+end
+
+
+"""
+    resample_conserving_flux(new_wave, old_wave, flux, err=nothing, mask=nothing; fill=NaN)
+
+Resample a spectrum (and optionally errors) onto a new wavelength grid, while convserving the flux.
+
+NOTES:
+This function has been taken and adapted from the SpectRes python package, https://github.com/ACCarnall/SpectRes
+"""
+function resample_conserving_flux(new_wave::AbstractVector, old_wave::AbstractVector, flux::AbstractArray, 
+    err::Union{AbstractArray,Nothing}=nothing, mask::Union{AbstractArray,Nothing}=nothing; fill::Real=NaN)
+
+    # Find the edges and widths of the new wavelength bins given the old ones
+    old_edges, old_widths = make_bins(old_wave)
+    new_edges, new_widths = make_bins(new_wave)
+
+    # Instantiate flux and error arrays with zeros
+    new_fluxes = zeros((size(flux[.., 1])..., size(new_wave)...))
+    if !isnothing(err)
+        if size(err) ≠ size(flux)
+            error("error must be the same shape as flux")
+        else
+            new_errs = copy(new_fluxes)
+        end
+    end
+    if !isnothing(mask)
+        if size(mask) ≠ size(flux)
+            error("mask must be the same shape as flux")
+        else
+            new_mask = falses(size(new_fluxes))
+        end
+    end
+
+    start = 1
+    stop = 1
+    warned = false
+
+    # Calculate new flux and uncertainty values, looping over new bins
+    for j ∈ 1:size(new_wave, 1)
+        # Add filler values if new_wavs extends outside of spec_wavs
+        if (new_edges[j] < old_edges[1]) || (new_edges[j+1] > old_edges[end])
+            new_fluxes[.., j] .= fill
+            if !isnothing(err)
+                new_errs[.., j] .= fill
+            end
+            if !isnothing(mask)
+                new_mask[.., j] .= 1
+            end
+            if (j == 1 || j == size(new_wave, 1)) && !warned
+                @warn "\nSpectres: new_wave contains values outside the range " *
+                      "in old_wave, new_fluxes and new_errs will be filled " *
+                      "with the value set in the 'fill' keyword argument. \n"
+                warned = true
+            end
+            continue
+        end
+    
+        # Find first old bin which is partially covered by the new bin
+        while old_edges[start+1] ≤ new_edges[j]
+            start += 1
+        end
+
+        # Find last old bin which is partially covered by the new bin
+        while old_edges[stop+1] < new_edges[j+1]
+            stop += 1
+        end
+
+        # If new bin is fully inside an old bin start and stop are equal
+        if start == stop
+            new_fluxes[.., j] .= flux[.., start]
+            if !isnothing(err)
+                new_errs[.., j] .= err[.., start]
+            end
+            if !isnothing(mask)
+                new_mask[.., j] .= mask[.., start]
+            end
+        # Otherwise multiply the first and last old bin widths by P_ij
+        else
+            start_factor = (old_edges[start+1] - new_edges[j]) / (old_edges[start+1] - old_edges[start])
+            stop_factor = (new_edges[j+1] - old_edges[stop]) / (old_edges[stop+1] - old_edges[stop])
+
+            old_widths[start] *= start_factor
+            old_widths[stop] *= stop_factor
+
+            # Populate new fluxes and errors
+            f_widths = old_widths[start:stop] .* permutedims(flux[.., start:stop], (ndims(flux), range(1,ndims(flux)-1)...))
+            new_fluxes[..,j] .= dropdims(sum(f_widths, dims=1); dims=1)
+            new_fluxes[..,j] ./= sum(old_widths[start:stop])
+
+            if !isnothing(err)
+                e_widths = old_widths[start:stop] .* permutedims(err[.., start:stop], (ndims(err), range(1,ndims(err)-1)...))
+                new_errs[..,j] .= dropdims(.√(sum(e_widths .^ 2, dims=1)); dims=1)
+                new_errs[..,j] ./= sum(old_widths[start:stop])
+            end
+
+            # Put the old bin widths back to their initial values
+            old_widths[start] /= start_factor
+            old_widths[stop] /= stop_factor
+
+            # Combine the mask data with a bitwise or
+            new_mask[..,j] .= [any(mask[xi,start:stop]) for xi ∈ CartesianIndices(selectdim(mask, 3, j))]
+        end
+    end
+
+    # Only return the quantities that were given in the input
+    if !isnothing(err) && !isnothing(mask)
+        new_fluxes, new_errs, new_mask
+    elseif !isnothing(err)
+        new_fluxes, new_errs
+    elseif !isnothing(mask)
+        new_fluxes, new_mask
+    else
+        new_fluxes
+    end
+
 end
 
 

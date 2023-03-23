@@ -14,8 +14,8 @@ using the "correct" function.  The data should then be handed off to the structs
 module CubeData
 
 # Export only the functions that the user may want to call
-export DataCube, Observation, from_fits, to_rest_frame, apply_mask, correct, interpolate_cube!, 
-    plot_2d, plot_1d, cube_combine!, cube_rebin!
+export DataCube, Observation, from_fits, to_rest_frame!, apply_mask!, correct!, interpolate_cube!, 
+    plot_2d, plot_1d, concatenate_subchannels!, cube_combine!, cube_rebin!, psf_kernel, convolve_psf!
 
 # Import packages
 using Statistics
@@ -26,7 +26,6 @@ using Printf
 # Import astronomy packages
 using FITSIO
 using Cosmology
-using WCS
 
 # Interpolation packages
 using Dierckx
@@ -43,6 +42,8 @@ using PyCall
 # Importing it within the __init__ function is necessary so that it works after precompilation
 const plt::PyObject = PyNULL()
 const py_anchored_artists::PyObject = PyNULL()
+const py_wcs::PyObject = PyNULL()
+const photutils::PyObject = PyNULL()
 
 const SMALL::UInt8 = 12
 const MED::UInt8 = 14
@@ -54,6 +55,9 @@ function __init__()
     copy!(plt, pyimport_conda("matplotlib.pyplot", "matplotlib"))
     # Import the anchored_artists package from matplotlib
     copy!(py_anchored_artists, pyimport_conda("mpl_toolkits.axes_grid1.anchored_artists", "matplotlib"))
+    # Import the WCS and photutils packages from astropy
+    copy!(py_wcs, pyimport_conda("astropy.wcs", "astropy"))
+    copy!(photutils, pyimport_conda("photutils", "photutils"))
 
     # MATPLOTLIB SETTINGS TO MAKE PLOTS LOOK PRETTY :)
     plt.switch_backend("Agg")         # switch to agg backend so that nothing is displayed, just saved to files
@@ -78,7 +82,7 @@ include("utils.jl")
 
 
 """ 
-    DataCube(λ, Iν, σI[, mask, Ω, α, δ, wcs, channel, band, rest_frame, masked])
+    DataCube(λ, Iν, σI[, mask, Ω, α, δ, psf_fwhm, wcs, channel, band, rest_frame, masked])
 
 An object for holding 3D IFU spectroscopy data. 
 
@@ -99,7 +103,7 @@ An object for holding 3D IFU spectroscopy data.
 - `rest_frame::Bool=false`: whether or not the DataCube wavelength vector is in the rest-frame
 - `masked::Bool=false`: whether or not the DataCube has been masked
 """
-struct DataCube
+mutable struct DataCube
 
     λ::Vector{<:Real}
     Iν::Array{<:Real,3}
@@ -110,8 +114,9 @@ struct DataCube
     Ω::Real
     α::Real
     δ::Real
+    psf_fwhm::Vector{<:Real}
 
-    wcs::Union{WCSTransform,Nothing}
+    wcs::Union{PyObject,Nothing}
 
     channel::String
     band::String
@@ -125,8 +130,8 @@ struct DataCube
 
     # This is the constructor for the DataCube struct; see the DataCube docstring for details
     function DataCube(λ::Vector{<:Real}, Iν::Array{<:Real,3}, σI::Array{<:Real,3}, mask::Union{BitArray{3},Nothing}=nothing, 
-        Ω::Real=NaN, α::Real=NaN, δ::Real=NaN, wcs::Union{WCSTransform,Nothing}=nothing, channel::String="Generic Channel", 
-        band::String="Generic Band", rest_frame::Bool=false, masked::Bool=false)
+        Ω::Real=NaN, α::Real=NaN, δ::Real=NaN, psf_fwhm::Union{Vector{<:Real},Nothing}=nothing, wcs::Union{PyObject,Nothing}=nothing, 
+        channel::String="Generic Channel", band::String="Generic Band", rest_frame::Bool=false, masked::Bool=false)
 
         # Make sure inputs have the right dimensions
         @assert ndims(λ) == 1 "Wavelength vector must be 1-dimensional!"
@@ -141,21 +146,22 @@ struct DataCube
         end
 
         # Return a new instance of the DataCube struct
-        new(λ, Iν, σI, mask, Ω, α, δ, wcs, channel, band, nx, ny, nz, rest_frame, masked)
+        new(λ, Iν, σI, mask, Ω, α, δ, psf_fwhm, wcs, channel, band, nx, ny, nz, rest_frame, masked)
     end
 
 end
 
 
 """
-    from_fits(filename::String)
+    from_fits(filename::String; mirror_size)
 
 Utility class-method for creating DataCube structures directly from JWST-formatted FITS files.
 
 # Arguments
 - `filename::String`: the filepath to the JWST-formatted FITS file
+- `mirror_size::Real=6.5`: size of the telescope mirror in meters, defaults to 6.5m for JWST
 """
-function from_fits(filename::String)::DataCube
+function from_fits(filename::String; mirror_size::Real=6.5)::DataCube
 
     @info "Initializing DataCube struct from $filename"
 
@@ -178,13 +184,14 @@ function from_fits(filename::String)::DataCube
     @debug "FITS data dimensions: ($nx, $ny, $nz), solid angle per spaxel: $Ω"
 
     # Construct 3D World coordinate system to convert from pixels to (RA,Dec,wave)
-    wcs = WCSTransform(3)
-    wcs.cdelt = [hdr["CDELT1"], hdr["CDELT2"], hdr["CDELT3"]]
-    wcs.ctype = [hdr["CTYPE1"], hdr["CTYPE2"], hdr["CTYPE3"]]
-    wcs.crpix = [hdr["CRPIX1"], hdr["CRPIX2"], hdr["CRPIX3"]]
-    wcs.crval = [hdr["CRVAL1"], hdr["CRVAL2"], hdr["CRVAL3"]]
-    wcs.cunit = [hdr["CUNIT1"], hdr["CUNIT2"], hdr["CUNIT3"]]
-    wcs.pc = [hdr["PC1_1"] hdr["PC1_2"] hdr["PC1_3"]; hdr["PC2_1"] hdr["PC2_2"] hdr["PC2_3"]; hdr["PC3_1"] hdr["PC3_2"] hdr["PC3_3"]]
+    # wcs = py_wcs.WCS(naxis=3)
+    # wcs.wcs.cdelt = [hdr["CDELT1"], hdr["CDELT2"], hdr["CDELT3"]]
+    # wcs.wcs.ctype = [hdr["CTYPE1"], hdr["CTYPE2"], hdr["CTYPE3"]]
+    # wcs.wcs.crpix = [hdr["CRPIX1"], hdr["CRPIX2"], hdr["CRPIX3"]]
+    # wcs.wcs.crval = [hdr["CRVAL1"], hdr["CRVAL2"], hdr["CRVAL3"]]
+    # wcs.wcs.cunit = [hdr["CUNIT1"], hdr["CUNIT2"], hdr["CUNIT3"]]
+    # wcs.wcs.pc = [hdr["PC1_1"] hdr["PC1_2"] hdr["PC1_3"]; hdr["PC2_1"] hdr["PC2_2"] hdr["PC2_3"]; hdr["PC3_1"] hdr["PC3_2"] hdr["PC3_3"]]
+    wcs = py_wcs.WCS(read_header(hdu["SCI"], String))
 
     # Wavelength vector
     λ = hdr["CRVAL3"] .+ hdr["CDELT3"] .* (collect(0:hdr["NAXIS3"]-1) .+ hdr["CRPIX3"] .- 1)
@@ -227,14 +234,19 @@ function from_fits(filename::String)::DataCube
         error("Unrecognized wavelength unit: $(hdr["CUNIT3"])")
     end
 
+    # Get the PSF FWHM in arcseconds assuming diffraction-limited optics (theta = lambda/D)
+    # Using the OBSERVED-FRAME wavelength
+    # psf_fwhm = @. (λ * 1e-6 / mirror_size) * 180/π * 3600
+    psf_fwhm = @. 0.033 * λ + 0.106
+
     @debug "Intensity units: $(hdr["BUNIT"]), Wavelength units: $(hdr["CUNIT3"])"
 
-    DataCube(λ, Iν, σI, mask, Ω, ra, dec, wcs, channel, band, false, false)
+    DataCube(λ, Iν, σI, mask, Ω, ra, dec, psf_fwhm, wcs, channel, band, false, false)
 end
 
 
 """
-    to_rest_frame(cube::DataCube, z)
+    to_rest_frame!(cube::DataCube, z)
 
 Convert a DataCube object's wavelength vector to the rest frame
 
@@ -244,27 +256,24 @@ Convert a DataCube object's wavelength vector to the rest frame
 
 See also [`DataCube`](@ref), [`Util.rest_frame`](@ref)
 """
-function to_rest_frame(cube::DataCube, z::Real)::DataCube
+function to_rest_frame!(cube::DataCube, z::Real)
 
     # Only convert using redshift if it hasn't already been converted
     if !cube.rest_frame
         @debug "Converting the wavelength vector of cube with channel $(cube.channel), band $(cube.band)" *
         " to the rest frame using redshift z=$z"
 
-        new_λ = Util.rest_frame(cube.λ, z)
-        return DataCube(new_λ, cube.Iν, cube.σI, cube.mask, cube.Ω, cube.α, cube.δ, cube.wcs, cube.channel, 
-            cube.band, true, cube.masked)
+        cube.λ = Util.rest_frame(cube.λ, z)
+        cube.rest_frame = true
     end
 
-    @info "This cube's wavelength vector has already been converted to the rest frame. Returning" *
-        " the unmodified cube."
-    return cube
+    cube
 
 end
 
 
 """
-    apply_mask(cube::DataCube)
+    apply_mask!(cube::DataCube)
 
 Apply the mask to the intensity & error arrays in the DataCube
 
@@ -273,25 +282,19 @@ Apply the mask to the intensity & error arrays in the DataCube
 
 See also [`DataCube`](@ref)
 """
-function apply_mask(cube::DataCube)::DataCube
+function apply_mask!(cube::DataCube)
 
     # Only apply the mask if it hasn't already been applied
     if !cube.masked
         @debug "Masking the intensity and error maps of cube with channel $(cube.channel), band $(cube.band)"
 
-        Iν = copy(cube.Iν)
-        σI = copy(cube.σI)
+        cube.Iν[cube.mask] .= NaN
+        cube.σI[cube.mask] .= NaN
+        cube.masked = true
 
-        Iν[cube.mask] .= NaN
-        σI[cube.mask] .= NaN
-
-        return DataCube(cube.λ, Iν, σI, cube.mask, cube.Ω, cube.α, cube.δ, cube.wcs, cube.channel, cube.band, 
-            cube.rest_frame, true)
     end
 
-    @info "This cube's intensity and error maps have already been masked. Returning the" *
-        " unmodified cube."
-    return cube
+    cube
 
 end
 
@@ -328,15 +331,24 @@ function interpolate_cube!(cube::DataCube)
 
         # Interpolate the NaNs
         if sum(filt) > 0
-            @debug "NaNs found in spaxel $index -- interpolating"
+            @info "NaNs found in spaxel $index -- interpolating"
 
             # Make sure the wavelength vector is linear, since it is assumed later in the function
             diffs = diff(λ)
             Δλ = mean(diffs[1])
-            scale = length(λ) ÷ 40
+            scale = 0.05
+            offset = findfirst(λ .> (scale + λ[1]))
 
             # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
-            λknots = λ[scale+1]:Δλ*scale:λ[end-scale-1]
+            λknots = collect(λ[offset+1]:scale:λ[end-offset-1])
+            good = []
+            for i ∈ 1:length(λknots)
+                _, λc = findmin(abs.(λknots[i] .- λ))
+                if !isnan(I[λc])
+                    append!(good, [i])
+                end
+            end
+            λknots = λknots[good]
             # ONLY replace NaN values, keep the rest of the data as-is
             I[filt] .= Spline1D(λ[isfinite.(I)], I[isfinite.(I)], λknots, k=3, bc="extrapolate").(λ[filt])
             σ[filt] .= Spline1D(λ[isfinite.(σ)], σ[isfinite.(σ)], λknots, k=3, bc="extrapolate").(λ[filt])
@@ -516,13 +528,13 @@ A plotting utility function for 1D spectra of individual spaxels or the full cub
 See also [`DataCube`](@ref), [`plot_2d`](@ref)
 """
 function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=true, logᵢ::Integer=false,
-    spaxel::Union{Tuple{S,S},Nothing}=nothing, linestyle::String="-", name::Union{String,Nothing}=nothing) where {S<:Integer}
+    aperture::Union{Tuple{S,S,S,S},Nothing}=nothing, linestyle::String="-", name::Union{String,Nothing}=nothing) where {S<:Integer}
 
     @debug "Plotting 1D intensity/error map for cube with channel $(cube.channel), band $(cube.band)"
 
     # Alias
     λ = data.λ
-    if isnothing(spaxel)
+    if isnothing(aperture)
         # Sum up data along spatial dimensions
         I = Util.Σ(data.Iν, (1,2))
         σ = sqrt.(Util.Σ(data.σI.^2, (1,2)))
@@ -535,8 +547,8 @@ function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
         σ ./= Util.Σ(Array{Int}(.~data.mask), (1,2))
     else
         # Take the spaxel
-        I = data.Iν[spaxel..., :]
-        σ = data.σI[spaxel..., :]
+        I = Util.Σ(data.Iν[aperture[1]:aperture[2], aperture[3]:aperture[4], :], (1,2))
+        σ = .√(Util.Σ(data.σI[aperture[1]:aperture[2], aperture[3]:aperture[4], :].^2, (1,2)))
         sub = "\\lambda"
     end
 
@@ -570,7 +582,7 @@ function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
     end
     ax.legend(loc="upper right", frameon=false)
     ax.set_xlim(minimum(λ), maximum(λ))
-    ax.set_title(isnothing(name) ? "" * (isnothing(spaxel) ? "" : "Spaxel ($(spaxel[1]),$(spaxel[2]))") : name)
+    ax.set_title(isnothing(name) ? "" * (isnothing(aperture) ? "" : "Spaxel ($(aperture[1]):$(aperture[2]),$(aperture[3]):$(aperture[4]))") : name)
     ax.tick_params(direction="in")
 
     @debug "Saving 1D plot to $fname"
@@ -603,9 +615,9 @@ A struct for holding DataCube objects in different channels for the same observa
 
 See also [`DataCube`](@ref)
 """
-struct Observation
+mutable struct Observation
 
-    channels::Dict{<:Integer,DataCube}
+    channels::Dict{Any,DataCube}
 
     name::String
     z::Real
@@ -616,7 +628,7 @@ struct Observation
     rest_frame::Bool
     masked::Bool
 
-    function Observation(channels::Dict{<:Integer,DataCube}=Dict{<:Integer,DataCube}(), name::String="Generic Observation",
+    function Observation(channels::Dict{Any,DataCube}=Dict{Any,DataCube}(), name::String="Generic Observation",
         z::Real=NaN, α::Real=NaN, δ::Real=NaN, instrument::String="Generic Instrument", 
         detector::String="Generic Detector", rest_frame::Bool=false, masked::Bool=false)
 
@@ -634,12 +646,13 @@ Create an Observation object from a series of fits files with IFU cubes in diffe
 # Arguments
 - `filenames::Vector{String}`: A vector of filepaths to the FITS files
 - `z::Real`: The redshift of the object.
+- `mirror_size::Real=6.5`: The mirror size of the telescope in meters, default = 6.5 m for JWST
 """
-function from_fits(filenames::Vector{String}, z::Real)::Observation
+function from_fits(filenames::Vector{String}, z::Real; mirror_size::Real=6.5)::Observation
 
 
     # Grab object information from the FITS header of the first file
-    channels = Dict{Int,DataCube}()
+    channels = Dict{Any,DataCube}()
     hdu = FITS(filenames[1])
     hdr = read_header(hdu[1])
     name = hdr["TARGNAME"]
@@ -652,10 +665,17 @@ function from_fits(filenames::Vector{String}, z::Real)::Observation
     Initializing Observation struct for $name, with redshift z=$z
     #############################################################
     """
+
+    bands = Dict("SHORT" => "A", "MEDIUM" => "B", "LONG" => "C")
     
     # Loop through the files and call the individual DataCube method of the from_fits function
     for (i, filepath) ∈ enumerate(filenames)
-        channels[i] = from_fits(filepath)
+        cube = from_fits(filepath; mirror_size=mirror_size)
+        if cube.band == "MULTIPLE"
+            channels[parse(Int, cube.channel)] = cube
+            continue
+        end
+        channels[Symbol(bands[cube.band] * cube.channel)] = cube
     end
 
     Observation(channels, name, z, ra, dec, inst, detector, false, false)
@@ -663,67 +683,273 @@ end
 
 
 """
-    to_rest_frame(obs::Observation)
+    to_rest_frame!(obs::Observation)
 
 Convert each wavelength channel into the rest-frame given by the redshift
 
 # Arguments
 - `obs::Observation`: The Observation object to convert
 """
-function to_rest_frame(obs::Observation)::Observation
+function to_rest_frame!(obs::Observation)
 
     @debug """\n
     Converting observation of $(obs.name) to the rest frame
     #######################################################
     """
-
-    new_channels = Dict{Int,DataCube}()
     # Loop through the channels and call the individual DataCube method of the to_rest_frame function
-    for (i, chan) ∈ zip(keys(obs.channels), values(obs.channels))
-        if !isnothing(chan)
-            new_channels[i] = to_rest_frame(chan, obs.z)
-        end
+    for k ∈ keys(obs.channels)
+        to_rest_frame!(obs.channels[k], obs.z)
     end
-    Observation(new_channels, obs.name, obs.z, obs.α, obs.δ, obs.instrument, obs.detector, true, obs.masked)
+    obs.rest_frame = true
+
+    obs
 
 end
 
 
 """
-    apply_mask(obs::Observation)
+    apply_mask!(obs::Observation)
 
 Apply the mask onto each intensity/error map in the observation
 
 # Arguments
 - `obs::Observation`: The Observation object to mask
 """
-function apply_mask(obs::Observation)::Observation
+function apply_mask!(obs::Observation)
 
     @debug """\n
     Masking out bad spaxels in observation of $(obs.name)
     #####################################################
     """
-
-    new_channels = Dict{Int,DataCube}()
     # Loop through the channels and call the individual DataCube method of the apply_mask function
-    for (i, chan) ∈ zip(keys(obs.channels), values(obs.channels))
-        if !isnothing(chan)
-            new_channels[i] = apply_mask(chan)
-        end
+    for k ∈ keys(obs.channels)
+        apply_mask!(obs.channels[k])
     end
-    Observation(new_channels, obs.name, obs.z, obs.α, obs.δ, obs.instrument, obs.detector, obs.rest_frame, true)
+    obs.masked = true
+
+    obs
 
 end
 
 
 """
-    correct(obs::Observation)
+    correct!(obs::Observation)
 
-A composition of the `apply_mask` and `to_rest_frame` functions for Observation objects
+A composition of the `apply_mask!` and `to_rest_frame!` functions for Observation objects
 
-See [`apply_mask`](@ref) and [`to_rest_frame`](@ref)
+See [`apply_mask!`](@ref) and [`to_rest_frame!`](@ref)
 """
-correct = apply_mask ∘ to_rest_frame
+correct! = apply_mask! ∘ to_rest_frame!
+
+
+"""
+    adjust_subchannel_wcs_alignment(obs, channel; box_size=9)
+
+Adjust the WCS alignments of each sub-channel within a given channel such that they match.
+This is performed in order to remove discontinuous jumps in the flux level when crossing between
+sub-channels.
+"""
+function adjust_subchannel_wcs_alignment!(obs::Observation, channel::Integer; box_size::Integer=9)
+
+    @info "Aligning World Coordinate Systems for subchannels in channel $channel..."
+
+    # Get summed intensity maps for each of the sub-channels for a given channel
+    ch_short = obs.channels[Symbol("A" * string(channel))]
+    short = Util.Σ(ch_short.Iν, 3)
+
+    ch_med = obs.channels[Symbol("B" * string(channel))]
+    med = Util.Σ(ch_med.Iν, 3)
+
+    ch_long = obs.channels[Symbol("C" * string(channel))]
+    long = Util.Σ(ch_long.Iν, 3)
+
+    c_coords = zeros(3, 2)
+
+    i = 1
+    for (data, wcs) ∈ zip([short, med, long], [ch_short.wcs, ch_med.wcs, ch_long.wcs])
+        # Find the peak brightness pixels and place boxes around them
+        peak = argmax(data)
+        box_half = fld(box_size, 2)
+        boxed = data[peak[1]-box_half:peak[1]+box_half, peak[2]-box_half:peak[2]+box_half]
+        # Find the "center of mass" -> the brightness centroid weighted by pixel indices
+        x_ind = ones(box_size)' .* (1:box_size)
+        x_cent = sum(boxed .* x_ind) / sum(boxed) + (peak[1]-box_half) - 1
+        y_ind = (1:box_size)' .* ones(box_size)
+        y_cent = sum(boxed .* y_ind) / sum(boxed) + (peak[2]-box_half) - 1
+        # Convert pixel coordinates to physical coordinates using the WCS transformation with the argument for 1-based indexing
+        c_coords[i, :] .= wcs.all_pix2world([[x_cent, y_cent, 1.]], 1)[1:2]
+        @debug "The centroid location of channel $channel $(["short", "medium", "long"][i]) is ($x_cent, $y_cent) pixels " *
+               "or $c_coords in RA (deg), dec (deg)"
+        i += 1
+    end
+    
+    # Calculate the offsets between each sub-channel and adjust the WCS parameters
+    med_offset = c_coords[2, :] .- c_coords[1, :]
+    @debug "The centroid offset for channel $channel medium is $med_offset"
+    long_offset = c_coords[3, :] .- c_coords[1, :]
+    @debug "The centroid offset for channel $channel long is $long_offset"
+
+    # Adjust the WCS "CRVAL" entries to fix the alignments of the sub-channels
+    ch_med.wcs.wcs.crval = [ch_med.wcs.wcs.crval[1:2] .- med_offset; ch_med.wcs.wcs.crval[3]]
+    ch_long.wcs.wcs.crval = [ch_long.wcs.wcs.crval[1:2] .- long_offset; ch_long.wcs.wcs.crval[3]]
+
+    nothing
+
+end
+
+
+"""
+    concatenate_subchannels!(obs, channels=[1,2,3,4])
+
+Combine the sub-channel cubes into a single cube for each channel by aligning the WCS parameters,
+performing square aperture extractions along a uniform grid, and resampling along a linear wavelength
+vector.
+"""
+function concatenate_subchannels!(obs::Observation, channels::Vector{<:Integer}=[1,2,3,4])
+
+    # Loop over each channel that should have its subchannels concatenated
+    for channel in channels
+
+        # Adjust the WCS alignments between subchannels
+        adjust_subchannel_wcs_alignment!(obs, channel; box_size=9)
+        
+        @info "Concatenating subchannels for channel $channel"
+        ch_short = obs.channels[Symbol("A" * string(channel))]
+        ch_med = obs.channels[Symbol("B" * string(channel))]
+        ch_long = obs.channels[Symbol("C" * string(channel))]
+
+        # Make sure each subchannel has had the same corrections applied
+        @assert ch_short.rest_frame == ch_med.rest_frame == ch_long.rest_frame "Make sure all subchannels are in the same frame! (rest / observed)"
+        @assert ch_short.masked == ch_med.masked == ch_long.masked "Make sure all subchannels are either unmasked or masked!"
+        # Make sure each subchannel has the same base properties
+        @assert ch_short.Ω ≈ ch_med.Ω ≈ ch_long.Ω "Make sure all subchannels have the same angular pixel sizes!"
+        @assert ch_short.α ≈ ch_med.α ≈ ch_long.α "Make sure all subchannels have the same RA and Dec!"
+        @assert ch_short.δ ≈ ch_med.δ ≈ ch_long.δ "Make sure all subchannels have the same RA and Dec!"
+
+        @debug "Concatenating wavelength vectors"
+        # First take care of the wavelength vectors and mask
+        λ = [ch_short.λ; ch_med.λ; ch_long.λ]
+
+        xs_size, ys_size, zs_size = size(ch_short.Iν)
+        xm_size, ym_size, zm_size = size(ch_med.Iν)
+        xl_size, yl_size, zl_size = size(ch_long.Iν)
+
+        Iν = zeros(xs_size, ys_size, length(λ))
+        σI = zeros(xs_size, ys_size, length(λ))
+        mask = falses(xs_size, ys_size, length(λ))
+
+        @debug "Performing gridded aperture photometry on each subchannel"
+        prog = Progress(xs_size * ys_size, showspeed=true)
+
+        # Extract spaxels from square apertures defined by the grid from the "short" subchannel
+        for x ∈ 1:xs_size, y ∈ 1:ys_size
+
+            # Get the pixel coordinates in each subchannel
+            c_short = [x, y]
+            c_med = ch_med.wcs.all_world2pix(ch_short.wcs.all_pix2world([[x, y, 1.]], 1), 1)[1:2]
+            c_long = ch_long.wcs.all_world2pix(ch_short.wcs.all_pix2world([[x, y, 1.]], 1), 1)[1:2]
+
+            # Find the area overlaps of each coordinate location assuming square apertures with a side length of 1 pixel
+            # By definition, the short aperture will directly overlap with the spaxel at (x, y) in the short IFU, so to 
+            # save time we just skip this step and set I_short = the short channel intensity at the spaxel (x, y)
+
+            # The medium and long apertures will have some overlap based on its shift
+            cc_med = round.(Int, c_med)
+            cc_med = max.(cc_med, 1)
+            cc_med = [min(cc_med[1], xm_size), min(cc_med[2], ym_size)]
+            ap_med = (max(1,cc_med[1]-1), min(cc_med[1]+1,xm_size), max(1,cc_med[2]-1), min(cc_med[2]+1,ym_size))
+            d_med = c_med .- round.(c_med)
+            a_med = photutils.geometry.rectangular_overlap_grid(-1.5-d_med[1], 1.5-d_med[1], -1.5-d_med[2], 1.5-d_med[2], 
+                ap_med[2]-ap_med[1]+1, ap_med[4]-ap_med[3]+1, 1, 1, 0, 0, 5)'
+            cc_long = round.(Int, c_long)
+            cc_long = max.(cc_long, 1)
+            cc_long = [min(cc_long[1], xl_size), min(cc_long[2], yl_size)]
+            ap_long = (max(1,cc_long[1]-1), min(cc_long[1]+1,xl_size), max(1,cc_long[2]-1), min(cc_long[2]+1,yl_size))
+            d_long = c_long .- round.(c_long)
+            a_long = photutils.geometry.rectangular_overlap_grid(-1.5-d_long[1], 1.5-d_long[1], -1.5-d_long[2], 1.5-d_long[2], 
+                ap_long[2]-ap_long[1]+1, ap_long[4]-ap_long[3]+1, 1, 1, 0, 0, 5)'
+
+            # The fluxes in each subchannel are the convolutions with these area kernels
+            I_short = ch_short.Iν[x, y, :]
+            I_med = Util.Σ(a_med .* ch_med.Iν[ap_med[1]:ap_med[2], ap_med[3]:ap_med[4], :], (1,2))
+            I_long = Util.Σ(a_long .* ch_long.Iν[ap_long[1]:ap_long[2], ap_long[3]:ap_long[4], :], (1,2))
+
+            # The errors are similar except they are added in quadrature
+            σ_short = ch_short.σI[x, y, :]
+            σ_med = sqrt.(Util.Σ(a_med .* ch_med.σI[ap_med[1]:ap_med[2], ap_med[3]:ap_med[4], :].^2, (1,2)))
+            σ_long = sqrt.(Util.Σ(a_long .* ch_long.σI[ap_long[1]:ap_long[2], ap_long[3]:ap_long[4], :].^2, (1,2)))
+
+            # The masks will just combine with an "and" / "all" or operation across the aperture
+            mask_short = ch_short.mask[x, y, :]
+            mask_med = [any(ch_med.mask[ap_med[1]:ap_med[2], ap_med[3]:ap_med[4], wi]) for wi ∈ 1:zm_size]
+            mask_long = [any(ch_long.mask[ap_long[1]:ap_long[2], ap_long[3]:ap_long[4], wi]) for wi ∈ 1:zl_size]
+
+            # Concatenate together
+            Iν[x, y, :] .= [I_short; I_med; I_long]
+            σI[x, y, :] .= [σ_short; σ_med; σ_long]
+            mask[x, y, :] .= [mask_short; mask_med; mask_long]
+            # If the mask covers a significant portion of a channel, i.e. an entire subchannel, then mask out everything
+            if all(mask_short .== 1) || all(mask_med .== 1) || all(mask_long .== 1)
+                mask[x, y, :] .= 1
+            end
+
+            # Iterate progress meter
+            next!(prog)
+        end
+
+        # Sort the wavelengths to be monotonically increasing
+        ss = sortperm(λ)
+        λ = λ[ss]
+        Iν = Iν[:, :, ss]
+        σI = σI[:, :, ss]
+        mask = mask[:, :, ss]
+
+        @debug "Resampling wavelength onto a uniform grid"
+        # For overlapping wavelength regions on the boundaries of the subchannels, rebin the flux so that the wavelength vector
+        # is linear
+        Δλ = median(diff(λ))
+        λ_lin = collect(λ[1]:Δλ:λ[end])
+        I_lin, σ_lin, mask_lin = Util.resample_conserving_flux(λ_lin, λ, Iν, σI, mask)
+
+        @debug "Creating new channel entry"
+
+        # New WCS object should be the same as the "short" subchannel except in the wavelength dimension
+        λ_init = λ_lin[1]
+        λ_diff = Δλ
+        if ch_short.rest_frame
+            λ_init = Util.observed_frame(λ_lin[1], obs.z)
+            λ_diff = Util.observed_frame(Δλ, obs.z)
+        end
+        ch_wcs = ch_short.wcs 
+        ch_wcs.wcs.crpix = [ch_wcs.wcs.crpix[1:2]..., 1]
+        ch_wcs.wcs.crval = [ch_wcs.wcs.crval[1:2]..., λ_init * 1e-6]
+        ch_wcs.wcs.cdelt = [ch_wcs.wcs.cdelt[1:2]..., λ_diff * 1e-6]
+        ch_wcs._naxis = [ch_wcs._naxis[1:2]..., length(λ_lin)]
+
+        # New PSF FWHM vector from the wavelength vector
+        ch_psf_fwhm = @. 0.033 * λ_lin + 0.106
+
+        # Apply the new mask
+        if ch_short.masked
+            I_lin[mask_lin] .= NaN
+            σ_lin[mask_lin] .= NaN
+        end
+
+        # Create a new entry in obs.channels with the full channel data
+        obs.channels[channel] = DataCube(λ_lin, I_lin, σ_lin, mask_lin, ch_short.Ω, ch_short.α, ch_short.δ, 
+            ch_psf_fwhm, ch_wcs, string(channel), "SHORTMEDIUMLONG", ch_short.rest_frame, ch_short.masked)
+        
+        # Delete the individual sub-channel entries since they are no longer necessary
+        delete!(obs.channels, Symbol("A" * string(channel)))
+        delete!(obs.channels, Symbol("B" * string(channel)))
+        delete!(obs.channels, Symbol("C" * string(channel)))
+
+    end
+
+    obs
+
+end
+
 
 
 """
@@ -789,8 +1015,8 @@ function cube_combine!(obs::Observation, channels::Union{Vector{S},Nothing}=noth
         # Function to transform output coordinates into input coordinates
         # Add in the wavelength coordinate, which doesn't change
         @inline function pix_transform(x, y)
-            coords3d = [x, y, 1.]
-            cprime = world_to_pix(obs.channels[ch_in].wcs, pix_to_world(obs.channels[ch_ref].wcs, coords3d))
+            sky_x, sky_y = obs.channels[ch_ref].wcs.all_pix2world([[x, y, 1.]], 1)[1:2]
+            cprime = obs.channels[ch_in].wcs.all_world2pix([[sky_x, sky_y, 1.]], 1)[1:2]
             cprime[1], cprime[2]
         end
 
@@ -873,11 +1099,10 @@ function cube_combine!(obs::Observation, channels::Union{Vector{S},Nothing}=noth
 
     # Define the rebinned cube as the zeroth channel (since this is not taken up by anything else)
     obs.channels[out_id] = DataCube(λ_out, I_out, σ_out, mask_out, 
-        obs.channels[ch_ref].Ω, obs.α, obs.δ, obs.channels[ch_ref].wcs, obs.channels[ch_ref].channel, 
-        obs.channels[ch_ref].band, obs.rest_frame, obs.masked)
+        obs.channels[ch_ref].Ω, obs.α, obs.δ, obs.channels[ch_ref].psf_fwhm, obs.channels[ch_ref].wcs, 
+        obs.channels[ch_ref].channel, obs.channels[ch_ref].band, obs.rest_frame, obs.masked)
     
     @info "Done!"
-    
     obs.channels[out_id]
 
 end
@@ -947,17 +1172,169 @@ function cube_rebin!(obs::Observation, binsize::S, channel::S; out_id::S=0) wher
 
     # New WCS (not tested)
     wcs_out = obs.channels[channel].wcs
-    wcs_out.cdelt[1:2] .*= binsize
-    wcs_out.crpix[1:2] .-= (0.5 - 0.5/binsize)
+    wcs_out.wcs.cdelt[1:2] .*= binsize
+    wcs_out.wcs.crpix[1:2] .-= (0.5 - 0.5/binsize)
 
     # Set new binned channel
     obs.channels[out_id] = DataCube(λ, I_out, σ_out, mask_out, 
-        obs.channels[channel].Ω * binsize^2, obs.α, obs.δ, obs.channels[channel].wcs, obs.channels[channel].channel,
-        obs.channels[channel].band, obs.rest_frame, obs.masked)
+        obs.channels[channel].Ω * binsize^2, obs.α, obs.δ, obs.channels[channel].psf_fwhm, obs.channels[channel].wcs, 
+        obs.channels[channel].channel, obs.channels[channel].band, obs.rest_frame, obs.masked)
 
     @info "Done!"
 
     obs.channels[out_id]
+
+end
+
+
+"""
+    psf_kernel(cube; psf_scale, kernel_size)
+    
+Compute the kernel that will be convolved with the IFU cube to extract individual spaxels while still respecting
+the PSF FWHM of the observations.
+"""
+function psf_kernel(cube::DataCube; aperture_scale::Real=1., kernel_size::Union{Integer,Nothing}=nothing, kernel_type::Symbol=:Tophat)
+
+    @debug "Creating the PSF kernel..."
+
+    # Make sure kernel size is odd
+    if !isnothing(kernel_size)
+        @assert kernel_size % 2 == 1 "The kernel size must be an odd integer!"
+    end
+
+    # Pixel scale in arcseconds
+    pix_as = sqrt(cube.Ω) * 180/π * 3600
+    # Find the PSF FWHM distance in pixel units (cube value is in arcseconds)
+    psf_fwhm_pix = cube.psf_fwhm ./ pix_as
+    # ap_pix is the HWHM of the aperture being used (or in the tophat case, the radius)
+    # aperture_scale is essentially a scaling factor for how much larger the aperture should be compared to the PSF FWHM
+    ap_pix = aperture_scale .* psf_fwhm_pix
+
+    @debug "PSF FWHM in arcseconds: $(cube.psf_fwhm[1]) at $(cube.λ[1]) microns"
+    @debug "PSF FWHM in pixels: $(psf_fwhm_pix[1]) at $(cube.λ[1]) microns"
+    @debug "Aperture radius in pixels (scale = x$(aperture_scale)): $(ap_pix[1]) at $(cube.λ[1]) microns"
+
+    if isnothing(kernel_size)
+        if kernel_type == :Gaussian
+            # Require the kernel size to cover 1-sigma (68%) of the PSF distribution
+            kernel_size = Int(ceil(2 * maximum(ap_pix) / (√(2log(2)))))
+        elseif kernel_type == :Tophat
+            # The diameter of the kernel is 2x the PSF FWHM for an aperture_scale of 1
+            kernel_size = Int(ceil(2 * maximum(ap_pix)))
+        end
+        # Make sure the size is odd so the center position covers the spaxel being convolved
+        if kernel_size % 2 == 0
+            kernel_size += 1
+        end
+        @debug "Using kernel size of $kernel_size pixels"
+    end
+
+    # Initialize kernel
+    kernel = zeros(kernel_size, kernel_size, length(cube.λ))
+    # Get the coordinate of the center of the kernel (i.e. [2,2] for a kernel size of 3)
+    c = cld(kernel_size, 2)
+    f = fld(kernel_size, 2)
+
+    # Loop through each wavelength point
+    for wi ∈ 1:length(cube.λ)
+
+        if kernel_type == :Gaussian
+            # For each pixel in the kernel, calculate the distance from the center (in pixels)
+            # and calculate the value of the normal distribution at that point
+            for xᵢ ∈ 1:kernel_size, yᵢ ∈ 1:kernel_size
+                # Set the kernel to the normal probability distribution function at the given coordinates
+                dist = hypot(xᵢ-c, yᵢ-c)
+                # (This is not normalized properly but it doesnt matter because we divide out the normalization anyways)
+                kernel[xᵢ, yᵢ, wi] = Util.Gaussian(dist, 1., 0., 2*ap_pix[wi])
+            end
+        elseif kernel_type == :Tophat
+            kernel[:, :, wi] .= photutils.geometry.circular_overlap_grid(-f-0.5, f+0.5, -f-0.5, f+0.5, kernel_size, kernel_size, 
+                ap_pix[wi], true, 5)'
+        end
+
+        # Renormalize such that it integrates to 1
+        kernel[:,:,wi] ./= sum(kernel[:,:,wi])
+
+    end
+
+    kernel
+
+end
+
+
+"""
+    convolve_psf!(cube, psf_kernel)
+
+Convolve the flux and error cubes with the PSF kernel to obtain a cube that has been smoothed out by the PSF
+"""
+function convolve_psf!(cube::DataCube; aperture_scale::Real=1., kernel_size::Union{Integer,Nothing}=nothing, kernel_type::Symbol=:Tophat)
+
+    kernel = psf_kernel(cube; aperture_scale=aperture_scale, kernel_size=kernel_size, kernel_type=kernel_type)
+
+    kernel_size = size(kernel)[1]
+    kernel_cent = cld(kernel_size, 2)
+    kernel_len = fld(kernel_size, 2)
+
+    @info "The median PSF FWHM is $(median(cube.psf_fwhm)) arcseconds"
+    @info "Convolving the IFU data with a $(kernel_size)x$(kernel_size) $(kernel_type) PSF FWHM kernel with a median " *
+          "$(kernel_type == :Tophat ? "diameter" : "FWHM") of $(2*aperture_scale*median(cube.psf_fwhm)) arcseconds"
+
+    # Step along the spatial directions and apply the kernel at each pixel
+    @showprogress for xᵢ ∈ 1:size(cube.Iν,1), yᵢ ∈ 1:size(cube.Iν,2)
+
+        if any(cube.mask[xᵢ, yᵢ, :])
+            # Do not convolve spaxels that are masked
+            continue
+        end
+
+        # Copy the kernel
+        k = copy(kernel)
+
+        # Min/max indices to consider
+        xmin = xᵢ - kernel_len
+        xmax = xᵢ + kernel_len
+        ymin = yᵢ - kernel_len
+        ymax = yᵢ + kernel_len
+
+        # Truncate the kernel if we're at one of the bounds
+        if xmin < 1
+            k = k[kernel_cent:end, :, :]
+            xmin = xᵢ
+        elseif xmax > size(cube.Iν,1)
+            k = k[1:kernel_cent, :, :]
+            xmax = xᵢ
+        end
+        if ymin < 1
+            k = k[:, kernel_cent:end, :]
+            ymin = yᵢ
+        elseif ymax > size(cube.Iν,2)
+            k = k[:, 1:kernel_cent, :]
+            ymax = yᵢ
+        end
+
+        # Check if any of the spaxels that would be covered by the kernel are masked
+        mask_reg = [any(cube.mask[xx, yy, :]) for xx ∈ xmin:xmax, yy ∈ ymin:ymax] 
+        # If so, renormalize the kernel such that only the unmasked spaxels are weighted
+        k[mask_reg, :] .= 0.
+        if iszero(sum(k))
+            # If every spaxel in the region is masked out, we dont need to do any convolving
+            continue
+        end
+        for wi ∈ 1:size(k,3)
+            k[:, :, wi] ./= sum(k[:, :, wi])
+        end
+
+        # Perform the convolution with the kernel
+        I = cube.Iν[xmin:xmax, ymin:ymax, :]
+        cube.Iν[xᵢ, yᵢ, :] .= Util.Σ(k .* I, (1,2))
+
+        # Same for the error
+        σ = cube.σI[xmin:xmax, ymin:ymax, :]
+        cube.σI[xᵢ, yᵢ, :] .= .√(Util.Σ(k .* σ.^2, (1,2)))
+
+    end
+
+    cube
 
 end
 
