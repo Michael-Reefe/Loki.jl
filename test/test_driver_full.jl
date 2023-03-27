@@ -1,7 +1,6 @@
 using Distributed
 
 procs = addprocs(Sys.CPU_THREADS)
-n_procs = length(procs)
 @everywhere begin
     using Pkg; Pkg.activate(dirname(@__DIR__))
     Pkg.instantiate(); Pkg.precompile()
@@ -55,12 +54,12 @@ obs = from_fits(["data/Level3_ch1-long_s3d.fits",
 # Convert to rest-frame wavelength vector, and mask out bad spaxels
 correct!(obs)
 # Concatenate the subchannels of each channel so that we have one cube for each channel
-concatenate_subchannels!(obs)
+interpolate_channels!(obs, channel, out_id=channel) 
 # Interpolate NaNs in otherwise good spaxels
-interpolate_cube!(obs.channels[channel])
+interpolate_nans!(obs.channels[channel])
 
 # Do the optical depth pre-fitting
-τ_guess = fit_optical_depth(obs)
+# τ_guess = fit_optical_depth(obs)
 
 # Convolve with the PSF FWHM
 # convolve_psf!(obs.channels[channel], psf_scale=1., kernel_type=:Tophat)
@@ -72,7 +71,7 @@ interpolate_cube!(obs.channels[channel])
 
 # Create the cube fitting object
 # plot_range=[(7.61, 7.69), (12.77, 12.85)]
-cube_fitter = CubeFitter(obs.channels[channel], obs.z, τ_guess, obs.name * "_ch$(channel)_full_tied_convolved_tophat_x1", n_procs; 
+cube_fitter = CubeFitter(obs.channels[channel], obs.z, obs.name * "_ch$(channel)_full_tied_wcs_aligned"; 
     parallel=true, plot_spaxels=:pyplot, plot_maps=true, save_fits=true)
 
 # Fit the cube

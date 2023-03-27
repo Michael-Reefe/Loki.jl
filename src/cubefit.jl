@@ -260,14 +260,13 @@ end
 
 
 """
-    parse_dust(τ_guess)
+    parse_dust()
 
 Read in the dust.toml configuration file, checking that it is formatted correctly,
 and convert it into a julia dictionary with Parameter objects for dust fitting parameters.
-This deals with continuum, PAH features, and extinction options.  The input parameter τ_guess
-is an initial guess for the optical depth, estimated by interpolating the continuum.
+This deals with continuum, PAH features, and extinction options.
 """
-function parse_dust(τ_guess::Real)::Dict
+function parse_dust()::Dict
 
     @debug """\n
     Parsing dust file
@@ -300,11 +299,11 @@ function parse_dust(τ_guess::Real)::Dict
         end
         for ex_key ∈ keylist3
             @assert haskey(dust["extinction"], ex_key) "Missing option $ex_key in extinction options!"
-            @assert haskey(dust["extinction"][ex_key], key) || ((ex_key == "tau_9_7") && (key == "val")) "Missing option $key in $ex_key options!"
+            @assert haskey(dust["extinction"][ex_key], key) "Missing option $key in $ex_key options!"
         end
         for hd_key ∈ keylist4
             @assert haskey(dust["hot_dust"], hd_key) "Missing option $hd_key in hot dust options!"
-            @assert haskey(dust["hot_dust"][hd_key], key) || ((hd_key ∈ ("tau_warm", "tau_cold")) && (key == "val")) "Missing option $key in $hd_key options!"
+            @assert haskey(dust["hot_dust"][hd_key], key) "Missing option $key in $hd_key options!"
         end
     end
 
@@ -338,7 +337,7 @@ function parse_dust(τ_guess::Real)::Dict
     dust_out[:extinction] = Param.ParamDict()
     msg = "Extinction:"
     # Write tau_9_7 value based on the provided guess
-    dust["extinction"]["tau_9_7"]["val"] = τ_guess
+    # dust["extinction"]["tau_9_7"]["val"] = τ_guess
     dust_out[:extinction][:tau_9_7] = Param.from_dict(dust["extinction"]["tau_9_7"])
     msg *= "\nTau_sil $(dust_out[:extinction][:tau_9_7])"
     dust_out[:extinction][:tau_ice] = Param.from_dict(dust["extinction"]["tau_ice"])
@@ -353,8 +352,8 @@ function parse_dust(τ_guess::Real)::Dict
     dust_out[:hot_dust] = Param.ParamDict()
     msg = "Hot Dust:"
     # Write warm_tau and col_tau values based on the provided guess
-    dust["hot_dust"]["tau_warm"]["val"] = τ_guess
-    dust["hot_dust"]["tau_cold"]["val"] = τ_guess
+    # dust["hot_dust"]["tau_warm"]["val"] = τ_guess
+    # dust["hot_dust"]["tau_cold"]["val"] = τ_guess
     dust_out[:hot_dust][:temp] = Param.from_dict(dust["hot_dust"]["temp"])
     msg *= "\nTemp $(dust_out[:hot_dust][:temp])"
     dust_out[:hot_dust][:frac] = Param.from_dict(dust["hot_dust"]["frac"])
@@ -1101,7 +1100,7 @@ end
 
 
 """
-    CubeFitter(cube, z, name, n_procs; plot_spaxels=plot_spaxels, 
+    CubeFitter(cube, z, name; plot_spaxels=plot_spaxels, 
         plot_maps=plot_maps, parallel=parallel, save_fits=save_fits)
 
 This is the main structure used for fitting IFU cubes, containing all of the necessary data, metadata,
@@ -1113,8 +1112,6 @@ to run. The actual fitting functions (`fit_spaxel` and `fit_cube!`) require an i
 `T<:Real, S<:Integer`
 - `cube::CubeData.DataCube`: The main DataCube object containing the cube that is being fit
 - `z::Real`: The redshift of the target that is being fit
-- `τ_guess::Real`: Initial guess for the optical depth
-- `n_procs::Integer`: The number of parallel processes that are being used in the fitting procedure
 - `plot_spaxels::Symbol=:pyplot`: A Symbol specifying the plotting backend to be used when plotting individual spaxel fits, can
     be either `:pyplot` or `:plotly`
 - `plot_maps::Bool=true`: Whether or not to plot 2D maps of the best-fit parameters after the fitting is finished
@@ -1186,11 +1183,9 @@ struct CubeFitter{T<:Real,S<:Integer}
     # Data
     cube::CubeData.DataCube
     z::T
-    τ_guess::Dict{Int, Matrix{T}}
     name::String
 
     # Basic fitting options
-    n_procs::S
     plot_spaxels::Symbol
     plot_maps::Bool
     plot_range::Union{Vector{<:Tuple},Nothing}
@@ -1263,9 +1258,9 @@ struct CubeFitter{T<:Real,S<:Integer}
 
     #= Constructor function --> the inputs taken map directly to fields in the CubeFitter object,
     the rest of the fields are generated in the function from these inputs =#
-    function CubeFitter(cube::CubeData.DataCube, z::Real, τ_guess::Dict{Int, Matrix{T}},
-        name::String, n_procs::Integer; plot_spaxels::Symbol=:pyplot, plot_maps::Bool=true, 
-        plot_range::Union{Vector{<:Tuple},Nothing}=nothing, parallel::Bool=true, save_fits::Bool=true) where {T<:Real}
+    function CubeFitter(cube::CubeData.DataCube, z::Real, name::String; 
+        plot_spaxels::Symbol=:pyplot, plot_maps::Bool=true, plot_range::Union{Vector{<:Tuple},Nothing}=nothing, 
+        parallel::Bool=true, save_fits::Bool=true) where {T<:Real}
 
         # Prepare output directories
         @info "Preparing output directories"
@@ -1325,13 +1320,10 @@ struct CubeFitter{T<:Real,S<:Integer}
 
         # Parse all of the options files to create default options and parameter objects
         interp_R = parse_resolving(z, parse(Int, cube.channel))
-        dust = parse_dust(τ_guess[0][parse(Int, cube.channel)])
+        dust = parse_dust()
         options = parse_options()
         line_list, voff_tied, fwhm_tied, acomp_voff_tied, acomp_fwhm_tied, flexible_wavesol, tie_voigt_mixing, voigt_mix_tied = 
             parse_lines(parse(Int, cube.channel), interp_R, λ)
-
-        # Check that number of processes doesn't exceed first dimension, so the rolling best fit can work as intended
-        @assert n_procs ≤ shape[1] "Number of processes ($n_procs) must be ≤ the size of the first cube dimension ($(shape[1]))!"
 
         # Get dust options from the dictionary
         T_s = dust[:stellar_continuum_temp]
@@ -1486,7 +1478,7 @@ struct CubeFitter{T<:Real,S<:Integer}
             p_init_line = readdlm(joinpath("output_$name", "spaxel_binaries", "init_fit_line.csv"), ',', Float64, '\n')[:, 1]
         end
 
-        new{typeof(z), typeof(n_procs)}(cube, z, τ_guess, name, n_procs, plot_spaxels, plot_maps, plot_range, parallel, 
+        new{typeof(z), typeof(n_lines)}(cube, z, name, plot_spaxels, plot_maps, plot_range, parallel, 
             save_fits, save_full_model, subtract_cubic, overwrite, track_memory, track_convergence, make_movies, extinction_curve, 
             extinction_screen, fit_sil_emission, T_s, T_dc, τ_97, τ_ice, τ_ch, β, T_hot, Cf_hot, τ_warm, τ_cold, n_dust_cont, 
             n_dust_features, df_names, dust_features, n_lines, n_acomps, line_names, line_profiles, line_acomp_profiles, lines, 
@@ -1575,28 +1567,48 @@ function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}; Δ::Integer=
     mask = falses(length(λ))
 
     # Sigma-clip to find the lines based on the *local* noise level
-    li = falses(length(λ))
-    @inbounds @simd for j ∈ 1:length(λ)
+    @inbounds for j ∈ 1:length(λ)
+        # Skip if the pixel has already been masked
+        if mask[j] == 1
+            continue
+        end
         # Only consider the spectrum within +/- W microns from the point in question
         wi = Int(W ÷ diffs[min(length(λ)-1, j)])
         wl = Int(0.1 ÷ diffs[min(length(λ)-1, j)])
         if d2f[j] < -thresh * nanstd(d2f[max(1, j-wi):min(length(λ), j+wi)])
 
-            # Count how many pixels are above the local RMS level
-            slope = (I[min(length(λ), j+wl)] - I[max(1, j-wl)]) / (λ[min(length(λ), j+wl)] - λ[max(1, j-wl)])
-            cont_lin = x -> I[max(1, j-wl)] .+ slope .* (x .- λ[max(1, j-wl)])
-            s_noline = [I[max(1, j-wl):max(1, j-fld(wl, 2))]; I[min(length(λ), j+fld(wl, 2)):min(length(λ), j+wl)]]
-            rms = nanstd(s_noline .- cont_lin.([λ[max(1, j-wl):max(1, j-fld(wl, 2))]; λ[min(length(λ), j+fld(wl, 2)):min(length(λ), j+wl)]]))
-            
-            n_pix = length(findall((I[max(1, j-wl):min(length(λ), j+wl)] .- cont_lin.(λ[max(1, j-wl):min(length(λ), j+wl)])) .> 3*rms))
+            # First, mask out +/-3*delta pixels by default
+            mask[j-3Δ:j+3Δ] .= 1
 
-            # Mask out half this many pixels to the left and right
+            # Count how many pixels are above the local RMS level using a cubic spline interpolation
+            λ_noline = [λ[max(1, j-wl):max(1, j-fld(wl, 2))]; λ[min(length(λ), j+fld(wl, 2)):min(length(λ), j+wl)]]
+            s_noline = [I[max(1, j-wl):max(1, j-fld(wl, 2))]; I[min(length(λ), j+fld(wl, 2)):min(length(λ), j+wl)]]
+
+            scale = 0.025
+            offset = findfirst(λ[.~mask] .> (λ[.~mask][1] + scale))
+            λknots = λ[.~mask][offset+1]:scale:λ[.~mask][end-offset-1]
+            good = []
+            for i ∈ 1:length(λknots)
+                _, ind = findmin(abs.(λ .- λknots[i]))
+                if !isnan(I[ind])
+                    append!(good, [i])
+                end
+            end
+            λknots = λknots[good]
+            cont_cub = Spline1D(λ[.~mask], I[.~mask], λknots, k=3)
+            rms = nanstd(s_noline .- cont_cub.(λ_noline))
+            
+            n_pix = length(findall((I[max(1, j-wl):min(length(λ), j+wl)] .- cont_cub.(λ[max(1, j-wl):min(length(λ), j+wl)])) .> 3*rms))
+
+            # Mask out this many pixels to the left and right
             mask[j-n_pix:j+n_pix] .= 1
+
         end
     end
 
     # Don't mask out this region that tends to trick this method sometimes
-    mask[11.175 .< λ .< 11.355] .= 0
+    mask[11.10 .< λ .< 11.15] .= 0
+    mask[11.17 .< λ .< 11.355] .= 0
 
     # Return the line locations and the mask
     mask
@@ -1634,15 +1646,22 @@ function continuum_cubic_spline(λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vecto
     Δλ = mean(diffs)
     # Break up cubic spline interpolation into knots 0.05 um long
     # (longer than a narrow emission line but not too long)
-    scale = 0.05
-    offset = findfirst(λ .> (scale + λ[1]))
+    scale = 0.025
+    finite = isfinite.(I_out)
+    offset = findfirst(λ[finite] .> (scale + λ[finite][1]))
 
     # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
-    λknots = λ[offset+1]:scale:λ[end-offset-1]
+    λknots = λ[finite][offset+1]:scale:λ[finite][end-offset-1]
+    # Remove any knots that happen to fall within a masked pixel
+    good = []
+    for i ∈ 1:length(λknots)
+        _, ind = findmin(abs.(λ .- λknots[i]))
+        if !isnan(I_out[ind])
+            append!(good, [i])
+        end
+    end
+    λknots = λknots[good]
     @debug "Performing cubic spline continuum fit with knots at $λknots"
-
-    # Remove knots that dont satisfy Schoenberg-Whitney conditions
-
 
     # Do a full cubic spline remapping of the data
     I_out = Spline1D(λ[isfinite.(I_out)], I_out[isfinite.(I_out)], λknots, k=3, bc="extrapolate").(λ)
@@ -1769,7 +1788,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
         pah_frac = copy(cube_fitter.p_init_cont)[end-1:end]
 
         # pull out optical depth that was pre-fit
-        τ_97_0 = cube_fitter.τ_guess[parse(Int, cube_fitter.cube.channel)][spaxel]
+        # τ_97_0 = cube_fitter.τ_guess[parse(Int, cube_fitter.cube.channel)][spaxel]
+        max_τ = maximum(cube_fitter.τ_97.prior)
 
         # scale all flux amplitudes by the difference in medians between the spaxel and the summed spaxels
         # (should be close to 1 since the sum is already normalized by the number of spaxels included anyways)
@@ -1790,15 +1810,15 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
         end
 
         # Set optical depth based on the pre-fitting
-        p₀[pᵢ] = τ_97_0
+        # p₀[pᵢ] = τ_97_0
         pᵢ += 4
 
         if cube_fitter.fit_sil_emission
             # Hot dust amplitude
             p₀[pᵢ] *= scale
             # Warm / cold optical depths
-            p₀[pᵢ+3] = τ_97_0
-            p₀[pᵢ+4] = τ_97_0
+            # p₀[pᵢ+3] = τ_97_0
+            # p₀[pᵢ+4] = τ_97_0
             pᵢ += 5
         end
 
@@ -1806,7 +1826,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
         for i ∈ 1:cube_fitter.n_dust_feat
             # dont take the best fit values, just start them all equal otherwise weird stuff happens
             # p₀[pᵢ] = clamp(nanmedian(I)/2, 0., Inf) 
-            p₀[pᵢ] = clamp(p₀[pᵢ]*scale, 0., max_amp / exp(-τ_97_0))
+            p₀[pᵢ] = clamp(p₀[pᵢ]*scale, 0., max_amp / exp(-max_τ))
             pᵢ += 3
         end
 
@@ -2384,8 +2404,8 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
             end
         end
         # Set up tied voff and fwhm parameter vectors
-        # voff_tied_pars = [cube_fitter.voff_tied[i].value for i ∈ 1:cube_fitter.n_kin_tied]
-        voff_tied_pars = voff_inits_tied
+        # voff_tied_pars = voff_inits_tied
+        voff_tied_pars = [cube_fitter.voff_tied[i].value for i ∈ 1:cube_fitter.n_kin_tied]
         fwhm_tied_pars = [cube_fitter.fwhm_tied[i].value for i ∈ 1:cube_fitter.n_kin_tied]
 
         acomp_voff_tied_pars = [cube_fitter.acomp_voff_tied[i].value for i ∈ 1:cube_fitter.n_acomp_kin_tied]
@@ -2685,7 +2705,9 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
             mode="lines", line=Dict(:color => "green", :width => 1), name="Dust+Stellar Continuum")])
         append!(traces, [PlotlyJS.scatter(x=λ, y=sum([comps["dust_feat_$i"] for i ∈ 1:n_dust_features], dims=1)[1] .* comps["extinction"],
             mode="lines", line=Dict(:color => "blue", :width => 1), name="PAHs")])
-        append!(traces, [PlotlyJS.scatter(x=λ, y=spline, mode="lines", line=Dict(:color => "red", :width => 1, :dash => "dash"), name="Cubic Spline")])
+        if !isnothing(spline)
+            append!(traces, [PlotlyJS.scatter(x=λ, y=spline, mode="lines", line=Dict(:color => "red", :width => 1, :dash => "dash"), name="Cubic Spline")])
+        end
         # axes labels / titles / fonts
         layout = PlotlyJS.Layout(
             xaxis_title=L"$\lambda\ (\mu{\rm m})$",
@@ -3132,7 +3154,7 @@ end
 
 
 """
-    fit_spaxel(cube_fitter, spaxel)
+    fit_spaxel(cube_fitter, spaxel; recalculate_params=false, plot_spline=false)
 
 Wrapper function to perform a full fit of a single spaxel, calling `continuum_fit_spaxel` and `line_fit_spaxel` and
 concatenating the best-fit parameters. The outputs are also saved to files so the fit need not be repeated in the case
@@ -3142,7 +3164,7 @@ of a crash.
 - `cube_fitter::CubeFitter`: The CubeFitter object containing the data, parameters, and options for the fit
 - `spaxel::CartesianIndex`: The coordinates of the spaxel to be fit
 """
-function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; recalculate_params=false, plot_spline=true)
+function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; recalculate_params=false, plot_spline=false)
 
     local p_out
     local p_err
@@ -3302,13 +3324,13 @@ end
 
 
 """
-    fit_stack!(cube_fitter)
+    fit_stack!(cube_fitter; plot_spline=false)
 
 Perform an initial fit to the sum of all spaxels (the stack) to get an estimate for the initial parameter
 vector to use with all of the individual spaxel fits.  The only input is the CubeFitter object, which is
 modified with the resultant fit parameters.  There is no output.
 """
-function fit_stack!(cube_fitter::CubeFitter; plot_spline=true)
+function fit_stack!(cube_fitter::CubeFitter; plot_spline=false)
 
     @info "===> Performing initial fit to the sum of all spaxels... <==="
     # Collect the data
@@ -3940,7 +3962,7 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
      # new angular size for this scale
     θ = l / dA
     n_pix = 1/sqrt(Ω) * θ   # number of pixels = (pixels per radian) * radians
-    if cosmo.h == 1.0
+    if cosmo.h ≈ 1.0
         scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, L"%$l$h^{-1}$ pc", "lower left", pad=1, color=:black, 
             frameon=false, size_vertical=0.4, label_top=false)
     else
@@ -3952,6 +3974,7 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
     # Add circle for the PSF FWHM
     psf = plt.Circle(size(data) .* 0.9, psf_fwhm / pix_as / 2, color="k")
     ax.add_patch(psf)
+    ax.annotate("PSF", size(data) .* 0.9 .- (0., psf_fwhm / pix_as / 2 + 1.75), ha=:center, va=:center)
 
     fig.colorbar(cdata, ax=ax, label=bunit)
     plt.savefig(joinpath("output_$(name)", "param_maps", "$(name_i).pdf"), dpi=300, bbox_inches=:tight)
@@ -4264,7 +4287,7 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
          cube_fitter.cube.wcs.wcs.naxis, cube_fitter.cube.wcs.wcs.cdelt[1], cube_fitter.cube.wcs.wcs.cdelt[2], cube_fitter.cube.wcs.wcs.cdelt[3], 
          cube_fitter.cube.wcs.wcs.ctype[1], cube_fitter.cube.wcs.wcs.ctype[2], cube_fitter.cube.wcs.wcs.ctype[3], cube_fitter.cube.wcs.wcs.crpix[1], 
          cube_fitter.cube.wcs.wcs.crpix[2], cube_fitter.cube.wcs.wcs.crpix[3], cube_fitter.cube.wcs.wcs.crval[1], cube_fitter.cube.wcs.wcs.crval[2], 
-         cube_fitter.cube.wcs.wcs.crval[3], cube_fitter.cube.wcs.wcs.cunit[1], cube_fitter.cube.wcs.wcs.cunit[2], cube_fitter.cube.wcs.wcs.cunit[3], 
+         cube_fitter.cube.wcs.wcs.crval[3], cube_fitter.cube.wcs.wcs.cunit[1].name, cube_fitter.cube.wcs.wcs.cunit[2].name, cube_fitter.cube.wcs.wcs.cunit[3].name, 
          cube_fitter.cube.wcs.wcs.pc[1,1], cube_fitter.cube.wcs.wcs.pc[1,2], cube_fitter.cube.wcs.wcs.pc[1,3], cube_fitter.cube.wcs.wcs.pc[2,1], cube_fitter.cube.wcs.wcs.pc[2,2], 
          cube_fitter.cube.wcs.wcs.pc[2,3], cube_fitter.cube.wcs.wcs.pc[3,1], cube_fitter.cube.wcs.wcs.pc[3,2], cube_fitter.cube.wcs.wcs.pc[3,3]],
 

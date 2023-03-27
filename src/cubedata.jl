@@ -14,8 +14,8 @@ using the "correct" function.  The data should then be handed off to the structs
 module CubeData
 
 # Export only the functions that the user may want to call
-export DataCube, Observation, from_fits, to_rest_frame!, apply_mask!, correct!, interpolate_cube!, 
-    plot_2d, plot_1d, concatenate_subchannels!, cube_combine!, cube_rebin!, psf_kernel, convolve_psf!
+export DataCube, Observation, from_fits, to_rest_frame!, apply_mask!, correct!, interpolate_nans!, 
+    plot_2d, plot_1d, interpolate_channels!, cube_rebin!, psf_kernel, convolve_psf!
 
 # Import packages
 using Statistics
@@ -44,6 +44,7 @@ const plt::PyObject = PyNULL()
 const py_anchored_artists::PyObject = PyNULL()
 const py_wcs::PyObject = PyNULL()
 const photutils::PyObject = PyNULL()
+const py_warnings::PyObject = PyNULL()
 
 const SMALL::UInt8 = 12
 const MED::UInt8 = 14
@@ -70,6 +71,9 @@ function __init__()
     plt.rc("figure", titlesize=BIG)   # fontsize of the figure title
     plt.rc("text", usetex=true)       # use LaTeX
     plt.rc("font", family="Times New Roman")  # use Times New Roman font
+
+    copy!(py_warnings, pyimport_conda("warnings", "warnings"))
+    py_warnings.filterwarnings("ignore", category=py_wcs.FITSFixedWarning)
 
 end
 
@@ -300,7 +304,7 @@ end
 
 
 """
-    interpolate_cube!(cube)
+    interpolate_nans!(cube)
 
 Function to interpolate bad pixels in individual spaxels.  Does not interpolate any spaxels
 where more than 10% of the datapoints are bad.  Uses a wide cubic spline interpolation to
@@ -311,7 +315,7 @@ get the general shape of the continuum but not fit noise or lines.
 
 See also [`DataCube`](@ref)
 """
-function interpolate_cube!(cube::DataCube)
+function interpolate_nans!(cube::DataCube)
 
     λ = cube.λ
     @debug "Interpolating NaNs in cube with channel $(cube.channel), band $(cube.band):"
@@ -331,16 +335,17 @@ function interpolate_cube!(cube::DataCube)
 
         # Interpolate the NaNs
         if sum(filt) > 0
-            @info "NaNs found in spaxel $index -- interpolating"
+            @debug "NaNs found in spaxel $index -- interpolating"
 
             # Make sure the wavelength vector is linear, since it is assumed later in the function
             diffs = diff(λ)
             Δλ = mean(diffs[1])
-            scale = 0.05
-            offset = findfirst(λ .> (scale + λ[1]))
+            scale = 0.025
+            finite = isfinite.(I)
+            offset = findfirst(λ[finite] .> (scale + λ[finite][1]))
 
             # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
-            λknots = collect(λ[offset+1]:scale:λ[end-offset-1])
+            λknots = λ[finite][offset+1]:scale:λ[finite][end-offset-1]
             good = []
             for i ∈ 1:length(λknots)
                 _, λc = findmin(abs.(λknots[i] .- λ))
@@ -743,270 +748,119 @@ correct! = apply_mask! ∘ to_rest_frame!
 
 
 """
-    adjust_subchannel_wcs_alignment(obs, channel; box_size=9)
+    adjust_wcs_alignment(obs, channels; box_size=9)
 
-Adjust the WCS alignments of each sub-channel within a given channel such that they match.
+Adjust the WCS alignments of each channel such that they match.
 This is performed in order to remove discontinuous jumps in the flux level when crossing between
 sub-channels.
 """
-function adjust_subchannel_wcs_alignment!(obs::Observation, channel::Integer; box_size::Integer=9)
+function adjust_wcs_alignment!(obs::Observation, channels; box_size::Integer=11)
 
-    @info "Aligning World Coordinate Systems for subchannels in channel $channel..."
+    @info "Aligning World Coordinate Systems for channels $channels..."
 
-    # Get summed intensity maps for each of the sub-channels for a given channel
-    ch_short = obs.channels[Symbol("A" * string(channel))]
-    short = Util.Σ(ch_short.Iν, 3)
+    # Prepare array of centroids for each channel
+    c_coords = zeros(length(channels), 2)
 
-    ch_med = obs.channels[Symbol("B" * string(channel))]
-    med = Util.Σ(ch_med.Iν, 3)
-
-    ch_long = obs.channels[Symbol("C" * string(channel))]
-    long = Util.Σ(ch_long.Iν, 3)
-
-    c_coords = zeros(3, 2)
-
-    i = 1
-    for (data, wcs) ∈ zip([short, med, long], [ch_short.wcs, ch_med.wcs, ch_long.wcs])
+    for (i, channel) ∈ enumerate(channels)
+        @assert haskey(obs.channels, channel) "Channel $channel does not exist!"
+        # Get summed intensity map and WCS object for each channel
+        ch_data = obs.channels[channel]
+        data = Util.Σ(ch_data.Iν, 3)
+        err = sqrt.(Util.Σ(ch_data.σI.^2, 3))
+        wcs = ch_data.wcs
         # Find the peak brightness pixels and place boxes around them
         peak = argmax(data)
         box_half = fld(box_size, 2)
-        boxed = data[peak[1]-box_half:peak[1]+box_half, peak[2]-box_half:peak[2]+box_half]
-        # Find the "center of mass" -> the brightness centroid weighted by pixel indices
-        x_ind = ones(box_size)' .* (1:box_size)
-        x_cent = sum(boxed .* x_ind) / sum(boxed) + (peak[1]-box_half) - 1
-        y_ind = (1:box_size)' .* ones(box_size)
-        y_cent = sum(boxed .* y_ind) / sum(boxed) + (peak[2]-box_half) - 1
+        mask = trues(size(data))
+        mask[peak[1]-box_half:peak[1]+box_half, peak[2]-box_half:peak[2]+box_half] .= 0
+        # Find the centroid using photutils' 2D-gaussian fitting
+        # NOTE 1: Make sure to transpose the data array because of numpy's reversed axis order
+        # NOTE 2: Add 1 because of python's 0-based indexing
+        x_cent, y_cent = photutils.centroids.centroid_2dg(data', error=err', mask=mask') .+ 1
         # Convert pixel coordinates to physical coordinates using the WCS transformation with the argument for 1-based indexing
         c_coords[i, :] .= wcs.all_pix2world([[x_cent, y_cent, 1.]], 1)[1:2]
-        @debug "The centroid location of channel $channel $(["short", "medium", "long"][i]) is ($x_cent, $y_cent) pixels " *
+        @debug "The centroid location of channel $channel is ($x_cent, $y_cent) pixels " *
                "or $c_coords in RA (deg), dec (deg)"
-        i += 1
+        # Calculate the offsets between this channel and the first channel and adjust the WCS "CRVAL" parameter accordingly
+        offset = c_coords[i, :] .- c_coords[1, :]
+        @info "The centroid offset relative to channel $(channels[1]) for channel $channel is $(offset)"
+        ch_data.wcs.wcs.crval = [ch_data.wcs.wcs.crval[1:2] .- offset; ch_data.wcs.wcs.crval[3]]
     end
-    
-    # Calculate the offsets between each sub-channel and adjust the WCS parameters
-    med_offset = c_coords[2, :] .- c_coords[1, :]
-    @debug "The centroid offset for channel $channel medium is $med_offset"
-    long_offset = c_coords[3, :] .- c_coords[1, :]
-    @debug "The centroid offset for channel $channel long is $long_offset"
 
-    # Adjust the WCS "CRVAL" entries to fix the alignments of the sub-channels
-    ch_med.wcs.wcs.crval = [ch_med.wcs.wcs.crval[1:2] .- med_offset; ch_med.wcs.wcs.crval[3]]
-    ch_long.wcs.wcs.crval = [ch_long.wcs.wcs.crval[1:2] .- long_offset; ch_long.wcs.wcs.crval[3]]
-
-    nothing
+    return
 
 end
 
 
 """
-    concatenate_subchannels!(obs, channels=[1,2,3,4])
+    interpolate_channels!(obs[, channels])
 
-Combine the sub-channel cubes into a single cube for each channel by aligning the WCS parameters,
-performing square aperture extractions along a uniform grid, and resampling along a linear wavelength
-vector.
-"""
-function concatenate_subchannels!(obs::Observation, channels::Vector{<:Integer}=[1,2,3,4])
-
-    # Loop over each channel that should have its subchannels concatenated
-    for channel in channels
-
-        # Adjust the WCS alignments between subchannels
-        adjust_subchannel_wcs_alignment!(obs, channel; box_size=9)
-        
-        @info "Concatenating subchannels for channel $channel"
-        ch_short = obs.channels[Symbol("A" * string(channel))]
-        ch_med = obs.channels[Symbol("B" * string(channel))]
-        ch_long = obs.channels[Symbol("C" * string(channel))]
-
-        # Make sure each subchannel has had the same corrections applied
-        @assert ch_short.rest_frame == ch_med.rest_frame == ch_long.rest_frame "Make sure all subchannels are in the same frame! (rest / observed)"
-        @assert ch_short.masked == ch_med.masked == ch_long.masked "Make sure all subchannels are either unmasked or masked!"
-        # Make sure each subchannel has the same base properties
-        @assert ch_short.Ω ≈ ch_med.Ω ≈ ch_long.Ω "Make sure all subchannels have the same angular pixel sizes!"
-        @assert ch_short.α ≈ ch_med.α ≈ ch_long.α "Make sure all subchannels have the same RA and Dec!"
-        @assert ch_short.δ ≈ ch_med.δ ≈ ch_long.δ "Make sure all subchannels have the same RA and Dec!"
-
-        @debug "Concatenating wavelength vectors"
-        # First take care of the wavelength vectors and mask
-        λ = [ch_short.λ; ch_med.λ; ch_long.λ]
-
-        xs_size, ys_size, zs_size = size(ch_short.Iν)
-        xm_size, ym_size, zm_size = size(ch_med.Iν)
-        xl_size, yl_size, zl_size = size(ch_long.Iν)
-
-        Iν = zeros(xs_size, ys_size, length(λ))
-        σI = zeros(xs_size, ys_size, length(λ))
-        mask = falses(xs_size, ys_size, length(λ))
-
-        @debug "Performing gridded aperture photometry on each subchannel"
-        prog = Progress(xs_size * ys_size, showspeed=true)
-
-        # Extract spaxels from square apertures defined by the grid from the "short" subchannel
-        for x ∈ 1:xs_size, y ∈ 1:ys_size
-
-            # Get the pixel coordinates in each subchannel
-            c_short = [x, y]
-            c_med = ch_med.wcs.all_world2pix(ch_short.wcs.all_pix2world([[x, y, 1.]], 1), 1)[1:2]
-            c_long = ch_long.wcs.all_world2pix(ch_short.wcs.all_pix2world([[x, y, 1.]], 1), 1)[1:2]
-
-            # Find the area overlaps of each coordinate location assuming square apertures with a side length of 1 pixel
-            # By definition, the short aperture will directly overlap with the spaxel at (x, y) in the short IFU, so to 
-            # save time we just skip this step and set I_short = the short channel intensity at the spaxel (x, y)
-
-            # The medium and long apertures will have some overlap based on its shift
-            cc_med = round.(Int, c_med)
-            cc_med = max.(cc_med, 1)
-            cc_med = [min(cc_med[1], xm_size), min(cc_med[2], ym_size)]
-            ap_med = (max(1,cc_med[1]-1), min(cc_med[1]+1,xm_size), max(1,cc_med[2]-1), min(cc_med[2]+1,ym_size))
-            d_med = c_med .- round.(c_med)
-            a_med = photutils.geometry.rectangular_overlap_grid(-1.5-d_med[1], 1.5-d_med[1], -1.5-d_med[2], 1.5-d_med[2], 
-                ap_med[2]-ap_med[1]+1, ap_med[4]-ap_med[3]+1, 1, 1, 0, 0, 5)'
-            cc_long = round.(Int, c_long)
-            cc_long = max.(cc_long, 1)
-            cc_long = [min(cc_long[1], xl_size), min(cc_long[2], yl_size)]
-            ap_long = (max(1,cc_long[1]-1), min(cc_long[1]+1,xl_size), max(1,cc_long[2]-1), min(cc_long[2]+1,yl_size))
-            d_long = c_long .- round.(c_long)
-            a_long = photutils.geometry.rectangular_overlap_grid(-1.5-d_long[1], 1.5-d_long[1], -1.5-d_long[2], 1.5-d_long[2], 
-                ap_long[2]-ap_long[1]+1, ap_long[4]-ap_long[3]+1, 1, 1, 0, 0, 5)'
-
-            # The fluxes in each subchannel are the convolutions with these area kernels
-            I_short = ch_short.Iν[x, y, :]
-            I_med = Util.Σ(a_med .* ch_med.Iν[ap_med[1]:ap_med[2], ap_med[3]:ap_med[4], :], (1,2))
-            I_long = Util.Σ(a_long .* ch_long.Iν[ap_long[1]:ap_long[2], ap_long[3]:ap_long[4], :], (1,2))
-
-            # The errors are similar except they are added in quadrature
-            σ_short = ch_short.σI[x, y, :]
-            σ_med = sqrt.(Util.Σ(a_med .* ch_med.σI[ap_med[1]:ap_med[2], ap_med[3]:ap_med[4], :].^2, (1,2)))
-            σ_long = sqrt.(Util.Σ(a_long .* ch_long.σI[ap_long[1]:ap_long[2], ap_long[3]:ap_long[4], :].^2, (1,2)))
-
-            # The masks will just combine with an "and" / "all" or operation across the aperture
-            mask_short = ch_short.mask[x, y, :]
-            mask_med = [any(ch_med.mask[ap_med[1]:ap_med[2], ap_med[3]:ap_med[4], wi]) for wi ∈ 1:zm_size]
-            mask_long = [any(ch_long.mask[ap_long[1]:ap_long[2], ap_long[3]:ap_long[4], wi]) for wi ∈ 1:zl_size]
-
-            # Concatenate together
-            Iν[x, y, :] .= [I_short; I_med; I_long]
-            σI[x, y, :] .= [σ_short; σ_med; σ_long]
-            mask[x, y, :] .= [mask_short; mask_med; mask_long]
-            # If the mask covers a significant portion of a channel, i.e. an entire subchannel, then mask out everything
-            if all(mask_short .== 1) || all(mask_med .== 1) || all(mask_long .== 1)
-                mask[x, y, :] .= 1
-            end
-
-            # Iterate progress meter
-            next!(prog)
-        end
-
-        # Sort the wavelengths to be monotonically increasing
-        ss = sortperm(λ)
-        λ = λ[ss]
-        Iν = Iν[:, :, ss]
-        σI = σI[:, :, ss]
-        mask = mask[:, :, ss]
-
-        @debug "Resampling wavelength onto a uniform grid"
-        # For overlapping wavelength regions on the boundaries of the subchannels, rebin the flux so that the wavelength vector
-        # is linear
-        Δλ = median(diff(λ))
-        λ_lin = collect(λ[1]:Δλ:λ[end])
-        I_lin, σ_lin, mask_lin = Util.resample_conserving_flux(λ_lin, λ, Iν, σI, mask)
-
-        @debug "Creating new channel entry"
-
-        # New WCS object should be the same as the "short" subchannel except in the wavelength dimension
-        λ_init = λ_lin[1]
-        λ_diff = Δλ
-        if ch_short.rest_frame
-            λ_init = Util.observed_frame(λ_lin[1], obs.z)
-            λ_diff = Util.observed_frame(Δλ, obs.z)
-        end
-        ch_wcs = ch_short.wcs 
-        ch_wcs.wcs.crpix = [ch_wcs.wcs.crpix[1:2]..., 1]
-        ch_wcs.wcs.crval = [ch_wcs.wcs.crval[1:2]..., λ_init * 1e-6]
-        ch_wcs.wcs.cdelt = [ch_wcs.wcs.cdelt[1:2]..., λ_diff * 1e-6]
-        ch_wcs._naxis = [ch_wcs._naxis[1:2]..., length(λ_lin)]
-
-        # New PSF FWHM vector from the wavelength vector
-        ch_psf_fwhm = @. 0.033 * λ_lin + 0.106
-
-        # Apply the new mask
-        if ch_short.masked
-            I_lin[mask_lin] .= NaN
-            σ_lin[mask_lin] .= NaN
-        end
-
-        # Create a new entry in obs.channels with the full channel data
-        obs.channels[channel] = DataCube(λ_lin, I_lin, σ_lin, mask_lin, ch_short.Ω, ch_short.α, ch_short.δ, 
-            ch_psf_fwhm, ch_wcs, string(channel), "SHORTMEDIUMLONG", ch_short.rest_frame, ch_short.masked)
-        
-        # Delete the individual sub-channel entries since they are no longer necessary
-        delete!(obs.channels, Symbol("A" * string(channel)))
-        delete!(obs.channels, Symbol("B" * string(channel)))
-        delete!(obs.channels, Symbol("C" * string(channel)))
-
-    end
-
-    obs
-
-end
-
-
-
-"""
-    cube_combine!(obs[, channels])
-
-Perform a 2D rebinning of the given channels such that all spaxels lie on the same grid. The grid is chosen to be
-the highest channel given (or, if no channels are given, the highest channel in the obs object) since this will also
-be the coarsest grid.
+Perform a 3D interpolation of the given channels such that all spaxels lie on the same grid.
 
 # Arguments
 `S<:Integer`
 - `obs::Observation`: The Observation object to rebin
-- `channels::Union{Vector{S},Nothing}=nothing`: The list of channels to be rebinned. If nothing, rebin all channels.
-- `out_grid::S=1`: Index for the channel whose grid the other channels should be rebinned to, defaults to 1 (first in the channels array).
-- `out_id::S=0`: The dictionary key corresponding to the newly rebinned cube, defaults to 0.
+- `channels=nothing`: The list of channels to be rebinned. If nothing, rebin all channels.
+- `ch_ref=1`: The channel whose grid the other channels should be rebinned to, defaults to the first channel in the channels array.
+- `out_id=0`: The dictionary key corresponding to the newly rebinned cube, defaults to 0.
+- `scrub_output=true`: Whether or not to delete the individual channels that were interpolated after assigning the new interpolated channel.
 """
-function cube_combine!(obs::Observation, channels::Union{Vector{S},Nothing}=nothing; 
-    out_grid::S=1, out_id::S=0) where {S<:Integer}
+function interpolate_channels!(obs::Observation, channels=nothing; ch_ref=nothing, out_id=0, scrub_output::Bool=false)
 
-    # Default channels to include
+    # Default to all 4 channels
     if isnothing(channels)
         channels = [1, 2, 3, 4]
     end
+    # If a single channel is given, interpret as interpolating all of the subchannels
+    if !(typeof(channels) <: Vector)
+        channels = [Symbol("A" * string(channels)), Symbol("B" * string(channels)), Symbol("C" * string(channels))]
+    end
+    # Default to the reference channel being the first in the array
+    if isnothing(ch_ref)
+        ch_ref = channels[1]
+    end
 
-    # Reference channel
-    ch_ref = channels[out_grid]
-    # DEPRECATED: Output grid is determined by the highest channel (lowest spatial resolution)
-    # NEW: Output grid is determined by the input value, defaults to the first channel given
-    # Examples: input ch [1,2,3,4], output ch 1
-    #           input ch [2,3],     output ch 2
-    #           input ch 2,         output ch 2
+    # First and foremost -- adjust the WCS alignment of each channel so that they are consistent with each other
+    adjust_wcs_alignment!(obs, channels; box_size=9)
 
-    # Output wavelength is just the individual wavelength vectors concatenated
+    # Output wavelength is just the individual wavelength vectors concatenated (for now -- will be interpolated later)
     λ_out = vcat([obs.channels[ch_i].λ for ch_i ∈ channels]...)
+    # Output intensity/error have the same grid as the reference channel but with 3rd axis defined by lambda_out
     I_out = zeros(size(obs.channels[ch_ref].Iν)[1:end-1]..., size(λ_out)...)
-    σ_out = copy(I_out)
+    σ_out = zeros(size(I_out))
+    mask_out = falses(size(I_out))
 
     shape_ref = size(obs.channels[ch_ref].Iν)
 
-    # Loop through all other channels
+    # Iteration variables to keep track of
     cumsum = 0
+    total_flux = 0.
+
+    # Loop through all channels
     for ch_in ∈ channels
 
-        @info "Rebinning $(obs.name), channel $ch_in to channel $ch_ref..."
+        @info "Reinterpolating $(obs.name), channel $ch_in onto channel $ch_ref..."
+        wi_size = length(obs.channels[ch_in].λ)
 
-        wi_size = size(obs.channels[ch_in].λ)[1]
-
+        # For the reference channel, no reinterpolation is necessary since by definition its grid
+        # is the one we are reinterpolating onto
         if ch_in == ch_ref
-            # append this channel in as normal with no rebinning,
-            # since by definition its grid is the one we rebinned to
             ch_Iν = obs.channels[ch_ref].Iν
             ch_Iν[.!isfinite.(ch_Iν)] .= 0.
             ch_σI = obs.channels[ch_ref].σI
             ch_σI[.!isfinite.(ch_σI)] .= 0.    
+            ch_mask = obs.channels[ch_ref].mask
 
-            I_out[:, :, cumsum+1:cumsum+wi_size] = ch_Iν
-            σ_out[:, :, cumsum+1:cumsum+wi_size] = ch_σI
+            I_out[:, :, cumsum+1:cumsum+wi_size] .= ch_Iν
+            σ_out[:, :, cumsum+1:cumsum+wi_size] .= ch_σI
+            mask_out[:, :, cumsum+1:cumsum+wi_size] .= ch_mask
+
+            # Loop through each spaxel and check if the entire channel is masked -- if so, mask all channels
+            for xᵣ ∈ 1:shape_ref[1], yᵣ ∈ 1:shape_ref[2]
+                if all(mask_out[xᵣ, yᵣ, cumsum+1:cumsum+wi_size])
+                    mask_out[xᵣ, yᵣ, :] .= 1
+                end
+            end
 
             cumsum += wi_size
             continue
@@ -1015,93 +869,112 @@ function cube_combine!(obs::Observation, channels::Union{Vector{S},Nothing}=noth
         # Function to transform output coordinates into input coordinates
         # Add in the wavelength coordinate, which doesn't change
         @inline function pix_transform(x, y)
+            # First transform the (x, y) pixel coordinates on the reference grid into (RA, Dec)
             sky_x, sky_y = obs.channels[ch_ref].wcs.all_pix2world([[x, y, 1.]], 1)[1:2]
-            cprime = obs.channels[ch_in].wcs.all_world2pix([[sky_x, sky_y, 1.]], 1)[1:2]
-            cprime[1], cprime[2]
+            # Then transform (RA, Dec) back into (x, y) pixel coordinates on the grid for the channel of interest
+            obs.channels[ch_in].wcs.all_world2pix([[sky_x, sky_y, 1.]], 1)[1:2]
         end
 
-        # Convert NaNs to 0s
+        # Convert NaNs/Infs to 0s because the interpolation doesnt like them
         ch_Iν = obs.channels[ch_in].Iν
         ch_Iν[.!isfinite.(ch_Iν)] .= 0.
         ch_σI = obs.channels[ch_in].σI
         ch_σI[.!isfinite.(ch_σI)] .= 0.
-        shape_in = size(ch_Iν)
+        ch_mask = obs.channels[ch_in].mask
 
-        # Heaviside step function
-        @inline θ(x) = 0.5 * (sign(x) + 1)
+        shape_in = size(ch_Iν)
 
         prog = Progress(wi_size, dt=0.01, showspeed=true)
         for wi ∈ 1:wi_size
             # 2D Cubic spline interpolations at each wavelength bin with flat boundary conditions
             interp_func_I = Spline2D(1:shape_in[1], 1:shape_in[2], ch_Iν[:, :, wi]; kx=3, ky=3)
             interp_func_σ = Spline2D(1:shape_in[1], 1:shape_in[2], ch_σI[:, :, wi]; kx=3, ky=3)
-            # interp_func_I = extrapolate(interpolate(ch_Iν[:, :, wi], BSpline(Cubic(Interpolations.Flat(OnGrid())))), Interpolations.Flat())
-            # interp_func_σ = extrapolate(interpolate(ch_σI[:, :, wi], BSpline(Cubic(Interpolations.Flat(OnGrid())))), Interpolations.Flat())
+            # Interpolate the mask with the "nearest neighbor" approach
+            interp_func_mask = (xᵢ, yᵢ) -> ch_mask[findmin([hypot(xᵢ - x, yᵢ - y) for x ∈ 1:shape_ref[1], y ∈ 1:shape_ref[2]])[2], wi]
             
             # Loop through all pairs of coordinates in the refrerence grid and set the intensity and error
             # at that point to the interpolated values of the corresponding location in the input grid, given by
             # the pix_transform function
-            # @inbounds for (xᵣ, yᵣ) ∈ collect(Iterators.product(1:shape_ref[1], 1:shape_ref[2]))
-            @inbounds @simd for xᵣ ∈ 1:shape_ref[1]
-                @simd for yᵣ ∈ 1:shape_ref[2]
-                    xᵢ, yᵢ = pix_transform(xᵣ, yᵣ)
-                    # Fill with zeros for any points outside the boundaries of the input data
-                    inb = θ(shape_in[1] - xᵢ) * θ(xᵢ - 1) * θ(shape_in[2] - yᵢ) * θ(yᵢ - 1)
-                    I_out[xᵣ, yᵣ, cumsum+wi] = inb * interp_func_I(xᵢ, yᵢ)
-                    σ_out[xᵣ, yᵣ, cumsum+wi] = inb * interp_func_σ(xᵢ, yᵢ)
+            @inbounds for xᵣ ∈ 1:shape_ref[1], yᵣ ∈ 1:shape_ref[2]
+                xᵢ, yᵢ = pix_transform(xᵣ, yᵣ)
+                # Fill with zeros for any points outside the boundaries of the input data
+                if (xᵢ < 1) || (xᵢ > shape_in[1]) || (yᵢ < 1) || (yᵢ > shape_in[2])
+                    I_out[xᵣ, yᵣ, cumsum+wi] = 0.
+                    σ_out[xᵣ, yᵣ, cumsum+wi] = 0.
+                    mask_out[xᵣ, yᵣ, cumsum+wi] = 1
+                else
+                    I_out[xᵣ, yᵣ, cumsum+wi] = interp_func_I(xᵢ, yᵢ)
+                    σ_out[xᵣ, yᵣ, cumsum+wi] = interp_func_σ(xᵢ, yᵢ)
+                    mask_out[xᵣ, yᵣ, cumsum+wi] = interp_func_mask(xᵢ, yᵢ)
                 end
             end
             # Iterate the progress bar
             next!(prog)
         end
+        # If an entire channel is masked out, we want to throw away all channels
+        for xᵣ ∈ 1:shape_ref[1], yᵣ ∈ 1:shape_ref[2]
+            if all(mask_out[xᵣ, yᵣ, cumsum+1:cumsum+wi_size])
+                mask_out[xᵣ, yᵣ, :] .= 1
+            end
+        end
 
         cumsum += wi_size
+        total_flux += sum(ch_Iν)
     end
 
-    # find overlapping regions
-    jumps = findall(diff(λ_out) .< 0.)
-    # rescale each channel so the flux level is continuous
-    for jump ∈ jumps
-        # find the full scale of the overlapping region
-        wave_left, wave_right = λ_out[jump+1], λ_out[jump]
-        _, i1 = findmin(abs.(λ_out[1:jump] .- wave_left))
-        _, i2 = findmin(abs.(λ_out[jump+1:end] .- wave_right))
-        i2 += jump
-        # get the median fluxes from both channels over the full region
-        med_left = dropdims(nanmedian(I_out[:, :, i1:jump], dims=3), dims=3)
-        med_right = dropdims(nanmedian(I_out[:, :, jump+1:i2], dims=3), dims=3)
-        # rescale the flux in the right channel to match the left channel
-        I_out[:, :, jump+1:end] .*= med_left ./ med_right
-    end
+    # Rescale by the integrated flux from the original data to the new data to make sure flux is conserved
+    scale_factor = total_flux / sum(I_out)
+    @info "Rescaling output by $scale_factor to conserve the total flux"
+    I_out .*= scale_factor
+    σ_out .*= scale_factor
 
+    @info "Resampling wavelength onto a uniform, monotonic grid"
     # deal with overlapping wavelength data -> sort wavelength vector to be monotonically increasing
     ss = sortperm(λ_out)
     λ_out = λ_out[ss]
     I_out = I_out[:, :, ss]
     σ_out = σ_out[:, :, ss]
+    mask_out = mask_out[:, :, ss]
 
-    @info "Masking bins with bad data..."
+    # Now we interpolate the wavelength dimension using a flux-conserving approach
+    Δλ = median(diff(λ_out))
+    λ_lin = collect(λ_out[1]:Δλ:λ_out[end])
+    I_lin, σ_lin, mask_lin = Util.resample_conserving_flux(λ_lin, λ_out, I_out, σ_out, mask_out)
 
-    # apply strict masking -- only retain pixels that have data for all channels
-    mask_out = falses(size(I_out))
-    # 1e-3 from empirically testing what works well
-    atol = median(I_out[I_out .> 0]) * 1e-3
-    @inbounds for (i, j) ∈ collect(Iterators.product(1:shape_ref[1], 1:shape_ref[2]))
-        # Has to have  significant number close to 0 to make sure that an entire channel has been cut out
-        # (as opposed to single-pixel noise dips)
-        mask_out[i, j, :] .= sum(isapprox.(I_out[i, j, :], 0.; atol=atol)) > 100
+    # New WCS object should be the same as the reference channel except in the wavelength dimension
+    λ_init = λ_lin[1]
+    λ_diff = Δλ
+    if obs.rest_frame
+        λ_init = Util.observed_frame(λ_lin[1], obs.z)
+        λ_diff = Util.observed_frame(Δλ, obs.z)
     end
+    ch_wcs = obs.channels[ch_ref].wcs 
+    ch_wcs.wcs.crpix = [ch_wcs.wcs.crpix[1:2]..., 1]
+    ch_wcs.wcs.crval = [ch_wcs.wcs.crval[1:2]..., λ_init * 1e-6]
+    ch_wcs.wcs.cdelt = [ch_wcs.wcs.cdelt[1:2]..., λ_diff * 1e-6]
+    ch_wcs._naxis = [ch_wcs._naxis[1:2]..., length(λ_lin)]
+
+    # New PSF FWHM vector from the wavelength vector
+    ch_psf_fwhm = @. 0.033 * λ_lin + 0.106
 
     if obs.masked
-        I_out[mask_out] .= NaN
-        σ_out[mask_out] .= NaN
+        @info "Masking bins with bad data..."
+        I_lin[mask_lin] .= NaN
+        σ_lin[mask_lin] .= NaN
     end
 
-    # Define the rebinned cube as the zeroth channel (since this is not taken up by anything else)
-    obs.channels[out_id] = DataCube(λ_out, I_out, σ_out, mask_out, 
-        obs.channels[ch_ref].Ω, obs.α, obs.δ, obs.channels[ch_ref].psf_fwhm, obs.channels[ch_ref].wcs, 
-        obs.channels[ch_ref].channel, obs.channels[ch_ref].band, obs.rest_frame, obs.masked)
+    # Define the interpolated cube as the zeroth channel (since this is not taken up by anything else)
+    obs.channels[out_id] = DataCube(λ_lin, I_lin, σ_lin, mask_lin, obs.channels[ch_ref].Ω, obs.α, obs.δ, 
+        ch_psf_fwhm, ch_wcs, "MULTIPLE", "MULTIPLE", obs.rest_frame, obs.masked)
     
+    # Delete all of the individual channels
+    if scrub_output
+        @info "Deleting individual channels that are no longer needed"
+        for channel ∈ channels
+            delete!(obs.channels, channel)
+        end
+    end
+
     @info "Done!"
     obs.channels[out_id]
 
