@@ -984,7 +984,7 @@ function get_line_priors(cube_fitter::CubeFitter, init::Bool)
                 if isnothing(cube_fitter.lines.tied[i, j])
                     # amplitude, voff, FWHM
                     append!(ln_priors, [amp_acomp_prior, cube_fitter.lines.voff[i, j].prior, cube_fitter.lines.fwhm[i, j].prior])
-                    append!(ln_lock, [false, acomp_voff_ln[i, j].locked, acomp_fwhm_ln[i, j].locked])
+                    append!(ln_lock, [false, cube_fitter.lines.voff[i, j].locked, cube_fitter.lines.fwhm[i, j].locked])
                     append!(ln_names, ["$(ln_name)_acomp_amp", "$(ln_name)_acomp_voff", "$(ln_name)_acomp_fwhm"])
                 else
                     # just amplitude (voff & FWHM tied)
