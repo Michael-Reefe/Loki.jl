@@ -778,7 +778,7 @@ Perform a 3D interpolation of the given channels such that all spaxels lie on th
 - `scrub_output=true`: Whether or not to delete the individual channels that were interpolated after assigning the new interpolated channel.
 """
 function reproject_channels!(obs::Observation, channels=nothing, concat_type=:full; out_id=0, scrub_output::Bool=false,
-    method=:adaptive, fudge=true)
+    method=:adaptive)
 
     # Default to all 4 channels
     if isnothing(channels)
@@ -797,8 +797,8 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
     # Output angular size
     Ω_out = minimum([obs.channels[channel].Ω for channel ∈ channels])
 
-    # Find the optimal output WCS using the reproject python package
     if concat_type == :sub
+        # Find the optimal output WCS using the reproject python package
         shapes = [size(obs.channels[channel].Iν)[1:2] for channel ∈ channels]
         wcs2ds = [obs.channels[channel].wcs[0] for channel ∈ channels]
         wcs_opt, size_optimal = py_mosaicking.find_optimal_celestial_wcs([(reverse(shapes[i]), wcs2ds[i]) 
@@ -851,6 +851,7 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
                 (size(σF_in, 1), size_optimal[2], size_optimal[1]), conserve_flux=true, kernel="gaussian", boundary_mode="strict",
                 return_footprint=false), (3,2,1))
         elseif method == :interp
+            @warn "The interp method is currently experimental and produces less robust results than the adaptive method!"
             F_out = permutedims(py_reproject.reproject_interp((F_in, obs.channels[ch_in].wcs[0]), wcs_optimal, 
                 (size(F_in, 1), size_optimal[2], size_optimal[1]), order=3, block_size=(10,10),
                 return_footprint=false), (3,2,1))
@@ -862,6 +863,12 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
                 F_out[:, :, wi] .*= nansum(F_in[wi, :, :]) ./ nansum(F_out[:, :, wi])
                 σF_out[:, :, wi] .*= nansum(σF_in[wi, :, :]) ./ nansum(σF_out[:, :, wi])
             end
+        elseif method == :exact
+            @warn "The exact method is currently experimental and produces less robust results than the adaptive method!"
+            F_out = permutedims(py_reproject.reproject_exact((F_in, obs.channels[ch_in].wcs[0]), wcs_optimal, 
+                (size(F_in, 1), size_optimal[2], size_optimal[1]), return_footprint=false), (3,2,1))
+            σF_out = permutedims(py_reproject.reproject_exact((σF_in, obs.channels[ch_in].wcs[0]), wcs_optimal, 
+                (size(σF_in, 1), size_optimal[2], size_optimal[1]), return_footprint=false), (3,2,1))
         end
 
         # Convert back to intensity
@@ -894,7 +901,7 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
     end
 
     # Need an additional correction (fudge) factor for overall channels
-    if concat_type == :full && fudge
+    if concat_type == :full
         # find overlapping regions
         jumps = findall(diff(λ_out) .< 0.)
         # rescale channels so the flux level is continuous
@@ -931,6 +938,7 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
         @warn "The wavelength dimension will not be resampled to be linear when concatenating multiple full channels! " *
               "Caution: as a result, the WCS's wavelength axis will not be accurate on the output cube!"
     end
+
     # New WCS object should be the same as the optimal wcs except in the wavelength dimension
     λ_init = λ_out[1]
     λ_diff = Δλ

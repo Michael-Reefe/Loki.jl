@@ -30,7 +30,7 @@ obs = from_fits(["data/Level3_ch1-long_s3d.fits",
                  "data/Level3_ch4-short_s3d.fits"],
                  0.016317)
 
-# obs = from_fits(["data/NGC_7469_Level3_ch1-shortmediumlong_s3d.fits",
+# obs_full = from_fits(["data/NGC_7469_Level3_ch1-shortmediumlong_s3d.fits",
 #                  "data/NGC_7469_Level3_ch2-shortmediumlong_s3d.fits",
 #                  "data/NGC_7469_Level3_ch3-shortmediumlong_s3d.fits",
 #                  "data/NGC_7469_Level3_ch4-shortmediumlong_s3d.fits"],
@@ -76,7 +76,7 @@ channel = 0
 
 # Create the cube fitting object
 # plot_range=[(7.61, 7.69), (12.77, 12.85)]
-cube_fitter = CubeFitter(obs.channels[channel], obs.z, obs.name * "_ch$(channel)_full_tied_rpj_adaptive"; 
+cube_fitter = CubeFitter(obs.channels[channel], obs.z, obs.name * "_ch$(channel)_full_tied_rpj_adaptive_sil"; 
     parallel=true, plot_spaxels=:pyplot, plot_maps=true, save_fits=true)
 
 # Fit the cube
