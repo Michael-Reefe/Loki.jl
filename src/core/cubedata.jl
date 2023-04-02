@@ -819,7 +819,7 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
     mask_out = falses(size(I_out))
 
     # Iteration variables to keep track of
-    cumsum = 0
+    wsum = 0
     for (i, ch_in) ∈ enumerate(channels)
 
         # The size of the current channel's wavelength veector
@@ -865,32 +865,32 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
         end
 
         # Convert back to intensity
-        I_out[:, :, cumsum+1:cumsum+wi_size] .= F_out ./ Ω_out
-        σ_out[:, :, cumsum+1:cumsum+wi_size] .= σF_out ./ Ω_out
+        I_out[:, :, wsum+1:wsum+wi_size] .= F_out ./ Ω_out
+        σ_out[:, :, wsum+1:wsum+wi_size] .= σF_out ./ Ω_out
 
         # Use nearest-neighbor interpolation for the mask since it's a binary 1 or 0
         mask_out_temp = permutedims(py_reproject.reproject_interp((mask_in, obs.channels[ch_in].wcs[0]), 
             wcs_optimal, (size(mask_in, 1), size_optimal[2], size_optimal[1]), order="nearest-neighbor", return_footprint=false), (3,2,1))
 
         # Set all NaNs to 1s for the mask (i.e. they are masked out)
-        mask_out_temp[.!isfinite.(mask_out_temp) .| .!isfinite.(I_out[:, :, cumsum+1:cumsum+wi_size]) .| 
-            .!isfinite.(σ_out[:, :, cumsum+1:cumsum+wi_size])] .= 1
-        mask_out[:, :, cumsum+1:cumsum+wi_size] .= mask_out_temp
+        mask_out_temp[.!isfinite.(mask_out_temp) .| .!isfinite.(I_out[:, :, wsum+1:wsum+wi_size]) .| 
+            .!isfinite.(σ_out[:, :, wsum+1:wsum+wi_size])] .= 1
+        mask_out[:, :, wsum+1:wsum+wi_size] .= mask_out_temp
 
-        cumsum += wi_size
+        wsum += wi_size
     end
     
     # If an entire channel is masked out, we want to throw away all channels
     # This has to be done after the first loop so that mask_out is not overwritten to be unmasked after it has been masked
-    cumsum = 0
+    wsum = 0
     for (i, ch_in) ∈ enumerate(channels)
         wi_size = length(obs.channels[ch_in].λ)
         for xᵣ ∈ 1:size_optimal[1], yᵣ ∈ 1:size_optimal[2]
-            if all(mask_out[xᵣ, yᵣ, cumsum+1:cumsum+wi_size])
+            if all(mask_out[xᵣ, yᵣ, wsum+1:wsum+wi_size])
                 mask_out[xᵣ, yᵣ, :] .= 1
             end
         end
-        cumsum += wi_size
+        wsum += wi_size
     end
 
     # Need an additional correction (fudge) factor for overall channels
