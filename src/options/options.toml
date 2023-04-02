@@ -13,7 +13,7 @@ overwrite = false
 # track_memory: This controls whether an additional log file is saved for each
 # spaxel which specifically tracks the memory usage / allocations during the
 # spaxel fitting. Useful if memory usage is higher than expected.
-track_memory = true
+track_memory = false
 
 # track_convergence: Similarly, this controls whether an additional log file is
 # generated which prints convergence information for each spaxel fit (but only
@@ -21,7 +21,7 @@ track_memory = true
 # annealing method SAMIN makes it always print "status: failure" even if convergence
 # was reached. The way to tell whether convergence was ACTUALLY reached is if
 # the number of iterations reached the maximum (which is 10^6 by default).
-track_convergence = true
+track_convergence = false
 
 # make_movies: Whether or not to save mp4 files of the data and final models of
 # IFU cubes. This option require the user to have FFMPeg (https://ffmpeg.org/),

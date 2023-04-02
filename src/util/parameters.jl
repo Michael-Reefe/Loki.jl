@@ -1,19 +1,9 @@
 #=
-THE PARAM MODULE
-----------------
-
-This module, like Util, is not intended to be directly accessed by the 
-user when fitting IFU cubes. Rather, it contains "Parameter" structures
-which are useful containers holding a parameter's value, prior, locked status,
-and MCMC search scale.  Nothing in this module is exported, but the module
-itself IS exported in CubeFit and Loki, and may be accessed with the "Param"
-prefix.
+This file, like utils, is not intended to be directly accessed by the 
+user when fitting IFU cubes. Rather, it contains various Parameter structures
+that are helpful for containing certain combinations of model parameters and
+related quantities.
 =#
-
-module Param
-
-# Import packages
-using Distributions
 
 """
     Parameter(value, locked, prior)
@@ -144,40 +134,79 @@ function from_dict_fwhm(dict::Dict)::Parameter
 end
 
 
-# Aliasing a helpful composite type
-ParamDict = Dict{Union{Symbol,String}, Parameter}
-
-
 """
-    TransitionLine(λ₀, profile, acomp_profile, parameters, tied, acomp_tied)
+    Continuum(T_s, T_dc, τ_97, τ_ice, τ_ch, β, T_hot, Cf_hot, τ_warm, τ_cold)
 
-A struct for an emission/absorption Line with a given name, rest wavelength,
-and fitting parameters
-
-# Fields
-- `λ₀::AbstractFloat`: The central wavelength of the line in the rest frame
-- `profile::Symbol`: The type of profile to fit with, i.e. `:Gaussian`, `:Lorentzian`, `:GaussHermite`, or `:Voigt`
-- `acomp_profile::Union{Symbol,Nothing}`: Same as `profile`, but for an additional component. Leave as `nothing` to
-    not include any additional components
-- `parameters::ParamDict`: All the necessary fitting parameters for the line, based on the profile, as Parameter objects
-    (i.e. amplitude, voff, FWHM, etc.)
-- `tied::Union{String,Nothing}`: If the voff should be tied to other lines, this should be a String that is the same
-    between all of the lines that share a voff. Otherwise, keep it as `nothing` to have an untied voff.
-- `acomp_tied::Union{String,Nothing}`: Same as `tied`, but for an additional voff component
+A container for various continuum modeling parameters.
 """
-struct TransitionLine
+struct Continuum
 
-    λ₀::AbstractFloat
-    profile::Symbol
-    acomp_profile::Union{Symbol,Nothing}
-    parameters::ParamDict
-    tied::Union{String,Nothing}
-    acomp_tied::Union{String,Nothing}
+    # Continuum parameters
+    T_s::Parameter
+    T_dc::Vector{Parameter}
+    τ_97::Parameter
+    τ_ice::Parameter
+    τ_ch::Parameter
+    β::Parameter
+    T_hot::Parameter
+    Cf_hot::Parameter
+    τ_warm::Parameter
+    τ_cold::Parameter
 
 end
 
 
-# Another alias for a helpful composite type
-LineDict = Dict{Union{Symbol,String}, TransitionLine}
+"""
+    DustFeatures(names, profiles, mean, fwhm)
+
+A container for the modeling parameters relating to PAH dust features.
+"""
+struct DustFeatures
+
+    names::Vector{String}
+    profiles::Vector{Symbol}
+    mean::Vector{Parameter}
+    fwhm::Vector{Parameter}
+
+end
+
+
+"""
+    TransitionLines(names, λ₀, profiles, tied, voff, fwhm, h3, h4, η)
+
+A container for ancillary information and modeling parameters relating to transition lines.
+"""
+struct TransitionLines
+
+    # 1st axis: labels each transition line
+    names::Vector{Symbol}
+    λ₀::Vector{AbstractFloat}
+    
+    # 1st axis: labels each transition line
+    # 2nd axis: labels the components of each line
+    profiles::Matrix{Union{Symbol,Nothing}}
+    tied::Matrix{Union{Symbol,Nothing}}
+
+    # Model Parameters
+    voff::Matrix{Union{Parameter,Nothing}}
+    fwhm::Matrix{Union{Parameter,Nothing}}
+    h3::Matrix{Union{Parameter,Nothing}}
+    h4::Matrix{Union{Parameter,Nothing}}
+    η::Matrix{Union{Parameter,Nothing}}
+
+end
+
+
+"""
+    TiedKinematics
+
+A container for tied kinematic parameter information.
+"""
+struct TiedKinematics
+
+    # Vectors of vectors, rather than Matrices, since the size of each element may be inhomogeneous 
+    key::Vector{Vector{Symbol}}
+    voff::Vector{Vector{Parameter}}
+    fwhm::Vector{Vector{Parameter}}
 
 end

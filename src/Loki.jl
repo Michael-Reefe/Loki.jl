@@ -1,32 +1,212 @@
 module Loki
 
-using Reexport
+# Importing all of the dependencies
 
-include("cubefit.jl")
-@reexport using .CubeFit
+# Parallel computing packages
+using Distributed
+using SharedArrays
 
-include("reduce.jl")
-@reexport using .Reduce
+# Math packages
+using Distributions
+using Statistics
+using NaNStatistics
+using QuadGK
+using Dierckx
+using EllipsisNotation
+
+# Optimization packages
+using Optim
+using CMPFit
+
+# Astronomy packages
+using FITSIO
+using Cosmology
+using Unitful
+using UnitfulAstro
+
+# File I/O
+using TOML
+using DelimitedFiles
+using CSV
+using DataFrames
+
+# Plotting packages
+using PlotlyJS
+
+# Misc packages/utilites
+using ProgressMeter
+using Printf
+using Logging
+using LoggingExtras
+using Dates
+using InteractiveUtils
+using TimerOutputs
+using ColorSchemes
+using LaTeXStrings
+
+# PyCall needed for some matplotlib modules
+using PyCall
+
+# Warnings
+const py_warnings::PyObject = PyNULL()
+
+# Matplotlib modules
+const plt::PyObject = PyNULL()
+const py_anchored_artists::PyObject = PyNULL()
+const py_ticker::PyObject = PyNULL()
+const py_animation::PyObject = PyNULL()
+
+# Astropy modules
+const py_wcs::PyObject = PyNULL()
+const py_units::PyObject = PyNULL()
+const py_photutils::PyObject = PyNULL()
+const py_reproject::PyObject = PyNULL()
+const py_mosaicking::PyObject = PyNULL()
+
+# Some constants for setting matplotlib font sizes
+const SMALL::UInt8 = 12
+const MED::UInt8 = 14
+const BIG::UInt8 = 16
+
+# Date format for the log files
+const date_format::String = "yyyy-mm-dd HH:MM:SS"
+
+# Timer object for logging the performance of the code, if the settings are enabled
+const timer_output::TimerOutput = TimerOutput()
+
+# This lock is used to control write access to the convergence log file, since
+# multiple parallel processes may try to write to it at once.
+const file_lock::ReentrantLock = ReentrantLock()
+
+# Have to import certain python modules within the __init__ function so that it works after precompilation,
+# so these PyNULL constants are just placeholders before that happens
+function __init__()
+
+    # Import pyplot
+    copy!(plt, pyimport_conda("matplotlib.pyplot", "matplotlib"))
+
+    # Import matplotlib submodules for nice plots
+    # anchored_artists --> used for scale bars
+    copy!(py_anchored_artists, pyimport_conda("mpl_toolkits.axes_grid1.anchored_artists", "matplotlib"))
+    # ticker --> used for formatting axis ticks and tick labels
+    copy!(py_ticker, pyimport_conda("matplotlib.ticker", "matplotlib"))
+    # animation --> used for making mp4 movie files (optional)
+    copy!(py_animation, pyimport_conda("matplotlib.animation", "matplotlib"))
+
+    # Import the WCS, photutils, and reproject packages from astropy
+    copy!(py_wcs, pyimport_conda("astropy.wcs", "astropy"))
+    copy!(py_units, pyimport_conda("astropy.units", "astropy"))
+    copy!(py_photutils, pyimport_conda("photutils", "photutils"))
+    copy!(py_reproject, pyimport_conda("reproject", "reproject"))
+    copy!(py_mosaicking, pyimport_conda("reproject.mosaicking", "reproject"))
+
+    # Warnings
+    copy!(py_warnings, pyimport_conda("warnings", "warnings"))
+
+    # Matplotlib settings to make plots look pretty :)
+    plt.switch_backend("Agg")                  # agg backend just saves to file, no GUI display
+    plt.rc("font", size=MED)                   # controls default text sizes
+    plt.rc("axes", titlesize=MED)              # fontsize of the axes title
+    plt.rc("axes", labelsize=MED)              # fontsize of the x and y labels
+    plt.rc("xtick", labelsize=SMALL)           # fontsize of the x tick labels
+    plt.rc("ytick", labelsize=SMALL)           # fontsize of the y tick labels
+    plt.rc("legend", fontsize=SMALL)           # legend fontsize
+    plt.rc("figure", titlesize=BIG)            # fontsize of the figure title
+    plt.rc("text", usetex=true)                # use LaTeX for things like axis offsets
+    plt.rc("font", family="Times New Roman")   # use Times New Roman font
+
+    # Filter annoying FITS fixed warnings from astropy
+    py_warnings.filterwarnings("ignore", category=py_wcs.FITSFixedWarning)
+
+    ###### SETTING UP A GLOBAL LOGGER ######
+
+    # Append timestamps to all logging messages
+    timestamp_logger(logger) = TransformerLogger(logger) do log
+        merge(log, (; message = "$(Dates.format(now(), date_format)) $(log.message)"))
+    end
+    # Create a tee logger that writes both to the stdout and to a log file
+    logger = TeeLogger(ConsoleLogger(stdout, Logging.Info), 
+                        timestamp_logger(MinLevelLogger(FileLogger(joinpath(@__DIR__, "loki.main.log"); 
+                                                                    always_flush=true), 
+                                                                    Logging.Debug)))
+    # Initialize our logger as the global logger
+    global_logger(logger)
+
+end
+
+
+export DataCube,   # DataCube struct
+
+       # DataCube Functions
+       from_fits, 
+       to_rest_Frame!, 
+       apply_mask!, 
+       correct!, 
+       interpolate_nans!, 
+       plot_2d, 
+       plot_1d,
+
+       # Observation struct
+       Observation, 
+
+       # Observation functions
+       adjust_wcs_alignment!, 
+       reproject_channels!, 
+       cube_rebin!, 
+       psf_kernel, 
+       convolve_psf!,
+
+       # Parameter structs
+       Parameter,
+       ParamDict,
+       LineDict,
+       TransitionLine,
+
+       # Parameter functions
+       from_dict,
+       from_dict_fwhm,
+       from_dict_wave,
+
+       # ParamMaps and CubeModel structs
+       ParamMaps,
+       CubeModel,
+
+       # initialization functions
+       parammaps_empty,
+       cubemodel_empty,
+
+       # CubeFitter struct
+       CubeFitter,
+
+       # CubeFitter-related functions
+       generate_cubemodel,
+       generate_parammaps,
+       mask_emission_lines,
+       continuum_cubic_spline,
+       fit_spaxel,
+       fit_stack!,
+       fit_cube!,
+       plot_parameter_maps,
+       make_movie,
+       write_fits
+
+# Include all of the files that we need to create the module
+
+include("util/parameters.jl")
+include("util/parsing.jl")
+include("util/math.jl")
+
+include("core/cubedata.jl")
+include("core/cubefit.jl")
+include("core/fitting.jl")
+include("core/output.jl")
 
 #####################
 #= WELCOME TO LOKI =#
 #####################
 
-# This file doesn't contain anything important, it just
-# includes and reexports the other modules!
-
 # Namespace:
-# CubeData => cubedata.jl
-# CubeFit => cubefit.jl
-# Param => parameters.jl
-# Util => utils.jl
-
-# The functions and structs from CubeData and CubeFit that are exported are the main
-# routines intended to be used to generate fits and models.  These modules have
-# additional items that are not exported which are intended only for use internally.
-
-# Functions and structs from Util and Param are similarly not exported 
-# (i.e. must be prefixed by "Util" or "Param"), since again they are mostly intended
-# only for use internally in the code.
+# First-class => most of cubefit.jl and cubedata.jl
+# "Loki" => utils.jl, parameters.jl
 
 end
