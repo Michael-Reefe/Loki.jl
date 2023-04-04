@@ -352,7 +352,7 @@ def runspec3(filename):
     
     # Cube building configuration options
     # spec3.cube_build.output_file = 'bandcube' # Custom output name
-    # spec3.cube_build.output_type = 'band' # 'band', 'channel', or 'multi' type cube output
+    spec3.cube_build.output_type = 'band' # 'band', 'channel', or 'multi' type cube output
     # spec3.cube_build.channel = '1' # Build everything from just channel 1 into a single cube (we could also choose '2','3','4', or 'ALL')
     # spec3.cube_build.weighting = 'drizzle' # 'emsm' or 'drizzle'
     # spec3.cube_build.coord_system = 'ifualign' # 'ifualign', 'skyalign', or 'internal_cal'

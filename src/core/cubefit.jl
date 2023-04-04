@@ -689,9 +689,9 @@ function get_continuum_priors(cube_fitter::CubeFitter, I::Vector{<:Real}=[Inf])
 
     # Split up for the two different stages of continuum fitting -- with templates and then with the PAHs
     priors_1 = Vector{Distribution}(vcat(stellar_priors, dc_priors, ext_priors, hd_priors, [amp_df_prior, amp_df_prior]))
-    lock_1 = Vector{Bool}(vcat(stellar_lock, dc_lock, ext_lock, hd_lock, [false, false]))
+    lock_1 = BitVector(vcat(stellar_lock, dc_lock, ext_lock, hd_lock, [false, false]))
     priors_2 = Vector{Distribution}(df_priors)
-    lock_2 = Vector{Bool}(df_lock)
+    lock_2 = BitVector(df_lock)
 
     priors_1, priors_2, lock_1, lock_2
 

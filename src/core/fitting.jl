@@ -231,7 +231,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
 
     # Create continuum without the PAH features
     _, ccomps = fit_spectrum(λ, res_1.param, cube_fitter.n_dust_cont, cube_fitter.extinction_curve, 
-    cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, true)
+        cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, true)
 
     I_cont = ccomps["stellar"]
     for i ∈ 1:cube_fitter.n_dust_cont

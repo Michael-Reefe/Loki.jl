@@ -61,6 +61,7 @@ for channel ∈ 1:4
     interpolate_nans!(obs.channels[channel])
 end
 reproject_channels!(obs, [1,2,3], out_id=0, method=:adaptive)
+interpolate_nans!(obs.channels[0])
 channel = 0
 
 # Do the optical depth pre-fitting

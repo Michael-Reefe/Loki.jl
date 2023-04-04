@@ -954,7 +954,7 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
     wcs_out.wcs.cdelt = [wcs_opt.wcs.cdelt[1:2]; λ_diff * 1e-6]
     wcs_out.wcs.pc = [wcs_opt.wcs.pc[1,1] wcs_opt.wcs.pc[1,2] 0;
                       wcs_opt.wcs.pc[2,1] wcs_opt.wcs.pc[2,2] 0;
-                      0                       0                       1]
+                      0                       0               1]
     wcs_out._naxis = [wcs_opt._naxis[1:2]; length(λ_out)]
 
     # New PSF FWHM vector from the wavelength vector

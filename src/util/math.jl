@@ -60,6 +60,10 @@ const DP_interp = Spline1D(DP_prof[1], DP_prof[2]; k=3)
 const CT_prof = silicate_ct()
 const CT_interp = Spline1D(CT_prof[1], CT_prof[2]; k=3)
 
+# Save the OHM 1992 profile as a constant
+const OHM_prof = silicate_ohm()
+const OHM_interp = Spline1D(OHM_prof[1], OHM_prof[2]; k=3)
+
 # Save the Smith+2006 PAH templates as constants
 const SmithTemps = read_smith_temps()
 const Smith3_interp = Spline1D(SmithTemps[1], SmithTemps[2]; k=3)
@@ -523,6 +527,16 @@ function τ_ct(λ::Real)
 end
 
 
+function τ_ohm(λ::Real)
+
+    ext = OHM_interp(λ)
+    _, wh = findmin(x -> abs(x - 9.7), OHM_prof[1])
+    ext /= OHM_prof[2][wh]
+
+    ext
+end
+
+
 """
     τ_dp(λ, β)
 
@@ -739,9 +753,7 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 
 # Arguments
 - `λ::Vector{<:AbstractFloat}`: Wavelength vector of the spectrum to be fit
-- `params::Vector{<:AbstractFloat}`: Parameter vector. Parameters should be ordered as: 
-    `[stellar amp, stellar temp, (amp, temp for each dust continuum), (amp, mean, FWHM for each PAH profile), 
-    extinction τ, extinction β]`
+- `params::Vector{<:AbstractFloat}`: Parameter vector. 
 - `n_dust_cont::Integer`: Number of dust continuum profiles to be fit
 - `n_dust_feat::Integer`: Number of PAH dust features to be fit
 - `extinction_curve::String`: The type of extinction curve to use, "kvt" or "d+"
@@ -776,6 +788,8 @@ function fit_spectrum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer, ex
         ext_curve = τ_kvt.(λ, params[pᵢ+3])
     elseif extinction_curve == "ct"
         ext_curve = τ_ct.(λ)
+    elseif extinction_curve == "ohm"
+        ext_curve = τ_ohm.(λ)
     else
         error("Unrecognized extinction curve: $extinction_curve")
     end
@@ -843,6 +857,8 @@ function fit_spectrum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer, ex
         ext_curve = τ_kvt.(λ, params[pᵢ+3])
     elseif extinction_curve == "ct"
         ext_curve = τ_ct.(λ)
+    elseif extinction_curve == "ohm"
+        ext_curve = τ_ohm.(λ)
     else
         error("Unrecognized extinction curve: $extinction_curve")
     end
@@ -1629,7 +1645,7 @@ Evaluate a Lorentzian profile at `x`, parametrized by the amplitude `A`, mean va
 and full-width at half-maximum `FWHM`
 """
 @inline function Lorentzian(x::Real, A::Real, μ::Real, FWHM::Real)
-    A/π * (FWHM/2) / ((x-μ)^2 + (FWHM/2)^2)
+    A * (FWHM/2)^2 / ((x-μ)^2 + (FWHM/2)^2)
 end
 
 

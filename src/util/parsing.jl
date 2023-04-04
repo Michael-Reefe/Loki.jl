@@ -695,3 +695,11 @@ function silicate_ct()
         ignorerepeated=true, header=["wave", "a_galcen", "a_local"])
     data[!, "wave"], data[!, "a_galcen"]
 end
+
+
+# Setup function for creating the extinction profile from OHM+92
+function silicate_ohm()
+    data = CSV.read(joinpath(@__DIR__, "..", "templates", "ohmc.txt"), DataFrame, delim=' ', ignorerepeated=true,
+        header=["wave", "ext"])
+    data[!, "wave"], data[!, "ext"]
+end
