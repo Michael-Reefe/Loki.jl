@@ -819,26 +819,22 @@ end
 Get the CMPFit parinfo and config objects for a given CubeFitter object, given the vector of initial valuels,
 priors, and boolean locked values.
 """
-function get_continuum_parinfo(cube_fitter::CubeFitter, pars_1::Vector{<:Real}, priors_1::Vector{<:Distribution}, 
-    lock_1::Vector{Bool}, pars_2::Vector{<:Real}, priors_2::Vector{<:Distribution}, lock_2::Vector{Bool})
+function get_continuum_parinfo(n_free_1::S, n_free_2::S, lb_1::Vector{T}, ub_1::Vector{T}, 
+    lb_2::Vector{T}, ub_2::Vector{T}) where {S<:Integer,T<:Real}
 
-    parinfo_1 = CMPFit.Parinfo(length(pars_1))
-    parinfo_2 = CMPFit.Parinfo(length(pars_2))
+    parinfo_1 = CMPFit.Parinfo(n_free_1)
+    parinfo_2 = CMPFit.Parinfo(n_free_2)
 
-    for pᵢ ∈ 1:length(pars_1)
-        parinfo_1[pᵢ].fixed = lock_1[pᵢ]
-        if iszero(parinfo_1[pᵢ].fixed)
-            parinfo_1[pᵢ].limited = (1,1)
-            parinfo_1[pᵢ].limits = (minimum(priors_1[pᵢ]), maximum(priors_1[pᵢ]))
-        end
+    for pᵢ ∈ 1:n_free_1
+        parinfo_1[pᵢ].fixed = 0
+        parinfo_1[pᵢ].limited = (1,1)
+        parinfo_1[pᵢ].limits = (lb_1[pᵢ], ub_1[pᵢ])
     end
 
-    for pᵢ ∈ 1:length(pars_2)
-        parinfo_2[pᵢ].fixed = lock_2[pᵢ]
-        if iszero(parinfo_2[pᵢ].fixed)
-            parinfo_2[pᵢ].limited = (1,1)
-            parinfo_2[pᵢ].limits = (minimum(priors_2[pᵢ]), maximum(priors_2[pᵢ]))
-        end
+    for pᵢ ∈ 1:n_free_2
+        parinfo_2[pᵢ].fixed = 0
+        parinfo_2[pᵢ].limited = (1,1)
+        parinfo_2[pᵢ].limits = (lb_2[pᵢ], ub_2[pᵢ])
     end
 
     # Create a `config` structure
@@ -1044,7 +1040,7 @@ function get_line_priors(cube_fitter::CubeFitter, init::Bool)
     η_name = cube_fitter.tie_voigt_mixing ? ["eta_tied"] : []
 
     priors = Vector{Distribution}(vcat(priors, η_prior, ln_priors))
-    param_lock = Vector{Bool}(vcat(param_lock, η_lock, ln_lock))
+    param_lock = BitVector(vcat(param_lock, η_lock, ln_lock))
     param_names = Vector{String}(vcat(param_names, η_name, ln_names))
 
     priors, param_lock, param_names
@@ -1151,17 +1147,14 @@ end
 Get the CMPFit parinfo and config objects for a given CubeFitter object, given the vector of initial valuels,
 priors, and boolean locked values.
 """
-function get_line_parinfo(cube_fitter::CubeFitter, p₀::Vector{<:Real}, priors::Vector{<:Distribution}, 
-    param_lock::Vector{Bool})
+function get_line_parinfo(n_free, lb, ub)
 
     # Convert parameter limits into CMPFit object
-    parinfo = CMPFit.Parinfo(length(p₀))
-    for pᵢ ∈ 1:length(p₀)
-        parinfo[pᵢ].fixed = param_lock[pᵢ]
-        if iszero(parinfo[pᵢ].fixed)
-            parinfo[pᵢ].limited = (1,1)
-            parinfo[pᵢ].limits = (minimum(priors[pᵢ]), maximum(priors[pᵢ]))
-        end
+    parinfo = CMPFit.Parinfo(n_free)
+    for pᵢ ∈ 1:n_free
+        parinfo[pᵢ].fixed = 0
+        parinfo[pᵢ].limited = (1,1)
+        parinfo[pᵢ].limits = (lb[pᵢ], ub[pᵢ])
     end
 
     # Create a `config` structure

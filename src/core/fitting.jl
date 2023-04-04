@@ -208,30 +208,60 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
     # Split up the initial parameter vector into the components that we need for each fitting step
     pars_1, pars_2 = get_continuum_initial_values(cube_fitter, λ, I, init)
 
+    # Sort parameters by those that are locked and those that are unlocked
+    p1fix = pars_1[lock_1]
+    p1free = pars_1[.~lock_1]
+    p2fix = pars_2[lock_2]
+    p2free = pars_2[.~lock_2]
+
+    # Count free parameters
+    n_free_1 = sum(.~lock_1)
+    n_free_2 = sum(.~lock_2)
+
+    # Lower/upper bounds
+    lb_1 = minimum.(priors_1[.~lock_1])
+    ub_1 = maximum.(priors_1[.~lock_1])
+    lb_2 = minimum.(priors_2[.~lock_2])
+    ub_2 = maximum.(priors_2[.~lock_2])
+
     # Convert parameter limits into CMPFit object
-    parinfo_1, parinfo_2, config = get_continuum_parinfo(cube_fitter, pars_1, priors_1, lock_1, pars_2, priors_2, lock_2)
+    parinfo_1, parinfo_2, config = get_continuum_parinfo(n_free_1, n_free_2, lb_1, ub_1, lb_2, ub_2)
 
     @debug """\n
     ##########################################################################################################
     ########################## STEP 1 - FIT THE BLACKBODY CONTINUUM WITH PAH TEMPLATES #######################
     ##########################################################################################################
     """
-    @debug "Continuum Step 1 Parameters: \n $(pars_1)"
-    @debug "Continuum Parameters locked? \n $([parinfo_1[i].fixed for i ∈ eachindex(pars_1)])"
-    @debug "Continuum Lower limits: \n $([parinfo_1[i].limits[1] for i ∈ eachindex(pars_1)])"
-    @debug "Continuum Upper limits: \n $([parinfo_1[i].limits[2] for i ∈ eachindex(pars_1)])"
+    @debug "Continuum Step 1 Parameters: \n $pars_1"
+    @debug "Continuum Parameters locked? \n $lock_1"
+    @debug "Continuum Lower limits: \n $(minimum.(priors_1))"
+    @debug "Continuum Upper limits: \n $(maximum.(priors_1))"
 
     @debug "Beginning continuum fitting with Levenberg-Marquardt least squares (CMPFit):"
 
-    res_1 = cmpfit(λ, I, σ, (x, p) -> fit_spectrum(x, p, cube_fitter.n_dust_cont,
-        cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission), 
-        pars_1, parinfo=parinfo_1, config=config)
+    # Wrapper fitting function separating the free and fixed parameters
+    function fit_step1(x, pfree, return_comps=false)
+        ptot = zeros(Float64, length(pars_1))
+        ptot[.~lock_1] .= pfree
+        ptot[lock_1] .= p1fix
+        if !return_comps
+            fit_spectrum(x, ptot, cube_fitter.n_dust_cont, cube_fitter.extinction_curve, cube_fitter.extinction_screen,
+                cube_fitter.fit_sil_emission)
+        else
+            println("ptot:")
+            println(ptot)
+            fit_spectrum(x, ptot, cube_fitter.n_dust_cont, cube_fitter.extinction_curve, cube_fitter.extinction_screen,
+                cube_fitter.fit_sil_emission, true)
+        end            
+    end
+    println("pars_1:")
+    println(pars_1)
+    res_1 = cmpfit(λ, I, σ, fit_step1, p1free, parinfo=parinfo_1, config=config)
 
-    @debug "Continuum CMPFit status: $(res_1.status)"
+    @debug "Continuum CMPFit Step 1 status: $(res_1.status)"
 
     # Create continuum without the PAH features
-    _, ccomps = fit_spectrum(λ, res_1.param, cube_fitter.n_dust_cont, cube_fitter.extinction_curve, 
-        cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, true)
+    _, ccomps = fit_step1(λ, res_1.param, true)
 
     I_cont = ccomps["stellar"]
     for i ∈ 1:cube_fitter.n_dust_cont
@@ -242,44 +272,64 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
         I_cont .+= ccomps["hot_dust"]
     end
 
-    # Count free parameters
-    n_free_1 = 0
-    for p₁ ∈ eachindex(pars_1)
-        n_free_1 += iszero(parinfo_1[p₁].fixed)
-    end
-
     @debug """\n
     ##########################################################################################################
     ################################# STEP 2 - FIT THE PAHs AS DRUDE PROFILES ################################
     ##########################################################################################################
     """
-    @debug "Continuum Step 2 Parameters: \n $(pars_2)"
-    @debug "Continuum Parameters locked? \n $([parinfo_2[i].fixed for i ∈ eachindex(pars_2)])"
-    @debug "Continuum Lower limits: \n $([parinfo_2[i].limits[1] for i ∈ eachindex(pars_2)])"
-    @debug "Continuum Upper limits: \n $([parinfo_2[i].limits[2] for i ∈ eachindex(pars_2)])"
+    @debug "Continuum Step 2 Parameters: \n $pars_2"
+    @debug "Continuum Parameters locked? \n $lock_2"
+    @debug "Continuum Lower limits: \n $(minimum.(priors_2))"
+    @debug "Continuum Upper limits: \n $(maximum.(priors_2))"
 
     @debug "Beginning continuum fitting with Levenberg-Marquardt least squares (CMPFit):"
 
-    res_2 = cmpfit(λ, I.-I_cont, σ, (x, p) -> fit_pah_residuals(x, p, cube_fitter.n_dust_feat,
-        ccomps["extinction"]), pars_2, parinfo=parinfo_2, config=config)
-
-    @debug "Continuum CMPFit status: $(res_2.status)"
-
-    # Count free parameters
-    n_free_2 = 0
-    for p₂ ∈ eachindex(pars_2)
-        n_free_2 += iszero(parinfo_2[p₂].fixed)
+    # Wrapper function
+    function fit_step2(x, pfree, return_comps=false)
+        ptot = zeros(Float64, length(pars_2))
+        ptot[.~lock_2] .= pfree
+        ptot[lock_2] .= p2fix
+        if !return_comps
+            fit_pah_residuals(x, ptot, cube_fitter.n_dust_feat, ccomps["extinction"])
+        else
+            fit_pah_residuals(x, ptot, cube_fitter.n_dust_feat, ccomps["extinction"], true)
+        end
     end
+    res_2 = cmpfit(λ, I, σ, fit_step2, p2free, parinfo=parinfo_2, config=config)
+
+    @debug "Continuum CMPFit Step 2 status: $(res_2.status)"
 
     # Get combined best fit results
-    popt = vcat(res_1.param[1:end-2], res_2.param)        # Combined Best fit parameters
-    perr = vcat(res_1.perror[1:end-2], res_2.perror)      # Combined 1-sigma uncertainties
-    covar = (res_1.covar, res_2.covar)                    # Combined Covariance matrix
-    n_free = n_free_1 - 2 + n_free_2
+    lock = vcat(lock_1[1:end-2], lock_2)
+
+    # Combined Best fit parameters
+    popt = zeros(length(pars_1)+length(pars_2)-2)
+    popt[.~lock] .= vcat(res_1.param[1:end-2], res_2.param)
+    popt[lock] .= vcat(p1fix, p2fix)
+
+    # Combined 1-sigma uncertainties
+    perr = zeros(length(popt))
+    perr[.~lock] .= vcat(res_1.perror[1:end-2], res_2.perror)
+
+    # Individual covariance matrices
+    covar_1 = zeros(length(pars_1)-2, length(pars_1)-2)
+    covar_1[.~lock_1[1:end-2], .~lock_1[1:end-2]] .= res_1.covar[1:end-2, 1:end-2]
+    covar_2 = zeros(length(pars_2), length(pars_2))
+    covar_2[.~lock_2, .~lock_2] .= res_2.covar
+
+    # Combined covariance matrix
+    covar = zeros(length(popt), length(popt))
+    covar[1:length(pars_1)-2, 1:length(pars_1)-2] .= covar_1
+    covar[length(pars_1)-1:end, length(pars_1)-1:end] .= covar_2
+    # Fill in the rest with the covariances from the 2 overall PAH amplitudes that were cut out before
+    # covar[1:length(pars_1)-2, length(pars_1)-1:end] .= mean(cat(res_1.covar[1:end-2, end-1], res_1.covar[1:end-2, end], dims=2), dims=2)
+    # covar[length(pars_1)-1:end, 1:length(pars_1)-2] .= mean(cat(res_1.covar[end-1, 1:end-2], res_1.covar[end, 1:end-2], dims=2), dims=2)'
+
+    n_free = n_free_1 + n_free_2 - 2
 
     @debug "Best fit continuum parameters: \n $popt"
     @debug "Continuum parameter errors: \n $perr"
-    @debug "Continuum covariance matrix: \n $covar"
+    # @debug "Continuum covariance matrix: \n $covar"
 
     # Create the full model
     I_model, comps = fit_full_continuum(λ, popt, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat,
@@ -370,26 +420,43 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     @debug "Line Lower limits: \n $lower_bounds"
     @debug "Line Upper Limits: \n $upper_bounds"
 
+    # Split up free and locked parameters
+    pfree = p₀[.~param_lock]
+    pfix = p₀[param_lock]
+
+    # Count free parameters
+    n_free = sum(.~param_lock)
+
+    # Get CMPFit parinfo object from bounds
+    parinfo, config = get_line_parinfo(n_free, lower_bounds, upper_bounds)
+
+    # Wrapper function for fitting only the free parameters
+    function fit_step3(x, pfree, func)
+        ptot = zeros(Float64, length(p₀))
+        ptot[.~param_lock] .= pfree
+        ptot[param_lock] .= pfix
+        func(x, ptot)
+    end
+
     if init
         @debug "Beginning Line fitting with Simulated Annealing:"
 
         # Parameter and function tolerance levels for convergence with SAMIN,
         # these are a bit loose since we're mainly just looking to get into the right global minimum region with SAMIN
         # before refining the fit later with a LevMar local minimum routine
+        fit_func = (x, p) -> negln_probability(p, [], x, Inorm, σnorm, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines,
+            cube_fitter.n_kin_tied, cube_fitter.tied_kinematics, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, ext_curve, 
+            priors)
         x_tol = 1e-5
-        f_tol = abs(negln_probability(p₀, [], λ, Inorm, σnorm, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
-                        cube_fitter.n_kin_tied, cube_fitter.tied_kinematics, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, 
-                        ext_curve, priors) -
-                    negln_probability(clamp.(p₀ .- x_tol, lower_bounds, upper_bounds), [], λ, Inorm, σnorm, cube_fitter.n_lines,
-                        cube_fitter.n_comps, cube_fitter.lines, cube_fitter.n_kin_tied, cube_fitter.tied_kinematics, cube_fitter.flexible_wavesol,
-                        cube_fitter.tie_voigt_mixing, ext_curve, priors))
+        f_tol = abs(fit_func(λ, p₀) - fit_func(λ, clamp.(p₀ .- x_tol, lower_bounds, upper_bounds)))
 
         # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
-        res = Optim.optimize(p -> negln_probability(p, [], λ, Inorm, σnorm, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines,
-           cube_fitter.n_kin_tied, cube_fitter.tied_kinematics, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, ext_curve, 
-           priors), lower_bounds, upper_bounds, p₀, SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), 
-           Optim.Options(iterations=10^6))
-        p₁ = res.minimizer
+        res = Optim.optimize(pfree -> fit_step3(λ, pfree, fit_func), lower_bounds, upper_bounds, p₀, 
+            SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
+        
+        p₁ = zeros(Float64, length(p₀))
+        p₁[.~param_lock] .= res.minimizer
+        p₁[param_lock] .= pfix
 
         # Write convergence results to file, if specified
         if cube_fitter.track_convergence
@@ -413,29 +480,31 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
 
     ############################################# FIT WITH LEVMAR ###################################################
 
-    parinfo, config = get_line_parinfo(cube_fitter, p₁, priors, param_lock)
+    fit_func = (x, p) -> fit_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
+        cube_fitter.n_kin_tied, cube_fitter.tied_kinematics, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, ext_curve)
+    
+    res = cmpfit(λ, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func), p₁[.~param_lock], parinfo=parinfo, config=config)
 
-    # # Same procedure as with the continuum fit
-    res = cmpfit(λ, Inorm, σnorm, (x, p) -> fit_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines,
-        cube_fitter.n_kin_tied, cube_fitter.tied_kinematics, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing,
-        ext_curve), p₁, parinfo=parinfo, config=config)
+    @debug "Line CMPFit status: $(res.status)"
 
     # Get the results
-    popt = res.param
-    perr = res.perror
-    covar = res.covar
+    popt = zeros(length(p₀))
+    popt[.~param_lock] .= res.param
+    popt[param_lock] .= pfix
 
-    # Count free parameters
-    n_free = 0
-    for pᵢ ∈ eachindex(popt)
-        n_free += iszero(parinfo[pᵢ].fixed)
-    end
+    # Errors
+    perr = zeros(length(popt))
+    perr[.~param_lock] .= res.perror
+
+    # Covariance matrix
+    covar = zeros(length(popt), length(popt))
+    covar[.~param_lock, .~param_lock] .= res.covar
 
     ######################################################################################################################
 
     @debug "Best fit line parameters: \n $popt"
     @debug "Line parameter errors: \n $perr"
-    @debug "Line covariance matrix: \n $covar"
+    # @debug "Line covariance matrix: \n $covar"
 
     # Final optimized fit
     I_model, comps = fit_line_residuals(λ, popt, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.n_kin_tied,
@@ -706,7 +775,6 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; recalculate
                              joinpath("output_$(cube_fitter.name)", "logs", "loki.spaxel_$(spaxel[1])_$(spaxel[2]).log"); 
                              always_flush=true), Logging.Debug)))
 
-
         with_logger(logger) do
 
             mask_lines, I_spline, σ_spline = continuum_cubic_spline(λ, I, σ)
@@ -868,6 +936,8 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
     ######## BEGINNING FULL CUBE FITTING ROUTINE FOR $(cube_fitter.name) ########
     #############################################################################
     """
+    # copy the main log file
+    cp(joinpath(@__DIR__, "..", "loki.main.log"), joinpath("output_$(cube_fitter.name)", "loki.main.log"), force=true)
 
     shape = size(cube_fitter.cube.Iν)
 
@@ -890,6 +960,9 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
     else
         @info "===> Initial fit to the sum of all spaxels has already been performed <==="
     end
+
+    # copy the main log file
+    cp(joinpath(@__DIR__, "..", "loki.main.log"), joinpath("output_$(cube_fitter.name)", "loki.main.log"), force=true)
 
     ##############################################################################################
 
@@ -942,6 +1015,9 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
         @info "===> Writing MP4 movies... (this may take a while) <==="
         make_movie(cube_fitter, cube_model)
     end
+
+    # copy the main log file again
+    cp(joinpath(@__DIR__, "..", "loki.main.log"), joinpath("output_$(cube_fitter.name)", "loki.main.log"), force=true)
 
     @info """\n
     #############################################################################

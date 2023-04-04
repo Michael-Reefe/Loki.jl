@@ -12,6 +12,7 @@ using Statistics
 using NaNStatistics
 using QuadGK
 using Dierckx
+using LinearAlgebra
 using EllipsisNotation
 
 # Optimization packages
