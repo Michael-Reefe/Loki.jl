@@ -995,7 +995,7 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
     @info "===> Generating parameter maps and model cubes... <==="
 
     # Create the ParamMaps and CubeModel structs containing the outputs
-    param_maps, param_errs, cube_model = assign_outputs(out_params, out_errs, cube_fitter, spaxels)
+    param_maps, param_errs, cube_model = assign_outputs(out_params, out_errs, cube_fitter, spaxels, cube_fitter.z)
 
     if cube_fitter.plot_maps
         @info "===> Plotting parameter maps... <==="
