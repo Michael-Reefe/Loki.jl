@@ -697,7 +697,7 @@ N.B. This function takes a while to run so be prepared to wait a good few minute
 """
 function make_movie(cube_fitter::CubeFitter, cube_model::CubeModel; cmap::Symbol=:cubehelix)
 
-    for (full_data, title) ∈ zip([cube_fitter.cube.Iν, cube_model.model], ["DATA", "MODEL"])
+    for (full_data, title) ∈ zip([cube_fitter.cube.Iν .* (1 .+ cube_fitter.z), cube_model.model], ["DATA", "MODEL"])
 
         # Writer using FFMpeg to create an mp4 file
         metadata = Dict(:title => title, :artist => "LOKI", :fps => 60)
@@ -798,30 +798,29 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
 
             @debug "Writing 3D model FITS HDUs"
 
-            write(f, Vector{Int}())                                                                     # Primary HDU (empty)
-            write(f, cube_fitter.cube.Iν; header=hdr, name="DATA")                                      # Raw data with nans inserted
-            write(f, cube_model.model; header=hdr, name="MODEL")                                        # Full intensity model
-            write(f, cube_fitter.cube.Iν .- cube_model.model; header=hdr, name="RESIDUALS")             # Residuals (data - model)
-            write(f, cube_model.stellar; header=hdr, name="STELLAR_CONTINUUM")                          # Stellar continuum model
+            write(f, Vector{Int}())                                                                                 # Primary HDU (empty)
+            write(f, cube_fitter.cube.Iν .* (1 .+ cube_fitter.z); header=hdr, name="DATA")                          # Raw data with nans inserted
+            write(f, cube_model.model; header=hdr, name="MODEL")                                                    # Full intensity model
+            write(f, cube_fitter.cube.Iν .* (1 .+ cube_fitter.z) .- cube_model.model; header=hdr, name="RESIDUALS") # Residuals (data - model)
+            write(f, cube_model.stellar; header=hdr, name="STELLAR_CONTINUUM")                                      # Stellar continuum model
             for i ∈ 1:size(cube_model.dust_continuum, 4)
-                write(f, cube_model.dust_continuum[:, :, :, i]; header=hdr, name="DUST_CONTINUUM_$i")   # Dust continuum models
+                write(f, cube_model.dust_continuum[:, :, :, i]; header=hdr, name="DUST_CONTINUUM_$i")               # Dust continuum models
             end
             for (j, df) ∈ enumerate(cube_fitter.df_names)
-                write(f, cube_model.dust_features[:, :, :, j]; header=hdr, name="$df")                  # Dust feature profiles
+                write(f, cube_model.dust_features[:, :, :, j]; header=hdr, name="$df")                              # Dust feature profiles
             end
             for (k, line) ∈ enumerate(cube_fitter.line_names)
-                write(f, cube_model.lines[:, :, :, k]; header=hdr, name="$line")                        # Emission line profiles
+                write(f, cube_model.lines[:, :, :, k]; header=hdr, name="$line")                                    # Emission line profiles
             end
-            write(f, cube_model.extinction; header=hdr, name="EXTINCTION")                              # Extinction model
-            write(f, cube_model.abs_ice; header=hdr, name="ABS_ICE")                                    # Ice Absorption model
-            write(f, cube_model.abs_ch; header=hdr, name="ABS_CH")                                      # CH Absorption model
+            write(f, cube_model.extinction; header=hdr, name="EXTINCTION")                                          # Extinction model
+            write(f, cube_model.abs_ice; header=hdr, name="ABS_ICE")                                                # Ice Absorption model
+            write(f, cube_model.abs_ch; header=hdr, name="ABS_CH")                                                  # CH Absorption model
             if cube_fitter.fit_sil_emission
-                write(f, cube_model.hot_dust; header=hdr, name="HOT_DUST")                              # Hot dust model
+                write(f, cube_model.hot_dust; header=hdr, name="HOT_DUST")                                          # Hot dust model
             end
             
-            write(f, ["wave_rest", "wave_obs"],                                                                     # 1D Rest frame and observed frame
-                    [cube_fitter.cube.λ, observed_frame(cube_fitter.cube.λ, cube_fitter.z)],                  # wavelength vectors
-                hdutype=TableHDU, name="WAVELENGTH", units=Dict(:wave_rest => "um", :wave_obs => "um"))
+            write(f, ["wave"], cube_fitter.cube.λ ./ (1 .+ z),                                                     # wavelength vector
+                hdutype=TableHDU, name="WAVELENGTH", units=Dict(:wave => "um"))
 
             # Insert physical units into the headers of each HDU -> MegaJansky per steradian for all except
             # the extinction profile, which is a multiplicative constant
