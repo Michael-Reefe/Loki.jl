@@ -28,7 +28,7 @@ negative spikes (indicating strong concave-downness) up to some tolerance thresh
 
 See also [`continuum_cubic_spline`](@ref)
 """
-function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}; Δ::Integer=3, W::Real=0.5, 
+function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}, z::Real; Δ::Integer=3, W::Real=0.5, 
     thresh::Real=3., n_iter::Integer=1)
 
     diffs = diff(λ)
@@ -65,7 +65,7 @@ function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}; Δ::Integer=
             λ_noline = [λ[max(1, j-wl):max(1, j-fld(wl, 2))]; λ[min(length(λ), j+fld(wl, 2)):min(length(λ), j+wl)]]
             s_noline = [I[max(1, j-wl):max(1, j-fld(wl, 2))]; I[min(length(λ), j+fld(wl, 2)):min(length(λ), j+wl)]]
 
-            scale = 0.025
+            scale = 0.025 / (1 + z)
             offset = findfirst(λ[.~mask] .> (λ[.~mask][1] + scale))
             λknots = λ[.~mask][offset+1]:scale:λ[.~mask][end-offset-1]
             good = []
@@ -112,17 +112,18 @@ noise.
 - `λ::Vector{<:Real}`: The wavelength vector of the spectrum
 - `I::Vector{<:Real}`: The flux vector of the spectrum
 - `σ::Vector{<:Real}`: The uncertainty vector of the spectrum 
+- `z::Real`: The redshift.
 
 See also [`mask_emission_lines`](@ref)
 """
-function continuum_cubic_spline(λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vector{<:Real})
+function continuum_cubic_spline(λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vector{<:Real}, z::Real)
 
     # Copy arrays
     I_out = copy(I)
     σ_out = copy(σ)
 
     # Mask out emission lines so that they aren't included in the continuum fit
-    mask_lines = mask_emission_lines(λ, I)
+    mask_lines = mask_emission_lines(λ, I, z)
     I_out[mask_lines] .= NaN
     σ_out[mask_lines] .= NaN 
 
@@ -131,7 +132,7 @@ function continuum_cubic_spline(λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vecto
     Δλ = mean(diffs)
     # Break up cubic spline interpolation into knots 0.05 um long
     # (longer than a narrow emission line but not too long)
-    scale = 0.025
+    scale = 0.025 / (1 + z)
     finite = isfinite.(I_out)
     offset = findfirst(λ[finite] .> (scale + λ[finite][1]))
 
@@ -181,14 +182,13 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
     #########################################################
     """
 
-    # Extract spaxel to be fit
-    λ = cube_fitter.cube.λ
     #= 
     Get the data to fit -- either one spaxel, or if "init" is set, the sum of all spaxels.
     The spaxels are in surface brightness units (flux per steradian), so to preserve the units when summing them up, 
     we must divide by the number of spaxels in the sum (this way preserves the proper conversion into flux units, i.e. you would
     multiply the result by N_SPAXELS x STERADIANS_PER_SPAXEL to get the total flux within all the spaxels included in the sum) 
     =#
+    λ = cube_fitter.cube.λ   # -> rest wavelength
     I = !init ? cube_fitter.cube.Iν[spaxel, :] : sumdim(cube_fitter.cube.Iν, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
     σ = !init ? cube_fitter.cube.σI[spaxel, :] : sqrt.(sumdim(cube_fitter.cube.σI.^2, (1,2))) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
 
@@ -245,17 +245,13 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
         ptot[.~lock_1] .= pfree
         ptot[lock_1] .= p1fix
         if !return_comps
-            fit_spectrum(x, ptot, cube_fitter.n_dust_cont, cube_fitter.extinction_curve, cube_fitter.extinction_screen,
+            model_continuum(x, ptot, cube_fitter.n_dust_cont, cube_fitter.extinction_curve, cube_fitter.extinction_screen,
                 cube_fitter.fit_sil_emission)
         else
-            println("ptot:")
-            println(ptot)
-            fit_spectrum(x, ptot, cube_fitter.n_dust_cont, cube_fitter.extinction_curve, cube_fitter.extinction_screen,
+            model_continuum(x, ptot, cube_fitter.n_dust_cont, cube_fitter.extinction_curve, cube_fitter.extinction_screen,
                 cube_fitter.fit_sil_emission, true)
         end            
     end
-    println("pars_1:")
-    println(pars_1)
     res_1 = cmpfit(λ, I, σ, fit_step1, p1free, parinfo=parinfo_1, config=config)
 
     @debug "Continuum CMPFit Step 1 status: $(res_1.status)"
@@ -290,12 +286,12 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
         ptot[.~lock_2] .= pfree
         ptot[lock_2] .= p2fix
         if !return_comps
-            fit_pah_residuals(x, ptot, cube_fitter.n_dust_feat, ccomps["extinction"])
+            model_pah_residuals(x, ptot, cube_fitter.n_dust_feat, ccomps["extinction"])
         else
-            fit_pah_residuals(x, ptot, cube_fitter.n_dust_feat, ccomps["extinction"], true)
+            model_pah_residuals(x, ptot, cube_fitter.n_dust_feat, ccomps["extinction"], true)
         end
     end
-    res_2 = cmpfit(λ, I, σ, fit_step2, p2free, parinfo=parinfo_2, config=config)
+    res_2 = cmpfit(λ, I.-I_cont, σ, fit_step2, p2free, parinfo=parinfo_2, config=config)
 
     @debug "Continuum CMPFit Step 2 status: $(res_2.status)"
 
@@ -332,7 +328,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, m
     # @debug "Continuum covariance matrix: \n $covar"
 
     # Create the full model
-    I_model, comps = fit_full_continuum(λ, popt, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat,
+    I_model, comps = model_continuum_and_pah(λ, popt, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat,
         cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission)
 
     if init
@@ -385,19 +381,18 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     """
 
     # Extract spaxel to be fit
-    λ = cube_fitter.cube.λ
+    λ = cube_fitter.cube.λ     # -> rest wavelength
     I = !init ? cube_fitter.cube.Iν[spaxel, :] : sumdim(cube_fitter.cube.Iν, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
     σ = !init ? cube_fitter.cube.σI[spaxel, :] : sqrt.(sumdim(cube_fitter.cube.σI.^2, (1,2))) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
 
-    # Perform a cubic spline continuum fit
-    # line_locs, mask_lines, spline_continuum, _ = continuum_cubic_spline(λ, I, σ)
+    # Get the normalization
     N = Float64(abs(nanmaximum(I)))
     N = N ≠ 0. ? N : 1.
 
     @debug "Using normalization N=$N"
 
     # Add statistical uncertainties to the systematic uncertainties in quadrature
-    σ_stat = std(I[.!mask_lines] .- I_spline[.!mask_lines])
+    σ_stat = std(I[.!mask_lines] .- continuum[.!mask_lines])
     σ .= .√(σ.^2 .+ σ_stat.^2)
 
     @debug "Adding statistical error of $σ_stat in quadrature"
@@ -413,12 +408,12 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     @debug "Line starting values: \n $p₀"
     @debug "Line priors: \n $priors"
 
-    # Lower and upper limits on each parameter, to be fed into the Simulated Annealing (SAMIN) algorithm
-    lower_bounds = minimum.(priors)
-    upper_bounds = maximum.(priors)
+    @debug "Line Lower limits: \n $(minimum.(priors))"
+    @debug "Line Upper Limits: \n $(minimum.(priors))"
 
-    @debug "Line Lower limits: \n $lower_bounds"
-    @debug "Line Upper Limits: \n $upper_bounds"
+    # Lower and upper limits on each parameter, to be fed into the Simulated Annealing (SAMIN) algorithm
+    lower_bounds = minimum.(priors)[.~param_lock]
+    upper_bounds = maximum.(priors)[.~param_lock]
 
     # Split up free and locked parameters
     pfree = p₀[.~param_lock]
@@ -480,7 +475,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
 
     ############################################# FIT WITH LEVMAR ###################################################
 
-    fit_func = (x, p) -> fit_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
+    fit_func = (x, p) -> model_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
         cube_fitter.n_kin_tied, cube_fitter.tied_kinematics, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, ext_curve)
     
     res = cmpfit(λ, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func), p₁[.~param_lock], parinfo=parinfo, config=config)
@@ -507,7 +502,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     # @debug "Line covariance matrix: \n $covar"
 
     # Final optimized fit
-    I_model, comps = fit_line_residuals(λ, popt, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.n_kin_tied,
+    I_model, comps = model_line_residuals(λ, popt, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.n_kin_tied,
         cube_fitter.tied_kinematics, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, ext_curve, true)
     
     # Renormalize
@@ -685,14 +680,15 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
         end
         # set axes limits and labels
         if isnothing(range)
-            ax1.set_xlim(minimum(λ), maximum(λ))
-            ax2.set_xlim(minimum(λ), maximum(λ))
-            ax4.set_xlim(minimum(observed_frame(λ, z)), maximum(observed_frame(λ, z)))
+            λmin, λmax = minimum(λ), maximum(λ)
+            ax1.set_xlim(λmin, λmax)
+            ax2.set_xlim(λmin, λmax)
+            ax4.set_xlim(λmin * (1 + z), λmax * (1 + z))
             ax1.set_ylim(-0.01, 1.3nanmaximum(I[.!line_mask] ./ norm ./ λ[.!line_mask]))
         else
             ax1.set_xlim(range[1], range[2])
             ax2.set_xlim(range[1], range[2])
-            ax4.set_xlim(observed_frame(range[1], z), observed_frame(range[2], z))
+            ax4.set_xlim(range[1] * (1 + z), range[2] * (1 + z))
             ax1.set_ylim(-0.01, 1.1nanmaximum((I ./ norm ./ λ)[range[1] .< λ .< range[2]]))
         end
         ax2.set_ylim(-1.1maximum(((I.-I_cont) ./ norm ./ λ)[.!line_mask]), 1.1maximum(((I.-I_cont) ./ norm ./ λ)[.!line_mask]))
@@ -777,12 +773,12 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; recalculate
 
         with_logger(logger) do
 
-            mask_lines, I_spline, σ_spline = continuum_cubic_spline(λ, I, σ)
+            mask_lines, I_spline, σ_spline = continuum_cubic_spline(λ, I, σ, cube_fitter.z)
 
             # Fit the spaxel
             σ, popt_c, I_cont, comps_cont, n_free_c, perr_c, covar_c = 
                 @timeit timer_output "continuum_fit_spaxel" continuum_fit_spaxel(cube_fitter, spaxel, mask_lines, I_spline, σ_spline)
-            _, popt_l, I_line, comps_line, n_free_l, perr_l, covar_l = 
+            σ, popt_l, I_line, comps_line, n_free_l, perr_l, covar_l = 
                 @timeit timer_output "line_fit_spaxel" line_fit_spaxel(cube_fitter, spaxel, cube_fitter.subtract_cubic ? I_spline : I_cont,
                 comps_cont["extinction"], mask_lines, I_spline, σ_spline)
 
@@ -803,7 +799,7 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; recalculate
                     cube_fitter.n_dust_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission,
                     cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.n_kin_tied, 
                     cube_fitter.tied_kinematics, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, popt_c, popt_l, perr_c, perr_l, 
-                    comps["extinction"], mask_lines, I_spline)
+                    comps["extinction"], mask_lines, I_spline, cube_fitter.cube.Ω)
             p_out = [popt_c; popt_l; p_dust; p_lines; χ2red]
             p_err = [perr_c; perr_l; p_dust_err; p_lines_err; 0.]
 
@@ -881,7 +877,7 @@ function fit_stack!(cube_fitter::CubeFitter; plot_spline=false)
     I_sum_init = sumdim(cube_fitter.cube.Iν, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
     σ_sum_init = sqrt.(sumdim(cube_fitter.cube.σI.^2, (1,2))) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
 
-    mask_lines, I_spline_init, σ_spline_init = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init)
+    mask_lines, I_spline_init, σ_spline_init = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init, cube_fitter.z)
 
     # Continuum and line fits
     σ_init, popt_c_init, I_c_init, comps_c_init, n_free_c_init, _, _ = continuum_fit_spaxel(cube_fitter, CartesianIndex(0,0),

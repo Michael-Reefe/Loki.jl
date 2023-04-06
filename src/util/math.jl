@@ -162,40 +162,6 @@ end
 
 
 """
-    rest_frame(λ, z)
-
-Convert observed-frame wavelength `λ` to rest-frame specified by redshift `z`
-
-# Example
-```jldoctest
-julia> rest_frame([5, 5.1, 5.2], 0.1)
-3-element Vector{Float64}:
- 4.545454545454545
- 4.636363636363636
- 4.727272727272727
-```
-"""
-@inline rest_frame(λ, z) = @. λ / (1 + z)
-
-
-"""
-    observed_frame(λ, z)
-
-Convert rest-frame wavelength `λ` specified by redshift `z` to observed-frame
-
-# Example
-```jldoctest
-julia> observed_frame([5, 5.1, 5.2], 0.1)
-3-element Vector{Float64}:
- 5.5
- 5.61
- 5.720000000000001
-```
-"""
-@inline observed_frame(λ, z) = @. λ * (1 + z)
-
-
-"""
     Doppler_shift_λ(λ₀, v)
 
 Convert rest-frame wavelength `λ₀` to observed frame using the relativistic doppler shift at a 
@@ -286,16 +252,17 @@ julia> ∫Gaussian(600, 1.2)
 """
     ∫Lorentzian(A)
 
-Integral of a Lorentzian with amplitude `A`
+Integral of a Lorentzian with amplitude `A` and full-widdth at half-max `FWHM`
 
 # Examples
 ```jldoctest
-julia> ∫Lorentzian(1000)
-1000
-julia> ∫Lorentzian(600)
-600
+julia> ∫Lorentzian(1000, 0.5)
+785.3981633974482
+julia> ∫Lorentzian(600, 1.2)
+1130.9733552923256
+```
 """
-@inline ∫Lorentzian(A) = A
+@inline ∫Lorentzian(A, FWHM) = π/2 * A * FWHM
 
 
 """
@@ -395,7 +362,7 @@ function negln_probability(p, grad, λ, Inorm, σnorm, n_lines, n_comps, lines, 
     # Check for gradient
     @assert length(grad) == 0 "Gradient-based solvers are not currently supported!"
     # First compute the model
-    model = fit_line_residuals(λ, p, n_lines, n_comps, lines, n_kin_tied, tied_kinematics, flexible_wavesol, 
+    model = model_line_residuals(λ, p, n_lines, n_comps, lines, n_kin_tied, tied_kinematics, flexible_wavesol, 
         tie_voigt_mixing, ext_curve)
     # Add the log of the likelihood (based on the model) and the prior distribution functions
     lnP = ln_likelihood(Inorm, model, σnorm) + ln_prior(p, priors)
@@ -471,6 +438,92 @@ Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.uto
 @inline function Drude(x::Real, A::Real, μ::Real, FWHM::Real)
     A * (FWHM/μ)^2 / ((x/μ - μ/x)^2 + (FWHM/μ)^2)
 end
+
+
+############################################## LINE PROFILES #############################################
+
+
+"""
+    Gaussian(x, A, μ, FWHM)
+
+Evaluate a Gaussian profile at `x`, parameterized by the amplitude `A`, mean value `μ`, and 
+full-width at half-maximum `FWHM`
+"""
+@inline function Gaussian(x::Real, A::Real, μ::Real, FWHM::Real)
+    # Reparametrize FWHM as dispersion σ
+    σ = FWHM / (2√(2log(2)))
+    A * exp(-(x-μ)^2 / (2σ^2))
+end
+
+
+"""
+    GaussHermite(x, A, μ, FWHM, h₃, h₄)
+
+Evaluate a Gauss-Hermite quadrature at `x`, parametrized by the amplitude `A`, mean value `μ`,
+full-width at half-maximum `FWHM`, 3rd moment / skewness `h₃`, and 4th moment / kurtosis `h₄`
+
+See Riffel et al. (2010)
+"""
+function GaussHermite(x::Real, A::Real, μ::Real, FWHM::Real, h₃::Real, h₄::Real)
+
+    h = [h₃, h₄]
+    # Reparametrize FWHM as dispersion σ
+    σ = FWHM / (2√(2log(2)))
+    # Gaussian exponential argument w
+    w = (x - μ) / σ
+    # Normalized Gaussian
+    α = exp(-w^2 / 2)
+
+    # Calculate coefficients for the Hermite basis
+    n = 3:(length(h)+2)
+    norm = .√(factorial.(n) .* 2 .^ n)
+    coeff = vcat([1, 0, 0], h./norm)
+    # Calculate hermite basis
+    Herm = sum([coeff[nᵢ] * hermite(w, nᵢ-1) for nᵢ ∈ eachindex(coeff)])
+
+    # Calculate peak height (i.e. value of function at w=0)
+    Herm0 = sum([coeff[nᵢ] * hermite(0., nᵢ-1) for nᵢ ∈ eachindex(coeff)])
+
+    # Combine the Gaussian and Hermite profiles
+    A * α * Herm / Herm0
+end
+
+
+"""
+    Lorentzian(x, A, μ, FWHM)
+
+Evaluate a Lorentzian profile at `x`, parametrized by the amplitude `A`, mean value `μ`,
+and full-width at half-maximum `FWHM`
+"""
+@inline function Lorentzian(x::Real, A::Real, μ::Real, FWHM::Real)
+    A * (FWHM/2)^2 / ((x-μ)^2 + (FWHM/2)^2)
+end
+
+
+"""
+    Voigt(x, A, μ, FWHM, η)
+
+Evaluate a pseudo-Voigt profile at `x`, parametrized by the amplitude `A`, mean value `μ`,
+full-width at half-maximum `FWHM`, and mixing ratio `η`
+
+https://docs.mantidproject.org/nightly/fitting/fitfunctions/PseudoVoigt.html
+"""
+function Voigt(x::Real, A::Real, μ::Real, FWHM::Real, η::Real)
+
+    # Reparametrize FWHM as dispersion σ
+    σ = FWHM / (2√(2log(2))) 
+    # Normalized Gaussian
+    G = 1/√(2π * σ^2) * exp(-(x-μ)^2 / (2σ^2))
+    # Normalized Lorentzian
+    L = 1/π * (FWHM/2) / ((x-μ)^2 + (FWHM/2)^2)
+
+    # Intensity parameter given the peak height A
+    I = A * FWHM * π / (2 * (1 + (√(π*log(2)) - 1)*η))
+
+    # Mix the two distributions with the mixing parameter η
+    I * (η * G + (1 - η) * L)
+end
+
 
 ############################################## EXTINCTION PROFILES #############################################
 
@@ -742,7 +795,7 @@ end
 
 
 """
-    fit_spectrum(λ, params, n_dust_cont, extinction_curve, extinction_screen, fit_sil_emission;
+    model_continuum(λ, params, n_dust_cont, extinction_curve, extinction_screen, fit_sil_emission;
         return_components=return_components)
 
 Create a model of the continuum (including stellar+dust continuum, PAH features, and extinction, excluding emission lines)
@@ -762,7 +815,7 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
-function fit_spectrum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer, extinction_curve::String, 
+function model_continuum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer, extinction_curve::String, 
     extinction_screen::Bool, fit_sil_emission::Bool, return_components::Bool) where {T<:Real}
 
     # Prepare outputs
@@ -834,7 +887,7 @@ end
 
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
-function fit_spectrum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer, extinction_curve::String, 
+function model_continuum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer, extinction_curve::String, 
     extinction_screen::Bool, fit_sil_emission::Bool) where {T<:Real}
 
     # Prepare outputs
@@ -897,7 +950,7 @@ end
 
 
 """
-    fit_pah_residuals(λ, params, n_dust_feat, return_components)
+    model_pah_residuals(λ, params, n_dust_feat, return_components)
 Create a model of the PAH features at the given wavelengths `λ`, given the parameter vector `params`.
 Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 (with modifications)
@@ -905,11 +958,11 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `λ::Vector{<:AbstractFloat}`: Wavelength vector of the spectrum to be fit
 - `params::Vector{<:AbstractFloat}`: Parameter vector. Parameters should be ordered as: `(amp, center, fwhm) for each PAH profile`
 - `n_dust_feat::Integer`: The number of PAH features that are being fit
-- `ext_curve::Vector{<:AbstractFloat}`: The extinction curve that was fit using fit_spectrum
+- `ext_curve::Vector{<:AbstractFloat}`: The extinction curve that was fit using model_continuum
 - `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in
     addition to the overall fit
 """
-function fit_pah_residuals(λ::Vector{T}, params::Vector{T}, n_dust_feat::Integer,
+function model_pah_residuals(λ::Vector{T}, params::Vector{T}, n_dust_feat::Integer,
     ext_curve::Vector{T}, return_components::Bool) where {T<:Real}
 
     # Prepare outputs
@@ -937,7 +990,7 @@ end
 
 
 # Multiple dispatch for more efficiency
-function fit_pah_residuals(λ::Vector{T}, params::Vector{T}, n_dust_feat::Integer,
+function model_pah_residuals(λ::Vector{T}, params::Vector{T}, n_dust_feat::Integer,
     ext_curve::Vector{T}) where {T<:Real}
 
     # Prepare outputs
@@ -958,15 +1011,15 @@ function fit_pah_residuals(λ::Vector{T}, params::Vector{T}, n_dust_feat::Intege
 end
 
 
-# Combine fit_spectrum and fit_pah_residuals to get the full continuum in one function (after getting the optimized parameters)
-function fit_full_continuum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer,
+# Combine model_continuum and model_pah_residuals to get the full continuum in one function (after getting the optimized parameters)
+function model_continuum_and_pah(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer,
     n_dust_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool) where {T<:Real}
 
     pars_1 = vcat(params[1:(2+2n_dust_cont+4+(fit_sil_emission ? 5 : 0))], [0., 0.])
     pars_2 = params[(3+2n_dust_cont+4+(fit_sil_emission ? 5 : 0)):end]
 
-    contin_1, ccomps = fit_spectrum(λ, pars_1, n_dust_cont, extinction_curve, extinction_screen, fit_sil_emission, true)
-    contin_2, pcomps = fit_pah_residuals(λ, pars_2, n_dust_feat, ccomps["extinction"], true)
+    contin_1, ccomps = model_continuum(λ, pars_1, n_dust_cont, extinction_curve, extinction_screen, fit_sil_emission, true)
+    contin_2, pcomps = model_pah_residuals(λ, pars_2, n_dust_feat, ccomps["extinction"], true)
 
     contin = contin_1 .+ contin_2
     comps = merge(ccomps, pcomps)
@@ -977,7 +1030,7 @@ end
 
 
 """
-    fit_line_residuals(λ, params, n_lines, n_kin_tied, kin_tied_key, line_tied, line_profiles,
+    model_line_residuals(λ, params, n_lines, n_kin_tied, kin_tied_key, line_tied, line_profiles,
         n_acomp_kin_tied, acomp_kin_tied_key, line_acomp_tied, line_acomp_profiles, line_restwave,
         flexible_wavesol, tie_voigt_mixing, ext_curve; return_components=return_components) 
 
@@ -999,11 +1052,11 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `flexible_wavesol::Bool`: Whether or not to allow small variations in tied velocity offsets, to account for a poor
     wavelength solution in the data
 - `tie_voigt_mixing::Bool`: Whether or not to tie the mixing parameters of all Voigt profiles together
-- `ext_curve::Vector{<:AbstractFloat}`: The extinction curve fit with fit_spectrum
+- `ext_curve::Vector{<:AbstractFloat}`: The extinction curve fit with model_continuum
 - `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
-function fit_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_comps::S, lines::TransitionLines, 
+function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_comps::S, lines::TransitionLines, 
     n_kin_tied::Vector{S}, tied_kinematics::TiedKinematics, flexible_wavesol::Bool, tie_voigt_mixing::Bool, ext_curve::Vector{T}, 
     return_components::Bool) where {T<:Real,S<:Integer}
 
@@ -1163,7 +1216,7 @@ end
 
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
-function fit_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_comps::S, lines::TransitionLines, 
+function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_comps::S, lines::TransitionLines, 
     n_kin_tied::Vector{S}, tied_kinematics::TiedKinematics, flexible_wavesol::Bool, tie_voigt_mixing::Bool, 
     ext_curve::Vector{T}) where {T<:Real,S<:Integer}
 
@@ -1315,7 +1368,7 @@ end
     calculate_extra_parameters(λ, I, σ, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen,
         fit_sil_emission, n_lines, n_acomps, n_kin_tied, kin_tied_key, line_tied, line_profiles,
         n_acomp_kin_tied, acomp_kin_tied_key, line_acomp_tied, line_acomp_profiles, line_restwave, flexible_wavesol,
-        tie_voigt_mixing, popt_c, popt_l, perr_c, perr_l, mask_lines, continuum)
+        tie_voigt_mixing, popt_c, popt_l, perr_c, perr_l, mask_lines, continuum, Ω)
 
 Calculate extra parameters that are not fit, but are nevertheless important to know, for a given spaxel.
 Currently this includes the integrated intensity and signal to noise ratios of dust features and emission lines.
@@ -1325,13 +1378,9 @@ function calculate_extra_parameters(λ::Vector{T}, I::Vector{T}, σ::Vector{T}, 
     n_lines::Integer, n_acomps::Integer, n_comps::Integer, lines::TransitionLines, n_kin_tied::Vector{S}, 
     tied_kinematics::TiedKinematics, flexible_wavesol::Bool, tie_voigt_mixing::Bool, popt_c::Vector{T}, 
     popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}, extinction::Vector{T}, mask_lines::BitVector, 
-    continuum::Vector{T}) where {T<:Real,S<:Integer}
+    continuum::Vector{T}, Ω::T) where {T<:Real,S<:Integer}
 
     @debug "Calculating extra parameters"
-
-    # Get the average wavelength resolution, and divide by 10 to subsample pixels
-    # (this is only used to calculate the peak location of the profiles, and thus the peak intensity)
-    Δλ = mean(diff(λ)) / 10
 
     # Normalization
     N = Float64(abs(nanmaximum(I)))
@@ -1354,25 +1403,29 @@ function calculate_extra_parameters(λ::Vector{T}, I::Vector{T}, σ::Vector{T}, 
         A_cgs = MJysr_to_cgs(A, μ)
         # Convert the error in the intensity to CGS units
         A_cgs_err = MJysr_to_cgs_err(A, A_err, μ, μ_err)
+        # Integrate over the solid angle
+        A_cgs *= Ω
+        A_cgs_err *= Ω
 
         # Get the extinction profile at the center
         ext = extinction[argmin(abs.(λ .- μ))]
 
-        # Calculate the intensity using the utility function
-        intensity, i_err = calculate_intensity(:Drude, A_cgs, A_cgs_err, μ, μ_err, fwhm, fwhm_err)
+        # Calculate the flux using the utility function
+        flux, f_err = calculate_flux(:Drude, A_cgs, A_cgs_err, μ, μ_err, fwhm, fwhm_err)
+
         # Calculate the equivalent width using the utility function
         eqw, e_err = calculate_eqw(popt_c, perr_c, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen, 
             fit_sil_emission, :Drude, A*ext, A_err*ext, μ, μ_err, fwhm, fwhm_err)
 
         @debug "PAH feature with ($A_cgs, $μ, $fwhm) and errors ($A_cgs_err, $μ_err, $fwhm_err)"
-        @debug "I=$intensity, err=$i_err, EQW=$eqw, err=$e_err"
+        @debug "I=$flux, err=$f_err, EQW=$eqw, err=$e_err"
 
         # increment the parameter index
         pᵢ += 3
 
-        # intensity units: erg s^-1 cm^-2 sr^-1 (integrated over μm)
-        p_dust[pₒ] = intensity
-        p_dust_err[pₒ] = i_err
+        # flux units: erg s^-1 cm^-2 sr^-1 (integrated over μm)
+        p_dust[pₒ] = flux
+        p_dust_err[pₒ] = f_err
         # equivalent width units: μm
         p_dust[pₒ+1] = eqw
         p_dust_err[pₒ+1] = e_err
@@ -1380,7 +1433,7 @@ function calculate_extra_parameters(λ::Vector{T}, I::Vector{T}, σ::Vector{T}, 
         # SNR, calculated as (peak amplitude) / (RMS intensity of the surrounding spectrum)
         # include the extinction factor when calculating the SNR
         p_dust[pₒ+2] = A*ext / std(I[.!mask_lines] .- continuum[.!mask_lines])
-        @debug "integrated intensity $(p_dust[pₒ]) +/- $(p_dust_err[pₒ]) " *
+        @debug "integrated flux $(p_dust[pₒ]) +/- $(p_dust_err[pₒ]) " *
             "(erg s^-1 cm^-2 sr^-1), equivalent width $(p_dust[pₒ+1]) +/- $(p_dust_err[pₒ+1]) um, " *
             "and SNR $(p_dust[pₒ+2])"
 
@@ -1400,7 +1453,7 @@ function calculate_extra_parameters(λ::Vector{T}, I::Vector{T}, σ::Vector{T}, 
     end
     for (k, λ0) ∈ enumerate(lines.λ₀)
 
-        # (\/ pretty much the same as the fit_line_residuals function, but calculating the integrated intensities)
+        # (\/ pretty much the same as the model_line_residuals function, but calculating the integrated intensities)
         amp = popt_l[pᵢ]
         amp_err = perr_l[pᵢ]
         # fill values with nothings for profiles that may / may not have them
@@ -1473,14 +1526,17 @@ function calculate_extra_parameters(λ::Vector{T}, I::Vector{T}, σ::Vector{T}, 
         # Convert amplitude to erg s^-1 cm^-2 μm^-1 sr^-1, put back in the normalization
         amp_cgs = MJysr_to_cgs(amp*N, mean_μm)
         amp_cgs_err = MJysr_to_cgs_err(amp*N, amp_err*N, mean_μm, mean_μm_err)
+        # Integrate over the solid angle
+        amp_cgs *= Ω
+        amp_cgs_err *= Ω
 
         # Get the extinction factor at the line center
         ext = extinction[argmin(abs.(λ .- mean_μm))]
 
         @debug "Line with ($amp_cgs, $mean_μm, $fwhm_μm) and errors ($amp_cgs_err, $mean_μm_err, $fwhm_μm_err)"
 
-        # Calculate line intensity using the helper function
-        p_lines[pₒ], p_lines_err[pₒ] = calculate_intensity(lines.profiles[k, 1], amp_cgs, amp_cgs_err, mean_μm, mean_μm_err,
+        # Calculate line flux using the helper function
+        p_lines[pₒ], p_lines_err[pₒ] = calculate_flux(lines.profiles[k, 1], amp_cgs, amp_cgs_err, mean_μm, mean_μm_err,
             fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err)
 
         # Calculate the equivalent width using the utility function
@@ -1491,7 +1547,7 @@ function calculate_extra_parameters(λ::Vector{T}, I::Vector{T}, σ::Vector{T}, 
         # SNR
         p_lines[pₒ+2] = amp*N*ext / std(I[.!mask_lines] .- continuum[.!mask_lines])
 
-        @debug "integrated intensity $(p_lines[pₒ]) +/- $(p_lines_err[pₒ]) " *
+        @debug "integrated flux $(p_lines[pₒ]) +/- $(p_lines_err[pₒ]) " *
             "(erg s^-1 cm^-2 sr^-1), equivalent width $(p_lines[pₒ+1]) +/- $(p_lines_err[pₒ+1]) um, and SNR $(p_lines[pₒ+1])"
 
         # Advance the output vector index by 3
@@ -1550,11 +1606,14 @@ function calculate_extra_parameters(λ::Vector{T}, I::Vector{T}, σ::Vector{T}, 
                 # Convert amplitude to erg s^-1 cm^-2 μm^-1 sr^-1, put back in the normalization
                 acomp_amp_cgs = MJysr_to_cgs(acomp_amp*N, acomp_mean_μm)
                 acomp_amp_cgs_err = MJysr_to_cgs_err(acomp_amp*N, acomp_amp_err*N, acomp_mean_μm, acomp_mean_μm_err)
+                # Integrate over the solid angle
+                acomp_amp_cgs *= Ω
+                acomp_amp_cgs_err *= Ω
 
                 @debug "acomp line with ($acomp_amp_cgs, $acomp_mean_μm, $acomp_fwhm_μm) and errors ($acomp_amp_cgs_err, $acomp_mean_μm_err, $acomp_fwhm_μm_err)"
                     
-                # Calculate line intensity using the helper function
-                p_lines[pₒ], p_lines_err[pₒ] = calculate_intensity(lines.profiles[k, j], acomp_amp_cgs, acomp_amp_cgs_err, acomp_mean_μm, 
+                # Calculate line flux using the helper function
+                p_lines[pₒ], p_lines_err[pₒ] = calculate_flux(lines.profiles[k, j], acomp_amp_cgs, acomp_amp_cgs_err, acomp_mean_μm, 
                     acomp_mean_μm_err, acomp_fwhm_μm, acomp_fwhm_μm_err, h3=acomp_h3, h3_err=acomp_h3_err, h4=acomp_h4, h4_err=acomp_h4_err, 
                     η=acomp_η, η_err=acomp_η_err)
     
@@ -1567,7 +1626,7 @@ function calculate_extra_parameters(λ::Vector{T}, I::Vector{T}, σ::Vector{T}, 
                 # SNR
                 p_lines[pₒ+2] = acomp_amp*N*ext / std(I[.!mask_lines] .- continuum[.!mask_lines])
 
-                @debug "integrated intensity $(p_lines[pₒ]) +/- $(p_lines_err[pₒ]) " *
+                @debug "integrated flux $(p_lines[pₒ]) +/- $(p_lines_err[pₒ]) " *
                     "(erg s^-1 cm^-2 sr^-1), equivalent width $(p_lines[pₒ+1]) +/- $(p_lines_err[pₒ+1]) um, and SNR $(p_lines[pₒ+1])"
 
                 # Advance the output vector index by 3
@@ -1575,158 +1634,69 @@ function calculate_extra_parameters(λ::Vector{T}, I::Vector{T}, σ::Vector{T}, 
             end
         end
 
-        # SNR, calculated as (amplitude) / (RMS of the surrounding spectrum)
-        # p_lines[pₒ+2] = calculate_SNR(Δλ, I[.!mask_lines] .- continuum[.!mask_lines], cube_fitter.line_profiles[k],
-        #     amp*N*ext, mean_μm, fwhm_μm, h3=h3, h4=h4, η=η, acomp_prof=cube_fitter.line_acomp_profiles[k], 
-        #     acomp_amp=isnothing(acomp_amp) ? acomp_amp : acomp_amp*N*ext,
-        #     acomp_peak=acomp_mean_μm, acomp_fwhm=acomp_fwhm_μm, acomp_h3=acomp_h3, acomp_h4=acomp_h4, acomp_η=acomp_η)
-
-        # pₒ += 3
-
     end
 
     p_dust, p_lines, p_dust_err, p_lines_err
 end
 
 
-############################################## LINE PROFILES #############################################
-
-
 """
-    Gaussian(x, A, μ, FWHM)
+    calculate_flux(profile, amp, amp_err, peak, peak_err, fwhm, fwhm_err; <keyword_args>)
 
-Evaluate a Gaussian profile at `x`, parameterized by the amplitude `A`, mean value `μ`, and 
-full-width at half-maximum `FWHM`
-"""
-@inline function Gaussian(x::Real, A::Real, μ::Real, FWHM::Real)
-    # Reparametrize FWHM as dispersion σ
-    σ = FWHM / (2√(2log(2)))
-    A * exp(-(x-μ)^2 / (2σ^2))
-end
-
-
-"""
-    GaussHermite(x, A, μ, FWHM, h₃, h₄)
-
-Evaluate a Gauss-Hermite quadrature at `x`, parametrized by the amplitude `A`, mean value `μ`,
-full-width at half-maximum `FWHM`, 3rd moment / skewness `h₃`, and 4th moment / kurtosis `h₄`
-
-See Riffel et al. (2010)
-"""
-function GaussHermite(x::Real, A::Real, μ::Real, FWHM::Real, h₃::Real, h₄::Real)
-
-    h = [h₃, h₄]
-    # Reparametrize FWHM as dispersion σ
-    σ = FWHM / (2√(2log(2)))
-    # Gaussian exponential argument w
-    w = (x - μ) / σ
-    # Normalized Gaussian
-    α = exp(-w^2 / 2)
-
-    # Calculate coefficients for the Hermite basis
-    n = 3:(length(h)+2)
-    norm = .√(factorial.(n) .* 2 .^ n)
-    coeff = vcat([1, 0, 0], h./norm)
-    # Calculate hermite basis
-    Herm = sum([coeff[nᵢ] * hermite(w, nᵢ-1) for nᵢ ∈ eachindex(coeff)])
-
-    # Calculate peak height (i.e. value of function at w=0)
-    Herm0 = sum([coeff[nᵢ] * hermite(0., nᵢ-1) for nᵢ ∈ eachindex(coeff)])
-
-    # Combine the Gaussian and Hermite profiles
-    A * α * Herm / Herm0
-end
-
-
-"""
-    Lorentzian(x, A, μ, FWHM)
-
-Evaluate a Lorentzian profile at `x`, parametrized by the amplitude `A`, mean value `μ`,
-and full-width at half-maximum `FWHM`
-"""
-@inline function Lorentzian(x::Real, A::Real, μ::Real, FWHM::Real)
-    A * (FWHM/2)^2 / ((x-μ)^2 + (FWHM/2)^2)
-end
-
-
-"""
-    Voigt(x, A, μ, FWHM, η)
-
-Evaluate a pseudo-Voigt profile at `x`, parametrized by the amplitude `A`, mean value `μ`,
-full-width at half-maximum `FWHM`, and mixing ratio `η`
-
-https://docs.mantidproject.org/nightly/fitting/fitfunctions/PseudoVoigt.html
-"""
-function Voigt(x::Real, A::Real, μ::Real, FWHM::Real, η::Real)
-
-    # Reparametrize FWHM as dispersion σ
-    σ = FWHM / (2√(2log(2))) 
-    # Normalized Gaussian
-    G = 1/√(2π * σ^2) * exp(-(x-μ)^2 / (2σ^2))
-    # Normalized Lorentzian
-    L = 1/π * (FWHM/2) / ((x-μ)^2 + (FWHM/2)^2)
-
-    # Intensity parameter given the peak height A
-    I = A * FWHM * π / (2 * (1 + (√(π*log(2)) - 1)*η))
-
-    # Mix the two distributions with the mixing parameter η
-    I * (η * G + (1 - η) * L)
-end
-
-
-"""
-    calculate_intensity(profile, amp, amp_err, peak, peak_err, fwhm, fwhm_err; <keyword_args>)
-
-Calculate the integrated intensity of a spectral feature, i.e. a PAH or emission line. Calculates the integral
+Calculate the integrated flux of a spectral feature, i.e. a PAH or emission line. Calculates the integral
 of the feature profile, using an analytic form if available, otherwise integrating numerically with QuadGK.
 """
-function calculate_intensity(profile::Symbol, amp::T, amp_err::T, peak::T, peak_err::T, fwhm::T, fwhm_err::T;
+function calculate_flux(profile::Symbol, amp::T, amp_err::T, peak::T, peak_err::T, fwhm::T, fwhm_err::T;
     h3::Union{T,Nothing}=nothing, h3_err::Union{T,Nothing}=nothing, h4::Union{T,Nothing}=nothing, 
     h4_err::Union{T,Nothing}=nothing, η::Union{T,Nothing}=nothing, η_err::Union{T,Nothing}=nothing) where {T<:Real}
 
+    if iszero(amp) && iszero(amp_err)
+        return 0., 0.
+    end
     # Evaluate the line profiles according to whether there is a simple analytic form
     # otherwise, integrate numerically with quadgk
     if profile == :Drude
         # (integral = π/2 * A * fwhm)
-        intensity = ∫Drude(amp, fwhm)
+        flux = ∫Drude(amp, fwhm)
         if iszero(amp)
-            i_err = π/2 * fwhm * amp_err
+            f_err = π/2 * fwhm * amp_err
         else
             frac_err2 = (amp_err / amp)^2 + (fwhm_err / fwhm)^2
-            i_err = √(frac_err2 * intensity^2)
+            f_err = √(frac_err2 * flux^2)
         end
     elseif profile == :Gaussian
-        intensity = ∫Gaussian(amp, fwhm)
+        flux = ∫Gaussian(amp, fwhm)
         frac_err2 = (amp_err / amp)^2 + (fwhm_err / fwhm)^2
-        i_err = √(frac_err2 * intensity^2)
+        f_err = √(frac_err2 * flux^2)
     elseif profile == :Lorentzian
-        intensity = ∫Lorentzian(amp)
-        i_err = amp_err
+        flux = ∫Lorentzian(amp, fwhm)
+        frac_err2 = (amp_err / amp)^2 + (fwhm_err / fwhm)^2
+        f_err = √(frac_err2 * flux^2)
     elseif profile == :GaussHermite
         # shift the profile to be centered at 0 since it doesnt matter for the integral, and it makes it
         # easier for quadgk to find a solution
-        intensity = quadgk(x -> GaussHermite(x+peak, amp, peak, fwhm, h3, h4), -Inf, Inf, order=200)[1]
+        flux = amp * quadgk(x -> GaussHermite(x+peak, 1, peak, fwhm, h3, h4), -Inf, Inf, order=200)[1]
         # estimate error by evaluating the integral at +/- 1 sigma
-        err_l = intensity - quadgk(x -> GaussHermite(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), h3-h3_err, h4-h4_err), -Inf, Inf, order=200)[1]
-        err_u = quadgk(x -> GaussHermite(x+peak, amp+amp_err, peak, fwhm+fwhm_err, h3+h3_err, h4+h4_err), -Inf, Inf, order=200)[1] - intensity
+        err_l = flux - amp * quadgk(x -> GaussHermite(x+peak, max(1-amp_err/amp, 0.), peak, max(fwhm-fwhm_err, eps()), h3-h3_err, h4-h4_err), -Inf, Inf, order=200)[1]
+        err_u = amp * quadgk(x -> GaussHermite(x+peak, 1+amp_err/amp, peak, fwhm+fwhm_err, h3+h3_err, h4+h4_err), -Inf, Inf, order=200)[1] - flux
         err_l = err_l ≥ 0 ? err_l : 0.
         err_u = abs(err_u)
-        i_err = (err_l + err_u)/2
+        f_err = (err_l + err_u)/2
     elseif profile == :Voigt
         # also use a high order to ensure that all the initial test points dont evaluate to precisely 0
-        intensity = quadgk(x -> Voigt(x+peak, amp, peak, fwhm, η), -Inf, Inf, order=200)[1]
+        flux = amp * quadgk(x -> Voigt(x+peak, 1, peak, fwhm, η), -Inf, Inf, order=200)[1]
         # estimate error by evaluating the integral at +/- 1 sigma
-        err_l = intensity - quadgk(x -> Voigt(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), η-η_err), -Inf, Inf, order=200)[1]
-        err_u = quadgk(x -> Voigt(x+peak, amp+amp_err, peak, fwhm+fwhm_err, η+η_err), -Inf, Inf, order=200)[1] - intensity
+        err_l = flux - amp * quadgk(x -> Voigt(x+peak, max(1-amp_err/amp, 0.), peak, max(fwhm-fwhm_err, eps()), max(η-η_err, 0.)), -Inf, Inf, order=200)[1]
+        err_u = amp * quadgk(x -> Voigt(x+peak, 1+amp_err/amp, peak, fwhm+fwhm_err, η+η_err), -Inf, Inf, order=200)[1] - flux
         err_l = err_l ≥ 0 ? err_l : 0.
         err_u = abs(err_u)
-        i_err = (err_l + err_u)/2
+        f_err = (err_l + err_u)/2
     else
         error("Unrecognized line profile $profile")
     end
 
-    @debug "I=$intensity, err=$i_err"
-    intensity, i_err
+    @debug "I=$flux, err=$f_err"
+    flux, f_err
 end
 
 
@@ -1753,7 +1723,7 @@ function calculate_eqw(popt_c::Vector{T}, perr_c::Vector{T}, n_dust_cont::Intege
     if profile == :Drude
         # do not shift the drude profiles since x=0 and mu=0 cause problems;
         # the wide wings should allow quadgk to find the solution even without shifting it
-        cont = x -> fit_spectrum([x], popt_c, n_dust_cont, extinction_curve, extinction_screen, fit_sil_emission)[1]
+        cont = x -> model_continuum([x], popt_c, n_dust_cont, extinction_curve, extinction_screen, fit_sil_emission)[1]
         eqw = quadgk(x -> Drude(x, amp, peak, fwhm) / cont(x), max(peak-10fwhm, 3.), peak+10fwhm, order=200)[1]
         # errors
         err_l = eqw - quadgk(x -> Drude(x, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps())) / cont(x),
@@ -1766,7 +1736,7 @@ function calculate_eqw(popt_c::Vector{T}, perr_c::Vector{T}, n_dust_cont::Intege
     elseif profile == :Gaussian
         # Make sure to use [x] as a vector and take the first element [1] of the result, since the continuum functions
         # were written to be used with vector inputs + outputs
-        cont = x -> fit_full_continuum([x], popt_c, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen, fit_sil_emission)[1]
+        cont = x -> model_continuum_and_pah([x], popt_c, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen, fit_sil_emission)[1]
         eqw = quadgk(x -> Gaussian(x+peak, amp, peak, fwhm) / cont(x+peak), max(-10fwhm, -peak+1), 10fwhm, order=200)[1]
         err_l = eqw - quadgk(x -> Gaussian(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps())) / cont(x+peak),
             -10fwhm, 10fwhm, order=200)[1]
@@ -1776,7 +1746,7 @@ function calculate_eqw(popt_c::Vector{T}, perr_c::Vector{T}, n_dust_cont::Intege
         err_u = abs(err_u)
         err = (err_l + err_u)/2
     elseif profile == :Lorentzian
-        cont = x -> fit_full_continuum([x], popt_c, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen, fit_sil_emission)[1]
+        cont = x -> model_continuum_and_pah([x], popt_c, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen, fit_sil_emission)[1]
         eqw = quadgk(x -> Lorentzian(x+peak, amp, peak, fwhm) / cont(x+peak), max(-10fwhm, -peak+1), 10fwhm, order=200)[1]
         err_l = eqw - quadgk(x -> Lorentzian(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps())) / cont(x+peak),
             -10fwhm, 10fwhm, order=200)[1]
@@ -1786,7 +1756,7 @@ function calculate_eqw(popt_c::Vector{T}, perr_c::Vector{T}, n_dust_cont::Intege
         err_u = abs(err_u)
         err = (err_l + err_u)/2
     elseif profile == :GaussHermite
-        cont = x -> fit_spectrum([x], popt_c, n_dust_cont, extinction_curve, extinction_screen, fit_sil_emission)[1]
+        cont = x -> model_continuum([x], popt_c, n_dust_cont, extinction_curve, extinction_screen, fit_sil_emission)[1]
         eqw = quadgk(x -> GaussHermite(x+peak, amp, peak, fwhm, h3, h4) / cont(x+peak), max(-10fwhm, -peak+1), 10fwhm, order=200)[1]
         err_l = eqw - quadgk(x -> GaussHermite(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), h3-h3_err, h4-h4_err) / 
             cont(x+peak), -10fwhm, 10fwhm, order=200)[1]
@@ -1796,7 +1766,7 @@ function calculate_eqw(popt_c::Vector{T}, perr_c::Vector{T}, n_dust_cont::Intege
         err_u = abs(err_u)
         err = (err_l + err_u)/2
     elseif profile == :Voigt
-        cont = x -> fit_spectrum([x], popt_c, n_dust_cont, extinction_curve, extinction_screen, fit_sil_emission)[1]
+        cont = x -> model_continuum([x], popt_c, n_dust_cont, extinction_curve, extinction_screen, fit_sil_emission)[1]
         eqw = quadgk(x -> Voigt(x+peak, amp, peak, fwhm, η) / cont(x+peak), max(-10fwhm, -peak+1), 10fwhm, order=200)[1]
         err_l = eqw - quadgk(x -> Voigt(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), η-η_err) / 
             cont(x+peak), -10fwhm, 10fwhm, order=200)[1]

@@ -93,7 +93,7 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, df_names::Ve
         dust_features[n][:amp] = copy(nan_arr)
         dust_features[n][:mean] = copy(nan_arr)
         dust_features[n][:fwhm] = copy(nan_arr)
-        dust_features[n][:intI] = copy(nan_arr)
+        dust_features[n][:flux] = copy(nan_arr)
         dust_features[n][:eqw] = copy(nan_arr)
         dust_features[n][:SNR] = copy(nan_arr)
         @debug "dust feature $n maps with keys $(keys(dust_features[n]))"
@@ -133,11 +133,11 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, df_names::Ve
                 end
             end
         end
-        # Append parameters for intensity and signal-to-noise ratio, which are NOT fitting parameters, but are of interest
-        pnames = [pnames; :intI; :eqw; :SNR]
+        # Append parameters for flux, equivalent width, and signal-to-noise ratio, which are NOT fitting parameters, but are of interest
+        pnames = [pnames; :flux; :eqw; :SNR]
         for j ∈ 2:n_comps
             if !isnothing(line_profiles[i, j])
-                pnames = [pnames; Symbol("acomp_intI", "_$j"); Symbol("acomp_eqw", "_$j"); Symbol("acomp_SNR", "_$j")]
+                pnames = [pnames; Symbol("acomp_flux", "_$j"); Symbol("acomp_eqw", "_$j"); Symbol("acomp_SNR", "_$j")]
             end
         end
         for pname ∈ pnames
@@ -460,15 +460,17 @@ struct CubeFitter{T<:Real,S<:Integer}
         Creating CubeFitter struct for $name at z=$z
         ############################################
         """
-
         # Alias
         λ = cube.λ
 
         # Parse all of the options files to create default options and parameter objects
-        interp_R = parse_resolving(z, cube.channel)
+        interp_R = parse_resolving(cube.channel)
+        # Get the limiting value of the instrumental FWHM
+        fwhm_inst = C_KMS / maximum(interp_R.(λ .* (1 .+ z)))
+
         continuum, dust_features = parse_dust()
         options = parse_options()
-        lines, tied_kinematics, flexible_wavesol, tie_voigt_mixing, voigt_mix_tied = parse_lines(cube.channel, interp_R, λ)
+        lines, tied_kinematics, flexible_wavesol, tie_voigt_mixing, voigt_mix_tied = parse_lines(fwhm_inst)
 
         @debug "### Model will include 1 stellar continuum component ###" *
              "\n### at T = $(continuum.T_s.value) K ###"

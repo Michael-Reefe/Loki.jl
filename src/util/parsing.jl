@@ -9,14 +9,12 @@ them into code objects.
     parse_resolving(z, channel)
 
 Read in the resolving_mrs.csv configuration file to create a cubic spline interpolation of the
-MIRI MRS resolving power as a function of wavelength, redshifted to the rest frame of the object
-being fit.
+MIRI MRS resolving power as a function of wavelength.
 
 # Arguments
-- `z::Real`: The redshift of the object to be fit
 - `channel::String`: The channel of the fit
 """
-function parse_resolving(z::Real, channel::String)::Function
+function parse_resolving(channel::String)::Function
 
     @debug "Parsing MRS resoling power from resolving_mrs.csv for channel $channel"
 
@@ -50,6 +48,8 @@ function parse_resolving(z::Real, channel::String)::Function
     elseif channel == "MULTIPLE"
         edge_left = 1
         edge_right = length(wave)
+    else
+        error("Unrecognized channel: $(channel)")
     end
 
     # Filter down to the channel we want
@@ -75,8 +75,8 @@ function parse_resolving(z::Real, channel::String)::Function
     end
 
     # Create a linear interpolation function so we can evaluate it at the points of interest for our data,
-    # corrected to be in the rest frame
-    interp_R = wi -> Spline1D(wave, R, k=1)(observed_frame(wi, z))
+    # taking an input wi in the OBSERVED frame
+    interp_R = wi -> Spline1D(wave, R, k=1)(wi)
     
     interp_R
 end
@@ -245,18 +245,16 @@ end
 
 
 """
-    parse_lines(channel, interp_R, λ)
+    parse_lines(fwhm_inst)
 
 Read in the lines.toml configuration file, checking that it is formatted correctly,
 and convert it into a julia dictionary with Parameter objects for line fitting parameters.
 This deals purely with emission line options.
 
 # Arguments
-- `channel::String`: The MIRI channel that is being fit
-- `interp_R::Function`: The MRS resolving power interpolation function, as a function of rest frame wavelength
-- `λ::Vector{<:Real}`: The rest frame wavelength vector of the spectrum being fit
+- `fwhm_inst::Real`: The maximum instrument FWHM in km/s
 """
-function parse_lines(channel::String, interp_R::Function, λ::Vector{<:Real})
+function parse_lines(fwhm_inst::Real)
 
     @debug """\n
     Parsing lines file
@@ -296,7 +294,7 @@ function parse_lines(channel::String, interp_R::Function, λ::Vector{<:Real})
 
     # Minimum possible FWHM of a narrow line given the instrumental resolution of MIRI 
     # in the given wavelength range: Δλ/λ = Δv/c ---> Δv = c/(λ/Δλ) = c/R
-    fwhm_pmin = lines["limit_fwhm_res"] ? C_KMS / maximum(interp_R.(λ)) : lines["fwhm_plim"][1]
+    fwhm_pmin = lines["limit_fwhm_res"] ? fwhm_inst : lines["fwhm_plim"][1]
     @debug "Setting minimum FWHM to $fwhm_pmin km/s"
 
     # Define the initial values of line parameters given the values in the options file (if present)
