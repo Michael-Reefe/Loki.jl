@@ -251,8 +251,8 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
         for df ∈ cube_fitter.dust_features.names
             param_maps.dust_features[df][:flux][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
             param_errs.dust_features[df][:flux][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / (log(10) * out_params[index, pᵢ]) : NaN
-            param_maps.dust_features[df][:eqw][index] = out_params[index, pᵢ+1]/(1+z)
-            param_errs.dust_features[df][:eqw][index] = out_errs[index, pᵢ+1]/(1+z)
+            param_maps.dust_features[df][:eqw][index] = out_params[index, pᵢ+1] * (1+z)
+            param_errs.dust_features[df][:eqw][index] = out_errs[index, pᵢ+1] * (1+z)
             param_maps.dust_features[df][:SNR][index] = out_params[index, pᵢ+2]
             pᵢ += 3
         end
@@ -269,8 +269,8 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             # Line intensity, EQW, and SNR, from calculate_extra_parameters
             param_maps.lines[ln][:flux][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
             param_errs.lines[ln][:flux][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / (log(10) * out_params[index, pᵢ]) : NaN
-            param_maps.lines[ln][:eqw][index] = out_params[index, pᵢ+1]/(1+z)
-            param_errs.lines[ln][:eqw][index] = out_errs[index, pᵢ+1]/(1+z)
+            param_maps.lines[ln][:eqw][index] = out_params[index, pᵢ+1] * (1+z)
+            param_errs.lines[ln][:eqw][index] = out_errs[index, pᵢ+1] * (1+z)
             param_maps.lines[ln][:SNR][index] = out_params[index, pᵢ+2]
             
             pᵢ += 3
@@ -285,8 +285,8 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
                     # Line intensity, EQW, and SNR from calculate_extra_parameters
                     param_maps.lines[ln][Symbol(:acomp_flux, "_$j")][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
                     param_errs.lines[ln][Symbol(:acomp_flux, "_$j")][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / (log(10) * out_params[index, pᵢ]) : NaN
-                    param_maps.lines[ln][Symbol(:acomp_eqw, "_$j")][index] = out_params[index, pᵢ+1]/(1+z)
-                    param_errs.lines[ln][Symbol(:acomp_eqw, "_$j")][index] = out_params[index, pᵢ+1]/(1+z)
+                    param_maps.lines[ln][Symbol(:acomp_eqw, "_$j")][index] = out_params[index, pᵢ+1] * (1+z)
+                    param_errs.lines[ln][Symbol(:acomp_eqw, "_$j")][index] = out_params[index, pᵢ+1] * (1+z)
                     param_maps.lines[ln][Symbol(:acomp_SNR, "_$j")][index] = out_params[index, pᵢ+2]
 
                     pᵢ += 3
