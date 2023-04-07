@@ -81,7 +81,7 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
 
         if cube_fitter.save_full_model
             # End of continuum parameters: recreate the continuum model
-            I_cont, comps_c = fit_full_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], cube_fitter.n_dust_cont, cube_fitter.n_dust_feat,
+            I_cont, comps_c = model_continuum_and_pah(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], cube_fitter.n_dust_cont, cube_fitter.n_dust_feat,
                 cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission)
         end
 
@@ -231,7 +231,7 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
         N = N ≠ 0. ? N : 1.
         if cube_fitter.save_full_model
             # End of line parameters: recreate the un-extincted (intrinsic) line model
-            I_line, comps_l = fit_line_residuals(cube_fitter.cube.λ, out_params[index, vᵢ:pᵢ-1], cube_fitter.n_lines, cube_fitter.n_comps,
+            I_line, comps_l = model_line_residuals(cube_fitter.cube.λ, out_params[index, vᵢ:pᵢ-1], cube_fitter.n_lines, cube_fitter.n_comps,
                 cube_fitter.lines, cube_fitter.n_kin_tied, cube_fitter.tied_kinematics, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, 
                 comps_c["extinction"], true)
 
@@ -272,6 +272,8 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             param_maps.lines[ln][:eqw][index] = out_params[index, pᵢ+1]/(1+z)
             param_errs.lines[ln][:eqw][index] = out_errs[index, pᵢ+1]/(1+z)
             param_maps.lines[ln][:SNR][index] = out_params[index, pᵢ+2]
+            
+            pᵢ += 3
 
             for j ∈ 2:cube_fitter.n_comps
                 if !isnothing(cube_fitter.lines.profiles[k, j])
@@ -290,8 +292,6 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
                     pᵢ += 3
                 end
             end
-
-            pᵢ += 3
         end
 
         # Reduced χ^2
@@ -312,7 +312,9 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             end
             for j ∈ 1:cube_fitter.n_comps
                 for k ∈ 1:cube_fitter.n_lines
-                    cube_model.lines[index, :, k] .+= comps["line_$(k)_$(j)"] .* (1 .+ z)
+                    if !isnothing(cube_fitter.lines.profiles[k, j])
+                        cube_model.lines[index, :, k] .+= comps["line_$(k)_$(j)"] .* (1 .+ z)
+                    end
                 end
             end
             cube_model.extinction[index, :] .= comps["extinction"]
@@ -806,10 +808,10 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
             for i ∈ 1:size(cube_model.dust_continuum, 4)
                 write(f, cube_model.dust_continuum[:, :, :, i]; header=hdr, name="DUST_CONTINUUM_$i")               # Dust continuum models
             end
-            for (j, df) ∈ enumerate(cube_fitter.df_names)
+            for (j, df) ∈ enumerate(cube_fitter.dust_features.names)
                 write(f, cube_model.dust_features[:, :, :, j]; header=hdr, name="$df")                              # Dust feature profiles
             end
-            for (k, line) ∈ enumerate(cube_fitter.line_names)
+            for (k, line) ∈ enumerate(cube_fitter.lines.names)
                 write(f, cube_model.lines[:, :, :, k]; header=hdr, name="$line")                                    # Emission line profiles
             end
             write(f, cube_model.extinction; header=hdr, name="EXTINCTION")                                          # Extinction model
@@ -819,7 +821,7 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
                 write(f, cube_model.hot_dust; header=hdr, name="HOT_DUST")                                          # Hot dust model
             end
             
-            write(f, ["wave"], cube_fitter.cube.λ ./ (1 .+ z),                                                     # wavelength vector
+            write(f, ["wave"], [cube_fitter.cube.λ .* (1 .+ cube_fitter.z)],                                        # wavelength vector
                 hdutype=TableHDU, name="WAVELENGTH", units=Dict(:wave => "um"))
 
             # Insert physical units into the headers of each HDU -> MegaJansky per steradian for all except
@@ -831,10 +833,10 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
             for i ∈ 1:size(cube_model.dust_continuum, 4)
                 write_key(f["DUST_CONTINUUM_$i"], "BUNIT", "MJy/sr")
             end
-            for df ∈ cube_fitter.df_names
+            for df ∈ cube_fitter.dust_features.names
                 write_key(f["$df"], "BUNIT", "MJy/sr")
             end
-            for line ∈ cube_fitter.line_names
+            for line ∈ cube_fitter.lines.names
                 write_key(f["$line"], "BUNIT", "MJy/sr")
             end
             write_key(f["EXTINCTION"], "BUNIT", "unitless")
@@ -1059,6 +1061,20 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
             for vk ∈ cube_fitter.tied_kinematics.key[j]
                 data = param_errs.tied_voffs[Symbol(vk, "_$j")]
                 name_i = join(["tied_voffs", vk, "$j", "err"], "_")
+                bunit = "km/s"
+                write(f, data; header=hdr, name=name_i)
+                write_key(f[name_i], "BUNIT", bunit)
+            end
+            for vk ∈ cube_fitter.tied_kinematics.key[j]
+                data = param_maps.tied_fwhms[Symbol(vk, "_$j")]
+                name_i = join(["tied_fwhms", vk, "$j"], "_")
+                bunit = "km/s"
+                write(f, data; header=hdr, name=name_i)
+                write_key(f[name_i], "BUNIT", bunit)
+            end
+            for vk ∈ cube_fitter.tied_kinematics.key[j]
+                data = param_errs.tied_fwhms[Symbol(vk, "_$j")]
+                name_i = join(["tied_fwhms", vk, "$j", "err"], "_")
                 bunit = "km/s"
                 write(f, data; header=hdr, name=name_i)
                 write_key(f[name_i], "BUNIT", bunit)

@@ -1736,7 +1736,7 @@ function calculate_eqw(popt_c::Vector{T}, perr_c::Vector{T}, n_dust_cont::Intege
     elseif profile == :Gaussian
         # Make sure to use [x] as a vector and take the first element [1] of the result, since the continuum functions
         # were written to be used with vector inputs + outputs
-        cont = x -> model_continuum_and_pah([x], popt_c, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen, fit_sil_emission)[1]
+        cont = x -> model_continuum_and_pah([x], popt_c, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen, fit_sil_emission)[1][1]
         eqw = quadgk(x -> Gaussian(x+peak, amp, peak, fwhm) / cont(x+peak), max(-10fwhm, -peak+1), 10fwhm, order=200)[1]
         err_l = eqw - quadgk(x -> Gaussian(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps())) / cont(x+peak),
             -10fwhm, 10fwhm, order=200)[1]
@@ -1746,7 +1746,7 @@ function calculate_eqw(popt_c::Vector{T}, perr_c::Vector{T}, n_dust_cont::Intege
         err_u = abs(err_u)
         err = (err_l + err_u)/2
     elseif profile == :Lorentzian
-        cont = x -> model_continuum_and_pah([x], popt_c, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen, fit_sil_emission)[1]
+        cont = x -> model_continuum_and_pah([x], popt_c, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen, fit_sil_emission)[1][1]
         eqw = quadgk(x -> Lorentzian(x+peak, amp, peak, fwhm) / cont(x+peak), max(-10fwhm, -peak+1), 10fwhm, order=200)[1]
         err_l = eqw - quadgk(x -> Lorentzian(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps())) / cont(x+peak),
             -10fwhm, 10fwhm, order=200)[1]
@@ -1756,7 +1756,7 @@ function calculate_eqw(popt_c::Vector{T}, perr_c::Vector{T}, n_dust_cont::Intege
         err_u = abs(err_u)
         err = (err_l + err_u)/2
     elseif profile == :GaussHermite
-        cont = x -> model_continuum([x], popt_c, n_dust_cont, extinction_curve, extinction_screen, fit_sil_emission)[1]
+        cont = x -> model_continuum_and_pah([x], popt_c, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen, fit_sil_emission)[1][1]
         eqw = quadgk(x -> GaussHermite(x+peak, amp, peak, fwhm, h3, h4) / cont(x+peak), max(-10fwhm, -peak+1), 10fwhm, order=200)[1]
         err_l = eqw - quadgk(x -> GaussHermite(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), h3-h3_err, h4-h4_err) / 
             cont(x+peak), -10fwhm, 10fwhm, order=200)[1]
@@ -1766,7 +1766,7 @@ function calculate_eqw(popt_c::Vector{T}, perr_c::Vector{T}, n_dust_cont::Intege
         err_u = abs(err_u)
         err = (err_l + err_u)/2
     elseif profile == :Voigt
-        cont = x -> model_continuum([x], popt_c, n_dust_cont, extinction_curve, extinction_screen, fit_sil_emission)[1]
+        cont = x -> model_continuum_and_pah([x], popt_c, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen, fit_sil_emission)[1][1]
         eqw = quadgk(x -> Voigt(x+peak, amp, peak, fwhm, η) / cont(x+peak), max(-10fwhm, -peak+1), 10fwhm, order=200)[1]
         err_l = eqw - quadgk(x -> Voigt(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), η-η_err) / 
             cont(x+peak), -10fwhm, 10fwhm, order=200)[1]
