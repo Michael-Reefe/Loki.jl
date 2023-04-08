@@ -51,10 +51,10 @@ h4_plim = [-0.5, 0.5]                    # kurtosis (4th moment) limits (-0.5, 0
 
 # Additional line components
 n_acomps = 1
-acomp_voff_plim = [[-250.0, 250.0]]      # additive factor with the main line voff -> i.e. the additional component
-                                         # is allowed to have a voff within +/-250 km/s from the main component
+acomp_voff_plim = [[-250.0, -10.0]]      # additive factor with the main line voff -> i.e. the additional component
+                                         # is allowed to have a voff up to -250 km/s from the main component (it must be to the left)
 acomp_fwhm_plim = [[1.0, 5.0]]           # multiplicative factor with the main line FWHM -> i.e. the additional component
-                                         # is allowed to have a FWHM from 1-5x the main component
+                                         # is allowed to have a FWHM from 1-5x the main component (it must be wider)
 
 # Uncertainty in the wavelength solution of the data
 flexible_wavesol = true                  # allow tied voffs to vary slightly based on wavelength solution uncertainty

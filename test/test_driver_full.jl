@@ -16,20 +16,6 @@ end
 # channel = 2
 
 # Load in data
-obs = from_fits(["data/F2M1106_ch1-long_s3d.fits",
-                 "data/F2M1106_ch1-medium_s3d.fits",
-                 "data/F2M1106_ch1-short_s3d.fits",
-                 "data/F2M1106_ch2-long_s3d.fits",
-                 "data/F2M1106_ch2-medium_s3d.fits",
-                 "data/F2M1106_ch2-short_s3d.fits",
-                 "data/F2M1106_ch3-long_s3d.fits",
-                 "data/F2M1106_ch3-medium_s3d.fits",
-                 "data/F2M1106_ch3-short_s3d.fits",
-                 "data/F2M1106_ch4-long_s3d.fits",
-                 "data/F2M1106_ch4-medium_s3d.fits",
-                 "data/F2M1106_ch4-short_s3d.fits"],
-                 0.43744)
-
 # obs = from_fits(["data/Level3_ch1-long_s3d.fits",
 #                  "data/Level3_ch1-medium_s3d.fits",
 #                  "data/Level3_ch1-short_s3d.fits",
@@ -43,6 +29,34 @@ obs = from_fits(["data/F2M1106_ch1-long_s3d.fits",
 #                  "data/Level3_ch4-medium_s3d.fits",
 #                  "data/Level3_ch4-short_s3d.fits"],
 #                  0.016317)
+
+obs = from_fits(["data/VV_114E_ch1-long_s3d.fits",
+                 "data/VV_114E_ch1-medium_s3d.fits",
+                 "data/VV_114E_ch1-short_s3d.fits",
+                 "data/VV_114E_ch2-long_s3d.fits",
+                 "data/VV_114E_ch2-medium_s3d.fits",
+                 "data/VV_114E_ch2-short_s3d.fits",
+                 "data/VV_114E_ch3-long_s3d.fits",
+                 "data/VV_114E_ch3-medium_s3d.fits",
+                 "data/VV_114E_ch3-short_s3d.fits",
+                 "data/VV_114E_ch4-long_s3d.fits",
+                 "data/VV_114E_ch4-medium_s3d.fits",
+                 "data/VV_114E_ch4-short_s3d.fits"],
+                 0.02007)
+
+# obs = from_fits(["data/F2M1106_ch1-long_s3d.fits",
+#                  "data/F2M1106_ch1-medium_s3d.fits",
+#                  "data/F2M1106_ch1-short_s3d.fits",
+#                  "data/F2M1106_ch2-long_s3d.fits",
+#                  "data/F2M1106_ch2-medium_s3d.fits",
+#                  "data/F2M1106_ch2-short_s3d.fits",
+#                  "data/F2M1106_ch3-long_s3d.fits",
+#                  "data/F2M1106_ch3-medium_s3d.fits",
+#                  "data/F2M1106_ch3-short_s3d.fits",
+#                  "data/F2M1106_ch4-long_s3d.fits",
+#                  "data/F2M1106_ch4-medium_s3d.fits",
+#                  "data/F2M1106_ch4-short_s3d.fits"],
+#                  0.43744)
 
 # obs_full = from_fits(["data/NGC_7469_Level3_ch1-shortmediumlong_s3d.fits",
 #                  "data/NGC_7469_Level3_ch2-shortmediumlong_s3d.fits",

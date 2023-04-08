@@ -622,8 +622,8 @@ struct CubeFitter{T<:Real,S<:Integer}
 
         new{typeof(z), typeof(n_lines)}(cube, z, name, plot_spaxels, plot_maps, plot_range, parallel, 
             save_fits, save_full_model, subtract_cubic, overwrite, track_memory, track_convergence, make_movies, extinction_curve, 
-            extinction_screen, fit_sil_emission, continuum, n_dust_cont, n_dust_features, dust_features, n_lines, n_acomps, n_comps,
-            lines, n_kin_tied, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, 
+            extinction_screen, fit_sil_emission, fit_all_samin, continuum, n_dust_cont, n_dust_features, dust_features, n_lines, n_acomps, 
+            n_comps, lines, n_kin_tied, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, 
             n_params_extra, cosmo, interp_R, flexible_wavesol, p_init_cont, p_init_line)
     end
 
