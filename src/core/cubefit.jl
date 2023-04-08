@@ -93,7 +93,7 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, df_names::Ve
         dust_features[n][:amp] = copy(nan_arr)
         dust_features[n][:mean] = copy(nan_arr)
         dust_features[n][:fwhm] = copy(nan_arr)
-        dust_features[n][:intI] = copy(nan_arr)
+        dust_features[n][:flux] = copy(nan_arr)
         dust_features[n][:eqw] = copy(nan_arr)
         dust_features[n][:SNR] = copy(nan_arr)
         @debug "dust feature $n maps with keys $(keys(dust_features[n]))"
@@ -133,11 +133,11 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, df_names::Ve
                 end
             end
         end
-        # Append parameters for intensity and signal-to-noise ratio, which are NOT fitting parameters, but are of interest
-        pnames = [pnames; :intI; :eqw; :SNR]
+        # Append parameters for flux, equivalent width, and signal-to-noise ratio, which are NOT fitting parameters, but are of interest
+        pnames = [pnames; :flux; :eqw; :SNR]
         for j ∈ 2:n_comps
             if !isnothing(line_profiles[i, j])
-                pnames = [pnames; Symbol("acomp_intI", "_$j"); Symbol("acomp_eqw", "_$j"); Symbol("acomp_SNR", "_$j")]
+                pnames = [pnames; Symbol("acomp_flux", "_$j"); Symbol("acomp_eqw", "_$j"); Symbol("acomp_SNR", "_$j")]
             end
         end
         for pname ∈ pnames
@@ -385,6 +385,7 @@ struct CubeFitter{T<:Real,S<:Integer}
     extinction_curve::String
     extinction_screen::Bool
     fit_sil_emission::Bool
+    fit_all_samin::Bool
 
     # Continuum parameters
     continuum::Continuum
@@ -460,15 +461,17 @@ struct CubeFitter{T<:Real,S<:Integer}
         Creating CubeFitter struct for $name at z=$z
         ############################################
         """
-
         # Alias
         λ = cube.λ
 
         # Parse all of the options files to create default options and parameter objects
-        interp_R = parse_resolving(z, cube.channel)
+        interp_R = parse_resolving(cube.channel)
+        # Get the limiting value of the instrumental FWHM
+        fwhm_inst = C_KMS / maximum(interp_R.(λ .* (1 .+ z)))
+
         continuum, dust_features = parse_dust()
         options = parse_options()
-        lines, tied_kinematics, flexible_wavesol, tie_voigt_mixing, voigt_mix_tied = parse_lines(cube.channel, interp_R, λ)
+        lines, tied_kinematics, flexible_wavesol, tie_voigt_mixing, voigt_mix_tied = parse_lines(fwhm_inst)
 
         @debug "### Model will include 1 stellar continuum component ###" *
              "\n### at T = $(continuum.T_s.value) K ###"
@@ -596,6 +599,7 @@ struct CubeFitter{T<:Real,S<:Integer}
         extinction_curve = options[:extinction_curve]
         extinction_screen = options[:extinction_screen]
         fit_sil_emission = options[:fit_sil_emission]
+        fit_all_samin = options[:fit_all_samin]
         subtract_cubic = options[:subtract_cubic]
         overwrite = options[:overwrite]
         track_memory = options[:track_memory]
@@ -618,8 +622,8 @@ struct CubeFitter{T<:Real,S<:Integer}
 
         new{typeof(z), typeof(n_lines)}(cube, z, name, plot_spaxels, plot_maps, plot_range, parallel, 
             save_fits, save_full_model, subtract_cubic, overwrite, track_memory, track_convergence, make_movies, extinction_curve, 
-            extinction_screen, fit_sil_emission, continuum, n_dust_cont, n_dust_features, dust_features, n_lines, n_acomps, n_comps,
-            lines, n_kin_tied, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, 
+            extinction_screen, fit_sil_emission, fit_all_samin, continuum, n_dust_cont, n_dust_features, dust_features, n_lines, n_acomps, 
+            n_comps, lines, n_kin_tied, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, 
             n_params_extra, cosmo, interp_R, flexible_wavesol, p_init_cont, p_init_line)
     end
 
@@ -819,26 +823,22 @@ end
 Get the CMPFit parinfo and config objects for a given CubeFitter object, given the vector of initial valuels,
 priors, and boolean locked values.
 """
-function get_continuum_parinfo(cube_fitter::CubeFitter, pars_1::Vector{<:Real}, priors_1::Vector{<:Distribution}, 
-    lock_1::Vector{Bool}, pars_2::Vector{<:Real}, priors_2::Vector{<:Distribution}, lock_2::Vector{Bool})
+function get_continuum_parinfo(n_free_1::S, n_free_2::S, lb_1::Vector{T}, ub_1::Vector{T}, 
+    lb_2::Vector{T}, ub_2::Vector{T}) where {S<:Integer,T<:Real}
 
-    parinfo_1 = CMPFit.Parinfo(length(pars_1))
-    parinfo_2 = CMPFit.Parinfo(length(pars_2))
+    parinfo_1 = CMPFit.Parinfo(n_free_1)
+    parinfo_2 = CMPFit.Parinfo(n_free_2)
 
-    for pᵢ ∈ 1:length(pars_1)
-        parinfo_1[pᵢ].fixed = lock_1[pᵢ]
-        if iszero(parinfo_1[pᵢ].fixed)
-            parinfo_1[pᵢ].limited = (1,1)
-            parinfo_1[pᵢ].limits = (minimum(priors_1[pᵢ]), maximum(priors_1[pᵢ]))
-        end
+    for pᵢ ∈ 1:n_free_1
+        parinfo_1[pᵢ].fixed = 0
+        parinfo_1[pᵢ].limited = (1,1)
+        parinfo_1[pᵢ].limits = (lb_1[pᵢ], ub_1[pᵢ])
     end
 
-    for pᵢ ∈ 1:length(pars_2)
-        parinfo_2[pᵢ].fixed = lock_2[pᵢ]
-        if iszero(parinfo_2[pᵢ].fixed)
-            parinfo_2[pᵢ].limited = (1,1)
-            parinfo_2[pᵢ].limits = (minimum(priors_2[pᵢ]), maximum(priors_2[pᵢ]))
-        end
+    for pᵢ ∈ 1:n_free_2
+        parinfo_2[pᵢ].fixed = 0
+        parinfo_2[pᵢ].limited = (1,1)
+        parinfo_2[pᵢ].limits = (lb_2[pᵢ], ub_2[pᵢ])
     end
 
     # Create a `config` structure
@@ -1044,7 +1044,7 @@ function get_line_priors(cube_fitter::CubeFitter, init::Bool)
     η_name = cube_fitter.tie_voigt_mixing ? ["eta_tied"] : []
 
     priors = Vector{Distribution}(vcat(priors, η_prior, ln_priors))
-    param_lock = Vector{Bool}(vcat(param_lock, η_lock, ln_lock))
+    param_lock = BitVector(vcat(param_lock, η_lock, ln_lock))
     param_names = Vector{String}(vcat(param_names, η_name, ln_names))
 
     priors, param_lock, param_names
@@ -1151,17 +1151,14 @@ end
 Get the CMPFit parinfo and config objects for a given CubeFitter object, given the vector of initial valuels,
 priors, and boolean locked values.
 """
-function get_line_parinfo(cube_fitter::CubeFitter, p₀::Vector{<:Real}, priors::Vector{<:Distribution}, 
-    param_lock::Vector{Bool})
+function get_line_parinfo(n_free, lb, ub)
 
     # Convert parameter limits into CMPFit object
-    parinfo = CMPFit.Parinfo(length(p₀))
-    for pᵢ ∈ 1:length(p₀)
-        parinfo[pᵢ].fixed = param_lock[pᵢ]
-        if iszero(parinfo[pᵢ].fixed)
-            parinfo[pᵢ].limited = (1,1)
-            parinfo[pᵢ].limits = (minimum(priors[pᵢ]), maximum(priors[pᵢ]))
-        end
+    parinfo = CMPFit.Parinfo(n_free)
+    for pᵢ ∈ 1:n_free
+        parinfo[pᵢ].fixed = 0
+        parinfo[pᵢ].limited = (1,1)
+        parinfo[pᵢ].limits = (lb[pᵢ], ub[pᵢ])
     end
 
     # Create a `config` structure

@@ -89,15 +89,14 @@ end
 
 
 """
-    from_fits(filename::String; mirror_size)
+    from_fits(filename::String)
 
 Utility class-method for creating DataCube structures directly from JWST-formatted FITS files.
 
 # Arguments
 - `filename::String`: the filepath to the JWST-formatted FITS file
-- `mirror_size::Real=6.5`: size of the telescope mirror in meters, defaults to 6.5m for JWST
 """
-function from_fits(filename::String; mirror_size::Real=6.5)::DataCube
+function from_fits(filename::String)::DataCube
 
     @info "Initializing DataCube struct from $filename"
 
@@ -199,7 +198,13 @@ function to_rest_frame!(cube::DataCube, z::Real)
         @debug "Converting the wavelength vector of cube with channel $(cube.channel), band $(cube.band)" *
         " to the rest frame using redshift z=$z"
 
-        cube.λ = rest_frame(cube.λ, z)
+        # Wavelength is shorter in the rest frame
+        cube.λ = @. cube.λ / (1 + z)
+        # To conserve flux, which here is measured per unit frequency, we must also divide by the same factor
+        cube.Iν = @. cube.Iν / (1 + z)
+        # Uncertainty follows the same scaling as flux
+        cube.σI = @. cube.σI / (1 + z)
+
         cube.rest_frame = true
     end
 
@@ -236,7 +241,7 @@ end
 
 
 """
-    interpolate_nans!(cube)
+    interpolate_nans!(cube, z)
 
 Function to interpolate bad pixels in individual spaxels.  Does not interpolate any spaxels
 where more than 10% of the datapoints are bad.  Uses a wide cubic spline interpolation to
@@ -244,10 +249,11 @@ get the general shape of the continuum but not fit noise or lines.
 
 # Arguments
 - `cube::DataCube`: The DataCube object to interpolate
+- `z::Real`: The redshift
 
 See also [`DataCube`](@ref)
 """
-function interpolate_nans!(cube::DataCube)
+function interpolate_nans!(cube::DataCube, z::Real=0.)
 
     λ = cube.λ
     @debug "Interpolating NaNs in cube with channel $(cube.channel), band $(cube.band):"
@@ -272,7 +278,7 @@ function interpolate_nans!(cube::DataCube)
             # Make sure the wavelength vector is linear, since it is assumed later in the function
             diffs = diff(λ)
             Δλ = mean(diffs[1])
-            scale = 0.025
+            scale = 0.025 / (1 + z)
             finite = isfinite.(I)
             offset = findfirst(λ[finite] .> (scale + λ[finite][1]))
 
@@ -465,7 +471,7 @@ A plotting utility function for 1D spectra of individual spaxels or the full cub
 See also [`DataCube`](@ref), [`plot_2d`](@ref)
 """
 function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=true, logᵢ::Integer=false,
-    aperture::Union{Tuple{S,S,S,S},Nothing}=nothing, linestyle::String="-", name::Union{String,Nothing}=nothing) where {S<:Integer}
+    spaxel::Union{Tuple{S,S},Nothing}=nothing, linestyle::String="-", name::Union{String,Nothing}=nothing) where {S<:Integer}
 
     @debug "Plotting 1D intensity/error map for cube with channel $(data.channel), band $(data.band)"
 
@@ -484,8 +490,8 @@ function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
         σ ./= sumdim(Array{Int}(.~data.mask), (1,2))
     else
         # Take the spaxel
-        I = sumdim(data.Iν[aperture[1]:aperture[2], aperture[3]:aperture[4], :], (1,2))
-        σ = .√(sumdim(data.σI[aperture[1]:aperture[2], aperture[3]:aperture[4], :].^2, (1,2)))
+        I = data.Iν[spaxel..., :]
+        σ = data.σI[spaxel..., :]
         sub = "\\lambda"
     end
 
@@ -519,7 +525,7 @@ function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
     end
     ax.legend(loc="upper right", frameon=false)
     ax.set_xlim(minimum(λ), maximum(λ))
-    ax.set_title(isnothing(name) ? "" * (isnothing(aperture) ? "" : "Spaxel ($(aperture[1]):$(aperture[2]),$(aperture[3]):$(aperture[4]))") : name)
+    ax.set_title(isnothing(name) ? "" * (isnothing(aperture) ? "" : "Spaxel ($(spaxel[1]),$(spaxel[2]))") : name)
     ax.tick_params(direction="in")
 
     @debug "Saving 1D plot to $fname"
@@ -583,9 +589,8 @@ Create an Observation object from a series of fits files with IFU cubes in diffe
 # Arguments
 - `filenames::Vector{String}`: A vector of filepaths to the FITS files
 - `z::Real`: The redshift of the object.
-- `mirror_size::Real=6.5`: The mirror size of the telescope in meters, default = 6.5 m for JWST
 """
-function from_fits(filenames::Vector{String}, z::Real; mirror_size::Real=6.5)::Observation
+function from_fits(filenames::Vector{String}, z::Real)::Observation
 
 
     # Grab object information from the FITS header of the first file
@@ -607,7 +612,7 @@ function from_fits(filenames::Vector{String}, z::Real; mirror_size::Real=6.5)::O
     
     # Loop through the files and call the individual DataCube method of the from_fits function
     for (i, filepath) ∈ enumerate(filenames)
-        cube = from_fits(filepath; mirror_size=mirror_size)
+        cube = from_fits(filepath)
         if cube.band == "MULTIPLE"
             channels[parse(Int, cube.channel)] = cube
             continue
@@ -943,8 +948,8 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
     λ_init = λ_out[1]
     λ_diff = Δλ
     if obs.rest_frame
-        λ_init = observed_frame(λ_out[1], obs.z)
-        λ_diff = observed_frame(Δλ, obs.z)
+        λ_init = λ_out[1] * (1 + obs.z)
+        λ_diff = Δλ * (1 + obs.z)
     end
     wcs_out = py_wcs.WCS(naxis=3)
     wcs_out.wcs.ctype = [wcs_opt.wcs.ctype[1]; wcs_opt.wcs.ctype[2]; "WAVE"]

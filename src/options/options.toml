@@ -33,7 +33,7 @@ make_movies = false
 # format. If false, the model parameters will still be saved (the model can be
 # easily reconstructed by simply rerunning the code with this option enabled, as the
 # fitting data for each spaxel will already be saved)
-save_full_model = false
+save_full_model = true
 
 # extinction_curve: May be "kvt" for the Kemper, Vriend, & Tielens (2004) 
 # extinction profile, "ct" for the Chiar & Tielens (2005) extinction profile,
@@ -45,7 +45,12 @@ extinction_curve = "d+"
 extinction_screen = false
 
 # whether or not to fit silicate emission
-fit_sil_emission = true
+fit_sil_emission = false
+
+# whether or not to use simulated annealing on ALL spaxels (if false, only uses it for the initial fit
+# to the sum of all spaxels, and subsequent individual-spaxel fits are only done with a local Lev-Mar fit,
+# which is typically sufficient as long as the lines one wishes to fit are prominent in the sum of all spaxels)
+fit_all_samin = false
 
 # cosmology options: Controls the cosmology used for distance / luminosity calculations.
 # If h is set to 1, the distances in plot scale bars will be shown with h^-1 units.
