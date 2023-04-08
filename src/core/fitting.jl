@@ -433,7 +433,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
         func(x, ptot)
     end
 
-    if init
+    if init || cube_fitter.fit_all_samin
         @debug "Beginning Line fitting with Simulated Annealing:"
 
         # Parameter and function tolerance levels for convergence with SAMIN,

@@ -501,11 +501,17 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
      # new angular size for this scale
     θ = l / dA
     n_pix = 1/sqrt(Ω) * θ   # number of pixels = (pixels per radian) * radians
+    unit = "pc"
+    # convert to kpc if l is more than 1000 pc
+    if l ≥ 1000
+        l = Int(l / 1000)
+        unit = "kpc"
+    end
     if cosmo.h ≈ 1.0
-        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, L"%$l$h^{-1}$ pc", "lower left", pad=1, color=:black, 
+        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, L"%$l$h^{-1}$ %$unit", "lower left", pad=1, color=:black, 
             frameon=false, size_vertical=0.4, label_top=false)
     else
-        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, L"%$l pc", "lower left", pad=1, color=:black,
+        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, L"%$l %$unit", "lower left", pad=1, color=:black,
             frameon=false, size_vertical=0.4, label_top=false)
     end
     ax.add_artist(scalebar)

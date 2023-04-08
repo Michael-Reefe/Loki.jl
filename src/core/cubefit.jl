@@ -385,6 +385,7 @@ struct CubeFitter{T<:Real,S<:Integer}
     extinction_curve::String
     extinction_screen::Bool
     fit_sil_emission::Bool
+    fit_all_samin::Bool
 
     # Continuum parameters
     continuum::Continuum
@@ -598,6 +599,7 @@ struct CubeFitter{T<:Real,S<:Integer}
         extinction_curve = options[:extinction_curve]
         extinction_screen = options[:extinction_screen]
         fit_sil_emission = options[:fit_sil_emission]
+        fit_all_samin = options[:fit_all_samin]
         subtract_cubic = options[:subtract_cubic]
         overwrite = options[:overwrite]
         track_memory = options[:track_memory]

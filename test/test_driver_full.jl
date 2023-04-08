@@ -16,33 +16,33 @@ end
 # channel = 2
 
 # Load in data
-# obs = from_fits(["data/F2M1106_ch1-long_s3d.fits",
-#                  "data/F2M1106_ch1-medium_s3d.fits",
-#                  "data/F2M1106_ch1-short_s3d.fits",
-#                  "data/F2M1106_ch2-long_s3d.fits",
-#                  "data/F2M1106_ch2-medium_s3d.fits",
-#                  "data/F2M1106_ch2-short_s3d.fits",
-#                  "data/F2M1106_ch3-long_s3d.fits",
-#                  "data/F2M1106_ch3-medium_s3d.fits",
-#                  "data/F2M1106_ch3-short_s3d.fits",
-#                  "data/F2M1106_ch4-long_s3d.fits",
-#                  "data/F2M1106_ch4-medium_s3d.fits",
-#                  "data/F2M1106_ch4-short_s3d.fits"],
-#                  0.44)
+obs = from_fits(["data/F2M1106_ch1-long_s3d.fits",
+                 "data/F2M1106_ch1-medium_s3d.fits",
+                 "data/F2M1106_ch1-short_s3d.fits",
+                 "data/F2M1106_ch2-long_s3d.fits",
+                 "data/F2M1106_ch2-medium_s3d.fits",
+                 "data/F2M1106_ch2-short_s3d.fits",
+                 "data/F2M1106_ch3-long_s3d.fits",
+                 "data/F2M1106_ch3-medium_s3d.fits",
+                 "data/F2M1106_ch3-short_s3d.fits",
+                 "data/F2M1106_ch4-long_s3d.fits",
+                 "data/F2M1106_ch4-medium_s3d.fits",
+                 "data/F2M1106_ch4-short_s3d.fits"],
+                 0.43744)
 
-obs = from_fits(["data/Level3_ch1-long_s3d.fits",
-                 "data/Level3_ch1-medium_s3d.fits",
-                 "data/Level3_ch1-short_s3d.fits",
-                 "data/Level3_ch2-long_s3d.fits",
-                 "data/Level3_ch2-medium_s3d.fits",
-                 "data/Level3_ch2-short_s3d.fits",
-                 "data/Level3_ch3-long_s3d.fits",
-                 "data/Level3_ch3-medium_s3d.fits",
-                 "data/Level3_ch3-short_s3d.fits",
-                 "data/Level3_ch4-long_s3d.fits",
-                 "data/Level3_ch4-medium_s3d.fits",
-                 "data/Level3_ch4-short_s3d.fits"],
-                 0.016317)
+# obs = from_fits(["data/Level3_ch1-long_s3d.fits",
+#                  "data/Level3_ch1-medium_s3d.fits",
+#                  "data/Level3_ch1-short_s3d.fits",
+#                  "data/Level3_ch2-long_s3d.fits",
+#                  "data/Level3_ch2-medium_s3d.fits",
+#                  "data/Level3_ch2-short_s3d.fits",
+#                  "data/Level3_ch3-long_s3d.fits",
+#                  "data/Level3_ch3-medium_s3d.fits",
+#                  "data/Level3_ch3-short_s3d.fits",
+#                  "data/Level3_ch4-long_s3d.fits",
+#                  "data/Level3_ch4-medium_s3d.fits",
+#                  "data/Level3_ch4-short_s3d.fits"],
+#                  0.016317)
 
 # obs_full = from_fits(["data/NGC_7469_Level3_ch1-shortmediumlong_s3d.fits",
 #                  "data/NGC_7469_Level3_ch2-shortmediumlong_s3d.fits",
@@ -68,19 +68,19 @@ obs = from_fits(["data/Level3_ch1-long_s3d.fits",
 # Convert to rest-frame wavelength vector, and mask out bad spaxels
 correct!(obs)
 
-# # Concatenate the subchannels of each channel so that we have one cube for each channel
-# for channel ∈ 1:4
-#     reproject_channels!(obs, channel, out_id=channel, method=:adaptive) 
-#     # Interpolate NaNs in otherwise good spaxels
-#     interpolate_nans!(obs.channels[channel])
-# end
-# reproject_channels!(obs, [1,2,3], out_id=0, method=:adaptive)
-# interpolate_nans!(obs.channels[0], obs.z)
-# channel = 0
+# Concatenate the subchannels of each channel so that we have one cube for each channel
+for channel ∈ 1:4
+    reproject_channels!(obs, channel, out_id=channel, method=:adaptive) 
+    # Interpolate NaNs in otherwise good spaxels
+    interpolate_nans!(obs.channels[channel])
+end
+reproject_channels!(obs, [1,2,3], out_id=0, method=:adaptive)
+interpolate_nans!(obs.channels[0], obs.z)
+channel = 0
 
-reproject_channels!(obs, 2, out_id=2, method=:adaptive)
-interpolate_nans!(obs.channels[2], obs.z)
-channel = 2
+# reproject_channels!(obs, 2, out_id=2, method=:adaptive)
+# interpolate_nans!(obs.channels[2], obs.z)
+# channel = 2
 
 # Do the optical depth pre-fitting
 # τ_guess = fit_optical_depth(obs)
@@ -95,7 +95,7 @@ channel = 2
 
 # Create the cube fitting object
 # plot_range=[(7.61, 7.69), (12.77, 12.85)]
-cube_fitter = CubeFitter(obs.channels[channel], obs.z, obs.name * "_ch$(channel)_full_tied_rpj_adaptive_obsfix"; 
+cube_fitter = CubeFitter(obs.channels[channel], obs.z, obs.name * "_ch$(channel)_full_untied"; 
     parallel=true, plot_spaxels=:pyplot, plot_maps=true, save_fits=true)
 
 # Fit the cube
