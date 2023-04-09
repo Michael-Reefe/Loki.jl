@@ -778,7 +778,7 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; recalculate
             # Fit the spaxel
             σ, popt_c, I_cont, comps_cont, n_free_c, perr_c, covar_c = 
                 @timeit timer_output "continuum_fit_spaxel" continuum_fit_spaxel(cube_fitter, spaxel, mask_lines, I_spline, σ_spline)
-            σ, popt_l, I_line, comps_line, n_free_l, perr_l, covar_l = 
+            _, popt_l, I_line, comps_line, n_free_l, perr_l, covar_l = 
                 @timeit timer_output "line_fit_spaxel" line_fit_spaxel(cube_fitter, spaxel, cube_fitter.subtract_cubic ? I_spline : I_cont,
                 comps_cont["extinction"], mask_lines, I_spline, σ_spline)
 

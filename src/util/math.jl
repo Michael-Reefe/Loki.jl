@@ -1666,19 +1666,27 @@ function calculate_flux(profile::Symbol, amp::T, amp_err::T, peak::T, peak_err::
         end
     elseif profile == :Gaussian
         flux = ∫Gaussian(amp, fwhm)
-        frac_err2 = (amp_err / amp)^2 + (fwhm_err / fwhm)^2
-        f_err = √(frac_err2 * flux^2)
+        if iszero(amp)
+            f_err = √(π / (4log(2))) * fwhm * amp_err
+        else
+            frac_err2 = (amp_err / amp)^2 + (fwhm_err / fwhm)^2
+            f_err = √(frac_err2 * flux^2)
+        end
     elseif profile == :Lorentzian
         flux = ∫Lorentzian(amp, fwhm)
-        frac_err2 = (amp_err / amp)^2 + (fwhm_err / fwhm)^2
-        f_err = √(frac_err2 * flux^2)
+        if iszero(amp)
+            f_err = π/2 * fwhm * amp_err
+        else
+            frac_err2 = (amp_err / amp)^2 + (fwhm_err / fwhm)^2
+            f_err = √(frac_err2 * flux^2)
+        end
     elseif profile == :GaussHermite
         # shift the profile to be centered at 0 since it doesnt matter for the integral, and it makes it
         # easier for quadgk to find a solution
         flux = amp * quadgk(x -> GaussHermite(x+peak, 1, peak, fwhm, h3, h4), -Inf, Inf, order=200)[1]
         # estimate error by evaluating the integral at +/- 1 sigma
-        err_l = flux - amp * quadgk(x -> GaussHermite(x+peak, max(1-amp_err/amp, 0.), peak, max(fwhm-fwhm_err, eps()), h3-h3_err, h4-h4_err), -Inf, Inf, order=200)[1]
-        err_u = amp * quadgk(x -> GaussHermite(x+peak, 1+amp_err/amp, peak, fwhm+fwhm_err, h3+h3_err, h4+h4_err), -Inf, Inf, order=200)[1] - flux
+        err_l = flux - quadgk(x -> GaussHermite(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), h3-h3_err, h4-h4_err), -Inf, Inf, order=200)[1]
+        err_u = quadgk(x -> GaussHermite(x+peak, amp+amp_err, peak, fwhm+fwhm_err, h3+h3_err, h4+h4_err), -Inf, Inf, order=200)[1] - flux
         err_l = err_l ≥ 0 ? err_l : 0.
         err_u = abs(err_u)
         f_err = (err_l + err_u)/2
@@ -1686,8 +1694,8 @@ function calculate_flux(profile::Symbol, amp::T, amp_err::T, peak::T, peak_err::
         # also use a high order to ensure that all the initial test points dont evaluate to precisely 0
         flux = amp * quadgk(x -> Voigt(x+peak, 1, peak, fwhm, η), -Inf, Inf, order=200)[1]
         # estimate error by evaluating the integral at +/- 1 sigma
-        err_l = flux - amp * quadgk(x -> Voigt(x+peak, max(1-amp_err/amp, 0.), peak, max(fwhm-fwhm_err, eps()), max(η-η_err, 0.)), -Inf, Inf, order=200)[1]
-        err_u = amp * quadgk(x -> Voigt(x+peak, 1+amp_err/amp, peak, fwhm+fwhm_err, η+η_err), -Inf, Inf, order=200)[1] - flux
+        err_l = flux - quadgk(x -> Voigt(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), max(η-η_err, 0.)), -Inf, Inf, order=200)[1]
+        err_u = quadgk(x -> Voigt(x+peak, amp+amp_err, peak, fwhm+fwhm_err, η+η_err), -Inf, Inf, order=200)[1] - flux
         err_l = err_l ≥ 0 ? err_l : 0.
         err_u = abs(err_u)
         f_err = (err_l + err_u)/2
