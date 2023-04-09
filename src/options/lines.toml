@@ -6,40 +6,40 @@ tie_voigt_mixing = true     # tie the Voigt mixing ratios of all lines
 
 # Kinematics groups: for each group, every line in the group will have a tied voff and fwhm, just specify which
 #                    lines you want in each group
-# 
-# kinematic_group_H2 = [
-#     "H200_S"
-# ]
-# kinematic_group_low = [
-#     "HI_Br_",
-#     "HI_Pf_",
-#     "HI_Hu_",
-#     "ArII_",
-#     "ArIII_",
-#     "FeII_",
-#     "ClII_",
-#     "FeIII_",
-#     "HeII_",
-#     "NeII_",
-#     "NiII_",
-#     "PIII_",
-#     "SIII_"
-# ]
-# kinematic_group_med = [
-#     "ArV_",
-#     "NaIII_",
-#     "NeIII_",
-#     "OIV_",
-#     "SIV_"
-# ]
-# kinematic_group_high = [
-#     "FeVII_",
-#     "FeVIII_",
-#     "MgV_",
-#     "MgVII_",
-#     "NeV_",
-#     "NeVI_",
-# ]
+
+kinematic_group_H2 = [
+    "H200_S"
+]
+kinematic_group_low = [
+    "HI_Br_",
+    "HI_Pf_",
+    "HI_Hu_",
+    "ArII_",
+    "ArIII_",
+    "FeII_",
+    "ClII_",
+    "FeIII_",
+    "HeII_",
+    "NeII_",
+    "NiII_",
+    "PIII_",
+    "SIII_"
+]
+kinematic_group_med = [
+    "ArV_",
+    "NaIII_",
+    "NeIII_",
+    "OIV_",
+    "SIV_"
+]
+kinematic_group_high = [
+    "FeVII_",
+    "FeVIII_",
+    "MgV_",
+    "MgVII_",
+    "NeV_",
+    "NeVI_",
+]
 
 # Line voff and FWHM limits
 voff_plim = [-500.0, 500.0]              # -500 to 500 km/s from the rest wavelength
@@ -51,7 +51,7 @@ h4_plim = [-0.5, 0.5]                    # kurtosis (4th moment) limits (-0.5, 0
 
 # Additional line components
 n_acomps = 1
-acomp_voff_plim = [[-250.0, -10.0]]      # additive factor with the main line voff -> i.e. the additional component
+acomp_voff_plim = [[-500.0, 500.0]]      # additive factor with the main line voff -> i.e. the additional component
                                          # is allowed to have a voff up to -250 km/s from the main component (it must be to the left)
 acomp_fwhm_plim = [[1.0, 5.0]]           # multiplicative factor with the main line FWHM -> i.e. the additional component
                                          # is allowed to have a FWHM from 1-5x the main component (it must be wider)
@@ -432,26 +432,26 @@ default = "Voigt"
 # acomps: specify which, if any, lines to add an additional component, and what type
 # of profile it should be. Can add an arbitrary number of additional components.
 [acomps]
-# NeVI_7652 = ["Voigt"]
+NeVI_7652 = ["Voigt"]
 # NeII_12813 = ["Voigt"]
-# NeIII_15555 = ["Voigt"]
-# NeV_14322 = ["Voigt"]
-# ArIII_8991 = ["Voigt"]
-# SIV_10511 = ["Voigt"]
+NeIII_15555 = ["Voigt"]
+NeV_14322 = ["Voigt"]
+ArIII_8991 = ["Voigt"]
+SIV_10511 = ["Voigt"]
 
 
 # optional: add [priors] key to specify individual line priors that 
 # are different from the default Uniform
 
-# example:
-# [priors]
+[priors]
 
-#     [priors.H200_S3]
+# [priors.low]
+# voff_pstr = "Uniform(-500, 500)"
+# voff_locked = false
+# fwhm_pstr = "Uniform(77, 500)"
+# fwhm_locked = false
 
-#         [priors.H200_S3.voff]
-#         pstr = "Uniform(-1000, 1000)"
-#         locked = false
-
-#         [priors.H200_S3.fwhm]
-#         pstr = "Uniform(0, 1000)"
-#         locked = false
+# acomp_voff_pstr = ["Uniform(-500, 500)"]
+# acomp_voff_locked = [false]
+# acomp_fwhm_pstr = ["Uniform(2., 5.)"]
+# acomp_fwhm_locked = [false]

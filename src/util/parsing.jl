@@ -513,9 +513,21 @@ function parse_lines(fwhm_inst::Real)
         for j ∈ 1:lines["n_acomps"]
             if !isnothing(acomp_profiles[line][j])
                 @debug "acomp profile: $(acomp_profiles[line][j])"
-                acomp_voffs[i,j] = Parameter(0., acomp_voff_locked[j], acomp_voff_priors[j])
+                value = 0.
+                if !(minimum(acomp_voff_priors[j]) ≤ value ≤ maximum(acomp_voff_priors[j]))
+                    if abs(minimum(acomp_voff_priors[j])) < abs(maximum(acomp_voff_priors[j]))
+                        value = minimum(acomp_voff_priors[j])
+                    else
+                        value = maximum(acomp_voff_priors[j])
+                    end
+                end
+                acomp_voffs[i,j] = Parameter(value, acomp_voff_locked[j], acomp_voff_priors[j])
                 @debug "Voff $(acomp_voffs[i,j])"
-                acomp_fwhms[i,j] = Parameter(1., acomp_fwhm_locked[j], acomp_fwhm_priors[j])
+                value = 1.
+                if !(minimum(acomp_fwhm_priors[j]) ≤ value ≤ maximum(acomp_fwhm_priors[j]))
+                    value = minimum(acomp_fwhm_priors[j])
+                end
+                acomp_fwhms[i,j] = Parameter(value, acomp_fwhm_locked[j], acomp_fwhm_priors[j])
                 @debug "FWHM $(acomp_fwhms[i,j])"
                 if acomp_profiles[line][j] == "GaussHermite"
                     acomp_h3s[i,j] = Parameter(h3_init, acomp_h3_locked[j], acomp_h3_priors[j])
@@ -557,15 +569,29 @@ function parse_lines(fwhm_inst::Real)
         v_locked = f_locked = false
         # Check if there is an overwrite option in the lines file
         if haskey(lines, "priors")
-            if haskey(lines["priors"], kin_tie)
-                v_prior = isone(j) ? lines["priors"][kin_tie]["voff_pstr"] : lines["priors"][kin_tie]["acomp_voff_pstr"][j-1]
-                v_locked = isone(j) ? lines["priors"][kin_tie]["voff_locked"] : lines["priors"][kin_tie]["acomp_voff_locked"][j-1]
-                f_prior = isone(j) ? lines["priors"][kin_tie]["fwhm_pstr"] : lines["priors"][kin_tie]["acomp_fwhm_pstr"][j-1]
-                f_locked = isone(j) ? lines["priors"][kin_tie]["fwhm_locked"] : lines["priors"][kin_tie]["acomp_fwhm_locked"][j-1]
+            if haskey(lines["priors"], string(kin_tie))
+                v_prior = isone(j) ? lines["priors"][string(kin_tie)]["voff_pstr"] : lines["priors"][string(kin_tie)]["acomp_voff_pstr"][j-1]
+                v_locked = isone(j) ? lines["priors"][string(kin_tie)]["voff_locked"] : lines["priors"][string(kin_tie)]["acomp_voff_locked"][j-1]
+                f_prior = isone(j) ? lines["priors"][string(kin_tie)]["fwhm_pstr"] : lines["priors"][string(kin_tie)]["acomp_fwhm_pstr"][j-1]
+                f_locked = isone(j) ? lines["priors"][string(kin_tie)]["fwhm_locked"] : lines["priors"][string(kin_tie)]["acomp_fwhm_locked"][j-1]
+                v_prior = eval(Meta.parse(v_prior))
+                f_prior = eval(Meta.parse(f_prior))
             end
         end
-        voff_tied[j][i] = isone(j) ? Parameter(voff_init, v_locked, v_prior) : Parameter(0., v_locked, v_prior)
-        fwhm_tied[j][i] = isone(j) ? Parameter(fwhm_init, f_locked, f_prior) : Parameter(1., f_locked, f_prior)
+        value = 0.
+        if !(minimum(v_prior) ≤ value ≤ maximum(v_prior))
+            if abs(minimum(v_prior)) < abs(maximum(v_prior))
+                value = minimum(v_prior)
+            else
+                value = maximum(v_prior)
+            end
+        end
+        voff_tied[j][i] = isone(j) ? Parameter(voff_init, v_locked, v_prior) : Parameter(value, v_locked, v_prior)
+        value = 1.
+        if !(minimum(f_prior) ≤ value ≤ maximum(f_prior))
+            value = minimum(f_prior)
+        end
+        fwhm_tied[j][i] = isone(j) ? Parameter(fwhm_init, f_locked, f_prior) : Parameter(value, f_locked, f_prior)
         msg *= "\nvoff_tied_$(kin_tie)_$(j) $(voff_tied[j][i])"
         msg *= "\nfwhm_tied_$(kin_tie)_$(j) $(fwhm_tied[j][i])"
     end

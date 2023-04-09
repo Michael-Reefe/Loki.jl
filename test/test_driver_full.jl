@@ -16,33 +16,33 @@ end
 # channel = 2
 
 # Load in data
-# obs = from_fits(["data/Level3_ch1-long_s3d.fits",
-#                  "data/Level3_ch1-medium_s3d.fits",
-#                  "data/Level3_ch1-short_s3d.fits",
-#                  "data/Level3_ch2-long_s3d.fits",
-#                  "data/Level3_ch2-medium_s3d.fits",
-#                  "data/Level3_ch2-short_s3d.fits",
-#                  "data/Level3_ch3-long_s3d.fits",
-#                  "data/Level3_ch3-medium_s3d.fits",
-#                  "data/Level3_ch3-short_s3d.fits",
-#                  "data/Level3_ch4-long_s3d.fits",
-#                  "data/Level3_ch4-medium_s3d.fits",
-#                  "data/Level3_ch4-short_s3d.fits"],
-#                  0.016317)
+obs = from_fits(["data/Level3_ch1-long_s3d.fits",
+                 "data/Level3_ch1-medium_s3d.fits",
+                 "data/Level3_ch1-short_s3d.fits",
+                 "data/Level3_ch2-long_s3d.fits",
+                 "data/Level3_ch2-medium_s3d.fits",
+                 "data/Level3_ch2-short_s3d.fits",
+                 "data/Level3_ch3-long_s3d.fits",
+                 "data/Level3_ch3-medium_s3d.fits",
+                 "data/Level3_ch3-short_s3d.fits",
+                 "data/Level3_ch4-long_s3d.fits",
+                 "data/Level3_ch4-medium_s3d.fits",
+                 "data/Level3_ch4-short_s3d.fits"],
+                 0.016317)
 
-obs = from_fits(["data/VV_114E_ch1-long_s3d.fits",
-                 "data/VV_114E_ch1-medium_s3d.fits",
-                 "data/VV_114E_ch1-short_s3d.fits",
-                 "data/VV_114E_ch2-long_s3d.fits",
-                 "data/VV_114E_ch2-medium_s3d.fits",
-                 "data/VV_114E_ch2-short_s3d.fits",
-                 "data/VV_114E_ch3-long_s3d.fits",
-                 "data/VV_114E_ch3-medium_s3d.fits",
-                 "data/VV_114E_ch3-short_s3d.fits",
-                 "data/VV_114E_ch4-long_s3d.fits",
-                 "data/VV_114E_ch4-medium_s3d.fits",
-                 "data/VV_114E_ch4-short_s3d.fits"],
-                 0.02007)
+# obs = from_fits(["data/VV_114E_ch1-long_s3d.fits",
+#                  "data/VV_114E_ch1-medium_s3d.fits",
+#                  "data/VV_114E_ch1-short_s3d.fits",
+#                  "data/VV_114E_ch2-long_s3d.fits",
+#                  "data/VV_114E_ch2-medium_s3d.fits",
+#                  "data/VV_114E_ch2-short_s3d.fits",
+#                  "data/VV_114E_ch3-long_s3d.fits",
+#                  "data/VV_114E_ch3-medium_s3d.fits",
+#                  "data/VV_114E_ch3-short_s3d.fits",
+#                  "data/VV_114E_ch4-long_s3d.fits",
+#                  "data/VV_114E_ch4-medium_s3d.fits",
+#                  "data/VV_114E_ch4-short_s3d.fits"],
+#                  0.02007)
 
 # obs = from_fits(["data/F2M1106_ch1-long_s3d.fits",
 #                  "data/F2M1106_ch1-medium_s3d.fits",
@@ -109,8 +109,8 @@ channel = 0
 
 # Create the cube fitting object
 # plot_range=[(7.61, 7.69), (12.77, 12.85)]
-cube_fitter = CubeFitter(obs.channels[channel], obs.z, obs.name * "_ch$(channel)_full_untied"; 
-    parallel=true, plot_spaxels=:pyplot, plot_maps=true, save_fits=true)
+cube_fitter = CubeFitter(obs.channels[channel], obs.z, obs.name * "_ch$(channel)_full_tied_new"; 
+    parallel=true, plot_spaxels=:both, plot_maps=true, save_fits=true)
 
 # Fit the cube
 fit_cube!(cube_fitter)

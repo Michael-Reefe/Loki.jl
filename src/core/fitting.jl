@@ -409,7 +409,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     @debug "Line priors: \n $priors"
 
     @debug "Line Lower limits: \n $(minimum.(priors))"
-    @debug "Line Upper Limits: \n $(minimum.(priors))"
+    @debug "Line Upper Limits: \n $(maximum.(priors))"
 
     # Lower and upper limits on each parameter, to be fed into the Simulated Annealing (SAMIN) algorithm
     lower_bounds = minimum.(priors)[.~param_lock]
