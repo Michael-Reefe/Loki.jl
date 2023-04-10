@@ -401,35 +401,56 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     Inorm = (I .- continuum) ./ N
     σnorm = σ ./ N
 
-    priors, param_lock, param_names = get_line_priors(cube_fitter, init)
+    priors, param_lock, param_names, tied_pairs, tied_indices = get_line_priors(cube_fitter, init)
     p₀ = get_line_initial_values(cube_fitter, init)
 
-    @debug "Line Parameter labels: \n $param_names"
-    @debug "Line starting values: \n $p₀"
-    @debug "Line priors: \n $priors"
+    # Combine all of the tied parameters
+    p_tied = copy(p₀)
+    priors_tied = copy(priors)
+    param_lock_tied = copy(param_lock)
+    param_names_tied = copy(param_names)
+    deleteat!(p_tied, tied_indices)
+    deleteat!(priors_tied, tied_indices)
+    deleteat!(param_lock_tied, tied_indices)
+    deleteat!(param_names_tied, tied_indices)
 
-    @debug "Line Lower limits: \n $(minimum.(priors))"
-    @debug "Line Upper Limits: \n $(maximum.(priors))"
-
-    # Lower and upper limits on each parameter, to be fed into the Simulated Annealing (SAMIN) algorithm
-    lower_bounds = minimum.(priors)[.~param_lock]
-    upper_bounds = maximum.(priors)[.~param_lock]
-
-    # Split up free and locked parameters
-    pfree = p₀[.~param_lock]
-    pfix = p₀[param_lock]
+    # Split up into free and locked parameters
+    pfree_tied = p_tied[.~param_lock_tied]
+    pfix_tied = p_tied[param_lock_tied]
 
     # Count free parameters
-    n_free = sum(.~param_lock)
+    n_free = sum(.~param_lock_tied)
+
+    # Lower and upper limits on each parameter
+    lower_bounds = minimum.(priors)
+    upper_bounds = maximum.(priors)
+    lower_bounds_tied = minimum.(priors_tied)
+    upper_bounds_tied = maximum.(priors_tied)
+    lbfree_tied = lower_bounds_tied[.~param_lock_tied]
+    ubfree_tied = upper_bounds_tied[.~param_lock_tied]
+
+    @debug "Line Parameter labels: \n $param_names_tied"
+    @debug "Line starting values: \n $p_tied"
+    @debug "Line priors: \n $priors_tied"
+
+    @debug "Line Lower limits: \n $(lower_bounds_tied)"
+    @debug "Line Upper Limits: \n $(upper_bounds_tied))"
 
     # Get CMPFit parinfo object from bounds
-    parinfo, config = get_line_parinfo(n_free, lower_bounds, upper_bounds)
+    parinfo, config = get_line_parinfo(n_free, lbfree_tied, ubfree_tied)
 
-    # Wrapper function for fitting only the free parameters
-    function fit_step3(x, pfree, func)
-        ptot = zeros(Float64, length(p₀))
-        ptot[.~param_lock] .= pfree
-        ptot[param_lock] .= pfix
+    # Wrapper function for fitting only the free, tied parameters
+    function fit_step3(x, pfree_tied, func)
+        ptot = zeros(Float64, length(p_tied))
+        ptot[.~param_lock_tied] .= pfree_tied
+        ptot[param_lock_tied] .= pfix_tied
+
+        for tind in tied_indices
+            insert!(ptot, tind, 0.)
+        end
+        for tie in tied_pairs
+            ptot[tie[2]] = ptot[tie[1]] * tie[3]
+        end
         func(x, ptot)
     end
 
@@ -440,18 +461,15 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
         # these are a bit loose since we're mainly just looking to get into the right global minimum region with SAMIN
         # before refining the fit later with a LevMar local minimum routine
         fit_func = (x, p) -> negln_probability(p, [], x, Inorm, σnorm, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines,
-            cube_fitter.n_kin_tied, cube_fitter.tied_kinematics, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, ext_curve, 
-            priors)
+            cube_fitter.flexible_wavesol, ext_curve, priors)
         x_tol = 1e-5
         f_tol = abs(fit_func(λ, p₀) - fit_func(λ, clamp.(p₀ .- x_tol, lower_bounds, upper_bounds)))
 
         # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
-        res = Optim.optimize(pfree -> fit_step3(λ, pfree, fit_func), lower_bounds, upper_bounds, p₀, 
+        res = Optim.optimize(p -> fit_step3(λ, p, fit_func), lbfree_tied, ubfree_tied, pfree_tied, 
             SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
         
-        p₁ = zeros(Float64, length(p₀))
-        p₁[.~param_lock] .= res.minimizer
-        p₁[param_lock] .= pfix
+        p₁ = res.minimizer
 
         # Write convergence results to file, if specified
         if cube_fitter.track_convergence
@@ -468,7 +486,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
             end
         end
     else
-        p₁ = p₀
+        p₁ = pfree_tied
     end    
     
     @debug "Beginning Line fitting with Levenberg-Marquardt:"
@@ -476,24 +494,39 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     ############################################# FIT WITH LEVMAR ###################################################
 
     fit_func = (x, p) -> model_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
-        cube_fitter.n_kin_tied, cube_fitter.tied_kinematics, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, ext_curve)
+        cube_fitter.flexible_wavesol, ext_curve)
     
-    res = cmpfit(λ, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func), p₁[.~param_lock], parinfo=parinfo, config=config)
+    res = cmpfit(λ, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func), p₁, parinfo=parinfo, config=config)
 
     @debug "Line CMPFit status: $(res.status)"
 
-    # Get the results
-    popt = zeros(length(p₀))
-    popt[.~param_lock] .= res.param
-    popt[param_lock] .= pfix
-
-    # Errors
-    perr = zeros(length(popt))
-    perr[.~param_lock] .= res.perror
+    # Get the results and errors
+    popt = zeros(Float64, length(p_tied))
+    perr = zeros(Float64, length(p_tied))
+    popt[.~param_lock_tied] .= res.param
+    perr[.~param_lock_tied] .= res.perror
+    popt[param_lock_tied] .= pfix_tied
+    for tind in tied_indices
+        insert!(popt, tind, 0.)
+        insert!(perr, tind, 0.)
+    end
+    for tie in tied_pairs
+        popt[tie[2]] = popt[tie[1]] * tie[3]
+        perr[tie[2]] = perr[tie[1]] * tie[3]
+    end
 
     # Covariance matrix
-    covar = zeros(length(popt), length(popt))
-    covar[.~param_lock, .~param_lock] .= res.covar
+    covar = zeros(Float64, length(p_tied), length(p_tied))
+    covar[.~param_lock_tied, .~param_lock_tied] .= res.covar
+    for tind in tied_indices
+        covar = cat(covar[1:tind-1, :], zeros(size(covar, 2))', covar[tind:end, :], dims=1)
+        covar = cat(covar[:, 1:tind-1], zeros(size(covar, 1)), covar[:, tind:end], dims=2)
+    end
+    for tie in tied_pairs
+        covar[tie[2], :] .= covar[tie[1], :] .* tie[3]
+        covar[:, tie[2]] .= covar[:, tie[1]] .* tie[3]
+        covar[tie[2], tie[2]] /= tie[3]
+    end
 
     ######################################################################################################################
 
@@ -502,8 +535,8 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     # @debug "Line covariance matrix: \n $covar"
 
     # Final optimized fit
-    I_model, comps = model_line_residuals(λ, popt, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.n_kin_tied,
-        cube_fitter.tied_kinematics, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, ext_curve, true)
+    I_model, comps = model_line_residuals(λ, popt, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
+        cube_fitter.flexible_wavesol, ext_curve, true)
     
     # Renormalize
     I_model = I_model .* N
@@ -790,18 +823,21 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; recalculate
             n_free = n_free_c + n_free_l
             n_data = length(I)
 
-            # Reduced chi^2 of the model
-            χ2red = 1 / (n_data - n_free) * sum((I .- I_model).^2 ./ σ.^2)
+            # Degrees of freedom
+            dof = n_data - n_free
+
+            # chi^2 and reduced chi^2 of the model
+            χ2 = sum(@. (I - I_model)^2 / σ^2)
+            χ2red = χ2 / dof
 
             # Add dust feature and line parameters (intensity and SNR)
             p_dust, p_lines, p_dust_err, p_lines_err = 
                 @timeit timer_output "calculate_extra_parameters" calculate_extra_parameters(λ, I, σ, cube_fitter.n_dust_cont,
                     cube_fitter.n_dust_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission,
-                    cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.n_kin_tied, 
-                    cube_fitter.tied_kinematics, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, popt_c, popt_l, perr_c, perr_l, 
-                    comps["extinction"], mask_lines, I_spline, cube_fitter.cube.Ω)
-            p_out = [popt_c; popt_l; p_dust; p_lines; χ2red]
-            p_err = [perr_c; perr_l; p_dust_err; p_lines_err; 0.]
+                    cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol, 
+                    popt_c, popt_l, perr_c, perr_l, comps["extinction"], mask_lines, I_spline, cube_fitter.cube.Ω)
+            p_out = [popt_c; popt_l; p_dust; p_lines; χ2; dof]
+            p_err = [perr_c; perr_l; p_dust_err; p_lines_err; 0.; 0.]
 
             # Plot the fit
             if cube_fitter.plot_spaxels != :none
@@ -940,9 +976,9 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
     # Prepare output array
     @info "===> Preparing output data structures... <==="
     out_params = SharedArray(ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
-        cube_fitter.n_params_extra + 1) .* NaN)
+        cube_fitter.n_params_extra + 2) .* NaN)
     out_errs = SharedArray(ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
-        cube_fitter.n_params_extra + 1) .* NaN)
+        cube_fitter.n_params_extra + 2) .* NaN)
 
     ######################### DO AN INITIAL FIT WITH THE SUM OF ALL SPAXELS ###################
 

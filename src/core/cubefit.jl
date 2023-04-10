@@ -20,15 +20,10 @@ in the parameter map.
     dust continuum component
 - `dust_features::Dict{String, Dict{Symbol, Array{Float64, 2}}}`: The dust feature parameters: amplitude, central wavelength, and FWHM
     for each PAH feature
-- `lines::Dict{Symbol, Dict{Symbol, Array{Float64, 2}}}`: The emission line parameters: amplitude, voff, FWHM, and any additional 
-    line profile parameters for each line
-- `tied_voffs::Dict{String, Array{Float64, 2}}`: Tied line velocity offsets
-- `tied_fwhms::Dict{String, Array{Float64, 2}}`: Tied line velocity fwhms
-- `acomp_tied_voffs::Dict{String, Array{Float64, 2}}`: additional component tied velocity offsets
-- `acomp_tied_fwhms::Dict{String, Array{Float64, 2}}`: additional component tied velocity fwhms
-- `tied_voigt_mix::Union{Array{Float64, 2}, Nothing}`: Tied Voigt mixing parameter
 - `extinction::Dict{Symbol, Array{Float64, 2}}`: Extinction parameters: optical depth at 9.7 μm and mixing ratio
 - `hot_dust::Dict{Symbol, Array{Float64, 2}}`: Hot dust parameters: amplitude, temperature, covering fraction, warm tau, and cold tau
+- `lines::Dict{Symbol, Dict{Symbol, Array{Float64, 2}}}`: The emission line parameters: amplitude, voff, FWHM, and any additional 
+    line profile parameters for each line
 - `reduced_χ2::Array{Float64, 2}`: The reduced chi^2 value of each fit
 
 See ['parammaps_empty`](@ref) for a default constructor function.
@@ -38,29 +33,24 @@ struct ParamMaps{T<:Real}
     stellar_continuum::Dict{Symbol, Array{T, 2}}
     dust_continuum::Dict{Int, Dict{Symbol, Array{T, 2}}}
     dust_features::Dict{String, Dict{Symbol, Array{T, 2}}}
-    lines::Dict{Symbol, Dict{Symbol, Array{T, 2}}}
-    tied_voffs::Dict{Symbol, Array{T, 2}}
-    tied_fwhms::Dict{Symbol, Array{T, 2}}
-    tied_voigt_mix::Union{Array{T, 2}, Nothing}
     extinction::Dict{Symbol, Array{T, 2}}
     hot_dust::Dict{Symbol, Array{T, 2}}
+    lines::Dict{Symbol, Dict{Symbol, Array{T, 2}}}
     reduced_χ2::Array{T, 2}
 
 end
 
 
 """
-    parammaps_empty(shape, n_dust_cont, df_names, line_names, line_tied, line_profiles,
-        line_acomp_tied, line_acomp_profiles, kin_tied_key, acomp_kin_tied_key, flexible_wavesol, 
-        tie_voigt_mixing)
+    parammaps_empty(shape, n_dust_cont, df_names, line_names, line_profiles,
+        flexible_wavesol)
 
 A constructor function for making a default empty ParamMaps structure with all necessary fields for a given
 fit of a DataCube.
 """
 function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, df_names::Vector{String}, 
-    n_lines::S, n_comps::S, line_names::Vector{Symbol}, line_tied::Matrix{Union{Symbol,Nothing}}, 
-    line_profiles::Matrix{Union{Symbol,Nothing}}, kin_tied_key::Vector{Vector{Symbol}}, flexible_wavesol::Bool, 
-    tie_voigt_mixing::Bool)::ParamMaps where {S<:Integer}
+    n_lines::S, n_comps::S, line_names::Vector{Symbol}, line_profiles::Matrix{Union{Symbol,Nothing}}, 
+    flexible_wavesol::Bool)::ParamMaps where {S<:Integer}
 
     @debug """\n
     Creating ParamMaps struct with shape $shape
@@ -99,80 +89,6 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, df_names::Ve
         @debug "dust feature $n maps with keys $(keys(dust_features[n]))"
     end
 
-    # Nested dictionary -> first layer keys are line names, second layer keys are parameter names, which contain 2D arrays
-    lines = Dict{Symbol, Dict{Symbol, Array{Float64, 2}}}()
-    for i ∈ 1:n_lines
-
-        line = line_names[i]
-        lines[line] = Dict{Symbol, Array{Float64, 2}}()
-
-        # If tied and NOT using a flexible solution, don't include a voff parameter
-        if isnothing(line_tied[i, 1])
-            pnames = [:amp, :voff, :fwhm]
-        elseif flexible_wavesol
-            pnames = [:amp, :voff]
-        else
-            pnames = [:amp]
-        end
-        # Add 3rd and 4th order moments (skewness and kurtosis) for Gauss-Hermite profiles
-        if line_profiles[i, 1] == :GaussHermite
-            pnames = [pnames; :h3; :h4]
-        # Add mixing parameter for Voigt profiles, but only if NOT tying it
-        elseif line_profiles[i, 1] == :Voigt && !tie_voigt_mixing
-            pnames = [pnames; :mixing]
-        end
-        # Repeat the above but for additional components
-        for j ∈ 2:n_comps
-            if !isnothing(line_profiles[i, j])
-                pnames = isnothing(line_tied[i, j]) ? [pnames; Symbol("acomp_amp", "_$j"); Symbol("acomp_voff", "_$j"); 
-                    Symbol("acomp_fwhm", "_$j")] : [pnames; Symbol("acomp_amp", "_$j")]
-                if line_profiles[i, j] == :GaussHermite
-                    pnames = [pnames; Symbol("acomp_h3", "_$j"); Symbol("acomp_h4", "_$j")]
-                elseif line_profiles[i, j] == :Voigt && !tie_voigt_mixing
-                    pnames = [pnames; Symbol("acomp_mixing", "_$j")]
-                end
-            end
-        end
-        # Append parameters for flux, equivalent width, and signal-to-noise ratio, which are NOT fitting parameters, but are of interest
-        pnames = [pnames; :flux; :eqw; :SNR]
-        for j ∈ 2:n_comps
-            if !isnothing(line_profiles[i, j])
-                pnames = [pnames; Symbol("acomp_flux", "_$j"); Symbol("acomp_eqw", "_$j"); Symbol("acomp_SNR", "_$j")]
-            end
-        end
-        for pname ∈ pnames
-            lines[line][pname] = copy(nan_arr)
-        end
-        @debug "line $line maps with keys $pnames"
-    end
-
-    # Tied voff parameters
-    tied_voffs = Dict{Symbol, Array{Float64, 2}}()
-    for j ∈ 1:n_comps
-        for vk ∈ kin_tied_key[j]
-            vkj = Symbol(vk, "_$j")
-            tied_voffs[vkj] = copy(nan_arr)
-            @debug "tied voff map for group $vkj"
-        end
-    end
-    # Tied fwhm parameters
-    tied_fwhms = Dict{Symbol, Array{Float64, 2}}()
-    for j ∈ 1:n_comps
-        for vk ∈ kin_tied_key[j]
-            vkj = Symbol(vk, "_$j")
-            tied_fwhms[vkj] = copy(nan_arr)
-            @debug "tied fwhm map for group $vkj"
-        end
-    end
-
-    # Tied voigt mixing ratio parameter, if appropriate
-    if tie_voigt_mixing
-        tied_voigt_mix = copy(nan_arr)
-        @debug "tied voigt mixing map"
-    else
-        tied_voigt_mix = nothing
-    end
-
     # Add extinction fitting parameters
     extinction = Dict{Symbol, Array{Float64, 2}}()
     extinction[:tau_9_7] = copy(nan_arr)
@@ -190,12 +106,42 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, df_names::Ve
     hot_dust[:tau_cold] = copy(nan_arr)
     @debug "hot dust maps with keys $(keys(hot_dust))"
 
+    # Nested dictionary -> first layer keys are line names, second layer keys are parameter names, which contain 2D arrays
+    lines = Dict{Symbol, Dict{Symbol, Array{Float64, 2}}}()
+    for i ∈ 1:n_lines
+        for j ∈ 1:n_comps
+            if !isnothing(line_profiles[i, j])
+
+                line = Symbol(line_names[i], "_$(j)")
+                lines[line] = Dict{Symbol, Array{Float64, 2}}()
+
+                pnames = [:amp, :voff, :fwhm]
+                # Need extra voff parameter if using the flexible_wavesol keyword
+                if flexible_wavesol && isone(j)
+                    pnames = [:amp, :voff, :voff_indiv, :fwhm]
+                end
+                # Add 3rd and 4th order moments (skewness and kurtosis) for Gauss-Hermite profiles
+                if line_profiles[i, j] == :GaussHermite
+                    pnames = [pnames; :h3; :h4]
+                # Add mixing parameter for Voigt profiles, but only if NOT tying it
+                elseif line_profiles[i, j] == :Voigt
+                    pnames = [pnames; :mixing]
+                end
+            end
+            # Append parameters for flux, equivalent width, and signal-to-noise ratio, which are NOT fitting parameters, but are of interest
+            pnames = [pnames; :flux; :eqw; :SNR]
+        end
+        for pname ∈ pnames
+            lines[line][pname] = copy(nan_arr)
+        end
+        @debug "line $line maps with keys $pnames"
+    end
+
     # Reduced chi^2 of the fits
     reduced_χ2 = copy(nan_arr)
     @debug "reduced chi^2 map"
 
-    ParamMaps{Float64}(stellar_continuum, dust_continuum, dust_features, lines, tied_voffs, tied_fwhms, 
-        tied_voigt_mix, extinction, hot_dust, reduced_χ2)
+    ParamMaps{Float64}(stellar_continuum, dust_continuum, dust_features, extinction, hot_dust, lines, reduced_χ2)
 end
 
 
@@ -544,56 +490,37 @@ struct CubeFitter{T<:Real,S<:Integer}
         end
         @debug msg
 
-        # Total number of parameters for the continuum and line fits
-        n_params_cont = (2+4) + 2n_dust_cont + 3n_dust_features + (options[:fit_sil_emission] ? 5 : 0)
-        n_params_lines = 2 * sum(n_kin_tied)
         # One η for all voigt profiles
         if any(lines.profiles .== :Voigt) && tie_voigt_mixing
-            n_params_lines += 1
             @debug "### Model will include 1 tied voigt mixing parameter ###"
         end
+
+        # Total number of parameters for the continuum and line fits
+        n_params_cont = (2+4) + 2n_dust_cont + 3n_dust_features + (options[:fit_sil_emission] ? 5 : 0)
+        n_params_lines = 0
         for i ∈ 1:n_lines
-            if isnothing(lines.tied[i, 1])
-                # amplitude, voff, and FWHM parameters
-                n_params_lines += 3
-            elseif flexible_wavesol
-                # amplitude and voff_individual parameters
-                n_params_lines += 2
-            else
-                # no voff or FWHM parameter, since they're tied
-                n_params_lines += 1
-            end
-            if lines.profiles[i, 1] == :GaussHermite
-                # extra h3 and h4 parmeters
-                n_params_lines += 2
-            elseif lines.profiles[i, 1] == :Voigt
-                # extra mixing parameter, but only if it's not tied
-                if !tie_voigt_mixing
-                    n_params_lines += 1
-                end
-            end
-            # Repeat above for the additional components
-            for j ∈ 2:n_comps
+            for j ∈ 1:n_comps
                 if !isnothing(lines.profiles[i, j])
-                    if isnothing(lines.tied[i, j])
-                        n_params_lines += 3
-                    else
+                    # amplitude, voff, and FWHM parameters
+                    n_params_lines += 3
+                    if flexible_wavesol && isone(j)
+                        # individual voff parameter
                         n_params_lines += 1
                     end
                     if lines.profiles[i, j] == :GaussHermite
+                        # extra h3 and h4 parmeters
                         n_params_lines += 2
                     elseif lines.profiles[i, j] == :Voigt
-                        if !tie_voigt_mixing
-                            n_params_lines += 1
-                        end
+                        # extra mixing parameter
+                        n_params_lines += 1
                     end
                 end
             end
         end
         n_params_extra = 3 * (n_dust_features + n_lines + n_acomps)
-        @debug "### This totals to $(n_params_cont) continuum parameters ###"
-        @debug "### This totals to $(n_params_lines) emission line parameters ###"
-        @debug "### This totals to $(n_params_extra) extra parameters ###"
+        @debug "### There is a total of $(n_params_cont) continuum parameters ###"
+        @debug "### There is a total of $(n_params_lines) emission line parameters ###"
+        @debug "### There is a total of $(n_params_extra) extra parameters ###"
 
         # Prepare options
         extinction_curve = options[:extinction_curve]
@@ -654,12 +581,12 @@ function generate_parammaps(cube_fitter::CubeFitter)::Tuple{ParamMaps, ParamMaps
     # 2D maps of fitting parameters
     @debug "Generating 2D parameter value & error maps"
     param_maps = parammaps_empty(shape, cube_fitter.n_dust_cont, cube_fitter.dust_features.names, cube_fitter.n_lines,
-                                 cube_fitter.n_comps, cube_fitter.lines.names, cube_fitter.lines.tied, cube_fitter.lines.profiles, 
-                                 cube_fitter.tied_kinematics.key, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing)
+                                 cube_fitter.n_comps, cube_fitter.lines.names, cube_fitter.lines.profiles, 
+                                 cube_fitter.flexible_wavesol)
     # 2D maps of fitting parameter 1-sigma errors
     param_errs = parammaps_empty(shape, cube_fitter.n_dust_cont, cube_fitter.dust_features.names, cube_fitter.n_lines,
-                                 cube_fitter.n_comps, cube_fitter.lines.names, cube_fitter.lines.tied, cube_fitter.lines.profiles, 
-                                 cube_fitter.tied_kinematics.key, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing)
+                                 cube_fitter.n_comps, cube_fitter.lines.names, cube_fitter.lines.profiles, 
+                                 cube_fitter.flexible_wavesol)
     param_maps, param_errs
 end
 
@@ -937,117 +864,101 @@ function get_line_priors(cube_fitter::CubeFitter, init::Bool)
     # Set up the prior vector
     amp_ln_prior = Uniform(0., 1.)
     amp_acomp_prior = Uniform(0., 1.)
-    ln_priors = Vector{Any}()
-    ln_lock = Vector{Bool}()
+    ln_priors = Vector{Distribution}()
+    ln_lock = BitVector()
     ln_names = Vector{String}()
     
+    voff_tied = []
+    fwhm_tied = []
+    for j ∈ 1:cube_fitter.n_comps
+        append!(voff_tied, [[[] for _ in cube_fitter.tied_kinematics.key[j]]])
+        append!(fwhm_tied, [[[] for _ in cube_fitter.tied_kinematics.key[j]]])
+    end
+    η_tied = []
+    
     # Loop through each line and append the new components
+    ind = 1
     for i ∈ 1:cube_fitter.n_lines
-        # name
-        ln_name = cube_fitter.lines.names[i]
-        # check if voff should be tied or untied
-        if isnothing(cube_fitter.lines.tied[i, 1])
-            # amplitude, voff, FWHM
-            append!(ln_priors, [amp_ln_prior, cube_fitter.lines.voff[i, 1].prior, cube_fitter.lines.fwhm[i, 1].prior])
-            append!(ln_lock, [false, cube_fitter.lines.voff[i, 1].locked, cube_fitter.lines.fwhm[i, 1].locked])
-            append!(ln_names, ["$(ln_name)_amp", "$(ln_name)_voff", "$(ln_name)_fwhm"])
-        elseif cube_fitter.flexible_wavesol
-            # amplitude, voff (since FWHM is tied)
-            append!(ln_priors, [amp_ln_prior, cube_fitter.lines.voff[i, 1].prior])
-            append!(ln_lock, [false, cube_fitter.lines.voff[i, 1].locked])
-            append!(ln_names, ["$(ln_name)_amp", "$(ln_name)_voff"])
-        else
-            # just amplitude (since voff & FWHM are tied)
-            append!(ln_priors, [amp_ln_prior])
-            append!(ln_lock, [false])
-            append!(ln_names, ["$(ln_name)_amp"])
-        end
-        # check for additional profile parameters
-        if cube_fitter.lines.profiles[i, 1] == :GaussHermite
-            # add h3 and h4 moments
-            append!(ln_priors, [cube_fitter.lines.h3[i, 1].prior, cube_fitter.lines.h4[i, 1].prior])
-            append!(ln_lock, [cube_fitter.lines.h3[i, 1].locked, cube_fitter.lines.h4[i, 1].locked])
-            append!(ln_names, ["$(ln_name)_h3", "$(ln_name)_h4"])
-        elseif cube_fitter.lines.profiles[i, 1] == :Voigt
-            # add voigt mixing parameter, but only if it's not tied
-            if !cube_fitter.tie_voigt_mixing
-                append!(ln_priors, [cube_fitter.lines.η[i, 1].prior])
-                append!(ln_lock, [cube_fitter.lines.η[i, 1].locked])
-                append!(ln_names, ["$(ln_name)_eta"])
-            end
-        end
-        
-        # repeat the above for the acomp components
-        for j ∈ 2:cube_fitter.n_comps
+        for j ∈ 1:cube_fitter.n_comps
             if !isnothing(cube_fitter.lines.profiles[i, j])
-                # check tied or untied (but no flexible wavesol)
+                # name
+                ln_name = string(cube_fitter.lines.names[i]) * "_$(j)"
                 if isnothing(cube_fitter.lines.tied[i, j])
                     # amplitude, voff, FWHM
-                    append!(ln_priors, [amp_acomp_prior, cube_fitter.lines.voff[i, j].prior, cube_fitter.lines.fwhm[i, j].prior])
+                    append!(ln_priors, [amp_ln_prior, cube_fitter.lines.voff[i, j].prior, cube_fitter.lines.fwhm[i, j].prior])
                     append!(ln_lock, [false, cube_fitter.lines.voff[i, j].locked, cube_fitter.lines.fwhm[i, j].locked])
-                    append!(ln_names, ["$(ln_name)_acomp_amp", "$(ln_name)_acomp_voff", "$(ln_name)_acomp_fwhm"])
+                    append!(ln_names, ["$(ln_name)_amp", "$(ln_name)_voff", "$(ln_name)_fwhm"])
+                    ind += 3
+                elseif cube_fitter.flexible_wavesol && isone(j)
+                    key = cube_fitter.lines.tied[i, j]
+                    k = findfirst(cube_fitter.tied_kinematics.key[j] .== key)
+                    # amplitude, voff (tied), voff (individual), fwhm (tied)
+                    append!(ln_priors, [amp_ln_prior, cube_fitter.tied_kinematics.voff[j][k].prior, cube_fitter.lines.voff[i, j].prior,  
+                        cube_fitter.tied_kinematics.fwhm[j][k].prior])
+                    append!(ln_lock, [false, cube_fitter.tied_kinematics.voff[j][k].locked, cube_fitter.lines.voff[i, j].locked, 
+                        cube_fitter.tied_kinematics.fwhm[j][k].locked])
+                    append!(ln_names, ["$(ln_name)_amp", "$(key)_$(j)_voff", "$(ln_name)_voff", "$(key)_$(j)_fwhm"])
+                    append!(voff_tied[j][k], [ind+1])
+                    append!(fwhm_tied[j][k], [ind+3])
+                    ind += 4
                 else
-                    # just amplitude (voff & FWHM tied)
-                    append!(ln_priors, [amp_acomp_prior])
-                    append!(ln_lock, [false])
-                    append!(ln_names, ["$(ln_name)_acomp_amp"])
+                    key = cube_fitter.lines.tied[i, j]
+                    k = findfirst(cube_fitter.tied_kinematics.key[j] .== key)
+                    # amplitude, voff (tied), fwhm (tied)
+                    append!(ln_priors, [amp_ln_prior, cube_fitter.tied_kinematics.voff[j][k].prior, cube_fitter.tied_kinematics.fwhm[j][k].prior])
+                    append!(ln_lock, [false, cube_fitter.tied_kinematics.voff[j][k].locked, cube_fitter.tied_kinematics.fwhm[j][k].locked])
+                    append!(ln_names, ["$(ln_name)_amp", "$(key)_$(j)_voff", "$(key)_$(j)_fwhm"])
+                    append!(voff_tied[j][k], [ind+1])
+                    append!(fwhm_tied[j][k], [ind+2])
+                    ind += 3
                 end
                 # check for additional profile parameters
                 if cube_fitter.lines.profiles[i, j] == :GaussHermite
-                    # h3 and h4 moments
+                    # add h3 and h4 moments
                     append!(ln_priors, [cube_fitter.lines.h3[i, j].prior, cube_fitter.lines.h4[i, j].prior])
                     append!(ln_lock, [cube_fitter.lines.h3[i, j].locked, cube_fitter.lines.h4[i, j].locked])
-                    append!(ln_names, ["$(ln_name)_acomp_h3", "$(ln_name)_acomp_h4"])
+                    append!(ln_names, ["$(ln_name)_h3", "$(ln_name)_h4"])
+                    ind += 2
                 elseif cube_fitter.lines.profiles[i, j] == :Voigt
-                    # voigt mixing parameter, only if untied
+                    # add voigt mixing parameter, but only if it's not tied
                     if !cube_fitter.tie_voigt_mixing
                         append!(ln_priors, [cube_fitter.lines.η[i, j].prior])
                         append!(ln_lock, [cube_fitter.lines.η[i, j].locked])
-                        append!(ln_names, ["$(ln_name)_acomp_eta"])
+                        append!(ln_names, ["$(ln_name)_eta"])
+                    else
+                        append!(ln_priors, [cube_fitter.voigt_mix_tied.prior])
+                        append!(ln_lock, [cube_fitter.voigt_mix_tied.locked || !init])
+                        append!(ln_names, ["eta_tied"])
+                        append!(η_tied, [ind])
                     end
+                    ind += 1
                 end
             end
         end
     end
 
-    priors = []
-    param_lock = []
-    param_names = []
+    # Combine all "tied" vectors
+    tied = []
     for j ∈ 1:cube_fitter.n_comps
-        voff_tied_priors = []
-        voff_tied_lock = []
-        voff_tied_names = []
-        fwhm_tied_priors = []
-        fwhm_tied_lock = []
-        fwhm_tied_names = []
-        for (k, key) ∈ enumerate(cube_fitter.tied_kinematics.key[j])
-            append!(voff_tied_priors, [cube_fitter.tied_kinematics.voff[j][k].prior])
-            append!(voff_tied_lock, [cube_fitter.tied_kinematics.voff[j][k].locked])
-            append!(voff_tied_names, ["voff_tied_$(key)_$(j)"])
-            append!(fwhm_tied_priors, [cube_fitter.tied_kinematics.fwhm[j][k].prior])
-            append!(fwhm_tied_lock, [cube_fitter.tied_kinematics.fwhm[j][k].locked])
-            append!(fwhm_tied_names, ["fwhm_tied_$(key)_$(j)"])
+        for k ∈ 1:length(cube_fitter.tied_kinematics.key[j])
+            append!(tied, [tuple(voff_tied[j][k]...)])
+            append!(tied, [tuple(fwhm_tied[j][k]...)])
         end
-        # Sanity checking
-        @assert length(voff_tied_priors) == length(fwhm_tied_priors) == cube_fitter.n_kin_tied[j]
-        # Append to prior vector
-        priors = vcat(priors, voff_tied_priors, fwhm_tied_priors)
-        param_lock = vcat(param_lock, voff_tied_lock, fwhm_tied_lock)
-        param_names = vcat(param_names, voff_tied_names, fwhm_tied_names)
+    end
+    append!(tied, [tuple(η_tied...)])
+
+    # Convert the tied vectors into tuples for each pair of parameters
+    tied_pairs = []
+    for group in tied
+        if length(group) > 1
+            append!(tied_pairs, [(group[1],group[j],1.0) for j in 2:length(group)])
+        end
     end
 
-    ηᵢ = 2 * sum(cube_fitter.n_kin_tied) + 1
-    # If the sum has already been fit, keep eta fixed for the individual spaxels
-    η_prior = cube_fitter.tie_voigt_mixing ? [cube_fitter.voigt_mix_tied.prior] : []
-    η_prior = init ? η_prior : Uniform(cube_fitter.p_init_line[ηᵢ]-1e-10, cube_fitter.p_init_line[ηᵢ]+1e-10)
-    η_lock = cube_fitter.tie_voigt_mixing ? [cube_fitter.voigt_mix_tied.locked || !init] : []
-    η_name = cube_fitter.tie_voigt_mixing ? ["eta_tied"] : []
+    # Convert the paired tuples into indices for each tied parameter
+    tied_indices = sort([tp[2] for tp in tied_pairs])
 
-    priors = Vector{Distribution}(vcat(priors, η_prior, ln_priors))
-    param_lock = BitVector(vcat(param_lock, η_lock, ln_lock))
-    param_names = Vector{String}(vcat(param_names, η_name, ln_names))
-
-    priors, param_lock, param_names
+    ln_priors, ln_lock, ln_names, tied_pairs, tied_indices
 
 end
 
@@ -1065,7 +976,7 @@ function get_line_initial_values(cube_fitter::CubeFitter, init::Bool)
         @debug "Using initial best fit line parameters..."
 
         # If so, set the parameters to the previous ones
-        p₀ = copy(cube_fitter.p_init_line)
+        ln_pars = copy(cube_fitter.p_init_line)
 
     else
 
@@ -1076,71 +987,44 @@ function get_line_initial_values(cube_fitter::CubeFitter, init::Bool)
         A_fl = ones(cube_fitter.n_lines) .* 0.5     # (acomp amp is multiplied with main amp)
 
         # Initial parameter vector
-        ln_pars = Vector{Float64}()
+        ln_pars = Float64[]
         for i ∈ 1:cube_fitter.n_lines
-            if isnothing(cube_fitter.lines.tied[i, 1])
-                # 3 parameters: amplitude, voff, FWHM
-                append!(ln_pars, [A_ln[i], cube_fitter.lines.voff[i, 1].value, cube_fitter.lines.fwhm[i, 1].value])
-            elseif cube_fitter.flexible_wavesol
-                # 2 parameters: amplitude, voff (since FWHM is tied but voff is only restricted)
-                append!(ln_pars, [A_ln[i], cube_fitter.lines.voff[i, 1].value])
-            else
-                # 1 parameter: amplitude (since FWHM and voff are tied)
-                append!(ln_pars, [A_ln[i]])
-            end
-            if cube_fitter.lines.profiles[i, 1] == :GaussHermite
-                # 2 extra parameters: h3 and h4
-                append!(ln_pars, [cube_fitter.lines.h3[i, 1].value, cube_fitter.lines.h4[i, 1].value])
-            elseif cube_fitter.lines.profiles[i, 1] == :Voigt
-                # 1 extra parameter: eta, but only if not tied
-                if !cube_fitter.tie_voigt_mixing
-                    append!(ln_pars, [cube_fitter.lines.η[i].value])
-                end
-            end
-            # Repeat but for additional components, if present
-            for j ∈ 2:cube_fitter.n_comps
+            for j ∈ 1:cube_fitter.n_comps
                 if !isnothing(cube_fitter.lines.profiles[i, j])
                     if isnothing(cube_fitter.lines.tied[i, j])
-                        append!(ln_pars, [A_fl[i], cube_fitter.lines.voff[i, j].value, cube_fitter.lines.fwhm[i, j].value])
+                        # 3 parameters: amplitude, voff, FWHM
+                        append!(ln_pars, [A_ln[i], cube_fitter.lines.voff[i, j].value, cube_fitter.lines.fwhm[i, j].value])
+                    elseif cube_fitter.flexible_wavesol && isone(j)  # -> only allow flexible wavesol on the primary component
+                        key = cube_fitter.lines.tied[i, j]
+                        k = findfirst(cube_fitter.tied_kinematics.key[j] .== key)
+                        # 4 parameters: amplitude, voff (tied), voff (individual), fwhm (tied)
+                        append!(ln_pars, [A_ln[i], cube_fitter.tied_kinematics.voff[j][k].value, cube_fitter.lines.voff[i, j].value, 
+                            cube_fitter.tied_kinematics.fwhm[j][k].value])
                     else
-                        append!(ln_pars, [A_fl[i]])
+                        key = cube_fitter.lines.tied[i, j]
+                        k = findfirst(cube_fitter.tied_kinematics.key[j] .== key)
+                        # 3 parameter: amplitude, voff (tied), fwhm (tied)
+                        append!(ln_pars, [A_ln[i], cube_fitter.tied_kinematics.voff[j][k].value, cube_fitter.tied_kinematics.fwhm[j][k].value])
                     end
                     if cube_fitter.lines.profiles[i, j] == :GaussHermite
+                        # 2 extra parameters: h3 and h4
                         append!(ln_pars, [cube_fitter.lines.h3[i, j].value, cube_fitter.lines.h4[i, j].value])
                     elseif cube_fitter.lines.profiles[i, j] == :Voigt
+                        # 1 extra parameter: eta
                         if !cube_fitter.tie_voigt_mixing
-                            append!(ln_pars, [cube_fitter.lines.η[i, j].value])
+                            # Individual eta parameter
+                            append!(ln_pars, [cube_fitter.lines.η[i].value])
+                        else
+                            # Tied eta parameter
+                            append!(ln_pars, [cube_fitter.voigt_mix_tied.value])
                         end
                     end
                 end
             end
         end
-
-        p₀ = []
-        # Set up tied voff and fwhm parameter vectors
-        for j ∈ 1:cube_fitter.n_comps
-            voff_tied_pars = []
-            fwhm_tied_pars = []
-            for (k, key) ∈ enumerate(cube_fitter.tied_kinematics.key[j])
-                append!(voff_tied_pars, [cube_fitter.tied_kinematics.voff[j][k].value])
-                append!(fwhm_tied_pars, [cube_fitter.tied_kinematics.fwhm[j][k].value])
-            end
-            # Sanity checking
-            @assert length(voff_tied_pars) == length(fwhm_tied_pars) == cube_fitter.n_kin_tied[j]
-            # Append to parameter vector
-            p₀ = vcat(p₀, voff_tied_pars, fwhm_tied_pars)
-        end
-
-        η_par = cube_fitter.tie_voigt_mixing ? [cube_fitter.voigt_mix_tied.value] : []
-
-        # Set up the parameter vector in the proper order: 
-        # (tied voffs, tied fwhms, tied acomp voffs, tied acomp fwhms, tied voigt mixing, [amp, voff, FWHM, h3, h4, eta,
-        #     acomp_amp, acomp_voff, acomp_FWHM, acomp_h3, acomp_h4, acomp_eta] for each line)
-        p₀ = Vector{Float64}(vcat(p₀, η_par, ln_pars))
-
     end
 
-    p₀
+    ln_pars
 
 end
 
@@ -1179,89 +1063,44 @@ function pretty_print_line_results(cube_fitter::CubeFitter, popt::Vector{<:Real}
     msg *= "############### SPAXEL FIT RESULTS -- EMISSION LINES #################\n"
     msg *= "######################################################################\n"
     pᵢ = 1
-    msg *= "\n#> TIED VELOCITY OFFSETS <#\n"
-    for j ∈ 1:cube_fitter.n_comps
-        for (i, vk) ∈ enumerate(cube_fitter.tied_kinematics.key[j])
-            msg *= "$(vk)_$(j)_tied_voff: \t\t\t $(@sprintf "%.0f" popt[pᵢ]) +/- $(@sprintf "%.0f" perr[pᵢ]) km/s \t " *
-                "Limits: ($(@sprintf "%.0f" minimum(cube_fitter.tied_kinematics.voff[j][i].prior)), $(@sprintf "%.0f" maximum(cube_fitter.tied_kinematics.voff[j][i].prior)))\n"
-            pᵢ += 1
-        end
-        for (ii, vk) ∈ enumerate(cube_fitter.tied_kinematics.key[j])
-            msg *= "$(vk)_$(j)_tied_fwhm: \t\t\t $(@sprintf "%.0f" popt[pᵢ]) +/- $(@sprintf "%.0f" perr[pᵢ]) km/s \t " *
-                "Limits: ($(@sprintf "%.0f" minimum(cube_fitter.tied_kinematics.fwhm[j][ii].prior)), $(@sprintf "%.0f" maximum(cube_fitter.tied_kinematics.fwhm[j][ii].prior)))\n"
-            pᵢ += 1
-        end
-    end
-    msg *= "\n#> TIED VOIGT MIXING <#\n"
-    if cube_fitter.tie_voigt_mixing
-        msg *= "tied_voigt_mixing: \t\t\t $(@sprintf "%.2f" popt[pᵢ]) +/- $(@sprintf "%.2f" perr[pᵢ]) [-] \t " * 
-            "Limits: ($(@sprintf "%.2f" minimum(cube_fitter.voigt_mix_tied.prior)), $(@sprintf "%.2f" maximum(cube_fitter.voigt_mix_tied.prior)))\n"
-        pᵢ += 1
-    end
     msg *= "\n#> EMISSION LINES <#\n"
-    for (k, nm) ∈ enumerate(cube_fitter.lines.names)
-        msg *= "$(nm)_amp:\t\t\t $(@sprintf "%.3f" popt[pᵢ]) +/- $(@sprintf "%.3f" perr[pᵢ]) [x norm] \t Limits: (0, 1)\n"
-        if isnothing(cube_fitter.lines.tied[k, 1])
-            msg *= "$(nm)_voff:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) km/s \t " *
-                "Limits: ($(@sprintf "%.0f" minimum(cube_fitter.lines.voff[k, 1].prior)), $(@sprintf "%.0f" maximum(cube_fitter.lines.voff[k, 1].prior)))\n"
-            msg *= "$(nm)_fwhm:   \t\t $(@sprintf "%.0f" popt[pᵢ+2]) +/- $(@sprintf "%.0f" perr[pᵢ+2]) km/s \t " *
-                "Limits: ($(@sprintf "%.0f" minimum(cube_fitter.lines.fwhm[k, 1].prior)), $(@sprintf "%.0f" maximum(cube_fitter.lines.fwhm[k, 1].prior)))\n"
-            if cube_fitter.lines.profiles[k, 1] == :GaussHermite
-                msg *= "$(nm)_h3:    \t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3])      \t " *
-                    "Limits: ($(@sprintf "%.3f" minimum(cube_fitter.lines.h3[k, 1].prior)), $(@sprintf "%.3f" maximum(cube_fitter.lines.h3[k, 1].prior)))\n"
-                msg *= "$(nm)_h4:    \t\t $(@sprintf "%.3f" popt[pᵢ+4]) +/- $(@sprintf "%.3f" perr[pᵢ+4])      \t " *
-                    "Limits: ($(@sprintf "%.3f" minimum(cube_fitter.lines.h4[k, 1].prior)), $(@sprintf "%.3f" maximum(cube_fitter.lines.h4[k, 1].prior)))\n"
-                pᵢ += 2
-            elseif cube_fitter.lines.profiles[k, 1] == :Voigt && !cube_fitter.tie_voigt_mixing
-                msg *= "$(nm)_η:     \t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3])      \t " *
-                    "Limits: ($(@sprintf "%.3f" minimum(cube_fitter.lines.η[k, 1].prior)), $(@sprintf "%.3f" maximum(cube_fitter.lines.η[k, 1].prior)))\n"
-                pᵢ += 1
-            end
-            pᵢ += 3
-        elseif cube_fitter.flexible_wavesol
-            msg *= "$(nm)_voff:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) km/s \t " *
-                "Limits: ($(@sprintf "%.0f" minimum(cube_fitter.lines.voff[k, 1].prior)), $(@sprintf "%.0f" maximum(cube_fitter.lines.voff[k, 1].prior)))\n"
-            if cube_fitter.lines.profiles[k, 1] == :GaussHermite
-                msg *= "$(nm)_h3:    \t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3])      \t " *
-                    "Limits: ($(@sprintf "%.3f" minimum(cube_fitter.lines.h3[k, 1].prior)), $(@sprintf "%.3f" maximum(cube_fitter.lines.h3[k, 1].prior)))\n"
-                msg *= "$(nm)_h4:    \t\t $(@sprintf "%.3f" popt[pᵢ+4]) +/- $(@sprintf "%.3f" perr[pᵢ+4])      \t " *
-                    "Limits: ($(@sprintf "%.3f" minimum(cube_fitter.lines.h4[k, 1].prior)), $(@sprintf "%.3f" maximum(cube_fitter.lines.h4[k, 1].prior)))\n"
-                pᵢ += 2
-            elseif cube_fitter.lines.profiles[k, 1] == :Voigt && !cube_fitter.tie_voigt_mixing
-                msg *= "$(nm)_η:     \t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3])      \t " *
-                    "Limits: ($(@sprintf "%.3f" minimum(cube_fitter.lines.η[k, 1].prior)), $(@sprintf "%.3f" maximum(cube_fitter.lines.η[k, 1].prior)))\n"
-                pᵢ += 1
-            end
-            pᵢ += 2
-        else
-            pᵢ += 1
-        end
-        for j ∈ 2:cube_fitter.n_comps
+    for (k, name) ∈ enumerate(cube_fitter.lines.names)
+        for j ∈ 1:cube_fitter.n_comps
             if !isnothing(cube_fitter.lines.profiles[k, j])
-                msg *= "\n$(nm)_acomp_$(j)_amp:\t\t\t $(@sprintf "%.3f" popt[pᵢ]) +/- $(@sprintf "%.3f" perr[pᵢ]) [x amp] \t Limits: (0, 1)\n"
-                if isnothing(cube_fitter.lines.tied[k, j])
-                    msg *= "$(nm)_acomp_$(j)_voff:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) [+ voff] \t " *
+                nm = string(name) * "_$(j)"
+                msg *= "$(nm)_amp:\t\t\t $(@sprintf "%.3f" popt[pᵢ]) +/- $(@sprintf "%.3f" perr[pᵢ]) [x norm] \t Limits: (0, 1)\n"
+                msg *= "$(nm)_voff:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) " * (isone(j) ? "km/s" : "[+ voff_1]") * " \t " *
+                    "Limits: ($(@sprintf "%.0f" minimum(cube_fitter.lines.voff[k, j].prior)), $(@sprintf "%.0f" maximum(cube_fitter.lines.voff[k, j].prior)))\n"
+                if cube_fitter.flexible_wavesol && isone(j)
+                    msg *= "$(nm)_voff_indiv:   \t\t $(@sprintf "%.0f" popt[pᵢ+2]) +/- $(@sprintf "%.0f" perr[pᵢ+2]) km/s \t " *
                         "Limits: ($(@sprintf "%.0f" minimum(cube_fitter.lines.voff[k, j].prior)), $(@sprintf "%.0f" maximum(cube_fitter.lines.voff[k, j].prior)))\n"
-                    msg *= "$(nm)_acomp_$(j)_fwhm:   \t\t $(@sprintf "%.3f" popt[pᵢ+2]) +/- $(@sprintf "%.3f" perr[pᵢ+2]) [x fwhm] \t " *
+                    msg *= "$(nm)_fwhm:   \t\t $(@sprintf "%.0f" popt[pᵢ+3]) +/- $(@sprintf "%.0f" perr[pᵢ+3]) km/s \t " *
                         "Limits: ($(@sprintf "%.0f" minimum(cube_fitter.lines.fwhm[k, j].prior)), $(@sprintf "%.0f" maximum(cube_fitter.lines.fwhm[k, j].prior)))\n"
-                    if cube_fitter.lines.profiles[k, j] == :GaussHermite
-                        msg *= "$(nm)_acomp_$(j)_h3:    \t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3])      \t " *
-                            "Limits: ($(@sprintf "%.3f" minimum(cube_fitter.lines.h3[k, j].prior)), $(@sprintf "%.3f" maximum(cube_fitter.lines.h3[k, j].prior)))\n"
-                        msg *= "$(nm)_acomp_$(j)_h4:    \t\t $(@sprintf "%.3f" popt[pᵢ+4]) +/- $(@sprintf "%.3f" perr[pᵢ+4])      \t " *
-                            "Limits: ($(@sprintf "%.3f" minimum(cube_fitter.lines.h4[k, j].prior)), $(@sprintf "%.3f" maximum(cube_fitter.lines.h4[k, j].prior)))\n"
-                        pᵢ += 2
-                    elseif cube_fitter.lines.profiles[k, j] == :Voigt && !cube_fitter.tie_voigt_mixing
-                        msg *= "$(nm)_acomp_$(j)_η:     \t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3])       \t " *
-                            "Limits: ($(@sprintf "%.3f" minimum(cube_fitter.lines.η[k, j].prior)), $(@sprintf "%.3f" maximum(cube_fitter.lines.η[k, j].prior)))\n"
-                        pᵢ += 1
+                    pᵢ += 4
+                else
+                    if isone(j)
+                        msg *= "$(nm)_fwhm:   \t\t $(@sprintf "%.0f" popt[pᵢ+2]) +/- $(@sprintf "%.0f" perr[pᵢ+2]) km/s \t " *
+                            "Limits: ($(@sprintf "%.0f" minimum(cube_fitter.lines.fwhm[k, j].prior)), $(@sprintf "%.0f" maximum(cube_fitter.lines.fwhm[k, j].prior)))\n"
+                    else
+                        msg *= "$(nm)_fwhm:   \t\t $(@sprintf "%.3f" popt[pᵢ+2]) +/- $(@sprintf "%.3f" perr[pᵢ+2]) [x fwhm_1] \t " *
+                            "Limits: ($(@sprintf "%.3f" minimum(cube_fitter.lines.fwhm[k, j].prior)), $(@sprintf "%.3f" maximum(cube_fitter.lines.fwhm[k, j].prior)))\n"
                     end
                     pᵢ += 3
-                else
+                end
+                if cube_fitter.lines.profiles[k, j] == :GaussHermite
+                    msg *= "$(nm)_h3:    \t\t $(@sprintf "%.3f" popt[pᵢ]) +/- $(@sprintf "%.3f" perr[pᵢ])      \t " *
+                        "Limits: ($(@sprintf "%.3f" minimum(cube_fitter.lines.h3[k, j].prior)), $(@sprintf "%.3f" maximum(cube_fitter.lines.h3[k, j].prior)))\n"
+                    msg *= "$(nm)_h4:    \t\t $(@sprintf "%.3f" popt[pᵢ+1]) +/- $(@sprintf "%.3f" perr[pᵢ+1])      \t " *
+                        "Limits: ($(@sprintf "%.3f" minimum(cube_fitter.lines.h4[k, j].prior)), $(@sprintf "%.3f" maximum(cube_fitter.lines.h4[k, j].prior)))\n"
+                    pᵢ += 2
+                elseif cube_fitter.lines.profiles[k, j] == :Voigt 
+                    msg *= "$(nm)_η:     \t\t $(@sprintf "%.3f" popt[pᵢ]) +/- $(@sprintf "%.3f" perr[pᵢ])      \t " *
+                        "Limits: ($(@sprintf "%.3f" minimum(cube_fitter.lines.η[k, j].prior)), $(@sprintf "%.3f" maximum(cube_fitter.lines.η[k, j].prior)))\n"
                     pᵢ += 1
                 end
             end
-            msg *= "\n"
         end
+        msg *= "\n"
     end 
     msg *= "######################################################################" 
     @debug msg

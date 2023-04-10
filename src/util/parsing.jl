@@ -505,7 +505,7 @@ function parse_lines(fwhm_inst::Real)
             @debug "h3 $(h3s[i])"
             h4s[i] = Parameter(h4_init, h4_locked, h4_prior)
             @debug "h4 $(h4s[i])"
-        elseif profiles[line] == "Voigt" && !lines["tie_voigt_mixing"]
+        elseif profiles[line] == "Voigt" 
             ηs[i] = Parameter(η_init, η_locked, η_prior)
             @debug "eta $(ηs[i])"
         end
@@ -534,7 +534,7 @@ function parse_lines(fwhm_inst::Real)
                     @debug "h3 $(acomp_h3s[i,j])"
                     acomp_h4s[i,j] = Parameter(h4_init, acomp_h4_locked[j], acomp_h4_priors[j])
                     @debug "h4 $(acomp_h4s[i,j])"
-                elseif acomp_profiles[line][j] == "Voigt" && !lines["tie_voigt_mixing"]
+                elseif acomp_profiles[line][j] == "Voigt" 
                     acomp_ηs[i,j] = Parameter(η_init, acomp_η_locked[j], acomp_η_priors[j])
                     @debug "eta $(acomp_ηs[i,j])"
                 end

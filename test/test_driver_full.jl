@@ -109,7 +109,7 @@ channel = 0
 
 # Create the cube fitting object
 # plot_range=[(7.61, 7.69), (12.77, 12.85)]
-cube_fitter = CubeFitter(obs.channels[channel], obs.z, obs.name * "_ch$(channel)_full_tied_new"; 
+cube_fitter = CubeFitter(obs.channels[channel], obs.z, obs.name * "_ch$(channel)_full_tied_rpj_adaptive_new"; 
     parallel=true, plot_spaxels=:both, plot_maps=true, save_fits=true)
 
 # Fit the cube

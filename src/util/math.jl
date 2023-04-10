@@ -357,13 +357,11 @@ for the line residual fitting.
 
 ln(probability) = ln(likelihood) + ln(prior)
 """
-function negln_probability(p, grad, λ, Inorm, σnorm, n_lines, n_comps, lines, n_kin_tied, tied_kinematics,
-    flexible_wavesol, tie_voigt_mixing, ext_curve, priors)
+function negln_probability(p, grad, λ, Inorm, σnorm, n_lines, n_comps, lines, flexible_wavesol, ext_curve, priors)
     # Check for gradient
     @assert length(grad) == 0 "Gradient-based solvers are not currently supported!"
     # First compute the model
-    model = model_line_residuals(λ, p, n_lines, n_comps, lines, n_kin_tied, tied_kinematics, flexible_wavesol, 
-        tie_voigt_mixing, ext_curve)
+    model = model_line_residuals(λ, p, n_lines, n_comps, lines, flexible_wavesol, ext_curve)
     # Add the log of the likelihood (based on the model) and the prior distribution functions
     lnP = ln_likelihood(Inorm, model, σnorm) + ln_prior(p, priors)
     # return the NEGATIVE log of the probability
@@ -1046,163 +1044,85 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
     (amp[, voff], FWHM[, h3, h4, η], [acomp_amp, acomp_voff, acomp_FWHM, acomp_h3, acomp_h4, acomp_η] for each line)]`
 - `n_lines::Integer`: Number of lines being fit
 - `lines::TransitionLines`: Object containing information about each transition line being fit.
-- `n_kin_tied::Integer`: Number of tied velocity offsets
-- `n_acomp_kin_tied::Integer`: Same as `n_kin_tied`, but for additional line components
-- `tied_kinematics::TiedKinematics`: Object containing information about tied kinematics parameters.
 - `flexible_wavesol::Bool`: Whether or not to allow small variations in tied velocity offsets, to account for a poor
     wavelength solution in the data
-- `tie_voigt_mixing::Bool`: Whether or not to tie the mixing parameters of all Voigt profiles together
 - `ext_curve::Vector{<:AbstractFloat}`: The extinction curve fit with model_continuum
 - `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
 function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_comps::S, lines::TransitionLines, 
-    n_kin_tied::Vector{S}, tied_kinematics::TiedKinematics, flexible_wavesol::Bool, tie_voigt_mixing::Bool, ext_curve::Vector{T}, 
-    return_components::Bool) where {T<:Real,S<:Integer}
+    flexible_wavesol::Bool, ext_curve::Vector{T}, return_components::Bool) where {T<:Real,S<:Integer}
 
     # Prepare outputs
     comps = Dict{String, Vector{Float64}}()
     contin = zeros(Float64, length(λ))
 
-    # Skip ahead of the tied kinematics of the lines and acomp components
-    pᵢ = 2 * sum(n_kin_tied) + 1
-    # If applicable, skip ahead of the tied voigt mixing
-    if tie_voigt_mixing
-        ηᵢ = pᵢ
-        pᵢ += 1
-    end
-
+    pᵢ = 1
     # Add emission lines
     for k ∈ 1:n_lines
-        # Check if voff is tied: if so, use the tied voff parameter, otherwise, use the line's own voff parameter
-        amp = params[pᵢ]
-        if isnothing(lines.tied[k, 1])
-            # Unpack the components of the line
-            voff = params[pᵢ+1]
-            fwhm = params[pᵢ+2]
-            pᵢ += 3
-
-        elseif flexible_wavesol
-            # Find the position of the tied velocity offset that should be used
-            # based on matching the keys in line_tied and kin_tied_key
-            vwhere = findfirst(x -> x == lines.tied[k, 1], tied_kinematics.key[1])
-            voff_series = params[vwhere]
-            voff_indiv = params[pᵢ+1]
-            # Add velocity shifts of the tied lines and the individual offsets together
-            voff = voff_series + voff_indiv
-            # Position of the tied fwhm that should be used
-            fwhm = params[n_kin_tied[1]+vwhere]
-            pᵢ += 2
-
-        else
-            # Find the position of the tied velocity offset that should be used
-            # based on matching the keys in line_tied and kin_tied_key
-            vwhere = findfirst(x -> x == lines.tied[k, 1], tied_kinematics.key[1])
-            voff = params[vwhere]
-            fwhm = params[n_kin_tied[1]+vwhere]
-            pᵢ += 1
-
-        end
-
-        if lines.profiles[k, 1] == :GaussHermite
-            # Get additional h3, h4 components
-            h3 = params[pᵢ]
-            h4 = params[pᵢ+1]
-            pᵢ += 2
-        elseif lines.profiles[k, 1] == :Voigt
-            # Get additional mixing component, either from the tied position or the 
-            # individual position
-            if !tie_voigt_mixing
-                η = params[pᵢ]
-                pᵢ += 1
-            else
-                η = params[ηᵢ]
-            end
-        end
-
-        # Convert voff in km/s to mean wavelength in μm
-        mean_μm = Doppler_shift_λ(lines.λ₀[k], voff)
-        # Convert FWHM from km/s to μm
-        fwhm_μm = Doppler_shift_λ(lines.λ₀[k], fwhm/2) - Doppler_shift_λ(lines.λ₀[k], -fwhm/2)
-        # Evaluate line profile
-        if lines.profiles[k, 1] == :Gaussian
-            comps["line_$(k)_1"] = Gaussian.(λ, amp, mean_μm, fwhm_μm)
-        elseif lines.profiles[k, 1] == :Lorentzian
-            comps["line_$(k)_1"] = Lorentzian.(λ, amp, mean_μm, fwhm_μm)
-        elseif lines.profiles[k, 1] == :GaussHermite
-            comps["line_$(k)_1"] = GaussHermite.(λ, amp, mean_μm, fwhm_μm, h3, h4)
-        elseif lines.profiles[k, 1] == :Voigt
-            comps["line_$(k)_1"] = Voigt.(λ, amp, mean_μm, fwhm_μm, η)
-        else
-            error("Unrecognized line profile $(lines.profiles[k, 1])!")
-        end
-
-        # Add the line profile into the overall model
-        contin .+= comps["line_$(k)_1"]
-
-        # Repeat EVERYTHING, minus the flexible_wavesol, for the additional components
-        for j ∈ 2:n_comps
+        amp_1 = voff_1 = fwhm_1 = nothing
+        for j ∈ 1:n_comps
             if !isnothing(lines.profiles[k, j])
-                # Parametrize acomp amplitude in terms of the default line amplitude times some fractional value
-                # this way, we can constrain the acomp_amp parameter to be from (0,1) to ensure the acomp amplitude is always
-                # less than the line amplitude
-                acomp_amp = amp * params[pᵢ]
-
-                if isnothing(lines.tied[k, j])
-                    # Parametrize the acomp voff in terms of the default line voff plus some difference value
-                    # this way, we can constrain the acomp component to be within +/- some range from the line itself
-                    acomp_voff = voff + params[pᵢ+1]
-                    # Parametrize the acomp FWHM in terms of the default line FWHM times some fractional value
-                    # this way, we can constrain the acomp_fwhm parameter to be > 0 to ensure the acomp FWHM is always
-                    # greater than the line FWHM
-                    acomp_fwhm = fwhm * params[pᵢ+2]
-                    pᵢ += 3
-
+                # Unpack the components of the line
+                amp = params[pᵢ]
+                voff = params[pᵢ+1]
+                # Check if using a flexible_wavesol tied voff -> if so there is an extra voff parameter
+                if flexible_wavesol && isone(j)
+                    voff += params[pᵢ+2]
+                    fwhm = params[pᵢ+3]
+                    pᵢ += 4
                 else
-                    vwhere = findfirst(x -> x == lines.tied[k, j], tied_kinematics.key[j])
-                    acomp_voff = voff + params[2*sum(n_kin_tied[1:(j-1)])+vwhere]
-                    acomp_fwhm = fwhm * params[2*sum(n_kin_tied[1:(j-1)])+n_kin_tied[j]+vwhere]
-                    pᵢ += 1
-
+                    fwhm = params[pᵢ+2]
+                    pᵢ += 3
                 end
-
                 if lines.profiles[k, j] == :GaussHermite
-                    acomp_h3 = params[pᵢ]
-                    acomp_h4 = params[pᵢ+1]
+                    # Get additional h3, h4 components
+                    h3 = params[pᵢ]
+                    h4 = params[pᵢ+1]
                     pᵢ += 2
                 elseif lines.profiles[k, j] == :Voigt
-                    if !tie_voigt_mixing
-                        acomp_η = params[pᵢ]
-                        pᵢ += 1
-                    else
-                        acomp_η = params[ηᵢ]
-                    end
+                    # Get additional mixing component, either from the tied position or the 
+                    # individual position
+                    η = params[pᵢ]
+                    pᵢ += 1
+                end
+
+                # Save the j = 1 parameters for reference 
+                if isone(j)
+                    amp_1 = amp
+                    voff_1 = voff
+                    fwhm_1 = fwhm
+                # For the additional components, we parametrize them this way to essentially give them soft constraints
+                # relative to the primary component
+                else
+                    amp *= amp_1
+                    voff += voff_1
+                    fwhm *= fwhm_1
                 end
 
                 # Convert voff in km/s to mean wavelength in μm
-                acomp_mean_μm = Doppler_shift_λ(lines.λ₀[k], acomp_voff)
+                mean_μm = Doppler_shift_λ(lines.λ₀[k], voff)
                 # Convert FWHM from km/s to μm
-                acomp_fwhm_μm = Doppler_shift_λ(lines.λ₀[k], acomp_fwhm/2) - Doppler_shift_λ(lines.λ₀[k], -acomp_fwhm/2)
+                fwhm_μm = Doppler_shift_λ(lines.λ₀[k], fwhm/2) - Doppler_shift_λ(lines.λ₀[k], -fwhm/2)
                 # Evaluate line profile
                 if lines.profiles[k, j] == :Gaussian
-                    comps["line_$(k)_$(j)"] = Gaussian.(λ, acomp_amp, acomp_mean_μm, acomp_fwhm_μm)
+                    comps["line_$(k)_$(j)"] = Gaussian.(λ, amp, mean_μm, fwhm_μm)
                 elseif lines.profiles[k, j] == :Lorentzian
-                    comps["line_$(k)_$(j)"] = Lorentzian.(λ, acomp_amp, acomp_mean_μm, acomp_fwhm_μm)
+                    comps["line_$(k)_$(j)"] = Lorentzian.(λ, amp, mean_μm, fwhm_μm)
                 elseif lines.profiles[k, j] == :GaussHermite
-                    comps["line_$(k)_$(j)"] = GaussHermite.(λ, acomp_amp, acomp_mean_μm, acomp_fwhm_μm, acomp_h3, acomp_h4)
+                    comps["line_$(k)_$(j)"] = GaussHermite.(λ, amp, mean_μm, fwhm_μm, h3, h4)
                 elseif lines.profiles[k, j] == :Voigt
-                    comps["line_$(k)_$(j)"] = Voigt.(λ, acomp_amp, acomp_mean_μm, acomp_fwhm_μm, acomp_η)
+                    comps["line_$(k)_$(j)"] = Voigt.(λ, amp, mean_μm, fwhm_μm, η)
                 else
-                    error("Unrecognized acomp line profile $(lines.profiles[k, j])!")
+                    error("Unrecognized line profile $(lines.profiles[k, j])!")
                 end
 
-                # Add the additional component into the overall model
+                # Add the line profile into the overall model
                 contin .+= comps["line_$(k)_$(j)"]
-
             end
         end
-
     end
+
     # Apply extinction
     contin .*= ext_curve
 
@@ -1217,145 +1137,74 @@ end
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
 function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_comps::S, lines::TransitionLines, 
-    n_kin_tied::Vector{S}, tied_kinematics::TiedKinematics, flexible_wavesol::Bool, tie_voigt_mixing::Bool, 
-    ext_curve::Vector{T}) where {T<:Real,S<:Integer}
+    flexible_wavesol::Bool, ext_curve::Vector{T}) where {T<:Real,S<:Integer}
 
     # Prepare outputs
     contin = zeros(Float64, length(λ))
 
-    # Skip ahead of the tied kinematics of the lines and acomp components
-    pᵢ = 2 * sum(n_kin_tied) + 1
-    # If applicable, skip ahead of the tied voigt mixing
-    if tie_voigt_mixing
-        ηᵢ = pᵢ
-        pᵢ += 1
-    end
-
+    pᵢ = 1
     # Add emission lines
     for k ∈ 1:n_lines
-        # Check if voff is tied: if so, use the tied voff parameter, otherwise, use the line's own voff parameter
-        amp = params[pᵢ]
-        if isnothing(lines.tied[k, 1])
-            # Unpack the components of the line
-            voff = params[pᵢ+1]
-            fwhm = params[pᵢ+2]
-            pᵢ += 3
-
-        elseif flexible_wavesol
-            # Find the position of the tied velocity offset that should be used
-            # based on matching the keys in line_tied and kin_tied_key
-            vwhere = findfirst(x -> x == lines.tied[k, 1], tied_kinematics.key[1])
-            voff_series = params[vwhere]
-            voff_indiv = params[pᵢ+1]
-            # Add velocity shifts of the tied lines and the individual offsets together
-            voff = voff_series + voff_indiv
-            # Position of the tied fwhm that should be used
-            fwhm = params[n_kin_tied[1]+vwhere]
-            pᵢ += 2
-
-        else
-            # Find the position of the tied velocity offset that should be used
-            # based on matching the keys in line_tied and kin_tied_key
-            vwhere = findfirst(x -> x == lines.tied[k, 1], tied_kinematics.key[1])
-            voff = params[vwhere]
-            fwhm = params[n_kin_tied[1]+vwhere]
-            pᵢ += 1
-
-        end
-
-        if lines.profiles[k, 1] == :GaussHermite
-            # Get additional h3, h4 components
-            h3 = params[pᵢ]
-            h4 = params[pᵢ+1]
-            pᵢ += 2
-        elseif lines.profiles[k, 1] == :Voigt
-            # Get additional mixing component, either from the tied position or the 
-            # individual position
-            if !tie_voigt_mixing
-                η = params[pᵢ]
-                pᵢ += 1
-            else
-                η = params[ηᵢ]
-            end
-        end
-
-        # Convert voff in km/s to mean wavelength in μm
-        mean_μm = Doppler_shift_λ(lines.λ₀[k], voff)
-        # Convert FWHM from km/s to μm
-        fwhm_μm = Doppler_shift_λ(lines.λ₀[k], fwhm/2) - Doppler_shift_λ(lines.λ₀[k], -fwhm/2)
-        # Evaluate line profile
-        if lines.profiles[k, 1] == :Gaussian
-            contin .+= Gaussian.(λ, amp, mean_μm, fwhm_μm)
-        elseif lines.profiles[k, 1] == :Lorentzian
-            contin .+= Lorentzian.(λ, amp, mean_μm, fwhm_μm)
-        elseif lines.profiles[k, 1] == :GaussHermite
-            contin .+= GaussHermite.(λ, amp, mean_μm, fwhm_μm, h3, h4)
-        elseif lines.profiles[k, 1] == :Voigt
-            contin .+= Voigt.(λ, amp, mean_μm, fwhm_μm, η)
-        else
-            error("Unrecognized line profile $(lines.profiles[k, 1])!")
-        end
-
-        # Repeat EVERYTHING, minus the flexible_wavesol, for the additional components
-        for j ∈ 2:n_comps
+        amp_1 = voff_1 = fwhm_1 = nothing
+        for j ∈ 1:n_comps
             if !isnothing(lines.profiles[k, j])
-                # Parametrize acomp amplitude in terms of the default line amplitude times some fractional value
-                # this way, we can constrain the acomp_amp parameter to be from (0,1) to ensure the acomp amplitude is always
-                # less than the line amplitude
-                acomp_amp = amp * params[pᵢ]
-
-                if isnothing(lines.tied[k, j])
-                    # Parametrize the acomp voff in terms of the default line voff plus some difference value
-                    # this way, we can constrain the acomp component to be within +/- some range from the line itself
-                    acomp_voff = voff + params[pᵢ+1]
-                    # Parametrize the acomp FWHM in terms of the default line FWHM times some fractional value
-                    # this way, we can constrain the acomp_fwhm parameter to be > 0 to ensure the acomp FWHM is always
-                    # greater than the line FWHM
-                    acomp_fwhm = fwhm * params[pᵢ+2]
-                    pᵢ += 3
-
+                # Unpack the components of the line
+                amp = params[pᵢ]
+                voff = params[pᵢ+1]
+                # Check if using a flexible_wavesol tied voff -> if so there is an extra voff parameter
+                if flexible_wavesol && isone(j)
+                    voff += params[pᵢ+2]
+                    fwhm = params[pᵢ+3]
+                    pᵢ += 4
                 else
-                    vwhere = findfirst(x -> x == lines.tied[k, j], tied_kinematics.key[j])
-                    acomp_voff = voff + params[2*sum(n_kin_tied[1:(j-1)])+vwhere]
-                    acomp_fwhm = fwhm * params[2*sum(n_kin_tied[1:(j-1)])+n_kin_tied[j]+vwhere]
-                    pᵢ += 1
-
+                    fwhm = params[pᵢ+2]
+                    pᵢ += 3
                 end
-
                 if lines.profiles[k, j] == :GaussHermite
-                    acomp_h3 = params[pᵢ]
-                    acomp_h4 = params[pᵢ+1]
+                    # Get additional h3, h4 components
+                    h3 = params[pᵢ]
+                    h4 = params[pᵢ+1]
                     pᵢ += 2
                 elseif lines.profiles[k, j] == :Voigt
-                    if !tie_voigt_mixing
-                        acomp_η = params[pᵢ]
-                        pᵢ += 1
-                    else
-                        acomp_η = params[ηᵢ]
-                    end
+                    # Get additional mixing component, either from the tied position or the 
+                    # individual position
+                    η = params[pᵢ]
+                    pᵢ += 1
+                end
+
+                # Save the j = 1 parameters for reference 
+                if isone(j)
+                    amp_1 = amp
+                    voff_1 = voff
+                    fwhm_1 = fwhm
+                # For the additional components, we parametrize them this way to essentially give them soft constraints
+                # relative to the primary component
+                else
+                    amp *= amp_1
+                    voff += voff_1
+                    fwhm *= fwhm_1
                 end
 
                 # Convert voff in km/s to mean wavelength in μm
-                acomp_mean_μm = Doppler_shift_λ(lines.λ₀[k], acomp_voff)
+                mean_μm = Doppler_shift_λ(lines.λ₀[k], voff)
                 # Convert FWHM from km/s to μm
-                acomp_fwhm_μm = Doppler_shift_λ(lines.λ₀[k], acomp_fwhm/2) - Doppler_shift_λ(lines.λ₀[k], -acomp_fwhm/2)
+                fwhm_μm = Doppler_shift_λ(lines.λ₀[k], fwhm/2) - Doppler_shift_λ(lines.λ₀[k], -fwhm/2)
                 # Evaluate line profile
                 if lines.profiles[k, j] == :Gaussian
-                    contin .+= Gaussian.(λ, acomp_amp, acomp_mean_μm, acomp_fwhm_μm)
+                    contin .+= Gaussian.(λ, amp, mean_μm, fwhm_μm)
                 elseif lines.profiles[k, j] == :Lorentzian
-                    contin .+= Lorentzian.(λ, acomp_amp, acomp_mean_μm, acomp_fwhm_μm)
+                    contin .+= Lorentzian.(λ, amp, mean_μm, fwhm_μm)
                 elseif lines.profiles[k, j] == :GaussHermite
-                    contin .+= GaussHermite.(λ, acomp_amp, acomp_mean_μm, acomp_fwhm_μm, acomp_h3, acomp_h4)
+                    contin .+= GaussHermite.(λ, amp, mean_μm, fwhm_μm, h3, h4)
                 elseif lines.profiles[k, j] == :Voigt
-                    contin .+= Voigt.(λ, acomp_amp, acomp_mean_μm, acomp_fwhm_μm, acomp_η)
+                    contin .+= Voigt.(λ, amp, mean_μm, fwhm_μm, η)
                 else
-                    error("Unrecognized acomp line profile $(lines.profiles[k, j])!")
+                    error("Unrecognized line profile $(lines.profiles[k, j])!")
                 end
-
             end
         end
-
     end
+    
     # Apply extinction
     contin .*= ext_curve
 
@@ -1366,19 +1215,17 @@ end
 
 """
     calculate_extra_parameters(λ, I, σ, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen,
-        fit_sil_emission, n_lines, n_acomps, n_kin_tied, kin_tied_key, line_tied, line_profiles,
-        n_acomp_kin_tied, acomp_kin_tied_key, line_acomp_tied, line_acomp_profiles, line_restwave, flexible_wavesol,
-        tie_voigt_mixing, popt_c, popt_l, perr_c, perr_l, mask_lines, continuum, Ω)
+        fit_sil_emission, n_lines, n_acomps, n_cops, lines, flexible_wavesol, popt_c, popt_l, perr_c, perr_l,
+        extinction, mask_lines, continuum, Ω)
 
 Calculate extra parameters that are not fit, but are nevertheless important to know, for a given spaxel.
 Currently this includes the integrated intensity and signal to noise ratios of dust features and emission lines.
 """
 function calculate_extra_parameters(λ::Vector{T}, I::Vector{T}, σ::Vector{T}, n_dust_cont::Integer, 
     n_dust_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, 
-    n_lines::Integer, n_acomps::Integer, n_comps::Integer, lines::TransitionLines, n_kin_tied::Vector{S}, 
-    tied_kinematics::TiedKinematics, flexible_wavesol::Bool, tie_voigt_mixing::Bool, popt_c::Vector{T}, 
-    popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}, extinction::Vector{T}, mask_lines::BitVector, 
-    continuum::Vector{T}, Ω::T) where {T<:Real,S<:Integer}
+    n_lines::Integer, n_acomps::Integer, n_comps::Integer, lines::TransitionLines, flexible_wavesol::Bool, 
+    popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}, extinction::Vector{T}, 
+    mask_lines::BitVector, continuum::Vector{T}, Ω::T) where {T<:Real,S<:Integer}
 
     @debug "Calculating extra parameters"
 
@@ -1443,188 +1290,104 @@ function calculate_extra_parameters(λ::Vector{T}, I::Vector{T}, σ::Vector{T}, 
     # Loop through lines
     p_lines = zeros(3n_lines+3n_acomps)
     p_lines_err = zeros(3n_lines+3n_acomps)
-    pₒ = 1
-    # Skip over the tied velocity offsets
-    pᵢ = 2 * sum(n_kin_tied) + 1
-    # Skip over the tied voigt mixing parameter, saving its index
-    if tie_voigt_mixing
-        ηᵢ = pᵢ
-        pᵢ += 1
-    end
+    pₒ = pᵢ = 1
     for (k, λ0) ∈ enumerate(lines.λ₀)
-
-        # (\/ pretty much the same as the model_line_residuals function, but calculating the integrated intensities)
-        amp = popt_l[pᵢ]
-        amp_err = perr_l[pᵢ]
-        # fill values with nothings for profiles that may / may not have them
-        h3 = h3_err = h4 = h4_err = η = η_err = nothing
-
-        # Check if voff is tied: if so, use the tied voff parameter, otherwise, use the line's own voff parameter
-        if isnothing(lines.tied[k, 1])
-            # Unpack the components of the line
-            voff = popt_l[pᵢ+1]
-            voff_err = perr_l[pᵢ+1]
-            fwhm = popt_l[pᵢ+2]
-            fwhm_err = perr_l[pᵢ+2]
-            pᵢ += 3
-        elseif flexible_wavesol
-            # Find the position of the tied velocity offset that should be used
-            # based on matching the keys in line_tied and kin_tied_key
-            vwhere = findfirst(x -> x == lines.tied[k, 1], tied_kinematics.key[1])
-            voff_series = popt_l[vwhere]
-            voff_indiv = popt_l[pᵢ+1]
-            # Add velocity shifts of the tied lines and the individual offsets together
-            voff = voff_series + voff_indiv
-            voff_err = √(perr_l[vwhere]^2 + perr_l[pᵢ+1]^2)
-            fwhm = popt_l[n_kin_tied[1]+vwhere]
-            fwhm_err = perr_l[n_kin_tied[1]+vwhere]
-            pᵢ += 2
-        else
-            # Find the position of the tied velocity offset that should be used
-            # based on matching the keys in line_tied and kin_tied_key
-            vwhere = findfirst(x -> x == lines.tied[k, 1], tied_kinematics.key[1])
-            voff = popt_l[vwhere]
-            voff_err = perr_l[vwhere]
-            fwhm = popt_l[n_kin_tied[1]+vwhere]
-            fwhm_err = perr_l[n_kin_tied[1]+vwhere]
-            pᵢ += 1
-        end
-
-        if lines.profiles[k, 1] == :GaussHermite
-            # Get additional h3, h4 components
-            h3 = popt_l[pᵢ]
-            h3_err = perr_l[pᵢ]
-            h4 = popt_l[pᵢ+1]
-            h4_err = perr_l[pᵢ+1]
-            pᵢ += 2
-        elseif lines.profiles[k, 1] == :Voigt
-            # Get additional mixing component, either from the tied position or the 
-            # individual position
-            if !tie_voigt_mixing
-                η = popt_l[pᵢ]
-                η_err = perr_l[pᵢ]
-                pᵢ += 1
-            else
-                η = popt_l[ηᵢ]
-                η_err = perr_l[ηᵢ]
-            end
-        end
-
-        # Convert voff in km/s to mean wavelength in μm
-        mean_μm = Doppler_shift_λ(λ0, voff)
-        mean_μm_err = λ0 / C_KMS * voff_err
-        # WARNING:
-        # Probably should set to 0 if using flexible tied voffs since they are highly degenerate and result in massive errors
-        # if !isnothing(cube_fitter.line_tied[k]) && cube_fitter.flexible_wavesol
-        #     mean_μm_err = 0.
-        # end
-
-        # Convert FWHM from km/s to μm
-        fwhm_μm = Doppler_shift_λ(λ0, fwhm/2) - Doppler_shift_λ(λ0, -fwhm/2)
-        fwhm_μm_err = λ0 / C_KMS * fwhm_err
-
-        # Convert amplitude to erg s^-1 cm^-2 μm^-1 sr^-1, put back in the normalization
-        amp_cgs = MJysr_to_cgs(amp*N, mean_μm)
-        amp_cgs_err = MJysr_to_cgs_err(amp*N, amp_err*N, mean_μm, mean_μm_err)
-        # Integrate over the solid angle
-        amp_cgs *= Ω
-        amp_cgs_err *= Ω
-
-        # Get the extinction factor at the line center
-        ext = extinction[argmin(abs.(λ .- mean_μm))]
-
-        @debug "Line with ($amp_cgs, $mean_μm, $fwhm_μm) and errors ($amp_cgs_err, $mean_μm_err, $fwhm_μm_err)"
-
-        # Calculate line flux using the helper function
-        p_lines[pₒ], p_lines_err[pₒ] = calculate_flux(lines.profiles[k, 1], amp_cgs, amp_cgs_err, mean_μm, mean_μm_err,
-            fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err)
-
-        # Calculate the equivalent width using the utility function
-        p_lines[pₒ+1], p_lines_err[pₒ+1] = calculate_eqw(popt_c, perr_c, n_dust_cont, n_dust_feat,
-            extinction_curve, extinction_screen, fit_sil_emission, lines.profiles[k, 1], amp*N*ext, amp_err*N*ext, 
-            mean_μm, mean_μm_err, fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err)
-
-        # SNR
-        p_lines[pₒ+2] = amp*N*ext / std(I[.!mask_lines] .- continuum[.!mask_lines])
-
-        @debug "integrated flux $(p_lines[pₒ]) +/- $(p_lines_err[pₒ]) " *
-            "(erg s^-1 cm^-2 sr^-1), equivalent width $(p_lines[pₒ+1]) +/- $(p_lines_err[pₒ+1]) um, and SNR $(p_lines[pₒ+1])"
-
-        # Advance the output vector index by 3
-        pₒ += 3
-
-        for j ∈ 2:n_comps
-            # filler values
-            acomp_amp = acomp_mean_μm = acomp_fwhm_μm = nothing
-            acomp_h3 = acomp_h3_err = acomp_h4 = acomp_h4_err = acomp_η = acomp_η_err = nothing
-
-            # Repeat EVERYTHING, minus the flexible_wavesol, for the additional components
+        amp_1 = amp_1_err = voff_1 = voff_1_err = fwhm_1 = fwhm_1_err = nothing
+        for j ∈ 1:n_comps
             if !isnothing(lines.profiles[k, j])
-                acomp_amp = amp * popt_l[pᵢ]
-                acomp_amp_err = √(acomp_amp^2 * ((amp_err / amp)^2 + (perr_l[pᵢ] / acomp_amp)^2))
-                if isnothing(lines.tied[k, j])
-                    acomp_voff = voff + popt_l[pᵢ+1]
-                    acomp_voff_err = √(voff_err^2 + perr_l[pᵢ+1]^2)
-                    acomp_fwhm = fwhm * popt_l[pᵢ+2]
-                    acomp_fwhm_err = √(acomp_fwhm^2 * ((fwhm_err / fwhm)^2 + (perr_l[pᵢ+2] / acomp_fwhm)^2))
-                    pᵢ += 3
 
+                # (\/ pretty much the same as the model_line_residuals function, but calculating the integrated intensities)
+                amp = popt_l[pᵢ]
+                amp_err = perr_l[pᵢ]
+                voff = popt_l[pᵢ+1]
+                voff_err = perr_l[pᵢ+1]
+                # fill values with nothings for profiles that may / may not have them
+                h3 = h3_err = h4 = h4_err = η = η_err = nothing
+
+                if flexible_wavesol && isone(j)
+                    voff += popt_l[pᵢ+2]
+                    voff_err = √(voff_err^2 + perr_l[pᵢ+2]^2)
+                    fwhm = popt_l[pᵢ+3]
+                    fwhm_err = perr_l[pᵢ+3]
+                    pᵢ += 4
                 else
-                    vwhere = findfirst(x -> x == lines.tied[k, j], tied_kinematics.key[j])
-                    acomp_voff = voff + popt_l[2*sum(n_kin_tied[1:(j-1)])+vwhere]
-                    acomp_voff_err = √(voff_err^2 + perr_l[2*sum(n_kin_tied[1:(j-1)])+vwhere]^2)
-                    acomp_fwhm = fwhm * popt_l[2*sum(n_kin_tied[1:(j-1)])+n_kin_tied[j]+vwhere]
-                    acomp_fwhm_err = √(acomp_fwhm^2 * ((fwhm_err / fwhm)^2 + 
-                        (perr_l[2*sum(n_kin_tied[1:(j-1)])+n_kin_tied[j]+vwhere] / acomp_fwhm)^2))      
-                    pᵢ += 1
+                    fwhm = popt_l[pᵢ+2]
+                    fwhm_err = perr_l[pᵢ+2]
+                    pᵢ += 3
                 end
 
                 if lines.profiles[k, j] == :GaussHermite
-                    acomp_h3 = popt_l[pᵢ]
-                    acomp_h3_err = perr_l[pᵢ]
-                    acomp_h4 = popt_l[pᵢ+1]
-                    acomp_h4_err = perr_l[pᵢ+1]
+                    # Get additional h3, h4 components
+                    h3 = popt_l[pᵢ]
+                    h3_err = perr_l[pᵢ]
+                    h4 = popt_l[pᵢ+1]
+                    h4_err = perr_l[pᵢ+1]
                     pᵢ += 2
                 elseif lines.profiles[k, j] == :Voigt
-                    if !tie_voigt_mixing
-                        acomp_η = popt_l[pᵢ]
-                        acomp_η_err = perr_l[pᵢ]
-                        pᵢ += 1
-                    else
-                        acomp_η = popt_l[ηᵢ]
-                        acomp_η_err = perr_l[ηᵢ]
-                    end
+                    # Get additional mixing component, either from the tied position or the 
+                    # individual position
+                    η = popt_l[pᵢ]
+                    η_err = perr_l[pᵢ]
+                    pᵢ += 1
+                end
+
+                # Save the j = 1 parameters for reference 
+                if isone(j)
+                    amp_1 = amp
+                    amp_1_err = amp_err
+                    voff_1 = voff
+                    voff_1_err = voff_err
+                    fwhm_1 = fwhm
+                    fwhm_1_err = fwhm_err
+                # For the additional components, we parametrize them this way to essentially give them soft constraints
+                # relative to the primary component
+                else
+                    amp_err = √((amp * amp_1)^2 * ((amp_1_err / amp_1)^2 + (amp_err / amp)^2))
+                    amp *= amp_1
+                    
+                    voff_err = √(voff_err^2 + voff_1_err^2)
+                    voff += voff_1
+
+                    fwhm_err = √((fwhm * fwhm_1)^2 * ((fwhm_1_err / fwhm_1)^2 + (fwhm_err / fwhm)^2))
+                    fwhm *= fwhm_1
                 end
 
                 # Convert voff in km/s to mean wavelength in μm
-                acomp_mean_μm = Doppler_shift_λ(λ0, acomp_voff)
-                acomp_mean_μm_err = λ0 / C_KMS * acomp_voff_err
+                mean_μm = Doppler_shift_λ(λ0, voff)
+                mean_μm_err = λ0 / C_KMS * voff_err
+                # WARNING:
+                # Probably should set to 0 if using flexible tied voffs since they are highly degenerate and result in massive errors
+                # if !isnothing(cube_fitter.line_tied[k]) && cube_fitter.flexible_wavesol
+                #     mean_μm_err = 0.
+                # end
+
                 # Convert FWHM from km/s to μm
-                acomp_fwhm_μm = Doppler_shift_λ(λ0, acomp_fwhm/2) - Doppler_shift_λ(λ0, -acomp_fwhm/2)
-                acomp_fwhm_μm_err = λ0 / C_KMS * acomp_fwhm_err
+                fwhm_μm = Doppler_shift_λ(λ0, fwhm/2) - Doppler_shift_λ(λ0, -fwhm/2)
+                fwhm_μm_err = λ0 / C_KMS * fwhm_err
 
                 # Convert amplitude to erg s^-1 cm^-2 μm^-1 sr^-1, put back in the normalization
-                acomp_amp_cgs = MJysr_to_cgs(acomp_amp*N, acomp_mean_μm)
-                acomp_amp_cgs_err = MJysr_to_cgs_err(acomp_amp*N, acomp_amp_err*N, acomp_mean_μm, acomp_mean_μm_err)
+                amp_cgs = MJysr_to_cgs(amp*N, mean_μm)
+                amp_cgs_err = MJysr_to_cgs_err(amp*N, amp_err*N, mean_μm, mean_μm_err)
                 # Integrate over the solid angle
-                acomp_amp_cgs *= Ω
-                acomp_amp_cgs_err *= Ω
+                amp_cgs *= Ω
+                amp_cgs_err *= Ω
 
-                @debug "acomp line with ($acomp_amp_cgs, $acomp_mean_μm, $acomp_fwhm_μm) and errors ($acomp_amp_cgs_err, $acomp_mean_μm_err, $acomp_fwhm_μm_err)"
-                    
+                # Get the extinction factor at the line center
+                ext = extinction[argmin(abs.(λ .- mean_μm))]
+
+                @debug "Line with ($amp_cgs, $mean_μm, $fwhm_μm) and errors ($amp_cgs_err, $mean_μm_err, $fwhm_μm_err)"
+
                 # Calculate line flux using the helper function
-                p_lines[pₒ], p_lines_err[pₒ] = calculate_flux(lines.profiles[k, j], acomp_amp_cgs, acomp_amp_cgs_err, acomp_mean_μm, 
-                    acomp_mean_μm_err, acomp_fwhm_μm, acomp_fwhm_μm_err, h3=acomp_h3, h3_err=acomp_h3_err, h4=acomp_h4, h4_err=acomp_h4_err, 
-                    η=acomp_η, η_err=acomp_η_err)
-    
+                p_lines[pₒ], p_lines_err[pₒ] = calculate_flux(lines.profiles[k, j], amp_cgs, amp_cgs_err, mean_μm, mean_μm_err,
+                    fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err)
+
                 # Calculate the equivalent width using the utility function
-                p_lines[pₒ+1], p_lines_err[pₒ+1] = calculate_eqw(popt_c, perr_c, n_dust_cont, n_dust_feat, 
-                    extinction_curve, extinction_screen, fit_sil_emission, lines.profiles[k, j], acomp_amp*N*ext, acomp_amp_err*N*ext, 
-                    acomp_mean_μm, acomp_mean_μm_err, acomp_fwhm_μm, acomp_fwhm_μm_err, h3=acomp_h3, h3_err=acomp_h3_err, h4=acomp_h4, 
-                    h4_err=acomp_h4_err, η=acomp_η, η_err=acomp_η_err)
+                p_lines[pₒ+1], p_lines_err[pₒ+1] = calculate_eqw(popt_c, perr_c, n_dust_cont, n_dust_feat,
+                    extinction_curve, extinction_screen, fit_sil_emission, lines.profiles[k, j], amp*N*ext, amp_err*N*ext, 
+                    mean_μm, mean_μm_err, fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err)
 
                 # SNR
-                p_lines[pₒ+2] = acomp_amp*N*ext / std(I[.!mask_lines] .- continuum[.!mask_lines])
+                p_lines[pₒ+2] = amp*N*ext / std(I[.!mask_lines] .- continuum[.!mask_lines])
 
                 @debug "integrated flux $(p_lines[pₒ]) +/- $(p_lines_err[pₒ]) " *
                     "(erg s^-1 cm^-2 sr^-1), equivalent width $(p_lines[pₒ+1]) +/- $(p_lines_err[pₒ+1]) um, and SNR $(p_lines[pₒ+1])"
@@ -1633,7 +1396,6 @@ function calculate_extra_parameters(λ::Vector{T}, I::Vector{T}, σ::Vector{T}, 
                 pₒ += 3
             end
         end
-
     end
 
     p_dust, p_lines, p_dust_err, p_lines_err
