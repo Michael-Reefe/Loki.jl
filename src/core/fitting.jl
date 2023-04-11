@@ -371,8 +371,8 @@ See Smith, Draine, et al. 2007; http://tir.astro.utoledo.edu/jdsmith/research/pa
     the initial parameter vector for individual spaxel fits
 """
 function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, continuum::Vector{<:Real}, 
-    ext_curve::Vector{<:Real}, mask_lines::BitVector, I_spline::Vector{<:Real}, σ_spline::Vector{<:Real}; 
-    init::Bool=false)
+    ext_curve::Vector{<:Real}, mask_lines::BitVector, I_spline::Vector{<:Real}, σ_spline::Vector{<:Real},
+    lsf_interp_func::Function; init::Bool=false)
 
     @debug """\n
     #########################################################
@@ -461,7 +461,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
         # these are a bit loose since we're mainly just looking to get into the right global minimum region with SAMIN
         # before refining the fit later with a LevMar local minimum routine
         fit_func = (x, p) -> negln_probability(p, [], x, Inorm, σnorm, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines,
-            cube_fitter.flexible_wavesol, ext_curve, priors)
+            cube_fitter.flexible_wavesol, ext_curve, lsf_interp_func, priors)
         x_tol = 1e-5
         f_tol = abs(fit_func(λ, p₀) - fit_func(λ, clamp.(p₀ .- x_tol, lower_bounds, upper_bounds)))
 
@@ -494,7 +494,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     ############################################# FIT WITH LEVMAR ###################################################
 
     fit_func = (x, p) -> model_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
-        cube_fitter.flexible_wavesol, ext_curve)
+        cube_fitter.flexible_wavesol, ext_curve, lsf_interp_func)
     
     res = cmpfit(λ, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func), p₁, parinfo=parinfo, config=config)
 
@@ -536,7 +536,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
 
     # Final optimized fit
     I_model, comps = model_line_residuals(λ, popt, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
-        cube_fitter.flexible_wavesol, ext_curve, true)
+        cube_fitter.flexible_wavesol, ext_curve, lsf_interp_func, true)
     
     # Renormalize
     I_model = I_model .* N
@@ -807,13 +807,17 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; recalculate
         with_logger(logger) do
 
             mask_lines, I_spline, σ_spline = continuum_cubic_spline(λ, I, σ, cube_fitter.z)
+            
+            # Interpolate the LSF
+            lsf_interp = Spline1D(cube_fitter.cube.λ, cube_fitter.cube.lsf, k=1)
+            lsf_interp_func = x -> lsf_interp(x)
 
             # Fit the spaxel
             σ, popt_c, I_cont, comps_cont, n_free_c, perr_c, covar_c = 
                 @timeit timer_output "continuum_fit_spaxel" continuum_fit_spaxel(cube_fitter, spaxel, mask_lines, I_spline, σ_spline)
             _, popt_l, I_line, comps_line, n_free_l, perr_l, covar_l = 
                 @timeit timer_output "line_fit_spaxel" line_fit_spaxel(cube_fitter, spaxel, cube_fitter.subtract_cubic ? I_spline : I_cont,
-                comps_cont["extinction"], mask_lines, I_spline, σ_spline)
+                comps_cont["extinction"], mask_lines, I_spline, σ_spline, lsf_interp_func)
 
             # Combine the continuum and line models
             I_model = I_cont .+ I_line
@@ -835,7 +839,8 @@ function fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex; recalculate
                 @timeit timer_output "calculate_extra_parameters" calculate_extra_parameters(λ, I, σ, cube_fitter.n_dust_cont,
                     cube_fitter.n_dust_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission,
                     cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol, 
-                    popt_c, popt_l, perr_c, perr_l, comps["extinction"], mask_lines, I_spline, cube_fitter.cube.Ω)
+                    lsf_interp_func, popt_c, popt_l, perr_c, perr_l, comps["extinction"], mask_lines, I_spline, 
+                    cube_fitter.cube.Ω)
             p_out = [popt_c; popt_l; p_dust; p_lines; χ2; dof]
             p_err = [perr_c; perr_l; p_dust_err; p_lines_err; 0.; 0.]
 
@@ -915,12 +920,16 @@ function fit_stack!(cube_fitter::CubeFitter; plot_spline=false)
 
     mask_lines, I_spline_init, σ_spline_init = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init, cube_fitter.z)
 
+    # Interpolate the LSF
+    lsf_interp = Spline1D(cube_fitter.cube.λ, cube_fitter.cube.lsf, k=1)
+    lsf_interp_func = x -> lsf_interp(x)
+    
     # Continuum and line fits
     σ_init, popt_c_init, I_c_init, comps_c_init, n_free_c_init, _, _ = continuum_fit_spaxel(cube_fitter, CartesianIndex(0,0),
         mask_lines, I_spline_init, σ_spline_init; init=true)
     _, popt_l_init, I_l_init, comps_l_init, n_free_l_init, _, _ = line_fit_spaxel(cube_fitter, CartesianIndex(0,0), 
         cube_fitter.subtract_cubic ? I_spline_init : I_c_init, comps_c_init["extinction"], mask_lines, 
-        I_spline_init, σ_spline_init; init=true)
+        I_spline_init, σ_spline_init, lsf_interp_func; init=true)
 
     # Get the overall models
     I_model_init = I_c_init .+ I_l_init

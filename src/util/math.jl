@@ -357,11 +357,11 @@ for the line residual fitting.
 
 ln(probability) = ln(likelihood) + ln(prior)
 """
-function negln_probability(p, grad, λ, Inorm, σnorm, n_lines, n_comps, lines, flexible_wavesol, ext_curve, priors)
+function negln_probability(p, grad, λ, Inorm, σnorm, n_lines, n_comps, lines, flexible_wavesol, ext_curve, lsf, priors)
     # Check for gradient
     @assert length(grad) == 0 "Gradient-based solvers are not currently supported!"
     # First compute the model
-    model = model_line_residuals(λ, p, n_lines, n_comps, lines, flexible_wavesol, ext_curve)
+    model = model_line_residuals(λ, p, n_lines, n_comps, lines, flexible_wavesol, ext_curve, lsf)
     # Add the log of the likelihood (based on the model) and the prior distribution functions
     lnP = ln_likelihood(Inorm, model, σnorm) + ln_prior(p, priors)
     # return the NEGATIVE log of the probability
@@ -1047,11 +1047,12 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `flexible_wavesol::Bool`: Whether or not to allow small variations in tied velocity offsets, to account for a poor
     wavelength solution in the data
 - `ext_curve::Vector{<:AbstractFloat}`: The extinction curve fit with model_continuum
+- `lsf::Function`: A function giving the FWHM of the line-spread function in km/s as a function of rest-frame wavelength in microns.
 - `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
 function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_comps::S, lines::TransitionLines, 
-    flexible_wavesol::Bool, ext_curve::Vector{T}, return_components::Bool) where {T<:Real,S<:Integer}
+    flexible_wavesol::Bool, ext_curve::Vector{T}, lsf::Function, return_components::Bool) where {T<:Real,S<:Integer}
 
     # Prepare outputs
     comps = Dict{String, Vector{Float64}}()
@@ -1100,10 +1101,15 @@ function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_co
                     fwhm *= fwhm_1
                 end
 
+                # Broaden the FWHM by the instrumental FWHM at the location of the line
+                fwhm_inst = lsf(lines.λ₀[k])
+                fwhm = √(fwhm^2 + fwhm_inst^2)
+
                 # Convert voff in km/s to mean wavelength in μm
                 mean_μm = Doppler_shift_λ(lines.λ₀[k], voff)
                 # Convert FWHM from km/s to μm
                 fwhm_μm = Doppler_shift_λ(lines.λ₀[k], fwhm/2) - Doppler_shift_λ(lines.λ₀[k], -fwhm/2)
+
                 # Evaluate line profile
                 if lines.profiles[k, j] == :Gaussian
                     comps["line_$(k)_$(j)"] = Gaussian.(λ, amp, mean_μm, fwhm_μm)
@@ -1137,7 +1143,7 @@ end
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
 function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_comps::S, lines::TransitionLines, 
-    flexible_wavesol::Bool, ext_curve::Vector{T}) where {T<:Real,S<:Integer}
+    flexible_wavesol::Bool, ext_curve::Vector{T}, lsf::Function) where {T<:Real,S<:Integer}
 
     # Prepare outputs
     contin = zeros(Float64, length(λ))
@@ -1185,10 +1191,15 @@ function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_co
                     fwhm *= fwhm_1
                 end
 
+                # Broaden the FWHM by the instrumental FWHM at the location of the line
+                fwhm_inst = lsf(lines.λ₀[k])
+                fwhm = √(fwhm^2 + fwhm_inst^2)                
+
                 # Convert voff in km/s to mean wavelength in μm
                 mean_μm = Doppler_shift_λ(lines.λ₀[k], voff)
                 # Convert FWHM from km/s to μm
                 fwhm_μm = Doppler_shift_λ(lines.λ₀[k], fwhm/2) - Doppler_shift_λ(lines.λ₀[k], -fwhm/2)
+
                 # Evaluate line profile
                 if lines.profiles[k, j] == :Gaussian
                     contin .+= Gaussian.(λ, amp, mean_μm, fwhm_μm)
@@ -1215,8 +1226,8 @@ end
 
 """
     calculate_extra_parameters(λ, I, σ, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen,
-        fit_sil_emission, n_lines, n_acomps, n_cops, lines, flexible_wavesol, popt_c, popt_l, perr_c, perr_l,
-        extinction, mask_lines, continuum, Ω)
+        fit_sil_emission, n_lines, n_acomps, n_cops, lines, flexible_wavesol, lsf, popt_c, popt_l, 
+        perr_c, perr_l, extinction, mask_lines, continuum, Ω)
 
 Calculate extra parameters that are not fit, but are nevertheless important to know, for a given spaxel.
 Currently this includes the integrated intensity and signal to noise ratios of dust features and emission lines.
@@ -1224,8 +1235,8 @@ Currently this includes the integrated intensity and signal to noise ratios of d
 function calculate_extra_parameters(λ::Vector{T}, I::Vector{T}, σ::Vector{T}, n_dust_cont::Integer, 
     n_dust_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, 
     n_lines::Integer, n_acomps::Integer, n_comps::Integer, lines::TransitionLines, flexible_wavesol::Bool, 
-    popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}, extinction::Vector{T}, 
-    mask_lines::BitVector, continuum::Vector{T}, Ω::T) where {T<:Real,S<:Integer}
+    lsf::Function, popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}, 
+    extinction::Vector{T}, mask_lines::BitVector, continuum::Vector{T}, Ω::T) where {T<:Real,S<:Integer}
 
     @debug "Calculating extra parameters"
 
@@ -1342,15 +1353,20 @@ function calculate_extra_parameters(λ::Vector{T}, I::Vector{T}, σ::Vector{T}, 
                 # For the additional components, we parametrize them this way to essentially give them soft constraints
                 # relative to the primary component
                 else
-                    amp_err = √((amp * amp_1)^2 * ((amp_1_err / amp_1)^2 + (amp_err / amp)^2))
+                    amp_err = √((amp_1_err * amp)^2 + (amp_err * amp_1)^2)
                     amp *= amp_1
                     
                     voff_err = √(voff_err^2 + voff_1_err^2)
                     voff += voff_1
 
-                    fwhm_err = √((fwhm * fwhm_1)^2 * ((fwhm_1_err / fwhm_1)^2 + (fwhm_err / fwhm)^2))
+                    fwhm_err = √((fwhm_1_err * fwhm)^2 + (fwhm_err * fwhm_1)^2)
                     fwhm *= fwhm_1
                 end
+
+                # Broaden the FWHM by the instrumental FWHM at the location of the line
+                fwhm_inst = lsf(λ0)
+                fwhm_err = fwhm / √(fwhm^2 + fwhm_inst^2) * fwhm_err
+                fwhm = √(fwhm^2 + fwhm_inst^2)
 
                 # Convert voff in km/s to mean wavelength in μm
                 mean_μm = Doppler_shift_λ(λ0, voff)
@@ -1420,28 +1436,13 @@ function calculate_flux(profile::Symbol, amp::T, amp_err::T, peak::T, peak_err::
     if profile == :Drude
         # (integral = π/2 * A * fwhm)
         flux = ∫Drude(amp, fwhm)
-        if iszero(amp)
-            f_err = π/2 * fwhm * amp_err
-        else
-            frac_err2 = (amp_err / amp)^2 + (fwhm_err / fwhm)^2
-            f_err = √(frac_err2 * flux^2)
-        end
+        f_err = π/2 * √((amp_err * fwhm)^2 + (fwhm_err * amp)^2)
     elseif profile == :Gaussian
         flux = ∫Gaussian(amp, fwhm)
-        if iszero(amp)
-            f_err = √(π / (4log(2))) * fwhm * amp_err
-        else
-            frac_err2 = (amp_err / amp)^2 + (fwhm_err / fwhm)^2
-            f_err = √(frac_err2 * flux^2)
-        end
+        f_err = √(π / (4log(2))) * √((amp_err * fwhm)^2 + (fwhm_err * amp)^2)
     elseif profile == :Lorentzian
         flux = ∫Lorentzian(amp, fwhm)
-        if iszero(amp)
-            f_err = π/2 * fwhm * amp_err
-        else
-            frac_err2 = (amp_err / amp)^2 + (fwhm_err / fwhm)^2
-            f_err = √(frac_err2 * flux^2)
-        end
+        f_err = π/2 * √((amp_err * fwhm)^2 + (fwhm_err * amp)^2)
     elseif profile == :GaussHermite
         # shift the profile to be centered at 0 since it doesnt matter for the integral, and it makes it
         # easier for quadgk to find a solution

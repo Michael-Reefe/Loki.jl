@@ -9,7 +9,8 @@ them into code objects.
     parse_resolving(z, channel)
 
 Read in the resolving_mrs.csv configuration file to create a cubic spline interpolation of the
-MIRI MRS resolving power as a function of wavelength.
+MIRI MRS resolving power as a function of wavelength.  The function that is returned provides the
+FWHM of the line-spread function as a function of (observed-frame) wavelength.
 
 # Arguments
 - `channel::String`: The channel of the fit
@@ -76,9 +77,12 @@ function parse_resolving(channel::String)::Function
 
     # Create a linear interpolation function so we can evaluate it at the points of interest for our data,
     # taking an input wi in the OBSERVED frame
-    interp_R = wi -> Spline1D(wave, R, k=1)(wi)
+    interp_R = Spline1D(wave, R, k=1)
+
+    # The line-spread function in km/s
+    lsf = wi -> C_KMS / interp_R(wi)
     
-    interp_R
+    lsf
 end
 
 
@@ -245,16 +249,13 @@ end
 
 
 """
-    parse_lines(fwhm_inst)
+    parse_lines()
 
 Read in the lines.toml configuration file, checking that it is formatted correctly,
 and convert it into a julia dictionary with Parameter objects for line fitting parameters.
 This deals purely with emission line options.
-
-# Arguments
-- `fwhm_inst::Real`: The maximum instrument FWHM in km/s
 """
-function parse_lines(fwhm_inst::Real)
+function parse_lines()
 
     @debug """\n
     Parsing lines file
@@ -264,7 +265,7 @@ function parse_lines(fwhm_inst::Real)
     # Read in the lines file
     lines = TOML.parsefile(joinpath(@__DIR__, "..", "options", "lines.toml"))
 
-    keylist1 = ["tie_voigt_mixing", "voff_plim", "fwhm_plim", "limit_fwhm_res", "h3_plim", "h4_plim", "acomp_voff_plim", 
+    keylist1 = ["tie_voigt_mixing", "voff_plim", "fwhm_plim", "h3_plim", "h4_plim", "acomp_voff_plim", 
         "acomp_fwhm_plim", "flexible_wavesol", "wavesol_unc", "lines", "profiles", "acomps", "n_acomps"]
 
     # Loop through all the required keys that should be in the file and confirm that they are there
@@ -292,13 +293,8 @@ function parse_lines(fwhm_inst::Real)
         end
     end
 
-    # Minimum possible FWHM of a narrow line given the instrumental resolution of MIRI 
-    # in the given wavelength range: Δλ/λ = Δv/c ---> Δv = c/(λ/Δλ) = c/R
-    fwhm_pmin = lines["limit_fwhm_res"] ? fwhm_inst : lines["fwhm_plim"][1]
-    @debug "Setting minimum FWHM to $fwhm_pmin km/s"
-
     # Define the initial values of line parameters given the values in the options file (if present)
-    fwhm_init = haskey(lines, "fwhm_init") ? lines["fwhm_init"] : max(fwhm_pmin + 1, 100)
+    fwhm_init = haskey(lines, "fwhm_init") ? lines["fwhm_init"] : 100.0
     voff_init = haskey(lines, "voff_init") ? lines["voff_init"] : 0.0
     h3_init = haskey(lines, "h3_init") ? lines["h3_init"] : 0.0        # gauss-hermite series start fully gaussian,
     h4_init = haskey(lines, "h4_init") ? lines["h4_init"] : 0.0        # with both h3 and h4 moments starting at 0
@@ -354,8 +350,7 @@ function parse_lines(fwhm_inst::Real)
         # Set the priors for FWHM, voff, h3, h4, and eta based on the values in the options file
         voff_prior = Uniform(lines["voff_plim"]...)
         voff_locked = false
-        fwhm_prior = Uniform(fwhm_pmin, profiles[line] == "GaussHermite" ? 
-                             lines["fwhm_plim"][2] * 2 #= allow GH prof. to be wide =# : lines["fwhm_plim"][2])
+        fwhm_prior = Uniform(lines["fwhm_plim"]...)
         fwhm_locked = false
         if profiles[line] == "GaussHermite"
             h3_prior = truncated(Normal(0.0, 0.1), lines["h3_plim"]... #= normal profile, but truncated with hard limits =#)
@@ -565,7 +560,7 @@ function parse_lines(fwhm_inst::Real)
     msg = ""
     for (i, kin_tie) ∈ enumerate(kin_tied_key[1]), j ∈ 1:size(lines_out.tied, 2)
         v_prior = isone(j) ? Uniform(lines["voff_plim"]...) : Uniform(lines["acomp_voff_plim"][j-1]...)
-        f_prior = isone(j) ? Uniform(fwhm_pmin, lines["fwhm_plim"][2]) : Uniform(lines["acomp_fwhm_plim"][j-1]...)
+        f_prior = isone(j) ? Uniform(lines["fwhm_plim"]...) : Uniform(lines["acomp_fwhm_plim"][j-1]...)
         v_locked = f_locked = false
         # Check if there is an overwrite option in the lines file
         if haskey(lines, "priors")

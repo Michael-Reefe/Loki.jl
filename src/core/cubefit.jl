@@ -127,14 +127,14 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, df_names::Ve
                 elseif line_profiles[i, j] == :Voigt
                     pnames = [pnames; :mixing]
                 end
+                # Append parameters for flux, equivalent width, and signal-to-noise ratio, which are NOT fitting parameters, but are of interest
+                pnames = [pnames; :flux; :eqw; :SNR]
+                for pname ∈ pnames
+                    lines[line][pname] = copy(nan_arr)
+                end
+                @debug "line $line maps with keys $pnames"
             end
-            # Append parameters for flux, equivalent width, and signal-to-noise ratio, which are NOT fitting parameters, but are of interest
-            pnames = [pnames; :flux; :eqw; :SNR]
         end
-        for pname ∈ pnames
-            lines[line][pname] = copy(nan_arr)
-        end
-        @debug "line $line maps with keys $pnames"
     end
 
     # Reduced chi^2 of the fits
@@ -292,7 +292,6 @@ Read from the options files:
 - `cosmology::Cosmology.AbstractCosmology`: The Cosmology, used solely to create physical scale bars on the 2D parameter plots
 - `χ²_thresh::Real`: The threshold for reduced χ² values, below which the best fit parameters for a given
     row will be set
-- `interp_R::Function`: Interpolation function for the instrumental resolution as a function of wavelength
 - `flexible_wavesol::Bool`: Whether or not to allow small variations in the velocity offsets even when tied, to account
     for a bad wavelength solution
 - `p_best_cont::SharedArray{T}`: A rolling collection of best fit continuum parameters for the best fitting spaxels
@@ -362,7 +361,6 @@ struct CubeFitter{T<:Real,S<:Integer}
     
     # General options
     cosmology::Cosmology.AbstractCosmology
-    interp_R::Function
     flexible_wavesol::Bool
 
     p_init_cont::Vector{T}
@@ -410,14 +408,9 @@ struct CubeFitter{T<:Real,S<:Integer}
         # Alias
         λ = cube.λ
 
-        # Parse all of the options files to create default options and parameter objects
-        interp_R = parse_resolving(cube.channel)
-        # Get the limiting value of the instrumental FWHM
-        fwhm_inst = C_KMS / maximum(interp_R.(λ .* (1 .+ z)))
-
         continuum, dust_features = parse_dust()
         options = parse_options()
-        lines, tied_kinematics, flexible_wavesol, tie_voigt_mixing, voigt_mix_tied = parse_lines(fwhm_inst)
+        lines, tied_kinematics, flexible_wavesol, tie_voigt_mixing, voigt_mix_tied = parse_lines()
 
         @debug "### Model will include 1 stellar continuum component ###" *
              "\n### at T = $(continuum.T_s.value) K ###"
@@ -430,7 +423,7 @@ struct CubeFitter{T<:Real,S<:Integer}
         end
         @debug msg 
 
-        # Only use PAH features within +/-0.5 um of the region being fitting (to include wide tails)
+        # Only use PAH features within +/-0.5 um of the region being fit (to include wide tails)
         df_filt = [(minimum(λ)-0.5 < dust_features.mean[i].value < maximum(λ)+0.5) for i ∈ 1:length(dust_features.mean)]
         dust_features = DustFeatures(dust_features.names[df_filt], 
                                      dust_features.profiles[df_filt],
@@ -551,7 +544,7 @@ struct CubeFitter{T<:Real,S<:Integer}
             save_fits, save_full_model, subtract_cubic, overwrite, track_memory, track_convergence, make_movies, extinction_curve, 
             extinction_screen, fit_sil_emission, fit_all_samin, continuum, n_dust_cont, n_dust_features, dust_features, n_lines, n_acomps, 
             n_comps, lines, n_kin_tied, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, 
-            n_params_extra, cosmo, interp_R, flexible_wavesol, p_init_cont, p_init_line)
+            n_params_extra, cosmo, flexible_wavesol, p_init_cont, p_init_line)
     end
 
 end

@@ -43,9 +43,8 @@ kinematic_group_high = [
 
 # Line voff and FWHM limits
 voff_plim = [-500.0, 500.0]              # -500 to 500 km/s from the rest wavelength
-fwhm_plim = [0.0, 500.0]                 # 500 km/s maximum FWHM -> lower limit is filled in by the spectral resolution (c/R)
-limit_fwhm_res = true                    # Whether or not to automatically set a lower limit on the fit FWHM based on the
-                                         #    instrumental FWHM resolution.  This will overwrite the minimum in the "fwhm_plim" option.
+fwhm_plim = [0.0, 500.0]                 # 0 to 500 km/s FWHM velocity of the line -- this is the *intrinsic* FWHM,
+                                         #    i.e. the FWHM after the instrumental FWHM has been subtracted in quadrature
 h3_plim = [-0.5, 0.5]                    # skewness (3rd moment) limits (-0.5, 0.5), to remain mostly gaussian
 h4_plim = [-0.5, 0.5]                    # kurtosis (4th moment) limits (-0.5, 0.5), to remain mostly gaussian
 

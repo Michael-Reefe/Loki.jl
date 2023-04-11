@@ -21,7 +21,7 @@ track_memory = false
 # annealing method SAMIN makes it always print "status: failure" even if convergence
 # was reached. The way to tell whether convergence was ACTUALLY reached is if
 # the number of iterations reached the maximum (which is 10^6 by default).
-track_convergence = false
+track_convergence = true
 
 # make_movies: Whether or not to save mp4 files of the data and final models of
 # IFU cubes. This option require the user to have FFMPeg (https://ffmpeg.org/),

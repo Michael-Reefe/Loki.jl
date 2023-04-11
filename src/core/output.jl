@@ -72,10 +72,10 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
         for df ∈ cube_fitter.dust_features.names
             param_maps.dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z))-17 : -Inf
             param_errs.dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / (log(10) * out_params[index, pᵢ]) : NaN
-            param_maps.dust_features[df][:mean][index] = out_params[index, pᵢ+1]/(1+z)
-            param_errs.dust_features[df][:mean][index] = out_errs[index, pᵢ+1]/(1+z)
-            param_maps.dust_features[df][:fwhm][index] = out_params[index, pᵢ+2]/(1+z)
-            param_errs.dust_features[df][:fwhm][index] = out_errs[index, pᵢ+2]/(1+z)
+            param_maps.dust_features[df][:mean][index] = out_params[index, pᵢ+1] * (1+z)
+            param_errs.dust_features[df][:mean][index] = out_errs[index, pᵢ+1] * (1+z)
+            param_maps.dust_features[df][:fwhm][index] = out_params[index, pᵢ+2] * (1+z)
+            param_errs.dust_features[df][:fwhm][index] = out_errs[index, pᵢ+2] * (1+z)
             pᵢ += 3
         end
 
@@ -93,7 +93,7 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             for j ∈ 1:cube_fitter.n_comps
                 if !isnothing(cube_fitter.lines.profiles[k, j])
 
-                    ln = string(cube_fitter.lines.names[k]) * "_$(j)"
+                    ln = Symbol(cube_fitter.lines.names[k], "_$(j)")
                     amp = out_params[index, pᵢ]
                     amp_err = out_errs[index, pᵢ]
                     if isone(j)
@@ -105,7 +105,6 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
                         param_maps.lines[ln][:amp][index] = amp * amp_1
                         param_errs.lines[ln][:amp][index] = √((amp * amp_1)^2 * ((amp_1_err / amp_1)^2 + (amp_err / amp)^2))
                     end
-                    fwhm_res = C_KMS / cube_fitter.interp_R(cube_fitter.lines.λ₀[k] * (1+z))
                     
                     # Voff parameter
                     voff = out_params[index, pᵢ+1]
@@ -135,28 +134,15 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
                         pᵢ += 3
                     end
 
+                    # FWHM parameter
                     if isone(j)
-                        # FWHM -> subtract instrumental resolution in quadrature
-                        if fwhm_res ≥ fwhm
-                            param_maps.lines[ln][:fwhm][index] = 0.
-                            param_errs.lines[ln][:fwhm][index] = fwhm_err
-                        else
-                            param_maps.lines[ln][:fwhm][index] = √(fwhm^2 - fwhm_res^2)
-                            param_errs.lines[ln][:fwhm][index] = fwhm / √(fwhm^2 - fwhm_res^2) * fwhm_err
-                        end
+                        param_maps.lines[ln][:fwhm][index] = fwhm
+                        param_errs.lines[ln][:fwhm][index] = fwhm_err
                         fwhm_1 = fwhm
                         fwhm_1_err = fwhm_err
                     else
-                        # FWHM -> subtract instrumental resolution in quadrature
-                        fwhm_err = √((fwhm * fwhm_1)^2 * ((fwhm_1_err / fwhm_1)^2 + (fwhm_err / fwhm)^2))
-                        fwhm = fwhm * fwhm_1
-                        if fwhm_res ≥ (fwhm * fwhm_1)
-                            param_maps.lines[ln][:fwhm][index] = 0.
-                            param_errs.lines[ln][:fwhm][index] = fwhm_err
-                        else
-                            param_maps.lines[ln][:fwhm][index] = √(fwhm^2 - fwhm_res^2)
-                            param_errs.lines[ln][:fwhm][index] = fwhm / √(fwhm^2 - fwhm_res^2) * fwhm_err
-                        end
+                        param_maps.lines[ln][:fwhm][index] = fwhm * fwhm_1
+                        param_errs.lines[ln][:fwhm][index] = √((fwhm * fwhm_1)^2 * ((fwhm_1_err / fwhm_1)^2 + (fwhm_err / fwhm)^2))
                     end
 
                     # Get Gauss-Hermite 3rd and 4th order moments
@@ -167,8 +153,8 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
                         param_errs.lines[ln][:h4][index] = out_errs[index, pᵢ+1]
                         pᵢ += 2
                     elseif cube_fitter.lines.profiles[k, j] == :Voigt
-                        param_maps.lines[k][:mixing][index] = out_params[index, pᵢ]
-                        param_errs.lines[k][:mixing][index] = out_errs[index, pᵢ]
+                        param_maps.lines[ln][:mixing][index] = out_params[index, pᵢ]
+                        param_errs.lines[ln][:mixing][index] = out_errs[index, pᵢ]
                         pᵢ += 1
                     end
                 end
@@ -178,9 +164,14 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
         N = Float64(abs(nanmaximum(cube_fitter.cube.Iν[index, :])))
         N = N ≠ 0. ? N : 1.
         if cube_fitter.save_full_model
+
+            # Interpolate the LSF
+            lsf_interp = Spline1D(cube_fitter.cube.λ, cube_fitter.cube.lsf, k=1)
+            lsf_interp_func = x -> lsf_interp(x)
+
             # End of line parameters: recreate the un-extincted (intrinsic) line model
             I_line, comps_l = model_line_residuals(cube_fitter.cube.λ, out_params[index, vᵢ:pᵢ-1], cube_fitter.n_lines, cube_fitter.n_comps,
-                cube_fitter.lines, cube_fitter.flexible_wavesol, comps_c["extinction"], true)
+                cube_fitter.lines, cube_fitter.flexible_wavesol, comps_c["extinction"], lsf_interp_func, true)
 
             # Renormalize
             for comp ∈ keys(comps_l)
@@ -208,7 +199,7 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             for j ∈ 1:cube_fitter.n_comps
                 if !isnothing(cube_fitter.lines.profiles[k, j])
 
-                    ln = string(cube_fitter.lines.names[k]) * "_$(j)"
+                    ln = Symbol(cube_fitter.lines.names[k], "_$(j)")
 
                     # Convert amplitudes to the correct units, then take the log
                     amp_norm = param_maps.lines[ln][:amp][index]
@@ -268,7 +259,7 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             snrs = nothing
             # Loop through and create 3D arrays of the voffs and SNRs of each line in the tied kinematic group
             for k ∈ 1:cube_fitter.n_lines
-                name = cube_fitter.lines.names[k]
+                name = Symbol(cube_fitter.lines.names[k], "_1")
                 if cube_fitter.lines.tied[k, 1] == vk
                     if isnothing(indiv_voffs)
                         indiv_voffs = param_maps.lines[name][:voff_indiv]
@@ -285,7 +276,7 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
                 avg_offset = dropdims(nanmean(indiv_voffs, dims=3), dims=3)
                 # (the goal is to have the average offset of the individual voffs be 0, relative to the tied voff)
                 for k ∈ 1:cube_fitter.n_lines
-                    name = cube_fitter.lines.names[k]
+                    name = Symbol(cube_fitter.lines.names[k], "_1")
                     if cube_fitter.lines.tied[k, 1] == vk
                         # Subtract the average offset from the individual voffs
                         param_maps.lines[name][:voff_indiv] .-= avg_offset
@@ -408,7 +399,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         vmin = -vabs
         vmax = vabs
         if cmap == :cubehelix
-            cmap = :coolwarm
+            cmap = :RdBu_r
         end
     end
     # default cmap is magma for FWHMs and equivalent widths
@@ -459,7 +450,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
 
     # Make directories
     if !isdir(dirname(save_path))
-        mkdir(dirname(save_path))
+        mkpath(dirname(save_path))
     end
     plt.savefig(save_path, dpi=300, bbox_inches=:tight)
     plt.close()
@@ -483,12 +474,15 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
     # Iterate over model parameters and make 2D maps
     @debug "Using solid angle $(cube_fitter.cube.Ω), redshift $(cube_fitter.z), cosmology $(cube_fitter.cosmology)"
 
+    # Ineterpolate the PSF
+    psf_interp = Spline1D(cube_fitter.cube.λ, cube_fitter.cube.psf, k=1)
+
     # Stellar continuum parameters
     for parameter ∈ keys(param_maps.stellar_continuum)
         data = param_maps.stellar_continuum[parameter]
         name_i = join(["stellar_continuum", parameter], "_")
         save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "continuum", "$(name_i).pdf")
-        plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf_fwhm), 
+        plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf), 
             cube_fitter.cosmology, cube_fitter.cube.wcs)
     end
 
@@ -498,7 +492,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
             data = param_maps.dust_continuum[i][parameter]
             name_i = join(["dust_continuum", i, parameter], "_") 
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "continuum", "$(name_i).pdf")
-            plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf_fwhm), 
+            plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf), 
                 cube_fitter.cosmology, cube_fitter.cube.wcs)
         end
     end
@@ -507,14 +501,13 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
     for df ∈ keys(param_maps.dust_features)
         snr = param_maps.dust_features[df][:SNR]
         # Find the wavelength/index at which to get the PSF FWHM for the circle in the plot
-        wave_i = nanmedian(param_maps.dust_features[df][:mean])
-        _, ind_i = findmin(abs.(cube_fitter.cube.λ .- wave_i))
+        wave_i = nanmedian(param_maps.dust_features[df][:mean]) / (1 + cube_fitter.z)
 
         for parameter ∈ keys(param_maps.dust_features[df])
             data = param_maps.dust_features[df][parameter]
             name_i = join(["dust_features", df, parameter], "_")
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "dust_features", "$(name_i).pdf")
-            plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cube.psf_fwhm[ind_i],
+            plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=parameter !== :SNR ? snr : nothing, snr_thresh=snr_thresh)
         end
     end
@@ -524,7 +517,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
         data = param_maps.extinction[parameter]
         name_i = join(["extinction", parameter], "_")
         save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "extinction", "$(name_i).pdf")
-        plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf_fwhm), 
+        plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf), 
             cube_fitter.cosmology, cube_fitter.cube.wcs)
     end
 
@@ -534,7 +527,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
             data = param_maps.hot_dust[parameter]
             name_i = join(["hot_dust", parameter], "_")
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "hot_dust", "$(name_i).pdf")
-            plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf_fwhm), 
+            plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf), 
                 cube_fitter.cosmology, cube_fitter.cube.wcs)
         end
     end
@@ -546,7 +539,6 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
         # Find the wavelength/index at which to get the PSF FWHM for the circle in the plot
         line_i = findfirst(cube_fitter.lines.names .== line_key)
         wave_i = cube_fitter.lines.λ₀[line_i]
-        _, ind_i = findmin(abs.(cube_fitter.cube.λ .- wave_i))
 
         for parameter ∈ keys(param_maps.lines[line])
             data = param_maps.lines[line][parameter]
@@ -556,7 +548,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
                 snr_filter = nothing
             end
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(line_key)", "$(name_i).pdf")
-            plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cube.psf_fwhm[ind_i], 
+            plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i), 
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh)
         end
     end
@@ -564,7 +556,8 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
     # Reduced chi^2 
     data = param_maps.reduced_χ2
     name_i = "reduced_chi2"
-    plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf_fwhm), 
+    save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "$(name_i).pdf")
+    plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf), 
         cube_fitter.cosmology, cube_fitter.cube.wcs)
 
     return
@@ -694,27 +687,27 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
 
             @debug "Writing 3D model FITS HDUs"
 
-            write(f, Vector{Int}())                                                                                 # Primary HDU (empty)
-            write(f, cube_fitter.cube.Iν .* (1 .+ cube_fitter.z); header=hdr, name="DATA")                          # Raw data with nans inserted
-            write(f, cube_model.model; header=hdr, name="MODEL")                                                    # Full intensity model
-            write(f, cube_model.stellar; header=hdr, name="STELLAR_CONTINUUM")                                      # Stellar continuum model
+            write(f, Vector{Int}(); header=hdr)                                                         # Primary HDU (empty)
+            write(f, cube_fitter.cube.Iν .* (1 .+ cube_fitter.z); name="DATA")                          # Raw data with nans inserted
+            write(f, cube_model.model; name="MODEL")                                                    # Full intensity model
+            write(f, cube_model.stellar; name="STELLAR_CONTINUUM")                                      # Stellar continuum model
             for i ∈ 1:size(cube_model.dust_continuum, 4)
-                write(f, cube_model.dust_continuum[:, :, :, i]; header=hdr, name="DUST_CONTINUUM_$i")               # Dust continuum models
+                write(f, cube_model.dust_continuum[:, :, :, i]; name="DUST_CONTINUUM_$i")               # Dust continuum models
             end
             for (j, df) ∈ enumerate(cube_fitter.dust_features.names)
-                write(f, cube_model.dust_features[:, :, :, j]; header=hdr, name="$df")                              # Dust feature profiles
+                write(f, cube_model.dust_features[:, :, :, j]; name="$df")                              # Dust feature profiles
             end
             for (k, line) ∈ enumerate(cube_fitter.lines.names)
-                write(f, cube_model.lines[:, :, :, k]; header=hdr, name="$line")                                    # Emission line profiles
+                write(f, cube_model.lines[:, :, :, k]; name="$line")                                    # Emission line profiles
             end
-            write(f, cube_model.extinction; header=hdr, name="EXTINCTION")                                          # Extinction model
-            write(f, cube_model.abs_ice; header=hdr, name="ABS_ICE")                                                # Ice Absorption model
-            write(f, cube_model.abs_ch; header=hdr, name="ABS_CH")                                                  # CH Absorption model
+            write(f, cube_model.extinction; name="EXTINCTION")                                          # Extinction model
+            write(f, cube_model.abs_ice; name="ABS_ICE")                                                # Ice Absorption model
+            write(f, cube_model.abs_ch; name="ABS_CH")                                                  # CH Absorption model
             if cube_fitter.fit_sil_emission
-                write(f, cube_model.hot_dust; header=hdr, name="HOT_DUST")                                          # Hot dust model
+                write(f, cube_model.hot_dust; name="HOT_DUST")                                          # Hot dust model
             end
             
-            write(f, ["wave"], [cube_fitter.cube.λ .* (1 .+ cube_fitter.z)],                                        # wavelength vector
+            write(f, ["wave"], [cube_fitter.cube.λ .* (1 .+ cube_fitter.z)],                            # wavelength vector
                 hdutype=TableHDU, name="WAVELENGTH", units=Dict(:wave => "um"))
 
             # Insert physical units into the headers of each HDU -> MegaJansky per steradian for all except
@@ -741,198 +734,132 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
         end
     end
 
-    # Create the 2D parameter map FITS file
-    FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_parameter_maps.fits"), "w") do f
+    # Create the 2D parameter map FITS file for the parameters and the errors
+    for (index, param_data) ∈ enumerate([param_maps, param_errs])
+            
+        FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_parameter_" * 
+            (isone(index) ? "maps" : "errs") * ".fits"), "w") do f
 
-        @debug "Writing 2D parameter map FITS HDUs"
+            @debug "Writing 2D parameter map FITS HDUs"
 
-        write(f, Vector{Int}())  # Primary HDU (empty)
-
-        # Iterate over model parameters and make 2D maps
-
-        # Stellar continuum parameters
-        for parameter ∈ keys(param_maps.stellar_continuum)
-            data = param_maps.stellar_continuum[parameter]
-            name_i = join(["stellar_continuum", parameter], "_")
-            if occursin("amp", String(name_i))
-                bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
-            elseif occursin("temp", String(name_i))
-                bunit = "Kelvin"
+            write(f, Vector{Int}(), header=hdr)  # Primary HDU (empty)
+            # Tied line information
+            for j in 1:cube_fitter.n_comps
+                line_keys = [string(ki) for ki in cube_fitter.tied_kinematics.key[j]]
+                tied_groups = [[name for (name,tied) in zip(cube_fitter.lines.names, cube_fitter.lines.tied[:, j]) if tied == key] for key in line_keys]
+                for (line_key, tied_group) in zip(line_keys, tied_groups)
+                    for (li, line_i) in enumerate(tied_group)
+                        write_key(f[1], "kinematic_group_" * string(line_key) * "_$(j)_$(li)", string(line_i))
+                    end
+                end
             end
-            write(f, data; header=hdr, name=name_i)
-            write_key(f[name_i], "BUNIT", bunit)
-        end
-        for parameter ∈ keys(param_errs.stellar_continuum)
-            data = param_errs.stellar_continuum[parameter]
-            name_i = join(["stellar_continuum", parameter, "err"], "_")
-            if occursin("amp", String(name_i))
-                bunit = "dex"
-            elseif occursin("temp", String(name_i))
-                bunit = "Kelvin"
-            end
-            write(f, data; header=hdr, name=name_i)
-            write_key(f[name_i], "BUNIT", bunit)
-        end
 
-        # Dust continuum parameters
-        for i ∈ keys(param_maps.dust_continuum)
-            for parameter ∈ keys(param_maps.dust_continuum[i])
-                data = param_maps.dust_continuum[i][parameter]
-                name_i = join(["dust_continuum", i, parameter], "_")
+            # Iterate over model parameters and make 2D maps
+
+            # Stellar continuum parameters
+            for parameter ∈ keys(param_data.stellar_continuum)
+                data = param_data.stellar_continuum[parameter]
+                name_i = join(["stellar_continuum", parameter], "_")
                 if occursin("amp", String(name_i))
                     bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
                 elseif occursin("temp", String(name_i))
                     bunit = "Kelvin"
                 end
-                write(f, data; header=hdr, name=name_i)
-                write_key(f[name_i], "BUNIT", bunit)  
-            end
-        end
-        for i ∈ keys(param_errs.dust_continuum)
-            for parameter ∈ keys(param_errs.dust_continuum[i])
-                data = param_errs.dust_continuum[i][parameter]
-                name_i = join(["dust_continuum", i, parameter, "err"], "_")
-                if occursin("amp", String(name_i))
-                    bunit = "dex"
-                elseif occursin("temp", String(name_i))
-                    bunit = "Kelvin"
-                end
-                write(f, data; header=hdr, name=name_i)
-                write_key(f[name_i], "BUNIT", bunit)  
-            end
-        end
-
-        if cube_fitter.fit_sil_emission
-            # Hot dust parameters
-            for parameter ∈ keys(param_maps.hot_dust)
-                data = param_maps.hot_dust[parameter]
-                name_i = join(["hot_dust", parameter], "_")
-                if occursin("amp", String(name_i))
-                    bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
-                elseif occursin("temp", String(name_i))
-                    bunit = "Kelvin"
-                elseif occursin("frac", String(name_i)) || occursin("tau", String(name_i))
-                    bunit = "unitless"
-                end
-                write(f, data; header=hdr, name=name_i)
+                write(f, data; name=name_i)
                 write_key(f[name_i], "BUNIT", bunit)
             end
-            for parameter ∈ keys(param_errs.hot_dust)
-                data = param_errs.hot_dust[parameter]
-                name_i = join(["hot_dust", parameter], "_")
-                if occursin("amp", String(name_i))
-                    bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
-                elseif occursin("temp", String(name_i))
-                    bunit = "Kelvin"
-                elseif occursin("frac", String(name_i)) || occursin("tau", String(name_i))
-                    bunit = "unitless"
+
+            # Dust continuum parameters
+            for i ∈ keys(param_data.dust_continuum)
+                for parameter ∈ keys(param_data.dust_continuum[i])
+                    data = param_data.dust_continuum[i][parameter]
+                    name_i = join(["dust_continuum", i, parameter], "_")
+                    if occursin("amp", String(name_i))
+                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                    elseif occursin("temp", String(name_i))
+                        bunit = "Kelvin"
+                    end
+                    write(f, data; name=name_i)
+                    write_key(f[name_i], "BUNIT", bunit)  
                 end
-                write(f, data; header=hdr, name=name_i)
+            end
+
+            if cube_fitter.fit_sil_emission
+                # Hot dust parameters
+                for parameter ∈ keys(param_data.hot_dust)
+                    data = param_data.hot_dust[parameter]
+                    name_i = join(["hot_dust", parameter], "_")
+                    if occursin("amp", String(name_i))
+                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                    elseif occursin("temp", String(name_i))
+                        bunit = "Kelvin"
+                    elseif occursin("frac", String(name_i)) || occursin("tau", String(name_i))
+                        bunit = "unitless"
+                    end
+                    write(f, data; name=name_i)
+                    write_key(f[name_i], "BUNIT", bunit)
+                end
+            end
+
+            # Dust feature (PAH) parameters
+            for df ∈ keys(param_data.dust_features)
+                for parameter ∈ keys(param_data.dust_features[df])
+                    data = param_data.dust_features[df][parameter]
+                    name_i = join(["dust_features", df, parameter], "_")
+                    if occursin("amp", String(name_i))
+                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                    elseif occursin("fwhm", String(name_i)) || occursin("mean", String(name_i)) || occursin("eqw", String(name_i))
+                        bunit = "um"
+                    elseif occursin("flux", String(name_i))
+                        bunit = "log10(F / erg s^-1 cm^-2)"
+                    elseif occursin("SNR", String(name_i))
+                        bunit = "unitless"
+                    end
+                    write(f, data; name=name_i)
+                    write_key(f[name_i], "BUNIT", bunit)      
+                end
+            end
+            
+            # Extinction parameters
+            for parameter ∈ keys(param_data.extinction)
+                data = param_data.extinction[parameter]
+                name_i = join(["extinction", parameter], "_")
+                bunit = "unitless"
+                write(f, data; name=name_i)
+                write_key(f[name_i], "BUNIT", bunit)  
+            end
+
+            # Line parameters
+            for line ∈ keys(param_data.lines)
+                for parameter ∈ keys(param_data.lines[line])
+                    data = param_data.lines[line][parameter]
+                    name_i = join(["lines", line, parameter], "_")
+                    if occursin("amp", String(name_i))
+                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                    elseif occursin("fwhm", String(name_i)) || occursin("voff", String(name_i))
+                        bunit = "km/s"
+                    elseif occursin("flux", String(name_i))
+                        bunit = "log10(I / erg s^-1 cm^-2)"
+                    elseif occursin("eqw", String(name_i))
+                        bunit = "um"
+                    elseif occursin("SNR", String(name_i)) || occursin("h3", String(name_i)) || 
+                        occursin("h4", String(name_i)) || occursin("mixing", String(name_i))
+                        bunit = "unitless"
+                    end
+                    write(f, data; name=name_i)
+                    write_key(f[name_i], "BUNIT", bunit)
+                end
+            end
+
+            if isone(index)
+                # Reduced chi^2
+                data = param_maps.reduced_χ2
+                name_i = "reduced_chi2"
+                bunit = "unitless"
+                write(f, data; name=name_i)
                 write_key(f[name_i], "BUNIT", bunit)
             end
         end
-
-        # Dust feature (PAH) parameters
-        for df ∈ keys(param_maps.dust_features)
-            for parameter ∈ keys(param_maps.dust_features[df])
-                data = param_maps.dust_features[df][parameter]
-                name_i = join(["dust_features", df, parameter], "_")
-                if occursin("amp", String(name_i))
-                    bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
-                elseif occursin("fwhm", String(name_i)) || occursin("mean", String(name_i)) || occursin("eqw", String(name_i))
-                    bunit = "um"
-                elseif occursin("flux", String(name_i))
-                    bunit = "log10(F / erg s^-1 cm^-2)"
-                elseif occursin("SNR", String(name_i))
-                    bunit = "unitless"
-                end
-                write(f, data; header=hdr, name=name_i)
-                write_key(f[name_i], "BUNIT", bunit)      
-            end
-        end
-        for df ∈ keys(param_errs.dust_features)
-            for parameter ∈ keys(param_errs.dust_features[df])
-                data = param_errs.dust_features[df][parameter]
-                name_i = join(["dust_features", df, parameter, "err"], "_")
-                if occursin("amp", String(name_i))
-                    bunit = "dex"
-                elseif occursin("fwhm", String(name_i)) || occursin("mean", String(name_i)) || occursin("eqw", String(name_i))
-                    bunit = "um"
-                elseif occursin("flux", String(name_i))
-                    bunit = "dex"
-                elseif occursin("SNR", String(name_i))
-                    bunit = "unitless"
-                end
-                write(f, data; header=hdr, name=name_i)
-                write_key(f[name_i], "BUNIT", bunit)      
-            end
-        end
-           
-        # Extinction parameters
-        for parameter ∈ keys(param_maps.extinction)
-            data = param_maps.extinction[parameter]
-            name_i = join(["extinction", parameter], "_")
-            bunit = "unitless"
-            write(f, data; header=hdr, name=name_i)
-            write_key(f[name_i], "BUNIT", bunit)  
-        end
-        for parameter ∈ keys(param_errs.extinction)
-            data = param_errs.extinction[parameter]
-            name_i = join(["extinction", parameter, "err"], "_")
-            bunit = "unitless"
-            write(f, data; header=hdr, name=name_i)
-            write_key(f[name_i], "BUNIT", bunit)  
-        end
-
-        # Line parameters
-        for line ∈ keys(param_maps.lines)
-            for parameter ∈ keys(param_maps.lines[line])
-                data = param_maps.lines[line][parameter]
-                name_i = join(["lines", line, parameter], "_")
-                if occursin("amp", String(name_i))
-                    bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
-                elseif occursin("fwhm", String(name_i)) || occursin("voff", String(name_i))
-                    bunit = "km/s"
-                elseif occursin("flux", String(name_i))
-                    bunit = "log10(I / erg s^-1 cm^-2)"
-                elseif occursin("eqw", String(name_i))
-                    bunit = "um"
-                elseif occursin("SNR", String(name_i)) || occursin("h3", String(name_i)) || 
-                    occursin("h4", String(name_i)) || occursin("mixing", String(name_i))
-                    bunit = "unitless"
-                end
-                write(f, data; header=hdr, name=name_i)
-                write_key(f[name_i], "BUNIT", bunit)   
-            end
-        end
-        for line ∈ keys(param_errs.lines)
-            for parameter ∈ keys(param_errs.lines[line])
-                data = param_errs.lines[line][parameter]
-                name_i = join(["lines", line, parameter, "err"], "_")
-                if occursin("amp", String(name_i))
-                    bunit = "dex"
-                elseif occursin("fwhm", String(name_i)) || occursin("voff", String(name_i))
-                    bunit = "km/s"
-                elseif occursin("flux", String(name_i))
-                    bunit = "dex"
-                elseif occursin("eqw", String(name_i))
-                    bunit = "um"
-                elseif occursin("SNR", String(name_i)) || occursin("h3", String(name_i)) || 
-                    occursin("h4", String(name_i)) || occursin("mixing", String(name_i))
-                    bunit = "unitless"
-                end
-                write(f, data; header=hdr, name=name_i)
-                write_key(f[name_i], "BUNIT", bunit)   
-            end
-        end
-
-        # Reduced chi^2
-        data = param_maps.reduced_χ2
-        name_i = "reduced_chi2"
-        bunit = "unitless"
-        write(f, data; header=hdr, name=name_i)
-        write_key(f[name_i], "BUNIT", bunit)
-
     end
 end
 
