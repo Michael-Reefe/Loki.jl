@@ -69,7 +69,7 @@ function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}, z::Real; Δ:
             offset = findfirst(λ[.~mask] .> (λ[.~mask][1] + scale))
             λknots = λ[.~mask][offset+1]:scale:λ[.~mask][end-offset-1]
             good = []
-            for i ∈ 1:length(λknots)
+            for i ∈ eachindex(λknots)
                 _, ind = findmin(abs.(λ .- λknots[i]))
                 if !isnan(I[ind])
                     append!(good, [i])
@@ -140,7 +140,7 @@ function continuum_cubic_spline(λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vecto
     λknots = λ[finite][offset+1]:scale:λ[finite][end-offset-1]
     # Remove any knots that happen to fall within a masked pixel
     good = []
-    for i ∈ 1:length(λknots)
+    for i ∈ eachindex(λknots)
         _, ind = findmin(abs.(λ .- λknots[i]))
         if !isnan(I_out[ind])
             append!(good, [i])
@@ -496,7 +496,26 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, contin
     fit_func = (x, p) -> model_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
         cube_fitter.flexible_wavesol, ext_curve, lsf_interp_func)
     
+    χ2_before = sum((Inorm .- fit_step3(λ, p₁, fit_func)).^2 ./ σnorm.^2)
     res = cmpfit(λ, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func), p₁, parinfo=parinfo, config=config)
+    χ2_after = res.bestnorm
+
+    # Check if CMPFit improved the reduced chi^2 at all.  If not, redo simulated annealing.
+    if χ2_after ≥ χ2_before && !init
+        @warn "The Levenberg-Marquardt solver for spaxel $spaxel did not improve the chi-squared. Re-running with simulated annealing."
+
+        fit_func = (x, p) -> negln_probability(p, [], x, Inorm, σnorm, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines,
+            cube_fitter.flexible_wavesol, ext_curve, lsf_interp_func, priors)
+        x_tol = 1e-5
+        f_tol = abs(fit_func(λ, p₀) - fit_func(λ, clamp.(p₀ .- x_tol, lower_bounds, upper_bounds)))
+
+        # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
+        res = Optim.optimize(p -> fit_step3(λ, p, fit_func), lbfree_tied, ubfree_tied, pfree_tied, 
+            SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
+        p₁ = res.minimizer
+
+        res = cmpfit(λ, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func), p₁, parinfo=parinfo, config=config)
+    end 
 
     @debug "Line CMPFit status: $(res.status)"
 
@@ -1051,6 +1070,12 @@ function fit_cube!(cube_fitter::CubeFitter)::Tuple{CubeFitter, ParamMaps, ParamM
         @info "===> Writing FITS outputs... <==="
         write_fits(cube_fitter, cube_model, param_maps, param_errs)
     end
+
+    # Save a copy of the options file used to run the code, so the settings can be referenced/reused
+    # (for example, if you need to recall which lines you tied, what your limits were, etc.)
+    cp(joinpath(@__DIR__, "..", "options", "options.toml"), joinpath("output_$(cube_fitter.name)", "general_options.archive.toml"), force=true)
+    cp(joinpath(@__DIR__, "..", "options", "dust.toml"), joinpath("output_$(cube_fitter.name)", "dust_options.archive.toml"), force=true)
+    cp(joinpath(@__DIR__, "..", "options", "lines.toml"), joinpath("output_$(cube_fitter.name)", "lines_options.archive.toml"), force=true)
 
     if cube_fitter.make_movies
         @info "===> Writing MP4 movies... (this may take a while) <==="

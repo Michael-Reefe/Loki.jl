@@ -1068,7 +1068,7 @@ function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_co
                 amp = params[pᵢ]
                 voff = params[pᵢ+1]
                 # Check if using a flexible_wavesol tied voff -> if so there is an extra voff parameter
-                if flexible_wavesol && isone(j)
+                if !isnothing(lines.tied_voff[k, j]) && flexible_wavesol && isone(j)
                     voff += params[pᵢ+2]
                     fwhm = params[pᵢ+3]
                     pᵢ += 4
@@ -1103,7 +1103,7 @@ function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_co
 
                 # Broaden the FWHM by the instrumental FWHM at the location of the line
                 fwhm_inst = lsf(lines.λ₀[k])
-                fwhm = √(fwhm^2 + fwhm_inst^2)
+                fwhm = hypot(fwhm, fwhm_inst)
 
                 # Convert voff in km/s to mean wavelength in μm
                 mean_μm = Doppler_shift_λ(lines.λ₀[k], voff)
@@ -1158,7 +1158,7 @@ function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_co
                 amp = params[pᵢ]
                 voff = params[pᵢ+1]
                 # Check if using a flexible_wavesol tied voff -> if so there is an extra voff parameter
-                if flexible_wavesol && isone(j)
+                if !isnothing(lines.tied_voff[k, j]) && flexible_wavesol && isone(j)
                     voff += params[pᵢ+2]
                     fwhm = params[pᵢ+3]
                     pᵢ += 4
@@ -1193,7 +1193,7 @@ function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_co
 
                 # Broaden the FWHM by the instrumental FWHM at the location of the line
                 fwhm_inst = lsf(lines.λ₀[k])
-                fwhm = √(fwhm^2 + fwhm_inst^2)                
+                fwhm = hypot(fwhm, fwhm_inst)
 
                 # Convert voff in km/s to mean wavelength in μm
                 mean_μm = Doppler_shift_λ(lines.λ₀[k], voff)
@@ -1315,9 +1315,9 @@ function calculate_extra_parameters(λ::Vector{T}, I::Vector{T}, σ::Vector{T}, 
                 # fill values with nothings for profiles that may / may not have them
                 h3 = h3_err = h4 = h4_err = η = η_err = nothing
 
-                if flexible_wavesol && isone(j)
+                if !isnothing(lines.tied_voff[k, j]) && flexible_wavesol && isone(j)
                     voff += popt_l[pᵢ+2]
-                    voff_err = √(voff_err^2 + perr_l[pᵢ+2]^2)
+                    voff_err = hypot(voff_err, perr_l[pᵢ+2])
                     fwhm = popt_l[pᵢ+3]
                     fwhm_err = perr_l[pᵢ+3]
                     pᵢ += 4
@@ -1353,20 +1353,20 @@ function calculate_extra_parameters(λ::Vector{T}, I::Vector{T}, σ::Vector{T}, 
                 # For the additional components, we parametrize them this way to essentially give them soft constraints
                 # relative to the primary component
                 else
-                    amp_err = √((amp_1_err * amp)^2 + (amp_err * amp_1)^2)
+                    amp_err = hypot(amp_1_err*amp, amp_err*amp_1)
                     amp *= amp_1
                     
-                    voff_err = √(voff_err^2 + voff_1_err^2)
+                    voff_err = hypot(voff_err, voff_1_err)
                     voff += voff_1
 
-                    fwhm_err = √((fwhm_1_err * fwhm)^2 + (fwhm_err * fwhm_1)^2)
+                    fwhm_err = hypot(fwhm_1_err*fwhm, fwhm_err*fwhm_1)
                     fwhm *= fwhm_1
                 end
 
                 # Broaden the FWHM by the instrumental FWHM at the location of the line
                 fwhm_inst = lsf(λ0)
-                fwhm_err = fwhm / √(fwhm^2 + fwhm_inst^2) * fwhm_err
-                fwhm = √(fwhm^2 + fwhm_inst^2)
+                fwhm_err = fwhm / hypot(fwhm, fwhm_inst) * fwhm_err
+                fwhm = hypot(fwhm, fwhm_inst)
 
                 # Convert voff in km/s to mean wavelength in μm
                 mean_μm = Doppler_shift_λ(λ0, voff)
@@ -1436,13 +1436,13 @@ function calculate_flux(profile::Symbol, amp::T, amp_err::T, peak::T, peak_err::
     if profile == :Drude
         # (integral = π/2 * A * fwhm)
         flux = ∫Drude(amp, fwhm)
-        f_err = π/2 * √((amp_err * fwhm)^2 + (fwhm_err * amp)^2)
+        f_err = π/2 * hypot(amp_err*fwhm, fwhm_err*amp)
     elseif profile == :Gaussian
         flux = ∫Gaussian(amp, fwhm)
-        f_err = √(π / (4log(2))) * √((amp_err * fwhm)^2 + (fwhm_err * amp)^2)
+        f_err = √(π / (4log(2))) * hypot(amp_err*fwhm, fwhm_err*amp)
     elseif profile == :Lorentzian
         flux = ∫Lorentzian(amp, fwhm)
-        f_err = π/2 * √((amp_err * fwhm)^2 + (fwhm_err * amp)^2)
+        f_err = π/2 * hypot(amp_err*fwhm, fwhm_err*amp)
     elseif profile == :GaussHermite
         # shift the profile to be centered at 0 since it doesnt matter for the integral, and it makes it
         # easier for quadgk to find a solution

@@ -6,7 +6,7 @@ src/idl_data*
 Manifest.toml
 
 # vscode
-.vscode/*
+**/.vscode/*
 
 # DS_Store
 *.DS_Store

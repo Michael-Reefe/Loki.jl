@@ -83,18 +83,18 @@ obs = from_fits(["data/Level3_ch1-long_s3d.fits",
 correct!(obs)
 
 # Concatenate the subchannels of each channel so that we have one cube for each channel
-for channel ∈ 1:4
-    reproject_channels!(obs, channel, out_id=channel, method=:adaptive) 
-    # Interpolate NaNs in otherwise good spaxels
-    interpolate_nans!(obs.channels[channel])
-end
-reproject_channels!(obs, [1,2,3], out_id=0, method=:adaptive)
-interpolate_nans!(obs.channels[0], obs.z)
-channel = 0
+# for channel ∈ 1:4
+#     reproject_channels!(obs, channel, out_id=channel, method=:adaptive) 
+#     # Interpolate NaNs in otherwise good spaxels
+#     interpolate_nans!(obs.channels[channel])
+# end
+# reproject_channels!(obs, [1,2,3], out_id=0, method=:adaptive)
+# interpolate_nans!(obs.channels[0], obs.z)
+# channel = 0
 
-# reproject_channels!(obs, 2, out_id=2, method=:adaptive)
-# interpolate_nans!(obs.channels[2], obs.z)
-# channel = 2
+reproject_channels!(obs, 3, out_id=3, method=:adaptive)
+interpolate_nans!(obs.channels[3], obs.z)
+channel = 3
 
 # Do the optical depth pre-fitting
 # τ_guess = fit_optical_depth(obs)
@@ -109,7 +109,7 @@ channel = 0
 
 # Create the cube fitting object
 # plot_range=[(7.61, 7.69), (12.77, 12.85)]
-cube_fitter = CubeFitter(obs.channels[channel], obs.z, obs.name * "_ch$(channel)_full_tied_rpj_adaptive_fwhm_intrin"; 
+cube_fitter = CubeFitter(obs.channels[channel], obs.z, obs.name * "_ch$(channel)_full_tied_rpj_adaptive_test_fwhm_untie"; 
     parallel=true, plot_spaxels=:pyplot, plot_maps=true, save_fits=true)
 
 # Fit the cube

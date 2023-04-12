@@ -10,6 +10,9 @@ tie_voigt_mixing = true     # tie the Voigt mixing ratios of all lines
 kinematic_group_H2 = [
     "H200_S"
 ]
+tie_voff_H2 = true
+tie_fwhm_H2 = false
+
 kinematic_group_low = [
     "HI_Br_",
     "HI_Pf_",
@@ -25,6 +28,9 @@ kinematic_group_low = [
     "PIII_",
     "SIII_"
 ]
+tie_voff_low = false
+tie_fwhm_low = false
+
 kinematic_group_med = [
     "ArV_",
     "NaIII_",
@@ -32,6 +38,9 @@ kinematic_group_med = [
     "OIV_",
     "SIV_"
 ]
+tie_voff_med = false
+tie_fwhm_med = true
+
 kinematic_group_high = [
     "FeVII_",
     "FeVIII_",
@@ -51,7 +60,7 @@ h4_plim = [-0.5, 0.5]                    # kurtosis (4th moment) limits (-0.5, 0
 # Additional line components
 n_acomps = 1
 acomp_voff_plim = [[-500.0, 500.0]]      # additive factor with the main line voff -> i.e. the additional component
-                                         # is allowed to have a voff up to -250 km/s from the main component (it must be to the left)
+                                         # is allowed to have a voff up to +/-500 km/s from the main component 
 acomp_fwhm_plim = [[1.0, 5.0]]           # multiplicative factor with the main line FWHM -> i.e. the additional component
                                          # is allowed to have a FWHM from 1-5x the main component (it must be wider)
 
@@ -432,7 +441,7 @@ default = "Voigt"
 # of profile it should be. Can add an arbitrary number of additional components.
 [acomps]
 NeVI_7652 = ["Voigt"]
-# NeII_12813 = ["Voigt"]
+NeII_12813 = ["Voigt"]
 NeIII_15555 = ["Voigt"]
 NeV_14322 = ["Voigt"]
 ArIII_8991 = ["Voigt"]
@@ -440,17 +449,6 @@ SIV_10511 = ["Voigt"]
 
 
 # optional: add [priors] key to specify individual line priors that 
-# are different from the default Uniform
+# are different from the defaults
 
-[priors]
-
-# [priors.low]
-# voff_pstr = "Uniform(-500, 500)"
-# voff_locked = false
-# fwhm_pstr = "Uniform(77, 500)"
-# fwhm_locked = false
-
-# acomp_voff_pstr = ["Uniform(-500, 500)"]
-# acomp_voff_locked = [false]
-# acomp_fwhm_pstr = ["Uniform(2., 5.)"]
-# acomp_fwhm_locked = [false]
+# [priors]

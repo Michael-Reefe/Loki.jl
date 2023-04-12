@@ -120,7 +120,7 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
                     end
 
                     # Individual voff parameter
-                    if cube_fitter.flexible_wavesol && isone(j)
+                    if !isnothing(cube_fitter.lines.tied_voff[k, j]) && cube_fitter.flexible_wavesol && isone(j)
                         voff_indiv = out_params[index, pᵢ+2]
                         voff_indiv_err = out_errs[index, pᵢ+2]
                         param_maps.lines[ln][:voff_indiv][index] = voff_indiv
@@ -254,13 +254,13 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
     # Subtract the average of the individual voffs from the tied voffs, based on the SNR, for each group
     if cube_fitter.flexible_wavesol
         @debug "Adjusting individual voffs due to the flexible_wavesol option"
-        for vk ∈ cube_fitter.tied_kinematics.key[1]
+        for vk ∈ cube_fitter.tied_kinematics.key_voff[1]
             indiv_voffs = nothing
             snrs = nothing
             # Loop through and create 3D arrays of the voffs and SNRs of each line in the tied kinematic group
             for k ∈ 1:cube_fitter.n_lines
                 name = Symbol(cube_fitter.lines.names[k], "_1")
-                if cube_fitter.lines.tied[k, 1] == vk
+                if cube_fitter.lines.tied_voff[k, 1] == vk
                     if isnothing(indiv_voffs)
                         indiv_voffs = param_maps.lines[name][:voff_indiv]
                         snrs = param_maps.lines[name][:SNR]
@@ -277,7 +277,7 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
                 # (the goal is to have the average offset of the individual voffs be 0, relative to the tied voff)
                 for k ∈ 1:cube_fitter.n_lines
                     name = Symbol(cube_fitter.lines.names[k], "_1")
-                    if cube_fitter.lines.tied[k, 1] == vk
+                    if cube_fitter.lines.tied_voff[k, 1] == vk
                         # Subtract the average offset from the individual voffs
                         param_maps.lines[name][:voff_indiv] .-= avg_offset
                         # and add it to the tied voffs
@@ -406,7 +406,14 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     if (occursin("fwhm", String(name_i)) || occursin("eqw", String(name_i))) && cmap == :cubehelix
         cmap = :magma
     end
-    cdata = ax.imshow(filtered', origin=:lower, cmap=cmap, vmin=vmin, vmax=vmax)
+
+    # Add small value to vmax to prevent the maximum color value from being the same as the background
+    small = 0.
+    if cmap == :cubehelix
+        small = (vmax - vmin) / 1e3
+    end
+
+    cdata = ax.imshow(filtered', origin=:lower, cmap=cmap, vmin=vmin, vmax=vmax+small)
     # ax.axis(:off)
     ax.tick_params(which="both", axis="both", direction="in")
     ax.set_xlabel("R.A.")
@@ -505,7 +512,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
 
         for parameter ∈ keys(param_maps.dust_features[df])
             data = param_maps.dust_features[df][parameter]
-            name_i = join(["dust_features", df, parameter], "_")
+            name_i = join([df, parameter], "_")
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "dust_features", "$(name_i).pdf")
             plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=parameter !== :SNR ? snr : nothing, snr_thresh=snr_thresh)
@@ -542,7 +549,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
 
         for parameter ∈ keys(param_maps.lines[line])
             data = param_maps.lines[line][parameter]
-            name_i = join(["lines", line, parameter], "_")
+            name_i = join([line, parameter], "_")
             snr_filter = param_maps.lines[line][:SNR]
             if contains(string(parameter), "SNR")
                 snr_filter = nothing
@@ -552,6 +559,32 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh)
         end
     end
+
+    # Total parameters for lines with multiple components
+    for (k, name) ∈ enumerate(cube_fitter.lines.names)
+        n_line_comps = sum(.!isnothing.(cube_fitter.lines.profiles[k, :]))
+        wave_i = cube_fitter.lines.λ₀[k]
+        snr_filter = param_maps.lines[Symbol(name, "_1")][:SNR]
+        if n_line_comps > 1
+            component_keys = [Symbol(name, "_$(j)") for j in 1:n_line_comps]
+
+            # Total flux
+            total_flux = log10.(sum([exp10.(param_maps.lines[comp][:flux]) for comp in component_keys]))
+            name_i = join([name, "total_flux"], "_")
+            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(name)", "$(name_i).pdf")
+            plot_parameter_map(total_flux, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
+                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh)
+
+            # Total equivalent width
+            total_eqw = sum([param_maps.lines[comp][:eqw] for comp in component_keys])
+            name_i = join([name, "total_eqw"], "_")
+            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(name)", "$(name_i).pdf")
+            plot_parameter_map(total_eqw, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
+                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh)
+            
+        end
+    end
+
 
     # Reduced chi^2 
     data = param_maps.reduced_χ2
@@ -629,7 +662,7 @@ function make_movie(cube_fitter::CubeFitter, cube_model::CubeModel; cmap::Symbol
         # Loop over the wavelength axis and set the image data to the new slice for each frame
         output_file = joinpath("output_$(cube_fitter.name)", "$title.mp4")
         writer.setup(fig, output_file, dpi=300)
-        for i ∈ 1:size(full_data, 3)
+        for i ∈ axes(full_data, 3)
             data_i = full_data[:, :, i] 
             image.set_array(data_i')
             ln.set_data(wave_rest[i], 24)
@@ -743,16 +776,6 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
             @debug "Writing 2D parameter map FITS HDUs"
 
             write(f, Vector{Int}(), header=hdr)  # Primary HDU (empty)
-            # Tied line information
-            for j in 1:cube_fitter.n_comps
-                line_keys = [string(ki) for ki in cube_fitter.tied_kinematics.key[j]]
-                tied_groups = [[name for (name,tied) in zip(cube_fitter.lines.names, cube_fitter.lines.tied[:, j]) if tied == key] for key in line_keys]
-                for (line_key, tied_group) in zip(line_keys, tied_groups)
-                    for (li, line_i) in enumerate(tied_group)
-                        write_key(f[1], "kinematic_group_" * string(line_key) * "_$(j)_$(li)", string(line_i))
-                    end
-                end
-            end
 
             # Iterate over model parameters and make 2D maps
 

@@ -294,7 +294,7 @@ function interpolate_nans!(cube::DataCube, z::Real=0.)
             # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
             λknots = λ[finite][offset+1]:scale:λ[finite][end-offset-1]
             good = []
-            for i ∈ 1:length(λknots)
+            for i ∈ eachindex(λknots) 
                 _, λc = findmin(abs.(λknots[i] .- λ))
                 if !isnan(I[λc])
                     append!(good, [i])
@@ -486,7 +486,7 @@ function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
 
     # Alias
     λ = data.λ
-    if isnothing(aperture)
+    if isnothing(spaxel)
         # Sum up data along spatial dimensions
         I = sumdim(data.Iν, (1,2))
         σ = sqrt.(sumdim(data.σI.^2, (1,2)))
@@ -507,7 +507,7 @@ function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
     # If specified, take the logarithm of the data with the given base
     if logᵢ ≠ false
         σ .= σ ./ abs.(I .* log.(logᵢ)) 
-        ν_Hz = (C_MS .* 1e6) ./ data.λ
+        ν_Hz = (C_KMS .* 1e9) ./ data.λ
         I .= log.(ν_Hz .* I) / log.(logᵢ)
     end
 
@@ -534,7 +534,7 @@ function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
     end
     ax.legend(loc="upper right", frameon=false)
     ax.set_xlim(minimum(λ), maximum(λ))
-    ax.set_title(isnothing(name) ? "" * (isnothing(aperture) ? "" : "Spaxel ($(spaxel[1]),$(spaxel[2]))") : name)
+    ax.set_title(isnothing(name) ? "" * (isnothing(spaxel) ? "" : "Spaxel ($(spaxel[1]),$(spaxel[2]))") : name)
     ax.tick_params(direction="in")
 
     @debug "Saving 1D plot to $fname"
@@ -1105,12 +1105,12 @@ function psf_kernel(cube::DataCube; aperture_scale::Real=1., kernel_size::Union{
     # Pixel scale in arcseconds
     pix_as = sqrt(cube.Ω) * 180/π * 3600
     # Find the PSF FWHM distance in pixel units (cube value is in arcseconds)
-    psf_fwhm_pix = cube.psf_fwhm ./ pix_as
+    psf_fwhm_pix = cube.psf ./ pix_as
     # ap_pix is the HWHM of the aperture being used (or in the tophat case, the radius)
     # aperture_scale is essentially a scaling factor for how much larger the aperture should be compared to the PSF FWHM
     ap_pix = aperture_scale .* psf_fwhm_pix
 
-    @debug "PSF FWHM in arcseconds: $(cube.psf_fwhm[1]) at $(cube.λ[1]) microns"
+    @debug "PSF FWHM in arcseconds: $(cube.psf[1]) at $(cube.λ[1]) microns"
     @debug "PSF FWHM in pixels: $(psf_fwhm_pix[1]) at $(cube.λ[1]) microns"
     @debug "Aperture radius in pixels (scale = x$(aperture_scale)): $(ap_pix[1]) at $(cube.λ[1]) microns"
 
@@ -1175,9 +1175,9 @@ function convolve_psf!(cube::DataCube; aperture_scale::Real=1., kernel_size::Uni
     kernel_cent = cld(kernel_size, 2)
     kernel_len = fld(kernel_size, 2)
 
-    @info "The median PSF FWHM is $(median(cube.psf_fwhm)) arcseconds"
+    @info "The median PSF FWHM is $(median(cube.psf)) arcseconds"
     @info "Convolving the IFU data with a $(kernel_size)x$(kernel_size) $(kernel_type) PSF FWHM kernel with a median " *
-          "$(kernel_type == :Tophat ? "diameter" : "FWHM") of $(2*aperture_scale*median(cube.psf_fwhm)) arcseconds"
+          "$(kernel_type == :Tophat ? "diameter" : "FWHM") of $(2*aperture_scale*median(cube.psf)) arcseconds"
 
     # Step along the spatial directions and apply the kernel at each pixel
     @showprogress for xᵢ ∈ 1:size(cube.Iν,1), yᵢ ∈ 1:size(cube.Iν,2)
@@ -1220,7 +1220,7 @@ function convolve_psf!(cube::DataCube; aperture_scale::Real=1., kernel_size::Uni
             # If every spaxel in the region is masked out, we dont need to do any convolving
             continue
         end
-        for wi ∈ 1:size(k,3)
+        for wi ∈ axes(k, 3)
             k[:, :, wi] ./= sum(k[:, :, wi])
         end
 

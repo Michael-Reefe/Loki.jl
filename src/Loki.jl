@@ -140,7 +140,7 @@ export DataCube,   # DataCube struct
 
        # DataCube Functions
        from_fits, 
-       to_rest_Frame!, 
+       to_rest_frame!, 
        apply_mask!, 
        correct!, 
        interpolate_nans!, 
@@ -159,9 +159,10 @@ export DataCube,   # DataCube struct
 
        # Parameter structs
        Parameter,
-       ParamDict,
-       LineDict,
-       TransitionLine,
+       Continuum,
+       DustFeatures,
+       TransitionLines,
+       TiedKinematics,
 
        # Parameter functions
        from_dict,
