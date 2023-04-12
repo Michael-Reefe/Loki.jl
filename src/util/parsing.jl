@@ -306,9 +306,19 @@ function parse_lines()
     #         or to the other additional components)
     kinematic_groups = []
     for key ∈ keys(lines)
-        if occursin("kinematic_group_", key)
+        if occursin("kinematic_group_", key) && !occursin("acomp", key)
             append!(kinematic_groups, [replace(key, "kinematic_group_" => "")])
         end
+    end
+    acomp_kinematic_groups = []
+    for j ∈ 1:lines["n_acomps"]
+        acomp_kinematic_group_j = []
+        for key ∈ keys(lines)
+            if occursin("acomp_$(j)_kinematic_group_", key)
+                append!(acomp_kinematic_group_j, [replace(key, "acomp_$(j)_kinematic_group_" => "")])
+            end
+        end
+        append!(acomp_kinematic_groups, [acomp_kinematic_group_j])
     end
 
     # Initialize undefined vectors for each TransitionLine attribute that will be filled in
@@ -445,8 +455,6 @@ function parse_lines()
 
         # Check if the kinematics should be tied to other lines based on the kinematic groups
         tied_voff[i] = tied_fwhm[i] = nothing
-        acomp_tied_voff[i, :] .= nothing
-        acomp_tied_fwhm[i, :] .= nothing
         for group ∈ kinematic_groups
             for groupmember ∈ lines["kinematic_group_" * group]
                 #= Loop through the items in the "kinematic_group_*" list and see if the line name matches any of them.
@@ -474,16 +482,6 @@ function parse_lines()
                         @debug "Tying kinematics for $line to the group: $group"
                         # Use the group label (which can be anything you want) to categorize what lines are tied together
                         tied_voff[i] = Symbol(group)
-                        # Only set acomp_tied if the line actually *has* an acomp
-                        for j ∈ 1:lines["n_acomps"]
-                            tie_acomp_voff_group = true
-                            if haskey(lines, "tie_acomp_voff_" * group)
-                                tie_acomp_voff_group = lines["tie_acomp_voff_" * group][j]
-                            end
-                            if !isnothing(acomp_profiles[line][j]) && tie_acomp_voff_group
-                                acomp_tied_voff[i,j] = Symbol(group)
-                            end
-                        end
                         # If the wavelength solution is bad, allow the kinematics to still be flexible based on its accuracy
                         if lines["flexible_wavesol"]
                             δv = lines["wavesol_unc"]
@@ -498,19 +496,54 @@ function parse_lines()
                         @debug "Tying kinematics for $line to the group: $group"
                         # Use the group label (which can be anything you want) to categorize what lines are tied together
                         tied_fwhm[i] = Symbol(group)
-                        # Only set acomp_tied if the line actually *has* an acomp
-                        for j ∈ 1:lines["n_acomps"]
-                            tie_acomp_fwhm_group = true
-                            if haskey(lines, "tie_acomp_fwhm_" * group)
-                                tie_acomp_fwhm_group = lines["tie_acomp_fwhm_" * group][j]
-                            end
-                            if !isnothing(acomp_profiles[line][j]) && tie_acomp_fwhm_group
-                                acomp_tied_fwhm[i,j] = Symbol(group)
-                            end
-                        end
                     end
 
                     break
+                end
+            end
+        end
+
+        # Repeat for the acomps
+        acomp_tied_voff[i, :] .= nothing
+        acomp_tied_fwhm[i, :] .= nothing
+        for j ∈ 1:lines["n_acomps"]
+            for group ∈ acomp_kinematic_groups[j]
+                for groupmember ∈ lines["acomp_$(j)_kinematic_group_" * group]
+                    if occursin(groupmember, line)
+
+                        # Check if voff should be tied
+                        tie_acomp_voff_group = true
+                        if haskey(lines, "tie_acomp_voff_" * group)
+                            tie_acomp_voff_group = lines["tie_acomp_voff_" * group]
+                        end
+                        # Check if fwhm should be tied
+                        tie_acomp_fwhm_group = true
+                        if haskey(lines, "tie_acomp_fwhm_" * group)
+                            tie_acomp_fwhm_group = lines["tie_acomp_fwhm_" * group]
+                        end
+
+                        if !isnothing(acomp_profiles[line][j]) && tie_acomp_voff_group
+                            # Make sure line is not already a member of another group
+                            @assert isnothing(acomp_tied_voff[i, j]) "Line $(line[i]) acomp $(j) is already part of the kinematic group $(acomp_tied_voff[i, j]), " *
+                                "but it also passed filtering criteria to be included in the group $group. Make sure your filters are not too lenient!"
+                            @debug "Tying kinematics for $line acomp $(j) to the group: $group"
+
+                            # Only set acomp_tied if the line actually *has* an acomp
+                            acomp_tied_voff[i,j] = Symbol(group)
+                        end
+
+                        if !isnothing(acomp_profiles[line][j]) && tie_acomp_fwhm_group
+                            # Make sure line is not already a member of another group
+                            @assert isnothing(acomp_tied_fwhm[i, j]) "Line $(line[i]) acomp $(j) is already part of the kinematic group $(acomp_tied_fwhm[i, j]), " *
+                                "but it also passed filtering criteria to be included in the group $group. Make sure your filters are not too lenient!"
+                            @debug "Tying kinematics for $line acomp $(j) to the group: $group"
+                        
+                            # Only set acomp_tied if the line actually *has* an acomp
+                            acomp_tied_fwhm[i,j] = Symbol(group)
+                        end
+
+                        break
+                    end
                 end
             end
         end
@@ -531,6 +564,7 @@ function parse_lines()
             ηs[i] = Parameter(η_init, η_locked, η_prior)
             @debug "eta $(ηs[i])"
         end
+
         # Do the same for the additional component parameters, but only if the line has an additional component
         for j ∈ 1:lines["n_acomps"]
             if !isnothing(acomp_profiles[line][j])
@@ -578,79 +612,81 @@ function parse_lines()
 
     # Create a dictionary containing all of the unique `tie` keys, and the tied parameters 
     # corresponding to that tied key
-    kin_tied_key_voff = unique(lines_out.tied_voff)
-    kin_tied_key_voff = kin_tied_key_voff[.!isnothing.(kin_tied_key_voff)]
+    kin_tied_key_voff = [unique(lines_out.tied_voff[:, j]) for j ∈ 1:size(lines_out.tied_voff, 2)]
+    kin_tied_key_voff = [kin_tied_key_voff[i][.!isnothing.(kin_tied_key_voff[i])] for i in 1:length(kin_tied_key_voff)]
+    kin_tied_key_fwhm = [unique(lines_out.tied_fwhm[:, j]) for j ∈ 1:size(lines_out.tied_fwhm, 2)]
+    kin_tied_key_fwhm = [kin_tied_key_fwhm[i][.!isnothing.(kin_tied_key_fwhm[i])] for i in 1:length(kin_tied_key_fwhm)]
     @debug "kin_tied_key_voff: $kin_tied_key_voff"
-    kin_tied_key_fwhm = unique(lines_out.tied_fwhm)
-    kin_tied_key_fwhm = kin_tied_key_fwhm[.!isnothing.(kin_tied_key_fwhm)]
     @debug "kin_tied_key_fwhm: $kin_tied_key_fwhm"
-
-    kin_tied_key_voff = [copy(kin_tied_key_voff) for _ ∈ 1:size(lines_out.tied_voff, 2)]
-    kin_tied_key_fwhm = [copy(kin_tied_key_fwhm) for _ ∈ 1:size(lines_out.tied_fwhm, 2)]
-    voff_tied = [Vector{Parameter}(undef, length(kin_tied_key_voff[1])) for _ ∈ 1:size(lines_out.tied_voff, 2)]
-    fwhm_tied = [Vector{Parameter}(undef, length(kin_tied_key_fwhm[1])) for _ ∈ 1:size(lines_out.tied_fwhm, 2)]
+    
+    voff_tied = [Vector{Parameter}(undef, length(kin_tied_key_voff[j])) for j ∈ 1:size(lines_out.tied_voff, 2)]
+    fwhm_tied = [Vector{Parameter}(undef, length(kin_tied_key_fwhm[j])) for j ∈ 1:size(lines_out.tied_fwhm, 2)]
     msg = ""
     # Iterate and create the tied voff parameters
-    for (i, kin_tie) ∈ enumerate(kin_tied_key_voff[1]), j ∈ 1:size(lines_out.tied_voff, 2)
-        v_prior = isone(j) ? Uniform(lines["voff_plim"]...) : Uniform(lines["acomp_voff_plim"][j-1]...)
-        v_locked = false
-        # Check if there is an overwrite option in the lines file
-        if haskey(lines, "priors")
-            if haskey(lines["priors"], string(kin_tie))
-                param_str = isone(j) ? "voff" : "acomp_voff"
-                if haskey(lines["priors"][string(kin_tie)], "$(param_str)_plim")
-                    v_prior = isone(j) ? Uniform(lines["priors"][string(kin_tie)]["$(param_str)_plim"]...) :
-                                         Uniform(lines["priors"][string(kin_tie)]["$(param_str)_plim"][j]...)
-                end
-                if haskey(lines["priors"][string(kin_tie)], "$(param_str)_pstr")
-                    v_prior = isone(j) ? eval(Meta.parse(lines["priors"][string(kin_tie)]["$(param_str)_pstr"])) :
-                                         eval(Meta.parse(lines["priors"][string(kin_tie)]["$(param_str)_pstr"][j]))
-                end
-                if haskey(lines["priors"][string(kin_tie)], "$(param_str)_locked")
-                    v_locked = isone(j) ? lines["priors"][string(kin_tie)]["$(param_str)_locked"] :
-                                          lines["priors"][string(kin_tie)]["$(param_str)_locked"][j]
+    for j ∈ 1:size(lines_out.tied_voff, 2)
+        for (i, kin_tie) ∈ enumerate(kin_tied_key_voff[j])
+            v_prior = isone(j) ? Uniform(lines["voff_plim"]...) : Uniform(lines["acomp_voff_plim"][j-1]...)
+            v_locked = false
+            # Check if there is an overwrite option in the lines file
+            if haskey(lines, "priors")
+                if haskey(lines["priors"], string(kin_tie))
+                    param_str = isone(j) ? "voff" : "acomp_voff"
+                    if haskey(lines["priors"][string(kin_tie)], "$(param_str)_plim")
+                        v_prior = isone(j) ? Uniform(lines["priors"][string(kin_tie)]["$(param_str)_plim"]...) :
+                                            Uniform(lines["priors"][string(kin_tie)]["$(param_str)_plim"][j]...)
+                    end
+                    if haskey(lines["priors"][string(kin_tie)], "$(param_str)_pstr")
+                        v_prior = isone(j) ? eval(Meta.parse(lines["priors"][string(kin_tie)]["$(param_str)_pstr"])) :
+                                            eval(Meta.parse(lines["priors"][string(kin_tie)]["$(param_str)_pstr"][j]))
+                    end
+                    if haskey(lines["priors"][string(kin_tie)], "$(param_str)_locked")
+                        v_locked = isone(j) ? lines["priors"][string(kin_tie)]["$(param_str)_locked"] :
+                                            lines["priors"][string(kin_tie)]["$(param_str)_locked"][j]
+                    end
                 end
             end
-        end
-        value = 0.
-        if !(minimum(v_prior) ≤ value ≤ maximum(v_prior))
-            if abs(minimum(v_prior)) < abs(maximum(v_prior))
-                value = minimum(v_prior)
-            else
-                value = maximum(v_prior)
+            value = 0.
+            if !(minimum(v_prior) ≤ value ≤ maximum(v_prior))
+                if abs(minimum(v_prior)) < abs(maximum(v_prior))
+                    value = minimum(v_prior)
+                else
+                    value = maximum(v_prior)
+                end
             end
+            voff_tied[j][i] = isone(j) ? Parameter(voff_init, v_locked, v_prior) : Parameter(value, v_locked, v_prior)
+            msg *= "\nvoff_tied_$(kin_tie)_$(j) $(voff_tied[j][i])"
         end
-        voff_tied[j][i] = isone(j) ? Parameter(voff_init, v_locked, v_prior) : Parameter(value, v_locked, v_prior)
-        msg *= "\nvoff_tied_$(kin_tie)_$(j) $(voff_tied[j][i])"
     end
     # Iterate and create the tied fwhm parameters
-    for (i, kin_tie) ∈ enumerate(kin_tied_key_fwhm[1]), j ∈ 1:size(lines_out.tied_fwhm, 2)
-        f_prior = isone(j) ? Uniform(lines["fwhm_plim"]...) : Uniform(lines["acomp_fwhm_plim"][j-1]...)
-        f_locked = false
-        # Check if there is an overwrite option in the lines file
-        if haskey(lines, "priors")
-            if haskey(lines["priors"], string(kin_tie))
-                param_str = isone(j) ? "fwhm" : "acomp_fwhm"
-                if haskey(lines["priors"][string(kin_tie)], "$(param_str)_plim")
-                    f_prior = isone(j) ? Uniform(lines["priors"][string(kin_tie)]["$(param_str)_plim"]...) :
-                                         Uniform(lines["priors"][string(kin_tie)]["$(param_str)_plim"][j]...)
-                end
-                if haskey(lines["priors"][string(kin_tie)], "$(param_str)_pstr")
-                    f_prior = isone(j) ? eval(Meta.parse(lines["priors"][string(kin_tie)]["$(param_str)_pstr"])) :
-                                         eval(Meta.parse(lines["priors"][string(kin_tie)]["$(param_str)_pstr"][j]))
-                end
-                if haskey(lines["priors"][string(kin_tie)], "$(param_str)_locked")
-                    f_locked = isone(j) ? lines["priors"][string(kin_tie)]["$(param_str)_locked"] :
-                                          lines["priors"][string(kin_tie)]["$(param_str)_locked"][j]
+    for j ∈ 1:size(lines_out.tied_fwhm, 2)
+        for (i, kin_tie) ∈ enumerate(kin_tied_key_fwhm[j])
+            f_prior = isone(j) ? Uniform(lines["fwhm_plim"]...) : Uniform(lines["acomp_fwhm_plim"][j-1]...)
+            f_locked = false
+            # Check if there is an overwrite option in the lines file
+            if haskey(lines, "priors")
+                if haskey(lines["priors"], string(kin_tie))
+                    param_str = isone(j) ? "fwhm" : "acomp_fwhm"
+                    if haskey(lines["priors"][string(kin_tie)], "$(param_str)_plim")
+                        f_prior = isone(j) ? Uniform(lines["priors"][string(kin_tie)]["$(param_str)_plim"]...) :
+                                            Uniform(lines["priors"][string(kin_tie)]["$(param_str)_plim"][j]...)
+                    end
+                    if haskey(lines["priors"][string(kin_tie)], "$(param_str)_pstr")
+                        f_prior = isone(j) ? eval(Meta.parse(lines["priors"][string(kin_tie)]["$(param_str)_pstr"])) :
+                                            eval(Meta.parse(lines["priors"][string(kin_tie)]["$(param_str)_pstr"][j]))
+                    end
+                    if haskey(lines["priors"][string(kin_tie)], "$(param_str)_locked")
+                        f_locked = isone(j) ? lines["priors"][string(kin_tie)]["$(param_str)_locked"] :
+                                            lines["priors"][string(kin_tie)]["$(param_str)_locked"][j]
+                    end
                 end
             end
+            value = 1.
+            if !(minimum(f_prior) ≤ value ≤ maximum(f_prior))
+                value = minimum(f_prior)
+            end
+            fwhm_tied[j][i] = isone(j) ? Parameter(fwhm_init, f_locked, f_prior) : Parameter(value, f_locked, f_prior)
+            msg *= "\nfwhm_tied_$(kin_tie)_$(j) $(fwhm_tied[j][i])"
         end
-        value = 1.
-        if !(minimum(f_prior) ≤ value ≤ maximum(f_prior))
-            value = minimum(f_prior)
-        end
-        fwhm_tied[j][i] = isone(j) ? Parameter(fwhm_init, f_locked, f_prior) : Parameter(value, f_locked, f_prior)
-        msg *= "\nfwhm_tied_$(kin_tie)_$(j) $(fwhm_tied[j][i])"
     end
 
     @debug msg
