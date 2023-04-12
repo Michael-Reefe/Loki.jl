@@ -356,12 +356,12 @@ function parse_lines()
         fwhm_locked = false
         h3_prior = h3_locked = h4_prior = h4_locked = η_prior = η_locked = nothing
         if profiles[line] == "GaussHermite"
-            h3_prior = truncated(Normal(0.0, 0.1), lines["h3_plim"]... #= normal profile, but truncated with hard limits =#)
+            h3_prior = Uniform(lines["h3_plim"]...)
             h3_locked = false
-            h4_prior = truncated(Normal(0.0, 0.1), lines["h4_plim"]... #= normal profile, but truncated with hard limits =#)
+            h4_prior = Uniform(lines["h4_plim"]...)
             h4_locked = false
         elseif profiles[line] == "Voigt"
-            η_prior = Uniform(0.0, 1.0)
+            η_prior = Uniform(lines["eta_plim"]...)
             η_locked = false
         end
 
@@ -476,7 +476,11 @@ function parse_lines()
                         tied_voff[i] = Symbol(group)
                         # Only set acomp_tied if the line actually *has* an acomp
                         for j ∈ 1:lines["n_acomps"]
-                            if !isnothing(acomp_profiles[line][j])
+                            tie_acomp_voff_group = true
+                            if haskey(lines, "tie_acomp_voff_" * group)
+                                tie_acomp_voff_group = lines["tie_acomp_voff_" * group][j]
+                            end
+                            if !isnothing(acomp_profiles[line][j]) && tie_acomp_voff_group
                                 acomp_tied_voff[i,j] = Symbol(group)
                             end
                         end
@@ -496,7 +500,11 @@ function parse_lines()
                         tied_fwhm[i] = Symbol(group)
                         # Only set acomp_tied if the line actually *has* an acomp
                         for j ∈ 1:lines["n_acomps"]
-                            if !isnothing(acomp_profiles[line][j])
+                            tie_acomp_fwhm_group = true
+                            if haskey(lines, "tie_acomp_fwhm_" * group)
+                                tie_acomp_fwhm_group = lines["tie_acomp_fwhm_" * group][j]
+                            end
+                            if !isnothing(acomp_profiles[line][j]) && tie_acomp_fwhm_group
                                 acomp_tied_fwhm[i,j] = Symbol(group)
                             end
                         end
