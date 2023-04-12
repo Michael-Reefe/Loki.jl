@@ -25,6 +25,8 @@ An object for holding 3D IFU spectroscopy data.
 - `Ω::Real=NaN`: the solid angle subtended by each spaxel, in steradians
 - `α::Real=NaN`: the right ascension of the observation, in decimal degrees
 - `δ::Real=NaN`: the declination of the observation, in decimal degrees
+- `psf::Function`: the FWHM of the spatial point-spread function in arcseconds as a function of (observed-frame) wavelength in microns
+- `lst::Function`: the FWHM of the spectral line-spread function in km/s as a function of (observed-frame) wavelength in microns
 - `wcs::Union{WCSTransform,Nothing}=nothing`: a World Coordinate System conversion object, optional
 - `channel::String="Generic Channel"`: the MIRI channel of the observation, from 1-4
 - `band::String="Generic Band"`: the MIRI band of the observation, i.e. 'MULTIPLE'
@@ -45,7 +47,8 @@ mutable struct DataCube
     Ω::Real
     α::Real
     δ::Real
-    psf_fwhm::Vector{<:Real}
+    psf::Vector{<:Real}
+    lsf::Vector{<:Real}
 
     wcs::Union{PyObject,Nothing}
 
@@ -61,16 +64,21 @@ mutable struct DataCube
 
     # This is the constructor for the DataCube struct; see the DataCube docstring for details
     function DataCube(λ::Vector{<:Real}, Iν::Array{<:Real,3}, σI::Array{<:Real,3}, mask::Union{BitArray{3},Nothing}=nothing, 
-        Ω::Real=NaN, α::Real=NaN, δ::Real=NaN, psf_fwhm::Union{Vector{<:Real},Nothing}=nothing, wcs::Union{PyObject,Nothing}=nothing, 
-        channel::String="Generic Channel", band::String="Generic Band", rest_frame::Bool=false, masked::Bool=false)
+        Ω::Real=NaN, α::Real=NaN, δ::Real=NaN, psf::Union{Vector{<:Real},Nothing}=nothing, lsf::Union{Vector{<:Real},Nothing}=nothing, 
+        wcs::Union{PyObject,Nothing}=nothing, channel::String="Generic Channel", band::String="Generic Band", rest_frame::Bool=false, 
+        masked::Bool=false)
 
         # Make sure inputs have the right dimensions
         @assert ndims(λ) == 1 "Wavelength vector must be 1-dimensional!"
         @assert (ndims(Iν) == 3) && (size(Iν)[end] == size(λ)[1]) "The last axis of the intensity cube must be the same length as the wavelength!"
         @assert size(Iν) == size(σI) "The intensity and error cubes must be the same size!"
-        if !isnothing(psf_fwhm)
-            @assert size(psf_fwhm) == size(λ) "The PSF FWHM vector should match the size of the wavelength vector!"
+        if !isnothing(psf)
+            @assert size(psf) == size(λ) "The PSF FWHM vector must be the same size as the wavelength vector!"
         end
+        if !isnothing(lsf)
+            @assert size(lsf) == size(λ) "The LSF FWHM vector must be the same size as the wavelength vector!"
+        end
+
         nx, ny, nz = size(Iν)
 
         # If no mask is given, make the default mask to be all falses (i.e. don't mask out anything)
@@ -82,7 +90,7 @@ mutable struct DataCube
         end
 
         # Return a new instance of the DataCube struct
-        new(λ, Iν, σI, mask, Ω, α, δ, psf_fwhm, wcs, channel, band, nx, ny, nz, rest_frame, masked)
+        new(λ, Iν, σI, mask, Ω, α, δ, psf, lsf, wcs, channel, band, nx, ny, nz, rest_frame, masked)
     end
 
 end
@@ -172,11 +180,12 @@ function from_fits(filename::String)::DataCube
     # Get the PSF FWHM in arcseconds assuming diffraction-limited optics (theta = lambda/D)
     # Using the OBSERVED-FRAME wavelength
     # psf_fwhm = @. (λ * 1e-6 / mirror_size) * 180/π * 3600
-    psf_fwhm = @. 0.033 * λ + 0.106
+    psf = @. 0.033 * λ + 0.016
+    lsf = parse_resolving(channel).(λ)
 
     @debug "Intensity units: $(hdr["BUNIT"]), Wavelength units: $(hdr["CUNIT3"])"
 
-    DataCube(λ, Iν, σI, mask, Ω, ra, dec, psf_fwhm, wcs, channel, band, false, false)
+    DataCube(λ, Iν, σI, mask, Ω, ra, dec, psf, lsf, wcs, channel, band, false, false)
 end
 
 
@@ -285,7 +294,7 @@ function interpolate_nans!(cube::DataCube, z::Real=0.)
             # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
             λknots = λ[finite][offset+1]:scale:λ[finite][end-offset-1]
             good = []
-            for i ∈ 1:length(λknots)
+            for i ∈ eachindex(λknots) 
                 _, λc = findmin(abs.(λknots[i] .- λ))
                 if !isnan(I[λc])
                     append!(good, [i])
@@ -477,7 +486,7 @@ function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
 
     # Alias
     λ = data.λ
-    if isnothing(aperture)
+    if isnothing(spaxel)
         # Sum up data along spatial dimensions
         I = sumdim(data.Iν, (1,2))
         σ = sqrt.(sumdim(data.σI.^2, (1,2)))
@@ -498,7 +507,7 @@ function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
     # If specified, take the logarithm of the data with the given base
     if logᵢ ≠ false
         σ .= σ ./ abs.(I .* log.(logᵢ)) 
-        ν_Hz = (C_MS .* 1e6) ./ data.λ
+        ν_Hz = (C_KMS .* 1e9) ./ data.λ
         I .= log.(ν_Hz .* I) / log.(logᵢ)
     end
 
@@ -525,7 +534,7 @@ function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
     end
     ax.legend(loc="upper right", frameon=false)
     ax.set_xlim(minimum(λ), maximum(λ))
-    ax.set_title(isnothing(name) ? "" * (isnothing(aperture) ? "" : "Spaxel ($(spaxel[1]),$(spaxel[2]))") : name)
+    ax.set_title(isnothing(name) ? "" * (isnothing(spaxel) ? "" : "Spaxel ($(spaxel[1]),$(spaxel[2]))") : name)
     ax.tick_params(direction="in")
 
     @debug "Saving 1D plot to $fname"
@@ -962,8 +971,18 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
                       0                       0               1]
     wcs_out._naxis = [wcs_opt._naxis[1:2]; length(λ_out)]
 
-    # New PSF FWHM vector from the wavelength vector
-    psf_fwhm_out = @. 0.033 * λ_out + 0.106
+    # New PSF FWHM function with input in the rest frame
+    if obs.rest_frame
+        psf_fwhm_out = @. 0.033 * λ_out * (1 + obs.z) + 0.106
+    else
+        psf_fwhm_out = @. 0.033 * λ_out + 0.106
+    end
+    # New LSF FWHM function with input in the rest frame
+    if obs.rest_frame
+        lsf_fwhm_out = parse_resolving("MULTIPLE").(λ_out .* (1 .+ obs.z))
+    else
+        lsf_fwhm_out = parse_resolving("MULTIPLE").(λ_out)
+    end
 
     if obs.masked
         @info "Masking bins with bad data..."
@@ -972,7 +991,7 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
     end
 
     # Define the interpolated cube as the zeroth channel (since this is not taken up by anything else)
-    obs.channels[out_id] = DataCube(λ_out, I_out, σ_out, mask_out, Ω_out, obs.α, obs.δ, psf_fwhm_out, wcs_out, 
+    obs.channels[out_id] = DataCube(λ_out, I_out, σ_out, mask_out, Ω_out, obs.α, obs.δ, psf_fwhm_out, lsf_fwhm_out, wcs_out, 
         "MULTIPLE", "MULTIPLE", obs.rest_frame, obs.masked)
     
     # Delete all of the individual channels
@@ -1058,8 +1077,8 @@ function cube_rebin!(obs::Observation, binsize::S, channel::S; out_id::S=0) wher
 
     # Set new binned channel
     obs.channels[out_id] = DataCube(λ, I_out, σ_out, mask_out, 
-        obs.channels[channel].Ω * binsize^2, obs.α, obs.δ, obs.channels[channel].psf_fwhm, obs.channels[channel].wcs, 
-        obs.channels[channel].channel, obs.channels[channel].band, obs.rest_frame, obs.masked)
+        obs.channels[channel].Ω * binsize^2, obs.α, obs.δ, obs.channels[channel].psf, obs.channels[channel].lsf, 
+        obs.channels[channel].wcs, obs.channels[channel].channel, obs.channels[channel].band, obs.rest_frame, obs.masked)
 
     @info "Done!"
 
@@ -1086,12 +1105,12 @@ function psf_kernel(cube::DataCube; aperture_scale::Real=1., kernel_size::Union{
     # Pixel scale in arcseconds
     pix_as = sqrt(cube.Ω) * 180/π * 3600
     # Find the PSF FWHM distance in pixel units (cube value is in arcseconds)
-    psf_fwhm_pix = cube.psf_fwhm ./ pix_as
+    psf_fwhm_pix = cube.psf ./ pix_as
     # ap_pix is the HWHM of the aperture being used (or in the tophat case, the radius)
     # aperture_scale is essentially a scaling factor for how much larger the aperture should be compared to the PSF FWHM
     ap_pix = aperture_scale .* psf_fwhm_pix
 
-    @debug "PSF FWHM in arcseconds: $(cube.psf_fwhm[1]) at $(cube.λ[1]) microns"
+    @debug "PSF FWHM in arcseconds: $(cube.psf[1]) at $(cube.λ[1]) microns"
     @debug "PSF FWHM in pixels: $(psf_fwhm_pix[1]) at $(cube.λ[1]) microns"
     @debug "Aperture radius in pixels (scale = x$(aperture_scale)): $(ap_pix[1]) at $(cube.λ[1]) microns"
 
@@ -1156,9 +1175,9 @@ function convolve_psf!(cube::DataCube; aperture_scale::Real=1., kernel_size::Uni
     kernel_cent = cld(kernel_size, 2)
     kernel_len = fld(kernel_size, 2)
 
-    @info "The median PSF FWHM is $(median(cube.psf_fwhm)) arcseconds"
+    @info "The median PSF FWHM is $(median(cube.psf)) arcseconds"
     @info "Convolving the IFU data with a $(kernel_size)x$(kernel_size) $(kernel_type) PSF FWHM kernel with a median " *
-          "$(kernel_type == :Tophat ? "diameter" : "FWHM") of $(2*aperture_scale*median(cube.psf_fwhm)) arcseconds"
+          "$(kernel_type == :Tophat ? "diameter" : "FWHM") of $(2*aperture_scale*median(cube.psf)) arcseconds"
 
     # Step along the spatial directions and apply the kernel at each pixel
     @showprogress for xᵢ ∈ 1:size(cube.Iν,1), yᵢ ∈ 1:size(cube.Iν,2)
@@ -1201,7 +1220,7 @@ function convolve_psf!(cube::DataCube; aperture_scale::Real=1., kernel_size::Uni
             # If every spaxel in the region is masked out, we dont need to do any convolving
             continue
         end
-        for wi ∈ 1:size(k,3)
+        for wi ∈ axes(k, 3)
             k[:, :, wi] ./= sum(k[:, :, wi])
         end
 

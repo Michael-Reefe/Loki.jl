@@ -185,7 +185,8 @@ struct TransitionLines
     # 1st axis: labels each transition line
     # 2nd axis: labels the components of each line
     profiles::Matrix{Union{Symbol,Nothing}}
-    tied::Matrix{Union{Symbol,Nothing}}
+    tied_voff::Matrix{Union{Symbol,Nothing}}
+    tied_fwhm::Matrix{Union{Symbol,Nothing}}
 
     # Model Parameters
     voff::Matrix{Union{Parameter,Nothing}}
@@ -205,8 +206,9 @@ A container for tied kinematic parameter information.
 struct TiedKinematics
 
     # Vectors of vectors, rather than Matrices, since the size of each element may be inhomogeneous 
-    key::Vector{Vector{Symbol}}
+    key_voff::Vector{Vector{Symbol}}
     voff::Vector{Vector{Parameter}}
+    key_fwhm::Vector{Vector{Symbol}}
     fwhm::Vector{Vector{Parameter}}
 
 end

@@ -21,7 +21,7 @@ track_memory = false
 # annealing method SAMIN makes it always print "status: failure" even if convergence
 # was reached. The way to tell whether convergence was ACTUALLY reached is if
 # the number of iterations reached the maximum (which is 10^6 by default).
-track_convergence = false
+track_convergence = true
 
 # make_movies: Whether or not to save mp4 files of the data and final models of
 # IFU cubes. This option require the user to have FFMPeg (https://ffmpeg.org/),
@@ -45,7 +45,7 @@ extinction_curve = "d+"
 extinction_screen = false
 
 # whether or not to fit silicate emission
-fit_sil_emission = true
+fit_sil_emission = false
 
 # whether or not to use simulated annealing on ALL spaxels (if false, only uses it for the initial fit
 # to the sum of all spaxels, and subsequent individual-spaxel fits are only done with a local Lev-Mar fit,

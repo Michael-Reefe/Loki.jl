@@ -72,10 +72,10 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
         for df ∈ cube_fitter.dust_features.names
             param_maps.dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z))-17 : -Inf
             param_errs.dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / (log(10) * out_params[index, pᵢ]) : NaN
-            param_maps.dust_features[df][:mean][index] = out_params[index, pᵢ+1]/(1+z)
-            param_errs.dust_features[df][:mean][index] = out_errs[index, pᵢ+1]/(1+z)
-            param_maps.dust_features[df][:fwhm][index] = out_params[index, pᵢ+2]/(1+z)
-            param_errs.dust_features[df][:fwhm][index] = out_errs[index, pᵢ+2]/(1+z)
+            param_maps.dust_features[df][:mean][index] = out_params[index, pᵢ+1] * (1+z)
+            param_errs.dust_features[df][:mean][index] = out_errs[index, pᵢ+1] * (1+z)
+            param_maps.dust_features[df][:fwhm][index] = out_params[index, pᵢ+2] * (1+z)
+            param_errs.dust_features[df][:fwhm][index] = out_errs[index, pᵢ+2] * (1+z)
             pᵢ += 3
         end
 
@@ -85,155 +85,93 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
                 cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission)
         end
 
-        # Tied line kinematics
+        # Save marker of the point where the continuum parameters end and the line parameters begin
         vᵢ = pᵢ
-        for j ∈ 1:cube_fitter.n_comps
-            for vk ∈ cube_fitter.tied_kinematics.key[j]
-                vkj = Symbol(vk, "_$j")
-                param_maps.tied_voffs[vkj][index] = out_params[index, pᵢ]
-                param_errs.tied_voffs[vkj][index] = out_errs[index, pᵢ]
-                pᵢ += 1
-            end
-            for vk ∈ cube_fitter.tied_kinematics.key[j]
-                vkj = Symbol(vk, "_$j")
-                param_maps.tied_fwhms[vkj][index] = out_params[index, pᵢ]
-                param_errs.tied_fwhms[vkj][index] = out_errs[index, pᵢ]
-                pᵢ += 1
-            end
-        end
-
-        # Tied voigt mixing
-        if cube_fitter.tie_voigt_mixing
-            param_maps.tied_voigt_mix[index] = out_params[index, pᵢ]
-            param_errs.tied_voigt_mix[index] = out_errs[index, pᵢ]
-            pᵢ += 1
-        end
 
         for k ∈ 1:cube_fitter.n_lines
-
-            ln = cube_fitter.lines.names[k]
-            amp = out_params[index, pᵢ]
-            amp_err = out_errs[index, pᵢ]
-            param_maps.lines[ln][:amp][index] = amp
-            param_errs.lines[ln][:amp][index] = amp_err
-            fwhm_res = C_KMS / cube_fitter.interp_R(cube_fitter.lines.λ₀[k] * (1+z))
-
-            if isnothing(cube_fitter.lines.tied[k, 1])
-
-                # Individual shift
-                voff = out_params[index, pᵢ+1]
-                voff_err = out_errs[index, pᵢ+1]
-                param_maps.lines[ln][:voff][index] = voff
-                param_errs.lines[ln][:voff][index] = voff_err
-
-                # FWHM -> subtract instrumental resolution in quadrature
-                fwhm = out_params[index, pᵢ+2]
-                fwhm_err = out_errs[index, pᵢ+2]
-                if fwhm_res > out_params[index, pᵢ+2]
-                    param_maps.lines[ln][:fwhm][index] = 0.
-                    param_errs.lines[ln][:fwhm][index] = fwhm_err
-                else
-                    if fwhm_res ≥ fwhm
-                        param_maps.lines[ln][:fwhm][index] = 0.
-                        param_errs.lines[ln][:fwhm][index] = fwhm_err
-                    else
-                        param_maps.lines[ln][:fwhm][index] = √(fwhm^2 - fwhm_res^2)
-                        param_errs.lines[ln][:fwhm][index] = fwhm / √(fwhm^2 - fwhm_res^2) * fwhm_err
-                    end
-                end
-                pᵢ += 3
-
-            elseif cube_fitter.flexible_wavesol
-                # If velocity is tied while flexible, show only the small shift from the tied velocity offset in the
-                # individual parameter maps for each line
-                voff = out_params[index, pᵢ+1]
-                voff_err = out_errs[index, pᵢ+1]
-                param_maps.lines[ln][:voff][index] = voff
-                param_errs.lines[ln][:voff][index] = voff_err
-                # Convert to the overall voff for later with the acomps
-                vwhere = findfirst(x -> x == cube_fitter.lines.tied[k, 1], cube_fitter.tied_kinematics.key[1])
-                voff += out_params[index, vᵢ+vwhere-1]
-                voff_err = √(voff_err^2 + out_errs[index, vᵢ+vwhere-1]^2)
-                # FWHM (tied)
-                fwhm = out_params[index, vᵢ+cube_fitter.n_kin_tied[1]+vwhere-1]
-                fwhm_err = out_errs[index, vᵢ+cube_fitter.n_kin_tied[1]+vwhere-1]
-                pᵢ += 2
-
-            else
-                # Tied shift only
-                vwhere = findfirst(x -> x == cube_fitter.lines.tied[k, 1], cube_fitter.tied_kinematics.key[1])
-                voff = out_params[index, vᵢ+vwhere-1]
-                voff_err = out_errs[index, vᵢ+vwhere-1]
-                # FWHM (tied)
-                fwhm = out_params[index, vᵢ+cube_fitter.n_kin_tied[1]+vwhere-1]
-                fwhm_err = out_errs[index, vᵢ+cube_fitter.n_kin_tied[1]+vwhere-1]
-                pᵢ += 1
-
-            end
-            # Get Gauss-Hermite 3rd and 4th order moments
-            if cube_fitter.lines.profiles[k, 1] == :GaussHermite
-                param_maps.lines[ln][:h3][index] = out_params[index, pᵢ]
-                param_errs.lines[ln][:h3][index] = out_errs[index, pᵢ]
-                param_maps.lines[ln][:h4][index] = out_params[index, pᵢ+1]
-                param_errs.lines[ln][:h4][index] = out_errs[index, pᵢ+1]
-                pᵢ += 2
-            elseif cube_fitter.lines.profiles[k, 1] == :Voigt && !cube_fitter.tie_voigt_mixing
-                param_maps.lines[k][:mixing][index] = out_params[index, pᵢ]
-                param_errs.lines[k][:mixing][index] = out_errs[index, pᵢ]
-                pᵢ += 1
-            end
-
-            for j ∈ 2:cube_fitter.n_comps
+            amp_1 = amp_1_err = voff_1 = voff_1_err = fwhm_1 = fwhm_1_err = nothing
+            for j ∈ 1:cube_fitter.n_comps
                 if !isnothing(cube_fitter.lines.profiles[k, j])
 
-                    param_maps.lines[ln][Symbol(:acomp_amp, "_$j")][index] = amp * out_params[index, pᵢ]
-                    param_errs.lines[ln][Symbol(:acomp_amp, "_$j")][index] = 
-                        √((amp * out_params[index, pᵢ])^2 * ((amp_err / amp)^2 + (out_errs[index, pᵢ] / out_params[index, pᵢ])^2))
-
-                    if isnothing(cube_fitter.lines.tied[k, j])
-                        # note of caution: the output/saved/plotted values of acomp voffs are ALWAYS given relative to
-                        # the rest wavelength of the line; same goes for the errors (which add in quadrature)
-                        param_maps.lines[ln][Symbol(:acomp_voff, "_$j")][index] = out_params[index, pᵢ+1] + voff
-                        param_errs.lines[ln][Symbol(:acomp_voff, "_$j")][index] = √(out_errs[index, pᵢ+1]^2 + voff_err^2)
-
-                        # FWHM -> subtract instrumental resolution in quadrature
-                        acomp_fwhm = fwhm * out_params[index, pᵢ+2]
-                        acomp_fwhm_err = √(acomp_fwhm^2 * ((fwhm_err / fwhm)^2 + (out_errs[index, pᵢ+2] / out_params[index, pᵢ+2])^2))
-                        if fwhm_res > acomp_fwhm
-                            param_maps.lines[ln][Symbol(:acomp_fwhm, "_$j")][index] = 0.
-                            param_errs.lines[ln][Symbol(:acomp_fwhm, "_$j")][index] = acomp_fwhm_err
-                        else
-                            param_maps.lines[ln][Symbol(:acomp_fwhm, "_$j")][index] = √(acomp_fwhm^2 - fwhm_res^2)
-                            param_errs.lines[ln][Symbol(:acomp_fwhm, "_$j")][index] = acomp_fwhm / √(acomp_fwhm^2 - fwhm_res^2) * acomp_fwhm_err
-                        end
-                        pᵢ += 3
+                    ln = Symbol(cube_fitter.lines.names[k], "_$(j)")
+                    amp = out_params[index, pᵢ]
+                    amp_err = out_errs[index, pᵢ]
+                    if isone(j)
+                        param_maps.lines[ln][:amp][index] = amp
+                        param_errs.lines[ln][:amp][index] = amp_err
+                        amp_1 = amp
+                        amp_1_err = amp_err
                     else
-                        pᵢ += 1
+                        param_maps.lines[ln][:amp][index] = amp * amp_1
+                        param_errs.lines[ln][:amp][index] = √((amp * amp_1)^2 * ((amp_1_err / amp_1)^2 + (amp_err / amp)^2))
                     end
+                    
+                    # Voff parameter
+                    voff = out_params[index, pᵢ+1]
+                    voff_err = out_errs[index, pᵢ+1]
+                    if isone(j)
+                        param_maps.lines[ln][:voff][index] = voff
+                        param_errs.lines[ln][:voff][index] = voff_err
+                        voff_1 = voff
+                        voff_1_err = voff_err
+                    else
+                        param_maps.lines[ln][:voff][index] = voff + voff_1
+                        param_errs.lines[ln][:voff][index] = √(voff_err^2 + voff_1_err^2)
+                    end
+
+                    # Individual voff parameter
+                    if !isnothing(cube_fitter.lines.tied_voff[k, j]) && cube_fitter.flexible_wavesol && isone(j)
+                        voff_indiv = out_params[index, pᵢ+2]
+                        voff_indiv_err = out_errs[index, pᵢ+2]
+                        param_maps.lines[ln][:voff_indiv][index] = voff_indiv
+                        param_errs.lines[ln][:voff_indiv][index] = voff_indiv_err
+                        fwhm = out_params[index, pᵢ+3]
+                        fwhm_err = out_errs[index, pᵢ+3]
+                        pᵢ += 4
+                    else
+                        fwhm = out_params[index, pᵢ+2]
+                        fwhm_err = out_errs[index, pᵢ+2]                        
+                        pᵢ += 3
+                    end
+
+                    # FWHM parameter
+                    if isone(j)
+                        param_maps.lines[ln][:fwhm][index] = fwhm
+                        param_errs.lines[ln][:fwhm][index] = fwhm_err
+                        fwhm_1 = fwhm
+                        fwhm_1_err = fwhm_err
+                    else
+                        param_maps.lines[ln][:fwhm][index] = fwhm * fwhm_1
+                        param_errs.lines[ln][:fwhm][index] = √((fwhm * fwhm_1)^2 * ((fwhm_1_err / fwhm_1)^2 + (fwhm_err / fwhm)^2))
+                    end
+
                     # Get Gauss-Hermite 3rd and 4th order moments
                     if cube_fitter.lines.profiles[k, j] == :GaussHermite
-                        param_maps.lines[ln][Symbol(:acomp_h3, "_$j")][index] = out_params[index, pᵢ]
-                        param_errs.lines[ln][Symbol(:acomp_h3, "_$j")][index] = out_errs[index, pᵢ]
-                        param_maps.lines[ln][Symbol(:acomp_h4, "_$j")][index] = out_params[index, pᵢ+1]
-                        param_errs.lines[ln][Symbol(:acomp_h4, "_$j")][index] = out_errs[index, pᵢ+1]
+                        param_maps.lines[ln][:h3][index] = out_params[index, pᵢ]
+                        param_errs.lines[ln][:h3][index] = out_errs[index, pᵢ]
+                        param_maps.lines[ln][:h4][index] = out_params[index, pᵢ+1]
+                        param_errs.lines[ln][:h4][index] = out_errs[index, pᵢ+1]
                         pᵢ += 2
-                    elseif cube_fitter.lines.profiles[k, j] == :Voigt && !cube_fitter.tie_voigt_mixing
-                        param_maps.lines[ln][Symbol(:acomp_mixing, "_$j")][index] = out_params[index, pᵢ]
-                        param_errs.lines[ln][Symbol(:acomp_mixing, "_$j")][index] = out_errs[index, pᵢ]
+                    elseif cube_fitter.lines.profiles[k, j] == :Voigt
+                        param_maps.lines[ln][:mixing][index] = out_params[index, pᵢ]
+                        param_errs.lines[ln][:mixing][index] = out_errs[index, pᵢ]
                         pᵢ += 1
                     end
                 end
             end
-
         end
 
         N = Float64(abs(nanmaximum(cube_fitter.cube.Iν[index, :])))
         N = N ≠ 0. ? N : 1.
         if cube_fitter.save_full_model
+
+            # Interpolate the LSF
+            lsf_interp = Spline1D(cube_fitter.cube.λ, cube_fitter.cube.lsf, k=1)
+            lsf_interp_func = x -> lsf_interp(x)
+
             # End of line parameters: recreate the un-extincted (intrinsic) line model
             I_line, comps_l = model_line_residuals(cube_fitter.cube.λ, out_params[index, vᵢ:pᵢ-1], cube_fitter.n_lines, cube_fitter.n_comps,
-                cube_fitter.lines, cube_fitter.n_kin_tied, cube_fitter.tied_kinematics, cube_fitter.flexible_wavesol, cube_fitter.tie_voigt_mixing, 
-                comps_c["extinction"], true)
+                cube_fitter.lines, cube_fitter.flexible_wavesol, comps_c["extinction"], lsf_interp_func, true)
 
             # Renormalize
             for comp ∈ keys(comps_l)
@@ -258,44 +196,31 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
         end
 
         for k ∈ 1:cube_fitter.n_lines
-
-            ln = cube_fitter.lines.names[k]
-            # Convert amplitudes to the correct units, then take the log
-            amp_norm = param_maps.lines[ln][:amp][index]
-            amp_norm_err = param_errs.lines[ln][:amp][index]
-            param_maps.lines[ln][:amp][index] = amp_norm > 0 ? log10(amp_norm * N * (1+z))-17 : -Inf
-            param_errs.lines[ln][:amp][index] = amp_norm > 0 ? amp_norm_err / (log(10) * amp_norm) : NaN
-
-            # Line intensity, EQW, and SNR, from calculate_extra_parameters
-            param_maps.lines[ln][:flux][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
-            param_errs.lines[ln][:flux][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / (log(10) * out_params[index, pᵢ]) : NaN
-            param_maps.lines[ln][:eqw][index] = out_params[index, pᵢ+1] * (1+z)
-            param_errs.lines[ln][:eqw][index] = out_errs[index, pᵢ+1] * (1+z)
-            param_maps.lines[ln][:SNR][index] = out_params[index, pᵢ+2]
-            
-            pᵢ += 3
-
-            for j ∈ 2:cube_fitter.n_comps
+            for j ∈ 1:cube_fitter.n_comps
                 if !isnothing(cube_fitter.lines.profiles[k, j])
-                    acomp_amp_norm = param_maps.lines[ln][Symbol(:acomp_amp, "_$j")][index]
-                    acomp_amp_norm_err = param_errs.lines[ln][Symbol(:acomp_amp, "_$j")][index]
-                    param_maps.lines[ln][Symbol(:acomp_amp, "_$j")][index] = acomp_amp_norm > 0 ? log10(acomp_amp_norm * N * (1+z))-17 : -Inf
-                    param_errs.lines[ln][Symbol(:acomp_amp, "_$j")][index] = acomp_amp_norm > 0 ? acomp_amp_norm_err / (log(10) * acomp_amp_norm) : NaN
 
-                    # Line intensity, EQW, and SNR from calculate_extra_parameters
-                    param_maps.lines[ln][Symbol(:acomp_flux, "_$j")][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
-                    param_errs.lines[ln][Symbol(:acomp_flux, "_$j")][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / (log(10) * out_params[index, pᵢ]) : NaN
-                    param_maps.lines[ln][Symbol(:acomp_eqw, "_$j")][index] = out_params[index, pᵢ+1] * (1+z)
-                    param_errs.lines[ln][Symbol(:acomp_eqw, "_$j")][index] = out_params[index, pᵢ+1] * (1+z)
-                    param_maps.lines[ln][Symbol(:acomp_SNR, "_$j")][index] = out_params[index, pᵢ+2]
+                    ln = Symbol(cube_fitter.lines.names[k], "_$(j)")
 
+                    # Convert amplitudes to the correct units, then take the log
+                    amp_norm = param_maps.lines[ln][:amp][index]
+                    amp_norm_err = param_errs.lines[ln][:amp][index]
+                    param_maps.lines[ln][:amp][index] = amp_norm > 0 ? log10(amp_norm * N * (1+z))-17 : -Inf
+                    param_errs.lines[ln][:amp][index] = amp_norm > 0 ? amp_norm_err / (log(10) * amp_norm) : NaN
+
+                    # Line intensity, EQW, and SNR, from calculate_extra_parameters
+                    param_maps.lines[ln][:flux][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
+                    param_errs.lines[ln][:flux][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / (log(10) * out_params[index, pᵢ]) : NaN
+                    param_maps.lines[ln][:eqw][index] = out_params[index, pᵢ+1] * (1+z)
+                    param_errs.lines[ln][:eqw][index] = out_errs[index, pᵢ+1] * (1+z)
+                    param_maps.lines[ln][:SNR][index] = out_params[index, pᵢ+2]
+                    
                     pᵢ += 3
                 end
             end
         end
 
-        # Reduced χ^2
-        param_maps.reduced_χ2[index] = out_params[index, pᵢ]
+        # Reduced χ^2 = χ^2 / dof
+        param_maps.reduced_χ2[index] = out_params[index, pᵢ] / out_params[index, pᵢ+1]
 
         if cube_fitter.save_full_model
             # Set 3D model cube outputs, shifted back to the observed frame
@@ -329,19 +254,19 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
     # Subtract the average of the individual voffs from the tied voffs, based on the SNR, for each group
     if cube_fitter.flexible_wavesol
         @debug "Adjusting individual voffs due to the flexible_wavesol option"
-        for vk ∈ cube_fitter.tied_kinematics.key[1]
+        for vk ∈ cube_fitter.tied_kinematics.key_voff[1]
             indiv_voffs = nothing
             snrs = nothing
             # Loop through and create 3D arrays of the voffs and SNRs of each line in the tied kinematic group
             for k ∈ 1:cube_fitter.n_lines
-                name = cube_fitter.lines.names[k]
-                if cube_fitter.lines.tied[k, 1] == vk
+                name = Symbol(cube_fitter.lines.names[k], "_1")
+                if cube_fitter.lines.tied_voff[k, 1] == vk
                     if isnothing(indiv_voffs)
-                        indiv_voffs = param_maps.lines[name][:voff]
+                        indiv_voffs = param_maps.lines[name][:voff_indiv]
                         snrs = param_maps.lines[name][:SNR]
                         continue
                     end
-                    indiv_voffs = cat(indiv_voffs, param_maps.lines[name][:voff], dims=3)
+                    indiv_voffs = cat(indiv_voffs, param_maps.lines[name][:voff_indiv], dims=3)
                     snrs = cat(snrs, param_maps.lines[name][:SNR], dims=3)
                 end
             end
@@ -349,16 +274,16 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             if !isnothing(indiv_voffs) && !isnothing(snrs)
                 indiv_voffs[snrs .< 3] .= NaN
                 avg_offset = dropdims(nanmean(indiv_voffs, dims=3), dims=3)
-                # Subtract the average offset from the individual voffs
                 # (the goal is to have the average offset of the individual voffs be 0, relative to the tied voff)
                 for k ∈ 1:cube_fitter.n_lines
-                    name = cube_fitter.lines.names[k]
-                    if cube_fitter.lines.tied[k, 1] == vk
-                        param_maps.lines[name][:voff] .-= avg_offset
+                    name = Symbol(cube_fitter.lines.names[k], "_1")
+                    if cube_fitter.lines.tied_voff[k, 1] == vk
+                        # Subtract the average offset from the individual voffs
+                        param_maps.lines[name][:voff_indiv] .-= avg_offset
+                        # and add it to the tied voffs
+                        param_maps.lines[name][:voff] .+= avg_offset
                     end
                 end
-                # and add it to the tied voff
-                param_maps.tied_voffs[Symbol(vk, "_1")] .+= avg_offset
             end
         end
     end
@@ -376,8 +301,8 @@ Plotting function for 2D parameter maps which are output by `fit_cube!`
 
 # Arguments
 - `data::Matrix{Float64}`: The 2D array of data to be plotted
-- `name::String`: The name of the object whose fitting parameter is being plotted, i.e. "NGC_7469"
 - `name_i::String`: The name of the individual parameter being plotted, i.e. "dust_features_PAH_5.24_amp"
+- `save_path::String`: The file path to save the plot to.
 - `Ω::Float64`: The solid angle subtended by each pixel, in steradians (used for angular scalebar)
 - `z::Float64`: The redshift of the object (used for physical scalebar)
 - `psf_fwhm::Float64`: The FWHM of the point-spread function in arcseconds (used to add a circular patch with this size)
@@ -388,7 +313,7 @@ Plotting function for 2D parameter maps which are output by `fit_cube!`
 - `snr_thresh::Float64=3.`: The S/N threshold below which to cut out any spaxels using the values in snr_filter
 - `cmap::Symbol=:cubehelix`: The colormap used in the plot, defaults to the cubehelix map
 """
-function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String, Ω::Float64, z::Float64, psf_fwhm::Float64,
+function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::String, Ω::Float64, z::Float64, psf_fwhm::Float64,
     cosmo::Cosmology.AbstractCosmology, python_wcs::PyObject; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, 
     snr_thresh::Float64=3., cmap::Symbol=:cubehelix)
 
@@ -474,14 +399,21 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
         vmin = -vabs
         vmax = vabs
         if cmap == :cubehelix
-            cmap = :coolwarm
+            cmap = :RdBu_r
         end
     end
     # default cmap is magma for FWHMs and equivalent widths
     if (occursin("fwhm", String(name_i)) || occursin("eqw", String(name_i))) && cmap == :cubehelix
         cmap = :magma
     end
-    cdata = ax.imshow(filtered', origin=:lower, cmap=cmap, vmin=vmin, vmax=vmax)
+
+    # Add small value to vmax to prevent the maximum color value from being the same as the background
+    small = 0.
+    if cmap == :cubehelix
+        small = (vmax - vmin) / 1e3
+    end
+
+    cdata = ax.imshow(filtered', origin=:lower, cmap=cmap, vmin=vmin, vmax=vmax+small)
     # ax.axis(:off)
     ax.tick_params(which="both", axis="both", direction="in")
     ax.set_xlabel("R.A.")
@@ -522,7 +454,12 @@ function plot_parameter_map(data::Matrix{Float64}, name::String, name_i::String,
     ax.annotate("PSF", size(data) .* 0.9 .- (0., psf_fwhm / pix_as / 2 + 1.75), ha=:center, va=:center)
 
     fig.colorbar(cdata, ax=ax, label=bunit)
-    plt.savefig(joinpath("output_$(name)", "param_maps", "$(name_i).pdf"), dpi=300, bbox_inches=:tight)
+
+    # Make directories
+    if !isdir(dirname(save_path))
+        mkpath(dirname(save_path))
+    end
+    plt.savefig(save_path, dpi=300, bbox_inches=:tight)
     plt.close()
 
 end
@@ -544,11 +481,15 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
     # Iterate over model parameters and make 2D maps
     @debug "Using solid angle $(cube_fitter.cube.Ω), redshift $(cube_fitter.z), cosmology $(cube_fitter.cosmology)"
 
+    # Ineterpolate the PSF
+    psf_interp = Spline1D(cube_fitter.cube.λ, cube_fitter.cube.psf, k=1)
+
     # Stellar continuum parameters
     for parameter ∈ keys(param_maps.stellar_continuum)
         data = param_maps.stellar_continuum[parameter]
         name_i = join(["stellar_continuum", parameter], "_")
-        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf_fwhm), 
+        save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "continuum", "$(name_i).pdf")
+        plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf), 
             cube_fitter.cosmology, cube_fitter.cube.wcs)
     end
 
@@ -556,8 +497,9 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
     for i ∈ keys(param_maps.dust_continuum)
         for parameter ∈ keys(param_maps.dust_continuum[i])
             data = param_maps.dust_continuum[i][parameter]
-            name_i = join(["dust_continuum", i, parameter], "_")
-            plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf_fwhm), 
+            name_i = join(["dust_continuum", i, parameter], "_") 
+            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "continuum", "$(name_i).pdf")
+            plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf), 
                 cube_fitter.cosmology, cube_fitter.cube.wcs)
         end
     end
@@ -566,13 +508,13 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
     for df ∈ keys(param_maps.dust_features)
         snr = param_maps.dust_features[df][:SNR]
         # Find the wavelength/index at which to get the PSF FWHM for the circle in the plot
-        wave_i = nanmedian(param_maps.dust_features[df][:mean])
-        _, ind_i = findmin(abs.(cube_fitter.cube.λ .- wave_i))
+        wave_i = nanmedian(param_maps.dust_features[df][:mean]) / (1 + cube_fitter.z)
 
         for parameter ∈ keys(param_maps.dust_features[df])
             data = param_maps.dust_features[df][parameter]
-            name_i = join(["dust_features", df, parameter], "_")
-            plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cube.psf_fwhm[ind_i],
+            name_i = join([df, parameter], "_")
+            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "dust_features", "$(name_i).pdf")
+            plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=parameter !== :SNR ? snr : nothing, snr_thresh=snr_thresh)
         end
     end
@@ -581,7 +523,8 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
     for parameter ∈ keys(param_maps.extinction)
         data = param_maps.extinction[parameter]
         name_i = join(["extinction", parameter], "_")
-        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf_fwhm), 
+        save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "extinction", "$(name_i).pdf")
+        plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf), 
             cube_fitter.cosmology, cube_fitter.cube.wcs)
     end
 
@@ -590,93 +533,64 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
         for parameter ∈ keys(param_maps.hot_dust)
             data = param_maps.hot_dust[parameter]
             name_i = join(["hot_dust", parameter], "_")
-            plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf_fwhm), 
+            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "hot_dust", "$(name_i).pdf")
+            plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf), 
                 cube_fitter.cosmology, cube_fitter.cube.wcs)
-        end
-    end
-
-    # Tied Voigt mixing parameter
-    if cube_fitter.tie_voigt_mixing
-        data = param_maps.tied_voigt_mix
-        name_i = "tied_voigt_mixing"
-        plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf_fwhm), 
-            cube_fitter.cosmology, cube_fitter.cube.wcs)
-    end
-
-    # Tied kinematics
-    for j ∈ 1:cube_fitter.n_comps
-        for vk ∈ cube_fitter.tied_kinematics.key[j]
-            data = param_maps.tied_voffs[Symbol(vk, "_$j")]
-            name_i = join(["tied_voffs", vk, "$j"], "_")
-            # Get the SNRs of each line in the tied kinematic group
-            snr = nothing
-            for k ∈ 1:cube_fitter.n_lines
-                name = cube_fitter.lines.names[k]
-                if cube_fitter.lines.tied[k, j] == vk
-                    if isnothing(snr)
-                        snr = param_maps.lines[name][:SNR]
-                        continue
-                    end
-                    snr = cat(snr, param_maps.lines[name][:SNR], dims=3)
-                end
-            end
-            # Take the maximum SNR along the 3rd axis
-            if ndims(snr) == 3
-                snr = dropdims(nanmaximum(snr, dims=3), dims=3)
-            end
-            plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf_fwhm), 
-                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr, snr_thresh=snr_thresh)
-        end
-        for vk ∈ cube_fitter.tied_kinematics.key[j]
-            data = param_maps.tied_fwhms[Symbol(vk, "_$j")]
-            name_i = join(["tied_fwhms", vk, "$j"], "_")
-            # Get the SNRs of each line in the tied kinematic group
-            snr = nothing
-            for k ∈ 1:cube_fitter.n_lines
-                name = cube_fitter.lines.names[k]
-                if cube_fitter.lines.tied[k, j] == vk
-                    if isnothing(snr)
-                        snr = param_maps.lines[name][:SNR]
-                        continue
-                    end
-                    snr = cat(snr, param_maps.lines[name][:SNR], dims=3)
-                end
-            end
-            # Take the maximum SNR along the 3rd axis
-            if ndims(snr) == 3
-                snr = dropdims(nanmaximum(snr, dims=3), dims=3)
-            end
-            plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf_fwhm), 
-                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr, snr_thresh=snr_thresh)
         end
     end
 
     # Line parameters
     for line ∈ keys(param_maps.lines)
+        # Remove the component index from the line name
+        line_key = Symbol(join(split(string(line), "_")[1:end-1], "_"))
         # Find the wavelength/index at which to get the PSF FWHM for the circle in the plot
-        line_i = findfirst(cube_fitter.lines.names .== line)
+        line_i = findfirst(cube_fitter.lines.names .== line_key)
         wave_i = cube_fitter.lines.λ₀[line_i]
-        _, ind_i = findmin(abs.(cube_fitter.cube.λ .- wave_i))
 
         for parameter ∈ keys(param_maps.lines[line])
             data = param_maps.lines[line][parameter]
-            name_i = join(["lines", line, parameter], "_")
+            name_i = join([line, parameter], "_")
             snr_filter = param_maps.lines[line][:SNR]
-            if contains(String(parameter), "SNR")
+            if contains(string(parameter), "SNR")
                 snr_filter = nothing
-            elseif contains(String(parameter), "acomp")
-                ind = split(String(parameter), "_")[end]
-                snr_filter = param_maps.lines[line][Symbol(:acomp_SNR, "_$ind")]
             end
-            plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, cube_fitter.cube.psf_fwhm[ind_i], 
+            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(line_key)", "$(name_i).pdf")
+            plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i), 
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh)
         end
     end
 
+    # Total parameters for lines with multiple components
+    for (k, name) ∈ enumerate(cube_fitter.lines.names)
+        n_line_comps = sum(.!isnothing.(cube_fitter.lines.profiles[k, :]))
+        wave_i = cube_fitter.lines.λ₀[k]
+        snr_filter = param_maps.lines[Symbol(name, "_1")][:SNR]
+        if n_line_comps > 1
+            component_keys = [Symbol(name, "_$(j)") for j in 1:n_line_comps]
+
+            # Total flux
+            total_flux = log10.(sum([exp10.(param_maps.lines[comp][:flux]) for comp in component_keys]))
+            name_i = join([name, "total_flux"], "_")
+            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(name)", "$(name_i).pdf")
+            plot_parameter_map(total_flux, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
+                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh)
+
+            # Total equivalent width
+            total_eqw = sum([param_maps.lines[comp][:eqw] for comp in component_keys])
+            name_i = join([name, "total_eqw"], "_")
+            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(name)", "$(name_i).pdf")
+            plot_parameter_map(total_eqw, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
+                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh)
+            
+        end
+    end
+
+
     # Reduced chi^2 
     data = param_maps.reduced_χ2
     name_i = "reduced_chi2"
-    plot_parameter_map(data, cube_fitter.name, name_i, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf_fwhm), 
+    save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "$(name_i).pdf")
+    plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf), 
         cube_fitter.cosmology, cube_fitter.cube.wcs)
 
     return
@@ -748,7 +662,7 @@ function make_movie(cube_fitter::CubeFitter, cube_model::CubeModel; cmap::Symbol
         # Loop over the wavelength axis and set the image data to the new slice for each frame
         output_file = joinpath("output_$(cube_fitter.name)", "$title.mp4")
         writer.setup(fig, output_file, dpi=300)
-        for i ∈ 1:size(full_data, 3)
+        for i ∈ axes(full_data, 3)
             data_i = full_data[:, :, i] 
             image.set_array(data_i')
             ln.set_data(wave_rest[i], 24)
@@ -806,28 +720,27 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
 
             @debug "Writing 3D model FITS HDUs"
 
-            write(f, Vector{Int}())                                                                                 # Primary HDU (empty)
-            write(f, cube_fitter.cube.Iν .* (1 .+ cube_fitter.z); header=hdr, name="DATA")                          # Raw data with nans inserted
-            write(f, cube_model.model; header=hdr, name="MODEL")                                                    # Full intensity model
-            write(f, cube_fitter.cube.Iν .* (1 .+ cube_fitter.z) .- cube_model.model; header=hdr, name="RESIDUALS") # Residuals (data - model)
-            write(f, cube_model.stellar; header=hdr, name="STELLAR_CONTINUUM")                                      # Stellar continuum model
+            write(f, Vector{Int}(); header=hdr)                                                         # Primary HDU (empty)
+            write(f, cube_fitter.cube.Iν .* (1 .+ cube_fitter.z); name="DATA")                          # Raw data with nans inserted
+            write(f, cube_model.model; name="MODEL")                                                    # Full intensity model
+            write(f, cube_model.stellar; name="STELLAR_CONTINUUM")                                      # Stellar continuum model
             for i ∈ 1:size(cube_model.dust_continuum, 4)
-                write(f, cube_model.dust_continuum[:, :, :, i]; header=hdr, name="DUST_CONTINUUM_$i")               # Dust continuum models
+                write(f, cube_model.dust_continuum[:, :, :, i]; name="DUST_CONTINUUM_$i")               # Dust continuum models
             end
             for (j, df) ∈ enumerate(cube_fitter.dust_features.names)
-                write(f, cube_model.dust_features[:, :, :, j]; header=hdr, name="$df")                              # Dust feature profiles
+                write(f, cube_model.dust_features[:, :, :, j]; name="$df")                              # Dust feature profiles
             end
             for (k, line) ∈ enumerate(cube_fitter.lines.names)
-                write(f, cube_model.lines[:, :, :, k]; header=hdr, name="$line")                                    # Emission line profiles
+                write(f, cube_model.lines[:, :, :, k]; name="$line")                                    # Emission line profiles
             end
-            write(f, cube_model.extinction; header=hdr, name="EXTINCTION")                                          # Extinction model
-            write(f, cube_model.abs_ice; header=hdr, name="ABS_ICE")                                                # Ice Absorption model
-            write(f, cube_model.abs_ch; header=hdr, name="ABS_CH")                                                  # CH Absorption model
+            write(f, cube_model.extinction; name="EXTINCTION")                                          # Extinction model
+            write(f, cube_model.abs_ice; name="ABS_ICE")                                                # Ice Absorption model
+            write(f, cube_model.abs_ch; name="ABS_CH")                                                  # CH Absorption model
             if cube_fitter.fit_sil_emission
-                write(f, cube_model.hot_dust; header=hdr, name="HOT_DUST")                                          # Hot dust model
+                write(f, cube_model.hot_dust; name="HOT_DUST")                                          # Hot dust model
             end
             
-            write(f, ["wave"], [cube_fitter.cube.λ .* (1 .+ cube_fitter.z)],                                        # wavelength vector
+            write(f, ["wave"], [cube_fitter.cube.λ .* (1 .+ cube_fitter.z)],                            # wavelength vector
                 hdutype=TableHDU, name="WAVELENGTH", units=Dict(:wave => "um"))
 
             # Insert physical units into the headers of each HDU -> MegaJansky per steradian for all except
@@ -854,246 +767,122 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
         end
     end
 
-    # Create the 2D parameter map FITS file
-    FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_parameter_maps.fits"), "w") do f
+    # Create the 2D parameter map FITS file for the parameters and the errors
+    for (index, param_data) ∈ enumerate([param_maps, param_errs])
+            
+        FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_parameter_" * 
+            (isone(index) ? "maps" : "errs") * ".fits"), "w") do f
 
-        @debug "Writing 2D parameter map FITS HDUs"
+            @debug "Writing 2D parameter map FITS HDUs"
 
-        write(f, Vector{Int}())  # Primary HDU (empty)
+            write(f, Vector{Int}(), header=hdr)  # Primary HDU (empty)
 
-        # Iterate over model parameters and make 2D maps
+            # Iterate over model parameters and make 2D maps
 
-        # Stellar continuum parameters
-        for parameter ∈ keys(param_maps.stellar_continuum)
-            data = param_maps.stellar_continuum[parameter]
-            name_i = join(["stellar_continuum", parameter], "_")
-            if occursin("amp", String(name_i))
-                bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
-            elseif occursin("temp", String(name_i))
-                bunit = "Kelvin"
-            end
-            write(f, data; header=hdr, name=name_i)
-            write_key(f[name_i], "BUNIT", bunit)
-        end
-        for parameter ∈ keys(param_errs.stellar_continuum)
-            data = param_errs.stellar_continuum[parameter]
-            name_i = join(["stellar_continuum", parameter, "err"], "_")
-            if occursin("amp", String(name_i))
-                bunit = "dex"
-            elseif occursin("temp", String(name_i))
-                bunit = "Kelvin"
-            end
-            write(f, data; header=hdr, name=name_i)
-            write_key(f[name_i], "BUNIT", bunit)
-        end
-
-        # Dust continuum parameters
-        for i ∈ keys(param_maps.dust_continuum)
-            for parameter ∈ keys(param_maps.dust_continuum[i])
-                data = param_maps.dust_continuum[i][parameter]
-                name_i = join(["dust_continuum", i, parameter], "_")
+            # Stellar continuum parameters
+            for parameter ∈ keys(param_data.stellar_continuum)
+                data = param_data.stellar_continuum[parameter]
+                name_i = join(["stellar_continuum", parameter], "_")
                 if occursin("amp", String(name_i))
                     bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
                 elseif occursin("temp", String(name_i))
                     bunit = "Kelvin"
                 end
-                write(f, data; header=hdr, name=name_i)
+                write(f, data; name=name_i)
+                write_key(f[name_i], "BUNIT", bunit)
+            end
+
+            # Dust continuum parameters
+            for i ∈ keys(param_data.dust_continuum)
+                for parameter ∈ keys(param_data.dust_continuum[i])
+                    data = param_data.dust_continuum[i][parameter]
+                    name_i = join(["dust_continuum", i, parameter], "_")
+                    if occursin("amp", String(name_i))
+                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                    elseif occursin("temp", String(name_i))
+                        bunit = "Kelvin"
+                    end
+                    write(f, data; name=name_i)
+                    write_key(f[name_i], "BUNIT", bunit)  
+                end
+            end
+
+            if cube_fitter.fit_sil_emission
+                # Hot dust parameters
+                for parameter ∈ keys(param_data.hot_dust)
+                    data = param_data.hot_dust[parameter]
+                    name_i = join(["hot_dust", parameter], "_")
+                    if occursin("amp", String(name_i))
+                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                    elseif occursin("temp", String(name_i))
+                        bunit = "Kelvin"
+                    elseif occursin("frac", String(name_i)) || occursin("tau", String(name_i))
+                        bunit = "unitless"
+                    end
+                    write(f, data; name=name_i)
+                    write_key(f[name_i], "BUNIT", bunit)
+                end
+            end
+
+            # Dust feature (PAH) parameters
+            for df ∈ keys(param_data.dust_features)
+                for parameter ∈ keys(param_data.dust_features[df])
+                    data = param_data.dust_features[df][parameter]
+                    name_i = join(["dust_features", df, parameter], "_")
+                    if occursin("amp", String(name_i))
+                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                    elseif occursin("fwhm", String(name_i)) || occursin("mean", String(name_i)) || occursin("eqw", String(name_i))
+                        bunit = "um"
+                    elseif occursin("flux", String(name_i))
+                        bunit = "log10(F / erg s^-1 cm^-2)"
+                    elseif occursin("SNR", String(name_i))
+                        bunit = "unitless"
+                    end
+                    write(f, data; name=name_i)
+                    write_key(f[name_i], "BUNIT", bunit)      
+                end
+            end
+            
+            # Extinction parameters
+            for parameter ∈ keys(param_data.extinction)
+                data = param_data.extinction[parameter]
+                name_i = join(["extinction", parameter], "_")
+                bunit = "unitless"
+                write(f, data; name=name_i)
                 write_key(f[name_i], "BUNIT", bunit)  
             end
-        end
-        for i ∈ keys(param_errs.dust_continuum)
-            for parameter ∈ keys(param_errs.dust_continuum[i])
-                data = param_errs.dust_continuum[i][parameter]
-                name_i = join(["dust_continuum", i, parameter, "err"], "_")
-                if occursin("amp", String(name_i))
-                    bunit = "dex"
-                elseif occursin("temp", String(name_i))
-                    bunit = "Kelvin"
-                end
-                write(f, data; header=hdr, name=name_i)
-                write_key(f[name_i], "BUNIT", bunit)  
-            end
-        end
 
-        if cube_fitter.fit_sil_emission
-            # Hot dust parameters
-            for parameter ∈ keys(param_maps.hot_dust)
-                data = param_maps.hot_dust[parameter]
-                name_i = join(["hot_dust", parameter], "_")
-                if occursin("amp", String(name_i))
-                    bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
-                elseif occursin("temp", String(name_i))
-                    bunit = "Kelvin"
-                elseif occursin("frac", String(name_i)) || occursin("tau", String(name_i))
-                    bunit = "unitless"
+            # Line parameters
+            for line ∈ keys(param_data.lines)
+                for parameter ∈ keys(param_data.lines[line])
+                    data = param_data.lines[line][parameter]
+                    name_i = join(["lines", line, parameter], "_")
+                    if occursin("amp", String(name_i))
+                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                    elseif occursin("fwhm", String(name_i)) || occursin("voff", String(name_i))
+                        bunit = "km/s"
+                    elseif occursin("flux", String(name_i))
+                        bunit = "log10(I / erg s^-1 cm^-2)"
+                    elseif occursin("eqw", String(name_i))
+                        bunit = "um"
+                    elseif occursin("SNR", String(name_i)) || occursin("h3", String(name_i)) || 
+                        occursin("h4", String(name_i)) || occursin("mixing", String(name_i))
+                        bunit = "unitless"
+                    end
+                    write(f, data; name=name_i)
+                    write_key(f[name_i], "BUNIT", bunit)
                 end
-                write(f, data; header=hdr, name=name_i)
-                write_key(f[name_i], "BUNIT", bunit)
             end
-            for parameter ∈ keys(param_errs.hot_dust)
-                data = param_errs.hot_dust[parameter]
-                name_i = join(["hot_dust", parameter], "_")
-                if occursin("amp", String(name_i))
-                    bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
-                elseif occursin("temp", String(name_i))
-                    bunit = "Kelvin"
-                elseif occursin("frac", String(name_i)) || occursin("tau", String(name_i))
-                    bunit = "unitless"
-                end
-                write(f, data; header=hdr, name=name_i)
+
+            if isone(index)
+                # Reduced chi^2
+                data = param_maps.reduced_χ2
+                name_i = "reduced_chi2"
+                bunit = "unitless"
+                write(f, data; name=name_i)
                 write_key(f[name_i], "BUNIT", bunit)
             end
         end
-
-        # Dust feature (PAH) parameters
-        for df ∈ keys(param_maps.dust_features)
-            for parameter ∈ keys(param_maps.dust_features[df])
-                data = param_maps.dust_features[df][parameter]
-                name_i = join(["dust_features", df, parameter], "_")
-                if occursin("amp", String(name_i))
-                    bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
-                elseif occursin("fwhm", String(name_i)) || occursin("mean", String(name_i)) || occursin("eqw", String(name_i))
-                    bunit = "um"
-                elseif occursin("flux", String(name_i))
-                    bunit = "log10(F / erg s^-1 cm^-2)"
-                elseif occursin("SNR", String(name_i))
-                    bunit = "unitless"
-                end
-                write(f, data; header=hdr, name=name_i)
-                write_key(f[name_i], "BUNIT", bunit)      
-            end
-        end
-        for df ∈ keys(param_errs.dust_features)
-            for parameter ∈ keys(param_errs.dust_features[df])
-                data = param_errs.dust_features[df][parameter]
-                name_i = join(["dust_features", df, parameter, "err"], "_")
-                if occursin("amp", String(name_i))
-                    bunit = "dex"
-                elseif occursin("fwhm", String(name_i)) || occursin("mean", String(name_i)) || occursin("eqw", String(name_i))
-                    bunit = "um"
-                elseif occursin("flux", String(name_i))
-                    bunit = "dex"
-                elseif occursin("SNR", String(name_i))
-                    bunit = "unitless"
-                end
-                write(f, data; header=hdr, name=name_i)
-                write_key(f[name_i], "BUNIT", bunit)      
-            end
-        end
-
-        # Line parameters
-        for line ∈ keys(param_maps.lines)
-            for parameter ∈ keys(param_maps.lines[line])
-                data = param_maps.lines[line][parameter]
-                name_i = join(["lines", line, parameter], "_")
-                if occursin("amp", String(name_i))
-                    bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
-                elseif occursin("fwhm", String(name_i)) || occursin("voff", String(name_i))
-                    bunit = "km/s"
-                elseif occursin("flux", String(name_i))
-                    bunit = "log10(I / erg s^-1 cm^-2)"
-                elseif occursin("eqw", String(name_i))
-                    bunit = "um"
-                elseif occursin("SNR", String(name_i)) || occursin("h3", String(name_i)) || 
-                    occursin("h4", String(name_i)) || occursin("mixing", String(name_i))
-                    bunit = "unitless"
-                end
-                write(f, data; header=hdr, name=name_i)
-                write_key(f[name_i], "BUNIT", bunit)   
-            end
-        end
-        for line ∈ keys(param_errs.lines)
-            for parameter ∈ keys(param_errs.lines[line])
-                data = param_errs.lines[line][parameter]
-                name_i = join(["lines", line, parameter, "err"], "_")
-                if occursin("amp", String(name_i))
-                    bunit = "dex"
-                elseif occursin("fwhm", String(name_i)) || occursin("voff", String(name_i))
-                    bunit = "km/s"
-                elseif occursin("flux", String(name_i))
-                    bunit = "dex"
-                elseif occursin("eqw", String(name_i))
-                    bunit = "um"
-                elseif occursin("SNR", String(name_i)) || occursin("h3", String(name_i)) || 
-                    occursin("h4", String(name_i)) || occursin("mixing", String(name_i))
-                    bunit = "unitless"
-                end
-                write(f, data; header=hdr, name=name_i)
-                write_key(f[name_i], "BUNIT", bunit)   
-            end
-        end
-
-        # Extinction parameters
-        for parameter ∈ keys(param_maps.extinction)
-            data = param_maps.extinction[parameter]
-            name_i = join(["extinction", parameter], "_")
-            bunit = "unitless"
-            write(f, data; header=hdr, name=name_i)
-            write_key(f[name_i], "BUNIT", bunit)  
-        end
-        for parameter ∈ keys(param_errs.extinction)
-            data = param_errs.extinction[parameter]
-            name_i = join(["extinction", parameter, "err"], "_")
-            bunit = "unitless"
-            write(f, data; header=hdr, name=name_i)
-            write_key(f[name_i], "BUNIT", bunit)  
-        end
-
-        # Tied Voigt mixing parameter
-        if cube_fitter.tie_voigt_mixing
-            data = param_maps.tied_voigt_mix
-            name_i = "tied_voigt_mixing"
-            bunit = "unitless"
-            write(f, data; header=hdr, name=name_i)
-            write_key(f[name_i], "BUNIT", bunit)
-        end
-        if cube_fitter.tie_voigt_mixing
-            data = param_errs.tied_voigt_mix
-            name_i = "tied_voigt_mixing_err"
-            bunit = "unitless"
-            write(f, data; header=hdr, name=name_i)
-            write_key(f[name_i], "BUNIT", bunit)
-        end
-
-        # Tied kinematics
-        for j ∈ 1:cube_fitter.n_comps
-            for vk ∈ cube_fitter.tied_kinematics.key[j]
-                data = param_maps.tied_voffs[Symbol(vk, "_$j")]
-                name_i = join(["tied_voffs", vk, "$j"], "_")
-                bunit = "km/s"
-                write(f, data; header=hdr, name=name_i)
-                write_key(f[name_i], "BUNIT", bunit)
-            end
-            for vk ∈ cube_fitter.tied_kinematics.key[j]
-                data = param_errs.tied_voffs[Symbol(vk, "_$j")]
-                name_i = join(["tied_voffs", vk, "$j", "err"], "_")
-                bunit = "km/s"
-                write(f, data; header=hdr, name=name_i)
-                write_key(f[name_i], "BUNIT", bunit)
-            end
-            for vk ∈ cube_fitter.tied_kinematics.key[j]
-                data = param_maps.tied_fwhms[Symbol(vk, "_$j")]
-                name_i = join(["tied_fwhms", vk, "$j"], "_")
-                bunit = "km/s"
-                write(f, data; header=hdr, name=name_i)
-                write_key(f[name_i], "BUNIT", bunit)
-            end
-            for vk ∈ cube_fitter.tied_kinematics.key[j]
-                data = param_errs.tied_fwhms[Symbol(vk, "_$j")]
-                name_i = join(["tied_fwhms", vk, "$j", "err"], "_")
-                bunit = "km/s"
-                write(f, data; header=hdr, name=name_i)
-                write_key(f[name_i], "BUNIT", bunit)
-            end
-        end
-
-        # Reduced chi^2
-        data = param_maps.reduced_χ2
-        name_i = "reduced_chi2"
-        bunit = "unitless"
-        write(f, data; header=hdr, name=name_i)
-        write_key(f[name_i], "BUNIT", bunit)
-
     end
 end
 
