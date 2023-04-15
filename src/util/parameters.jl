@@ -6,38 +6,28 @@ related quantities.
 =#
 
 """
-    Parameter(value, locked, prior)
+    Parameter(value, locked, limits)
 
 A struct for holding information about parameters' intial values and priors
 
 # Fields
 - `value::Number`: The initial value of the parameter
 - `locked::Bool`: false to allow the parameter to vary based on the prior, true to keep it fixed
-- `prior::UnivariateDistribution`: distribution that defines the prior (i.e. Normal, Uniform, LogUniform)
-- `mcmc_scale::Number`: the MCMC walker search scale for the parameter
+- `limits::Tuple`: lower/upper limits on the parameter, if it is allowed to vary
 """
-mutable struct Parameter
+mutable struct Parameter{T<:Number}
 
-    value::Number
+    value::T
     locked::Bool
-    prior::UnivariateDistribution
-    mcmc_scale::Number
+    limits::Tuple{T, T}
     
     # Constructor function
-    function Parameter(value::Number, locked::Bool, prior::UnivariateDistribution)
+    function Parameter(value::T, locked::Bool, limits::Tuple{T, T}) where {T<:Number}
 
-        # Calculate "MCMC scale" parameter for the search scale of the walker
-        if typeof(prior) <: Normal
-            mcmc_scale = std(prior) / 10
-        elseif typeof(prior) <: Uniform
-            dx₁ = abs(maximum(prior) - value)
-            dx₂ = abs(value - minimum(prior))
-            mcmc_scale = minimum([dx₁, dx₂]) / 100
-        else
-            mcmc_scale = value / 100
-        end
+        # Make sure the upper limit is greater than the lower limit
+        @assert limits[2] > limits[1]
 
-        new(value, locked, prior, mcmc_scale)
+        new{typeof(value)}(value, locked, limits)
     end
 
 end
@@ -49,7 +39,7 @@ end
 Show the parameter object as a nicely formatted string
 """
 function Base.show(io::IO, p::Parameter)
-    Base.show(io, "Parameter: value = $(p.value) | locked = $(p.locked) | prior = $(p.prior)")
+    Base.show(io, "Parameter: value = $(p.value) | locked = $(p.locked) | limits = $(p.limits)")
 end
 
 
@@ -64,17 +54,9 @@ function from_dict(dict::Dict)::Parameter
     value = dict["val"]
     locked = dict["locked"]
     # plim: absolute upper/lower limits
-    if "plim" ∈ keys(dict) && !("pval" ∈ keys(dict))
-        prior = truncated(Uniform(-Inf,Inf), dict["plim"]...)
-    end
-    # pval: prior values, which may be normal (mean, std) or anything else
-    if "pval" ∈ keys(dict)
-        pval = dict["pval"]
-        prior = eval(Meta.parse(dict["prior"] * "($pval...)"))
-        prior = truncated(prior, dict["plim"]...)
-    end
+    lims = (dict["plim"]...,)
 
-    Parameter(value, locked, prior)
+    Parameter(value, locked, lims)
 end 
 
 
@@ -91,18 +73,9 @@ function from_dict_wave(dict::Dict)::Parameter
     value = dict["val"]
     locked = dict["locked"]
     # plim: absolute upper/lower limits
-    if "plim" ∈ keys(dict) && !("pval" ∈ keys(dict))
-        plim = dict["plim"] .+ value
-        prior = truncated(Uniform(-Inf,Inf), plim...)
-    end
-    # pval: prior values, which may be normal (mean, std) or anything else
-    if "pval" ∈ keys(dict)
-        pval = dict["pval"]
-        prior = eval(Meta.parse(dict["prior"] * "($pval...)"))
-        prior = truncated(prior, dict["plim"]...)
-    end
+    lims = (dict["plim"].+value...,)
 
-    Parameter(value, locked, prior)
+    Parameter(value, locked, lims)
 end
 
 
@@ -119,18 +92,9 @@ function from_dict_fwhm(dict::Dict)::Parameter
     value = dict["val"]
     locked = dict["locked"]
     # plim: absolute upper/lower limits
-    if "plim" ∈ keys(dict) && !("pval" ∈ keys(dict))
-        plim = dict["plim"] .* value
-        prior = truncated(Uniform(-Inf,Inf), plim...)
-    end
-    # pval: prior values, which may be normal (mean, std) or anything else
-    if "pval" ∈ keys(dict)
-        pval = dict["pval"]
-        prior = eval(Meta.parse(dict["prior"] * "($pval...)"))
-        prior = truncated(prior, dict["plim"]...)
-    end
+    lims = (dict["plim"].*value...,)
 
-    Parameter(value, locked, prior)
+    Parameter(value, locked, lims)
 end
 
 

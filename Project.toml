@@ -4,6 +4,7 @@ authors = ["Michael-Reefe <michael.reefe8@gmail.com>"]
 version = "0.2.0"
 
 [deps]
+AstroAngles = "5c4adb95-c1fc-4c53-b4ea-2a94080c53d2"
 CMPFit = "a5944310-3432-5d93-8bb2-e3b5eb62a58f"
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
 ColorSchemes = "35d6a980-a343-548e-a6ea-1d62b119f2f4"
@@ -13,7 +14,6 @@ Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 DelimitedFiles = "8bb1440f-4735-579b-a4ab-409b98df4dab"
 Dierckx = "39dd38d3-220a-591b-8e3c-4c3a8c710a94"
 Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
-Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 EllipsisNotation = "da5c29d0-fa7d-589e-88eb-ea29b0a81949"
 FITSIO = "525bcba6-941b-5504-bd06-fd0dc1a4d2eb"
 InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"

@@ -7,7 +7,6 @@ using Distributed
 using SharedArrays
 
 # Math packages
-using Distributions
 using Statistics
 using NaNStatistics
 using QuadGK
@@ -22,6 +21,7 @@ using CMPFit
 # Astronomy packages
 using FITSIO
 using Cosmology
+using AstroAngles
 using Unitful
 using UnitfulAstro
 
@@ -59,6 +59,7 @@ const py_animation::PyObject = PyNULL()
 
 # Astropy modules
 const py_wcs::PyObject = PyNULL()
+const py_coords::PyObject = PyNULL()
 const py_units::PyObject = PyNULL()
 const py_photutils::PyObject = PyNULL()
 const py_reproject::PyObject = PyNULL()
@@ -96,6 +97,7 @@ function __init__()
 
     # Import the WCS, photutils, and reproject packages from astropy
     copy!(py_wcs, pyimport_conda("astropy.wcs", "astropy"))
+    copy!(py_coords, pyimport_conda("astropy.coordinates", "astropy"))
     copy!(py_units, pyimport_conda("astropy.units", "astropy"))
     copy!(py_photutils, pyimport_conda("photutils", "photutils"))
     copy!(py_reproject, pyimport_conda("reproject", "reproject"))
@@ -146,6 +148,7 @@ export DataCube,   # DataCube struct
        interpolate_nans!, 
        plot_2d, 
        plot_1d,
+       make_aperture,
 
        # Observation struct
        Observation, 

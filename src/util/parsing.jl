@@ -293,13 +293,6 @@ function parse_lines()
         end
     end
 
-    # Define the initial values of line parameters given the values in the options file (if present)
-    fwhm_init = haskey(lines, "fwhm_init") ? lines["fwhm_init"] : 100.0
-    voff_init = haskey(lines, "voff_init") ? lines["voff_init"] : 0.0
-    h3_init = haskey(lines, "h3_init") ? lines["h3_init"] : 0.0        # gauss-hermite series start fully gaussian,
-    h4_init = haskey(lines, "h4_init") ? lines["h4_init"] : 0.0        # with both h3 and h4 moments starting at 0
-    η_init = haskey(lines, "eta_init") ? lines["eta_init"] : 0.5       # Voigts start half gaussian, half lorentzian
-
     # Create the kinematic groups
     #   ---> kinematic groups apply to all additional components of lines as well as the main component
     #        (i.e. the additional components in a kinematic group are tied to each other, but not to the main components
@@ -346,6 +339,13 @@ function parse_lines()
     # Loop through all the lines
     for (i, line) ∈ enumerate(keys(lines["lines"]))
 
+        # Define the initial values of line parameters given the values in the options file (if present)
+        fwhm_init = haskey(lines, "fwhm_init") ? lines["fwhm_init"] : 100.0
+        voff_init = haskey(lines, "voff_init") ? lines["voff_init"] : 0.0
+        h3_init = haskey(lines, "h3_init") ? lines["h3_init"] : 0.0        # gauss-hermite series start fully gaussian,
+        h4_init = haskey(lines, "h4_init") ? lines["h4_init"] : 0.0        # with both h3 and h4 moments starting at 0
+        η_init = haskey(lines, "eta_init") ? lines["eta_init"] : 0.5       # Voigts start half gaussian, half lorentzian
+
         names[i] = Symbol(line)
         cent_vals[i] = lines["lines"][line]
         prof_out[i] = isnothing(profiles[line]) ? nothing : Symbol(profiles[line])
@@ -359,94 +359,101 @@ function parse_lines()
         # Rest wavelength: $(lines["lines"][line]) um #
         """
 
-        # Set the priors for FWHM, voff, h3, h4, and eta based on the values in the options file
-        voff_prior = Uniform(lines["voff_plim"]...)
+        # Set the parameter limits for FWHM, voff, h3, h4, and eta based on the values in the options file
+        voff_plim = (lines["voff_plim"]...,)
         voff_locked = false
-        fwhm_prior = Uniform(lines["fwhm_plim"]...)
+        fwhm_plim = (lines["fwhm_plim"]...,)
         fwhm_locked = false
-        h3_prior = h3_locked = h4_prior = h4_locked = η_prior = η_locked = nothing
+        h3_plim = h3_locked = h4_plim = h4_locked = η_plim = η_locked = nothing
         if profiles[line] == "GaussHermite"
-            h3_prior = Uniform(lines["h3_plim"]...)
+            h3_plim = (lines["h3_plim"]...,)
             h3_locked = false
-            h4_prior = Uniform(lines["h4_plim"]...)
+            h4_plim = (lines["h4_plim"]...,)
             h4_locked = false
         elseif profiles[line] == "Voigt"
-            η_prior = Uniform(lines["eta_plim"]...)
+            η_plim = (lines["eta_plim"]...,)
             η_locked = false
         end
 
-        # Set the priors for additional component FWHM, voff, h3, h4, and eta based on the values in the options file
-        acomp_voff_priors = Vector{Union{Distribution,Nothing}}(nothing, lines["n_acomps"])
+        # Determine the initial values for the additional components
+        acomp_fwhm_init = haskey(lines, "acomp_fwhm_init") ? lines["acomp_fwhm_init"] : repeat([fwhm_init], lines["n_acomps"])
+        acomp_voff_init = haskey(lines, "acomp_voff_init") ? lines["acomp_voff_init"] : repeat([voff_init], lines["n_acomps"])
+        acomp_h3_init = haskey(lines, "acomp_h3_init") ? lines["acomp_h3_init"] : repeat([h3_init], lines["n_acomps"])
+        acomp_h4_init = haskey(lines, "acomp_h4_init") ? lines["acomp_h4_init"] : repeat([h4_init], lines["n_acomps"])
+        acomp_η_init = haskey(lines, "acomp_eta_init") ? lines["acomp_eta_init"] : repeat([η_init], lines["n_acomps"])
+
+        # Set the parameter limits for additional component FWHM, voff, h3, h4, and eta based on the values in the options file
+        acomp_voff_plims = Vector{Union{Tuple,Nothing}}(nothing, lines["n_acomps"])
         acomp_voff_locked = falses(lines["n_acomps"])
-        acomp_fwhm_priors = Vector{Union{Distribution,Nothing}}(nothing, lines["n_acomps"])
+        acomp_fwhm_plims = Vector{Union{Tuple,Nothing}}(nothing, lines["n_acomps"])
         acomp_fwhm_locked = falses(lines["n_acomps"]) 
-        acomp_h3_priors = Vector{Union{Distribution,Nothing}}(nothing, lines["n_acomps"]) 
+        acomp_h3_plims = Vector{Union{Tuple,Nothing}}(nothing, lines["n_acomps"]) 
         acomp_h3_locked = falses(lines["n_acomps"])
-        acomp_h4_priors = Vector{Union{Distribution,Nothing}}(nothing, lines["n_acomps"])
+        acomp_h4_plims = Vector{Union{Tuple,Nothing}}(nothing, lines["n_acomps"])
         acomp_h4_locked = falses(lines["n_acomps"])
-        acomp_η_priors = Vector{Union{Distribution,Nothing}}(nothing, lines["n_acomps"])
+        acomp_η_plims = Vector{Union{Tuple,Nothing}}(nothing, lines["n_acomps"])
         acomp_η_locked = falses(lines["n_acomps"])
         for j ∈ 1:lines["n_acomps"]
             if !isnothing(acomp_profiles[line][j])
-                acomp_voff_priors[j] = Uniform(lines["acomp_voff_plim"][j]...)
-                acomp_fwhm_priors[j] = Uniform(lines["acomp_fwhm_plim"][j]...)
+                acomp_voff_plims[j] = (lines["acomp_voff_plim"][j]...,)
+                acomp_fwhm_plims[j] = (lines["acomp_fwhm_plim"][j]...,)
                 if acomp_profiles[line][j] == "GaussHermite"
-                    acomp_h3_priors[j] = truncated(Normal(0.0, 0.1), lines["h3_plim"]...)
-                    acomp_h4_priors[j] = truncated(Normal(0.0, 0.1), lines["h4_plim"]...)
+                    acomp_h3_plims[j] = (lines["h3_plim"]...,)
+                    acomp_h4_plims[j] = (lines["h4_plim"]...,)
                 elseif acomp_profiles[line][j] == "Voigt"
-                    acomp_η_priors[j] = Uniform(0.0, 1.0)
+                    acomp_η_plims[j] = (0.0, 1.0)
                 end
             end
         end
 
         # Check if there are any specific override values present in the options file,
         # and if so, use them
-        if haskey(lines, "priors")
-            if haskey(lines["priors"], line)
-                # Dictionary mapping parameter strings to their priors/locked values
-                paramvars = Dict("voff" => [voff_prior, voff_locked],
-                                 "fwhm" => [fwhm_prior, fwhm_locked],
-                                 "h3" => [h3_prior, h3_locked],
-                                 "h4" => [h4_prior, h4_locked],
-                                 "eta" => [η_prior, η_locked])
+        if haskey(lines, "parameters")
+            if haskey(lines["parameters"], line)
+                # Dictionary mapping parameter strings to their limits/locked values
+                paramvars = Dict("voff" => [voff_plim, voff_locked, voff_init],
+                                 "fwhm" => [fwhm_plim, fwhm_locked, fwhm_init],
+                                 "h3" => [h3_plim, h3_locked, h3_init],
+                                 "h4" => [h4_plim, h4_locked, h4_init],
+                                 "eta" => [η_plim, η_locked, η_init])
                 # Iterate over parameters and check if they should be overwritten by the contents of the lines file
                 for param_str ∈ ["voff", "fwhm", "h3", "h4", "eta"]
-                    if haskey(lines["priors"][line], "$(param_str)_plim")
+                    if haskey(lines["parameters"][line], "$(param_str)_plim")
                         @debug "Overriding $param_str limits for $line"
-                        paramvars[param_str][1] = Uniform(lines["priors"][line]["$(param_str)_plim"]...)
+                        paramvars[param_str][1] = (lines["parameters"][line]["$(param_str)_plim"]...,)
                     end
-                    if haskey(lines["priors"][line], "$(param_str)_pstr")
-                        @debug "Overriding $param_str prior for $line"
-                        paramvars[param_str][1] = eval(Meta.parse(lines["priors"][line]["$(param_str)_pstr"]))
-                    end
-                    if haskey(lines["priors"][line], "$(param_str)_locked")
+                    if haskey(lines["parameters"][line], "$(param_str)_locked")
                         @debug "Overriding $param_str locked value for $line"
-                        paramvars[param_str][2] = lines["priors"][line]["$(param_str)_locked"]
+                        paramvars[param_str][2] = lines["parameters"][line]["$(param_str)_locked"]
+                    end
+                    if haskey(lines["parameters"][line], "$(param_str)_init")
+                        @debug "Overriding $param_str initial value for $line"
+                        paramvars[param_str][3] = lines["parameters"][line]["$(param_str)_init"]
                     end
                 end
                 # Repeat for acomp parameters
-                acomp_paramvars = Dict("acomp_voff" => [acomp_voff_priors, acomp_voff_locked],
-                                       "acomp_fwhm" => [acomp_fwhm_priors, acomp_fwhm_locked],
-                                       "acomp_h3" => [acomp_h3_priors, acomp_h3_locked],
-                                       "acomp_h4" => [acomp_h4_priors, acomp_h4_locked],
-                                       "acomp_eta" => [acomp_η_priors, acomp_η_locked])
+                acomp_paramvars = Dict("acomp_voff" => [acomp_voff_plims, acomp_voff_locked, acomp_voff_init],
+                                       "acomp_fwhm" => [acomp_fwhm_plims, acomp_fwhm_locked, acomp_fwhm_init],
+                                       "acomp_h3" => [acomp_h3_plims, acomp_h3_locked, acomp_h3_init],
+                                       "acomp_h4" => [acomp_h4_plims, acomp_h4_locked, acomp_h4_init],
+                                       "acomp_eta" => [acomp_η_plims, acomp_η_locked, acomp_η_init])
                 for param_str ∈ ["acomp_voff", "acomp_fwhm", "acomp_h3", "acomp_h4", "acomp_eta"]
-                    if haskey(lines["priors"][line], "$(param_str)_plim")
+                    if haskey(lines["parameters"][line], "$(param_str)_plim")
                         @debug "Overriding $param_str limits for $line"
                         for j ∈ 1:lines["n_acomps"]
-                            acomp_paramvars[param_str][1][j] = Uniform(lines["priors"][line]["$(param_str)_plim"][j]...)
+                            acomp_paramvars[param_str][1][j] = (lines["parameters"][line]["$(param_str)_plim"][j]...,)
                         end
                     end
-                    if haskey(lines["priors"][line], "$(param_str)_pstr")
-                        @debug "Overriding $param_str prior for $line"
-                        for j ∈ 1:lines["n_acomps"]
-                            acomp_paramvars[param_str][1][j] = eval(Meta.parse(lines["priors"][line]["$(param_str)_pstr"]))
-                        end
-                    end
-                    if haskey(lines["priors"][line], "$(param_str)_locked")
+                    if haskey(lines["parameters"][line], "$(param_str)_locked")
                         @debug "Overriding $param_str locked value for $line"
                         for j ∈ 1:lines["n_acomps"]
-                            acomp_paramvars[param_str][2][j] = lines["priors"][line]["$(param_str)_locked"][j]
+                            acomp_paramvars[param_str][2][j] = lines["parameters"][line]["$(param_str)_locked"][j]
+                        end
+                    end
+                    if haskey(lines["parameters"][line], "$(param_str)_init")
+                        @debug "Overriding $param_str initial value for $line"
+                        for j ∈ 1:lines["n_acomps"]
+                            acomp_paramvars[param_str][3][j] = lines["parameters"][line]["$(param_str)_init"][j]
                         end
                     end
                 end
@@ -485,7 +492,7 @@ function parse_lines()
                         # If the wavelength solution is bad, allow the kinematics to still be flexible based on its accuracy
                         if lines["flexible_wavesol"]
                             δv = lines["wavesol_unc"]
-                            voff_prior = Uniform(-δv, δv)
+                            voff_plim = (-δv, δv)
                             @debug "Using flexible tied voff with lenience of +/-$δv km/s"
                         end
                     end
@@ -550,18 +557,18 @@ function parse_lines()
 
         @debug "Profile: $(profiles[line])"
 
-        # Create parameter objects using the priors
-        voffs[i] = Parameter(voff_init, voff_locked, voff_prior)
+        # Create parameter objects using the parameter limits
+        voffs[i] = Parameter(voff_init, voff_locked, voff_plim)
         @debug "Voff $(voffs[i])"
-        fwhms[i] = Parameter(fwhm_init, fwhm_locked, fwhm_prior)
+        fwhms[i] = Parameter(fwhm_init, fwhm_locked, fwhm_plim)
         @debug "FWHM $(fwhms[i])"
         if profiles[line] == "GaussHermite"
-            h3s[i] = Parameter(h3_init, h3_locked, h3_prior)
+            h3s[i] = Parameter(h3_init, h3_locked, h3_plim)
             @debug "h3 $(h3s[i])"
-            h4s[i] = Parameter(h4_init, h4_locked, h4_prior)
+            h4s[i] = Parameter(h4_init, h4_locked, h4_plim)
             @debug "h4 $(h4s[i])"
         elseif profiles[line] == "Voigt" 
-            ηs[i] = Parameter(η_init, η_locked, η_prior)
+            ηs[i] = Parameter(η_init, η_locked, η_plim)
             @debug "eta $(ηs[i])"
         end
 
@@ -569,29 +576,27 @@ function parse_lines()
         for j ∈ 1:lines["n_acomps"]
             if !isnothing(acomp_profiles[line][j])
                 @debug "acomp profile: $(acomp_profiles[line][j])"
-                value = 0.
-                if !(minimum(acomp_voff_priors[j]) ≤ value ≤ maximum(acomp_voff_priors[j]))
-                    if abs(minimum(acomp_voff_priors[j])) < abs(maximum(acomp_voff_priors[j]))
-                        value = minimum(acomp_voff_priors[j])
+                if !(acomp_voff_plims[j][1] ≤ acomp_voff_init[j] ≤ acomp_voff_plims[j][2])
+                    if abs(acomp_voff_plims[j][1]) < abs(acomp_voff_plims[j][2])
+                        acomp_voff_init[j] = acomp_voff_plims[j][1]
                     else
-                        value = maximum(acomp_voff_priors[j])
+                        acomp_voff_init[j] = acomp_voff_plims[j][2]
                     end
                 end
-                acomp_voffs[i,j] = Parameter(value, acomp_voff_locked[j], acomp_voff_priors[j])
+                acomp_voffs[i,j] = Parameter(acomp_voff_init[j], acomp_voff_locked[j], acomp_voff_plims[j])
                 @debug "Voff $(acomp_voffs[i,j])"
-                value = 1.
-                if !(minimum(acomp_fwhm_priors[j]) ≤ value ≤ maximum(acomp_fwhm_priors[j]))
-                    value = minimum(acomp_fwhm_priors[j])
+                if !(acomp_fwhm_plims[j][1] ≤ acomp_fwhm_init[j] ≤ acomp_fwhm_plims[j][2])
+                    acomp_fwhm_init[j] = acomp_fwhm_plims[j][1]
                 end
-                acomp_fwhms[i,j] = Parameter(value, acomp_fwhm_locked[j], acomp_fwhm_priors[j])
+                acomp_fwhms[i,j] = Parameter(acomp_fwhm_init[j], acomp_fwhm_locked[j], acomp_fwhm_plims[j])
                 @debug "FWHM $(acomp_fwhms[i,j])"
                 if acomp_profiles[line][j] == "GaussHermite"
-                    acomp_h3s[i,j] = Parameter(h3_init, acomp_h3_locked[j], acomp_h3_priors[j])
+                    acomp_h3s[i,j] = Parameter(acomp_h3_init[j], acomp_h3_locked[j], acomp_h3_plims[j])
                     @debug "h3 $(acomp_h3s[i,j])"
-                    acomp_h4s[i,j] = Parameter(h4_init, acomp_h4_locked[j], acomp_h4_priors[j])
+                    acomp_h4s[i,j] = Parameter(acomp_h4_init[j], acomp_h4_locked[j], acomp_h4_plims[j])
                     @debug "h4 $(acomp_h4s[i,j])"
                 elseif acomp_profiles[line][j] == "Voigt" 
-                    acomp_ηs[i,j] = Parameter(η_init, acomp_η_locked[j], acomp_η_priors[j])
+                    acomp_ηs[i,j] = Parameter(acomp_η_init[j], acomp_η_locked[j], acomp_η_plims[j])
                     @debug "eta $(acomp_ηs[i,j])"
                 end
             end
@@ -613,9 +618,9 @@ function parse_lines()
     # Create a dictionary containing all of the unique `tie` keys, and the tied parameters 
     # corresponding to that tied key
     kin_tied_key_voff = [unique(lines_out.tied_voff[:, j]) for j ∈ 1:size(lines_out.tied_voff, 2)]
-    kin_tied_key_voff = [kin_tied_key_voff[i][.!isnothing.(kin_tied_key_voff[i])] for i in 1:length(kin_tied_key_voff)]
+    kin_tied_key_voff = [kin_tied_key_voff[i][.!isnothing.(kin_tied_key_voff[i])] for i in eachindex(kin_tied_key_voff)]
     kin_tied_key_fwhm = [unique(lines_out.tied_fwhm[:, j]) for j ∈ 1:size(lines_out.tied_fwhm, 2)]
-    kin_tied_key_fwhm = [kin_tied_key_fwhm[i][.!isnothing.(kin_tied_key_fwhm[i])] for i in 1:length(kin_tied_key_fwhm)]
+    kin_tied_key_fwhm = [kin_tied_key_fwhm[i][.!isnothing.(kin_tied_key_fwhm[i])] for i in eachindex(kin_tied_key_fwhm)]
     @debug "kin_tied_key_voff: $kin_tied_key_voff"
     @debug "kin_tied_key_fwhm: $kin_tied_key_fwhm"
     
@@ -625,66 +630,66 @@ function parse_lines()
     # Iterate and create the tied voff parameters
     for j ∈ 1:size(lines_out.tied_voff, 2)
         for (i, kin_tie) ∈ enumerate(kin_tied_key_voff[j])
-            v_prior = isone(j) ? Uniform(lines["voff_plim"]...) : Uniform(lines["acomp_voff_plim"][j-1]...)
+            v_plim = isone(j) ? (lines["voff_plim"]...,) : (lines["acomp_voff_plim"][j-1]...,)
             v_locked = false
+            v_init = isone(j) && haskey(lines, "voff_init") ? lines["voff_init"] : 0.0
             # Check if there is an overwrite option in the lines file
-            if haskey(lines, "priors")
-                if haskey(lines["priors"], string(kin_tie))
+            if haskey(lines, "parameters")
+                if haskey(lines["parameters"], string(kin_tie))
                     param_str = isone(j) ? "voff" : "acomp_voff"
-                    if haskey(lines["priors"][string(kin_tie)], "$(param_str)_plim")
-                        v_prior = isone(j) ? Uniform(lines["priors"][string(kin_tie)]["$(param_str)_plim"]...) :
-                                            Uniform(lines["priors"][string(kin_tie)]["$(param_str)_plim"][j]...)
+                    if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_plim")
+                        v_plim = isone(j) ? (lines["parameters"][string(kin_tie)]["$(param_str)_plim"]...,) :
+                                            (lines["parameters"][string(kin_tie)]["$(param_str)_plim"][j]...,)
                     end
-                    if haskey(lines["priors"][string(kin_tie)], "$(param_str)_pstr")
-                        v_prior = isone(j) ? eval(Meta.parse(lines["priors"][string(kin_tie)]["$(param_str)_pstr"])) :
-                                            eval(Meta.parse(lines["priors"][string(kin_tie)]["$(param_str)_pstr"][j]))
+                    if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_locked")
+                        v_locked = isone(j) ? lines["parameters"][string(kin_tie)]["$(param_str)_locked"] :
+                                              lines["parameters"][string(kin_tie)]["$(param_str)_locked"][j]
                     end
-                    if haskey(lines["priors"][string(kin_tie)], "$(param_str)_locked")
-                        v_locked = isone(j) ? lines["priors"][string(kin_tie)]["$(param_str)_locked"] :
-                                            lines["priors"][string(kin_tie)]["$(param_str)_locked"][j]
+                    if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_init")
+                        v_init = isone(j) ? lines["parameters"][string(kin_tie)]["$(param_str)_init"] :
+                                            lines["parameters"][string(kin_tie)]["$(param_str)_init"][j]
                     end
                 end
             end
-            value = 0.
-            if !(minimum(v_prior) ≤ value ≤ maximum(v_prior))
-                if abs(minimum(v_prior)) < abs(maximum(v_prior))
-                    value = minimum(v_prior)
+            if !(v_plim[1] ≤ v_init ≤ v_plim[2])
+                if abs(v_plim[1]) < abs(v_plim[2])
+                    v_init = v_plim[1]
                 else
-                    value = maximum(v_prior)
+                    v_init = v_plim[2]
                 end
             end
-            voff_tied[j][i] = isone(j) ? Parameter(voff_init, v_locked, v_prior) : Parameter(value, v_locked, v_prior)
+            voff_tied[j][i] = Parameter(v_init, v_locked, v_plim)
             msg *= "\nvoff_tied_$(kin_tie)_$(j) $(voff_tied[j][i])"
         end
     end
     # Iterate and create the tied fwhm parameters
     for j ∈ 1:size(lines_out.tied_fwhm, 2)
         for (i, kin_tie) ∈ enumerate(kin_tied_key_fwhm[j])
-            f_prior = isone(j) ? Uniform(lines["fwhm_plim"]...) : Uniform(lines["acomp_fwhm_plim"][j-1]...)
+            f_plim = isone(j) ? (lines["fwhm_plim"]...,) : (lines["acomp_fwhm_plim"][j-1]...,)
             f_locked = false
+            f_init = isone(j) && haskey(lines, "fwhm_init") ? lines["fwhm_init"] : 100.0
             # Check if there is an overwrite option in the lines file
-            if haskey(lines, "priors")
-                if haskey(lines["priors"], string(kin_tie))
+            if haskey(lines, "parameters")
+                if haskey(lines["parameters"], string(kin_tie))
                     param_str = isone(j) ? "fwhm" : "acomp_fwhm"
-                    if haskey(lines["priors"][string(kin_tie)], "$(param_str)_plim")
-                        f_prior = isone(j) ? Uniform(lines["priors"][string(kin_tie)]["$(param_str)_plim"]...) :
-                                            Uniform(lines["priors"][string(kin_tie)]["$(param_str)_plim"][j]...)
+                    if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_plim")
+                        f_plim = isone(j) ? (lines["parameters"][string(kin_tie)]["$(param_str)_plim"]...,) :
+                                            (lines["parameters"][string(kin_tie)]["$(param_str)_plim"][j]...,)
                     end
-                    if haskey(lines["priors"][string(kin_tie)], "$(param_str)_pstr")
-                        f_prior = isone(j) ? eval(Meta.parse(lines["priors"][string(kin_tie)]["$(param_str)_pstr"])) :
-                                            eval(Meta.parse(lines["priors"][string(kin_tie)]["$(param_str)_pstr"][j]))
+                    if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_locked")
+                        f_locked = isone(j) ? lines["parameters"][string(kin_tie)]["$(param_str)_locked"] :
+                                              lines["parameters"][string(kin_tie)]["$(param_str)_locked"][j]
                     end
-                    if haskey(lines["priors"][string(kin_tie)], "$(param_str)_locked")
-                        f_locked = isone(j) ? lines["priors"][string(kin_tie)]["$(param_str)_locked"] :
-                                            lines["priors"][string(kin_tie)]["$(param_str)_locked"][j]
+                    if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_init")
+                        f_init = isone(j) ?   lines["parameters"][string(kin_tie)]["$(param_str)_init"] :
+                                              lines["parameters"][string(kin_tie)]["$(param_str)_init"][j]
                     end
                 end
             end
-            value = 1.
-            if !(minimum(f_prior) ≤ value ≤ maximum(f_prior))
-                value = minimum(f_prior)
+            if !(f_plim[1] ≤ f_init ≤ f_plim[2])
+                f_init = f_plim[1]
             end
-            fwhm_tied[j][i] = isone(j) ? Parameter(fwhm_init, f_locked, f_prior) : Parameter(value, f_locked, f_prior)
+            fwhm_tied[j][i] = Parameter(f_init, f_locked, f_plim)
             msg *= "\nfwhm_tied_$(kin_tie)_$(j) $(fwhm_tied[j][i])"
         end
     end
@@ -694,7 +699,9 @@ function parse_lines()
 
     # If tie_voigt_mixing is set, all Voigt profiles have the same tied mixing parameter eta
     if lines["tie_voigt_mixing"]
-        voigt_mix_tied = Parameter(η_init, false, Uniform(0.0, 1.0))
+        η_init = haskey(lines, "eta_init") ? lines["eta_init"] : 0.5       # Voigts start half gaussian, half lorentzian
+        η_plim = (lines["eta_plim"]...,)
+        voigt_mix_tied = Parameter(η_init, false, η_plim)
         @debug "voigt_mix_tied $voigt_mix_tied (tied)"
     else
         voigt_mix_tied = nothing

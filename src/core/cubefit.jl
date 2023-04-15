@@ -562,8 +562,8 @@ end
 
 Generate a CubeModel object corresponding to the options given by the CubeFitter object
 """
-function generate_cubemodel(cube_fitter::CubeFitter)::CubeModel
-    shape = size(cube_fitter.cube.Iν)
+function generate_cubemodel(cube_fitter::CubeFitter, aperture::Bool=false)::CubeModel
+    shape = aperture ? (1,1,size(cube_fitter.cube.Iν, 3)) : size(cube_fitter.cube.Iν)
     # Full 3D intensity model array
     @debug "Generating full 3D cube models"
     cubemodel_empty(shape, cube_fitter.n_dust_cont, cube_fitter.dust_features.names, cube_fitter.lines.names)
@@ -576,8 +576,8 @@ end
 Generate two ParamMaps objects (for the values and errors) corrresponding to the options given
 by the CubeFitter object
 """
-function generate_parammaps(cube_fitter::CubeFitter)::Tuple{ParamMaps, ParamMaps}
-    shape = size(cube_fitter.cube.Iν)
+function generate_parammaps(cube_fitter::CubeFitter, aperture::Bool=false)::Tuple{ParamMaps, ParamMaps}
+    shape = aperture ? (1,1,size(cube_fitter.cube.Iν, 3)) : size(cube_fitter.cube.Iν)
     # 2D maps of fitting parameters
     @debug "Generating 2D parameter value & error maps"
     param_maps = parammaps_empty(shape, cube_fitter.n_dust_cont, cube_fitter.dust_features.names, cube_fitter.n_lines,
@@ -590,39 +590,39 @@ end
 
 
 """
-    get_continuum_priors(cube_fitter, I)
+    get_continuum_plimits(cube_fitter, I)
 
-Get the continuum prior vector for a given CubeFitter object, split up by the 2 continuum fitting steps.
+Get the continuum limits vector for a given CubeFitter object, split up by the 2 continuum fitting steps.
 Also returns a boolean vector for which parameters are allowed to vary.
 """
-function get_continuum_priors(cube_fitter::CubeFitter, I::Vector{<:Real}=[Inf])
+function get_continuum_plimits(cube_fitter::CubeFitter, I::Vector{<:Real}=[Inf])
 
     dust_features = cube_fitter.dust_features
     continuum = cube_fitter.continuum
 
-    amp_dc_prior = Uniform(0., Inf)  # dont actually use this for getting pdfs or logpdfs, it's just for min/max
-    amp_df_prior = Uniform(0., clamp(nanmaximum(I) / exp(-maximum(continuum.τ_97.prior)), 1., Inf))
+    amp_dc_plim = (0., Inf)
+    amp_df_plim = (0., clamp(nanmaximum(I) / exp(-continuum.τ_97.limits[2]), 1., Inf))
 
-    stellar_priors = [amp_dc_prior, continuum.T_s.prior]
+    stellar_plim = [amp_dc_plim, continuum.T_s.limits]
     stellar_lock = [false, continuum.T_s.locked]
-    dc_priors = vcat([[amp_dc_prior, Ti.prior] for Ti ∈ continuum.T_dc]...)
+    dc_plim = vcat([[amp_dc_plim, Ti.limits] for Ti ∈ continuum.T_dc]...)
     dc_lock = vcat([[false, Ti.locked] for Ti ∈ continuum.T_dc]...)
-    df_priors = vcat([[amp_df_prior, mi.prior, fi.prior] for (mi, fi) ∈ zip(dust_features.mean, dust_features.fwhm)]...)
+    df_plim = vcat([[amp_df_plim, mi.limits, fi.limits] for (mi, fi) ∈ zip(dust_features.mean, dust_features.fwhm)]...)
     df_lock = vcat([[false, mi.locked, fi.locked] for (mi, fi) ∈ zip(dust_features.mean, dust_features.fwhm)]...)
-    ext_priors = [continuum.τ_97.prior, continuum.τ_ice.prior, continuum.τ_ch.prior, continuum.β.prior]
+    ext_plim = [continuum.τ_97.limits, continuum.τ_ice.limits, continuum.τ_ch.limits, continuum.β.limits]
     ext_lock = [continuum.τ_97.locked, continuum.τ_ice.locked, continuum.τ_ch.locked, continuum.β.locked]
-    hd_priors = cube_fitter.fit_sil_emission ? [amp_dc_prior, continuum.T_hot.prior, continuum.Cf_hot.prior, 
-        continuum.τ_warm.prior, continuum.τ_cold.prior] : []
+    hd_plim = cube_fitter.fit_sil_emission ? [amp_dc_plim, continuum.T_hot.limits, continuum.Cf_hot.limits, 
+        continuum.τ_warm.limits, continuum.τ_cold.limits] : []
     hd_lock = cube_fitter.fit_sil_emission ? [false, continuum.T_hot.locked, continuum.Cf_hot.locked,
         continuum.τ_warm.locked, continuum.τ_cold.locked] : []
 
     # Split up for the two different stages of continuum fitting -- with templates and then with the PAHs
-    priors_1 = Vector{Distribution}(vcat(stellar_priors, dc_priors, ext_priors, hd_priors, [amp_df_prior, amp_df_prior]))
+    plims_1 = Vector{Tuple}(vcat(stellar_plim, dc_plim, ext_plim, hd_plim, [amp_df_plim, amp_df_plim]))
     lock_1 = BitVector(vcat(stellar_lock, dc_lock, ext_lock, hd_lock, [false, false]))
-    priors_2 = Vector{Distribution}(df_priors)
+    plims_2 = Vector{Tuple}(df_plim)
     lock_2 = BitVector(df_lock)
 
-    priors_1, priors_2, lock_1, lock_2
+    plims_1, plims_2, lock_1, lock_2
 
 end
 
@@ -646,7 +646,7 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
 
         # pull out optical depth that was pre-fit
         # τ_97_0 = cube_fitter.τ_guess[parse(Int, cube_fitter.cube.channel)][spaxel]
-        max_τ = maximum(cube_fitter.continuum.τ_97.prior)
+        max_τ = cube_fitter.continuum.τ_97.limits[2]
 
         # scale all flux amplitudes by the difference in medians between the spaxel and the summed spaxels
         # (should be close to 1 since the sum is already normalized by the number of spaxels included anyways)
@@ -694,7 +694,8 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
         pah_frac = repeat([clamp(nanmedian(I)/2, 0., Inf)], 2)
 
         # Stellar amplitude
-        A_s = clamp(quadratic_interp_func(5.5, λ, I) / Blackbody_ν(5.5, continuum.T_s.value), 0., Inf) 
+        λ_s = minimum(λ) < 5 ? minimum(λ)+0.1 : 5.5
+        A_s = clamp(quadratic_interp_func(λ_s, λ, I) / Blackbody_ν(λ_s, continuum.T_s.value), 0., Inf) 
 
         # Dust feature amplitudes
         A_df = repeat([clamp(nanmedian(I)/2, 0., Inf)], cube_fitter.n_dust_feat)
@@ -705,7 +706,8 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
             zip(λ_dc, continuum.T_dc)] .* (λ_dc ./ 9.7).^2 ./ 5., 0., Inf)
         
         # Hot dust amplitude
-        A_hd = clamp(quadratic_interp_func(5.5, λ, I) / Blackbody_ν(5.5, continuum.T_hot.value), 0., Inf) / 2
+        λ_hd = clamp(9.7, minimum(λ), maximum(λ))
+        A_hd = clamp(quadratic_interp_func(λ_hd, λ, I) / Blackbody_ν(λ_hd, continuum.T_hot.value), 0., Inf) / 2
 
         stellar_pars = [A_s, continuum.T_s.value]
         dc_pars = vcat([[Ai, Ti.value] for (Ai, Ti) ∈ zip(A_dc, continuum.T_dc)]...)
@@ -729,7 +731,6 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
         (cube_fitter.fit_sil_emission ? "hot_dust_amp, hot_dust_temp, hot_dust_covering_frac, hot_dust_tau, cold_dust_tau, " : "") *
         join(["$(df)_amp, $(df)_mean, $(df)_fwhm" for df ∈ cube_fitter.dust_features.names], ", ") * "]"
         
-    # @debug "Priors: \n $priors"
     @debug "Continuum Starting Values: \n $p₀"
 
     # Step 1: Stellar + Dust blackbodies, 2 new amplitudes for the PAH templates, and the extinction parameters
@@ -743,10 +744,10 @@ end
 
 
 """
-    get_continuum_parinfo(cube_fitter, pars_1, priors_1, lock_1, pars_2, priors_2, lock_2)
+    get_continuum_parinfo(n_free_1, n_free_2, lb_1, ub_1, lb_2, ub_2)
 
 Get the CMPFit parinfo and config objects for a given CubeFitter object, given the vector of initial valuels,
-priors, and boolean locked values.
+limits, and boolean locked values.
 """
 function get_continuum_parinfo(n_free_1::S, n_free_2::S, lb_1::Vector{T}, ub_1::Vector{T}, 
     lb_2::Vector{T}, ub_2::Vector{T}) where {S<:Integer,T<:Real}
@@ -800,16 +801,16 @@ function pretty_print_continuum_results(cube_fitter::CubeFitter, popt::Vector{<:
     end
     msg *= "\n#> EXTINCTION <#\n"
     msg *= "τ_9.7: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ]) +/- $(@sprintf "%.2f" perr[pᵢ]) [-] \t Limits: " *
-        "($(@sprintf "%.2f" minimum(continuum.τ_97.prior)), $(@sprintf "%.2f" maximum(continuum.τ_97.prior)))" * 
+        "($(@sprintf "%.2f" continuum.τ_97.limits[1]), $(@sprintf "%.2f" continuum.τ_97.limits[2]))" * 
         (continuum.τ_97.locked ? " (fixed)" : "") * "\n"
     msg *= "τ_ice: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ+1]) +/- $(@sprintf "%.2f" perr[pᵢ+1]) [-] \t Limits: " *
-        "($(@sprintf "%.2f" minimum(continuum.τ_ice.prior)), $(@sprintf "%.2f" maximum(continuum.τ_ice.prior)))" *
+        "($(@sprintf "%.2f" continuum.τ_ice.limits[1]), $(@sprintf "%.2f" continuum.τ_ice.limits[2]))" *
         (continuum.τ_ice.locked ? " (fixed)" : "") * "\n"
     msg *= "τ_ch: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ+2]) +/- $(@sprintf "%.2f" perr[pᵢ+2]) [-] \t Limits: " *
-        "($(@sprintf "%.2f" minimum(continuum.τ_ch.prior)), $(@sprintf "%.2f" maximum(continuum.τ_ch.prior)))" *
+        "($(@sprintf "%.2f" continuum.τ_ch.limits[1]), $(@sprintf "%.2f" continuum.τ_ch.limits[2]))" *
         (continuum.τ_ch.locked ? " (fixed)" : "") * "\n"
     msg *= "β: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ+3]) +/- $(@sprintf "%.2f" perr[pᵢ+3]) [-] \t Limits: " *
-        "($(@sprintf "%.2f" minimum(continuum.β.prior)), $(@sprintf "%.2f" maximum(continuum.β.prior)))" * 
+        "($(@sprintf "%.2f" continuum.β.limits[1]), $(@sprintf "%.2f" continuum.β.limits[2]))" * 
         (continuum.β.locked ? " (fixed)" : "") * "\n"
     msg *= "\n"
     pᵢ += 4
@@ -817,16 +818,16 @@ function pretty_print_continuum_results(cube_fitter::CubeFitter, popt::Vector{<:
         msg *= "\n#> HOT DUST <#\n"
         msg *= "Hot_dust_amp: \t\t\t $(@sprintf "%.3e" popt[pᵢ]) +/- $(@sprintf "%.3e" perr[pᵢ]) MJy/sr \t Limits: (0, Inf)\n"
         msg *= "Hot_dust_temp: \t\t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) K \t Limits: " *
-            "($(@sprintf "%.0f" minimum(continuum.T_hot.prior)), $(@sprintf "%.0f" maximum(continuum.T_hot.prior)))" *
+            "($(@sprintf "%.0f" continuum.T_hot.limits[1])), $(@sprintf "%.0f" continuum.T_hot.limits[2]))" *
             (continuum.T_hot.locked ? " (fixed)" : "") * "\n"
         msg *= "Hot_dust_frac: \t\t\t $(@sprintf "%.3f" popt[pᵢ+2]) +/- $(@sprintf "%.3f" perr[pᵢ+2]) [-] \t Limits: " *
-            "($(@sprintf "%.3f" minimum(continuum.Cf_hot.prior)), $(@sprintf "%.3f" maximum(continuum.Cf_hot.prior)))" *
+            "($(@sprintf "%.3f" continuum.Cf_hot.limits[1]), $(@sprintf "%.3f" continuum.Cf_hot.limits[2]))" *
             (continuum.Cf_hot.locked ? " (fixed)" : "") * "\n"
         msg *= "Hot_dust_τ: \t\t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3]) [-] \t Limits: " *
-            "($(@sprintf "%.3f" minimum(continuum.τ_warm.prior)), $(@sprintf "%.3f" maximum(continuum.τ_warm.prior)))" *
+            "($(@sprintf "%.3f" continuum.τ_warm.limits[1]), $(@sprintf "%.3f" continuum.τ_warm.limits[2]))" *
             (continuum.τ_warm.locked ? " (fixed)" : "") * "\n"
         msg *= "Cold_dust_τ: \t\t\t $(@sprintf "%.3f" popt[pᵢ+4]) +/- $(@sprintf "%.3f" perr[pᵢ+4]) [-] \t Limits: " *
-            "($(@sprintf "%.3f" minimum(continuum.τ_cold.prior)), $(@sprintf "%.3f" maximum(continuum.τ_cold.prior)))" *
+            "($(@sprintf "%.3f" continuum.τ_cold.limits[1]), $(@sprintf "%.3f" continuum.τ_cold.limits[2]))" *
             (continuum.τ_cold.locked ? " (fixed)" : "") * "\n"
         pᵢ += 5
     end
@@ -835,10 +836,10 @@ function pretty_print_continuum_results(cube_fitter::CubeFitter, popt::Vector{<:
         msg *= "$(df)_amp:\t\t\t $(@sprintf "%.1f" popt[pᵢ]) +/- $(@sprintf "%.1f" perr[pᵢ]) MJy/sr \t Limits: " *
             "(0, $(@sprintf "%.1f" (nanmaximum(I) / exp(-popt[end-1]))))\n"
         msg *= "$(df)_mean:  \t\t $(@sprintf "%.3f" popt[pᵢ+1]) +/- $(@sprintf "%.3f" perr[pᵢ+1]) μm \t Limits: " *
-            "($(@sprintf "%.3f" minimum(cube_fitter.dust_features.mean[j].prior)), $(@sprintf "%.3f" maximum(cube_fitter.dust_features.mean[j].prior)))" * 
+            "($(@sprintf "%.3f" cube_fitter.dust_features.mean[j].limits[1]), $(@sprintf "%.3f" cube_fitter.dust_features.mean[j].limits[2]))" * 
             (cube_fitter.dust_features.mean[j].locked ? " (fixed)" : "") * "\n"
         msg *= "$(df)_fwhm:  \t\t $(@sprintf "%.3f" popt[pᵢ+2]) +/- $(@sprintf "%.3f" perr[pᵢ+2]) μm \t Limits: " *
-            "($(@sprintf "%.3f" minimum(cube_fitter.dust_features.fwhm[j].prior)), $(@sprintf "%.3f" maximum(cube_fitter.dust_features.fwhm[j].prior)))" * 
+            "($(@sprintf "%.3f" cube_fitter.dust_features.fwhm[j].limits[1]), $(@sprintf "%.3f" cube_fitter.dust_features.fwhm[j].limits[2]))" * 
             (cube_fitter.dust_features.fwhm[j].locked ? " (fixed)" : "") * "\n"
         msg *= "\n"
         pᵢ += 3
@@ -852,17 +853,17 @@ end
 
 
 """
-    get_line_priors(cube_fitter)
+    get_line_plimits(cube_fitter)
 
-Get the line prior vector for a given CubeFitter object. Also returns boolean locked values and
+Get the line limits vector for a given CubeFitter object. Also returns boolean locked values and
 names of each parameter as strings.
 """
-function get_line_priors(cube_fitter::CubeFitter, init::Bool)
+function get_line_plimits(cube_fitter::CubeFitter, init::Bool)
 
-    # Set up the prior vector
-    amp_prior = Uniform(0., 1.)
-    amp_acomp_prior = Uniform(0., 1.)
-    ln_priors = Vector{Distribution}()
+    # Set up the limits vector
+    amp_plim = (0., 1.)
+    amp_acomp_plim = (0., 0.5)
+    ln_plims = Vector{Tuple}()
     ln_lock = BitVector()
     ln_names = Vector{String}()
     
@@ -879,7 +880,7 @@ function get_line_priors(cube_fitter::CubeFitter, init::Bool)
     for i ∈ 1:cube_fitter.n_lines
         for j ∈ 1:cube_fitter.n_comps
             
-            amp_ln_prior = isone(j) ? amp_prior : amp_acomp_prior
+            amp_ln_plim = isone(j) ? amp_plim : amp_acomp_plim
             if !isnothing(cube_fitter.lines.profiles[i, j])
 
                 # name
@@ -889,25 +890,25 @@ function get_line_priors(cube_fitter::CubeFitter, init::Bool)
                 vt = ft = false
                 kv = kf = nothing
                 if isnothing(cube_fitter.lines.tied_voff[i, j])
-                    voff_ln_prior = cube_fitter.lines.voff[i, j].prior
+                    voff_ln_plim = cube_fitter.lines.voff[i, j].limits
                     voff_ln_locked = cube_fitter.lines.voff[i, j].locked
                     voff_ln_name = "$(ln_name)_voff"
                 else
                     key_voff = cube_fitter.lines.tied_voff[i, j]
                     kv = findfirst(cube_fitter.tied_kinematics.key_voff[j] .== key_voff)
-                    voff_ln_prior = cube_fitter.tied_kinematics.voff[j][kv].prior
+                    voff_ln_plim = cube_fitter.tied_kinematics.voff[j][kv].limits
                     voff_ln_locked = cube_fitter.tied_kinematics.voff[j][kv].locked
                     voff_ln_name = "$(key_voff)_$(j)_voff"
                     vt = true
                 end
                 if isnothing(cube_fitter.lines.tied_fwhm[i, j])
-                    fwhm_ln_prior = cube_fitter.lines.fwhm[i, j].prior
+                    fwhm_ln_plim = cube_fitter.lines.fwhm[i, j].limits
                     fwhm_ln_locked = cube_fitter.lines.fwhm[i, j].locked
                     fwhm_ln_name = "$(ln_name)_fwhm"
                 else
                     key_fwhm = cube_fitter.lines.tied_fwhm[i, j]
                     kf = findfirst(cube_fitter.tied_kinematics.key_fwhm[j] .== key_fwhm)
-                    fwhm_ln_prior = cube_fitter.tied_kinematics.fwhm[j][kf].prior
+                    fwhm_ln_plim = cube_fitter.tied_kinematics.fwhm[j][kf].limits
                     fwhm_ln_locked = cube_fitter.tied_kinematics.fwhm[j][kf].locked
                     fwhm_ln_name = "$(key_fwhm)_$(j)_fwhm"
                     ft = true
@@ -915,7 +916,7 @@ function get_line_priors(cube_fitter::CubeFitter, init::Bool)
 
                 # Depending on flexible_wavesol, we need to add 2 voffs instead of 1 voff
                 if !isnothing(cube_fitter.lines.tied_voff[i, j]) && cube_fitter.flexible_wavesol && isone(j)
-                    append!(ln_priors, [amp_ln_prior, voff_ln_prior, cube_fitter.lines.voff[i, j].prior, fwhm_ln_prior])
+                    append!(ln_plims, [amp_ln_plim, voff_ln_plim, cube_fitter.lines.voff[i, j].limits, fwhm_ln_plim])
                     append!(ln_lock, [false, voff_ln_locked, cube_fitter.lines.voff[i, j].locked, fwhm_ln_locked])
                     append!(ln_names, ["$(ln_name)_amp", voff_ln_name, "$(ln_name)_voff_indiv", fwhm_ln_name])
                     append!(voff_tied[j][kv], [ind+1])
@@ -924,7 +925,7 @@ function get_line_priors(cube_fitter::CubeFitter, init::Bool)
                     end
                     ind += 4
                 else
-                    append!(ln_priors, [amp_ln_prior, voff_ln_prior, fwhm_ln_prior])
+                    append!(ln_plims, [amp_ln_plim, voff_ln_plim, fwhm_ln_plim])
                     append!(ln_lock, [false, voff_ln_locked, fwhm_ln_locked])
                     append!(ln_names, ["$(ln_name)_amp", voff_ln_name, fwhm_ln_name])
                     if vt
@@ -939,18 +940,18 @@ function get_line_priors(cube_fitter::CubeFitter, init::Bool)
                 # check for additional profile parameters
                 if cube_fitter.lines.profiles[i, j] == :GaussHermite
                     # add h3 and h4 moments
-                    append!(ln_priors, [cube_fitter.lines.h3[i, j].prior, cube_fitter.lines.h4[i, j].prior])
+                    append!(ln_plims, [cube_fitter.lines.h3[i, j].limits, cube_fitter.lines.h4[i, j].limits])
                     append!(ln_lock, [cube_fitter.lines.h3[i, j].locked, cube_fitter.lines.h4[i, j].locked])
                     append!(ln_names, ["$(ln_name)_h3", "$(ln_name)_h4"])
                     ind += 2
                 elseif cube_fitter.lines.profiles[i, j] == :Voigt
                     # add voigt mixing parameter, but only if it's not tied
                     if !cube_fitter.tie_voigt_mixing
-                        append!(ln_priors, [cube_fitter.lines.η[i, j].prior])
+                        append!(ln_plims, [cube_fitter.lines.η[i, j].limits])
                         append!(ln_lock, [cube_fitter.lines.η[i, j].locked || !init])
                         append!(ln_names, ["$(ln_name)_eta"])
                     else
-                        append!(ln_priors, [cube_fitter.voigt_mix_tied.prior])
+                        append!(ln_plims, [cube_fitter.voigt_mix_tied.limits])
                         append!(ln_lock, [cube_fitter.voigt_mix_tied.locked || !init])
                         append!(ln_names, ["eta_tied"])
                         append!(η_tied, [ind])
@@ -984,7 +985,7 @@ function get_line_priors(cube_fitter::CubeFitter, init::Bool)
     # Convert the paired tuples into indices for each tied parameter
     tied_indices = sort([tp[2] for tp in tied_pairs])
 
-    ln_priors, ln_lock, ln_names, tied_pairs, tied_indices
+    ln_plims, ln_lock, ln_names, tied_pairs, tied_indices
 
 end
 
@@ -1010,7 +1011,7 @@ function get_line_initial_values(cube_fitter::CubeFitter, init::Bool)
         
         # Start the ampltiudes at 1/2 and 1/4 (in normalized units)
         A_ln = ones(cube_fitter.n_lines) .* 0.5
-        A_fl = ones(cube_fitter.n_lines) .* 0.5     # (acomp amp is multiplied with main amp)
+        A_fl = ones(cube_fitter.n_lines) .* 0.25     # (acomp amp is multiplied with main amp)
 
         # Initial parameter vector
         ln_pars = Float64[]
@@ -1065,10 +1066,10 @@ end
 
 
 """
-    get_line_parinfo(cube_fitter, p₀, priors, param_lock)
+    get_line_parinfo(n_free, lb, ub)
 
-Get the CMPFit parinfo and config objects for a given CubeFitter object, given the vector of initial valuels,
-priors, and boolean locked values.
+Get the CMPFit parinfo and config objects for a given CubeFitter object, given the vector of initial values,
+limits, and boolean locked values.
 """
 function get_line_parinfo(n_free, lb, ub)
 
@@ -1105,32 +1106,32 @@ function pretty_print_line_results(cube_fitter::CubeFitter, popt::Vector{<:Real}
                 nm = string(name) * "_$(j)"
                 msg *= "$(nm)_amp:\t\t\t $(@sprintf "%.3f" popt[pᵢ]) +/- $(@sprintf "%.3f" perr[pᵢ]) [x norm] \t Limits: (0, 1)\n"
                 msg *= "$(nm)_voff:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) " * (isone(j) ? "km/s" : "[+ voff_1]") * " \t " *
-                    "Limits: ($(@sprintf "%.0f" minimum(cube_fitter.lines.voff[k, j].prior)), $(@sprintf "%.0f" maximum(cube_fitter.lines.voff[k, j].prior)))\n"
+                    "Limits: ($(@sprintf "%.0f" cube_fitter.lines.voff[k, j].limits[1]), $(@sprintf "%.0f" cube_fitter.lines.voff[k, j].limits[2]))\n"
                 if !isnothing(cube_fitter.lines.tied_voff[k, j]) && cube_fitter.flexible_wavesol && isone(j)
                     msg *= "$(nm)_voff_indiv:   \t\t $(@sprintf "%.0f" popt[pᵢ+2]) +/- $(@sprintf "%.0f" perr[pᵢ+2]) km/s \t " *
-                        "Limits: ($(@sprintf "%.0f" minimum(cube_fitter.lines.voff[k, j].prior)), $(@sprintf "%.0f" maximum(cube_fitter.lines.voff[k, j].prior)))\n"
+                        "Limits: ($(@sprintf "%.0f" cube_fitter.lines.voff[k, j].limits[1]), $(@sprintf "%.0f" cube_fitter.lines.voff[k, j].limits[2]))\n"
                     msg *= "$(nm)_fwhm:   \t\t $(@sprintf "%.0f" popt[pᵢ+3]) +/- $(@sprintf "%.0f" perr[pᵢ+3]) km/s \t " *
-                        "Limits: ($(@sprintf "%.0f" minimum(cube_fitter.lines.fwhm[k, j].prior)), $(@sprintf "%.0f" maximum(cube_fitter.lines.fwhm[k, j].prior)))\n"
+                        "Limits: ($(@sprintf "%.0f" cube_fitter.lines.fwhm[k, j].limits[1]), $(@sprintf "%.0f" cube_fitter.lines.fwhm[k, j].limits[2]))\n"
                     pᵢ += 4
                 else
                     if isone(j)
                         msg *= "$(nm)_fwhm:   \t\t $(@sprintf "%.0f" popt[pᵢ+2]) +/- $(@sprintf "%.0f" perr[pᵢ+2]) km/s \t " *
-                            "Limits: ($(@sprintf "%.0f" minimum(cube_fitter.lines.fwhm[k, j].prior)), $(@sprintf "%.0f" maximum(cube_fitter.lines.fwhm[k, j].prior)))\n"
+                            "Limits: ($(@sprintf "%.0f" cube_fitter.lines.fwhm[k, j].limits[1]), $(@sprintf "%.0f" cube_fitter.lines.fwhm[k, j].limits[2]))\n"
                     else
                         msg *= "$(nm)_fwhm:   \t\t $(@sprintf "%.3f" popt[pᵢ+2]) +/- $(@sprintf "%.3f" perr[pᵢ+2]) [x fwhm_1] \t " *
-                            "Limits: ($(@sprintf "%.3f" minimum(cube_fitter.lines.fwhm[k, j].prior)), $(@sprintf "%.3f" maximum(cube_fitter.lines.fwhm[k, j].prior)))\n"
+                            "Limits: ($(@sprintf "%.3f" cube_fitter.lines.fwhm[k, j].limits[1]), $(@sprintf "%.3f" cube_fitter.lines.fwhm[k, j].limits[2]))\n"
                     end
                     pᵢ += 3
                 end
                 if cube_fitter.lines.profiles[k, j] == :GaussHermite
                     msg *= "$(nm)_h3:    \t\t $(@sprintf "%.3f" popt[pᵢ]) +/- $(@sprintf "%.3f" perr[pᵢ])      \t " *
-                        "Limits: ($(@sprintf "%.3f" minimum(cube_fitter.lines.h3[k, j].prior)), $(@sprintf "%.3f" maximum(cube_fitter.lines.h3[k, j].prior)))\n"
+                        "Limits: ($(@sprintf "%.3f" cube_fitter.lines.h3[k, j].limits[1]), $(@sprintf "%.3f" cube_fitter.lines.h3[k, j].limits[2]))\n"
                     msg *= "$(nm)_h4:    \t\t $(@sprintf "%.3f" popt[pᵢ+1]) +/- $(@sprintf "%.3f" perr[pᵢ+1])      \t " *
-                        "Limits: ($(@sprintf "%.3f" minimum(cube_fitter.lines.h4[k, j].prior)), $(@sprintf "%.3f" maximum(cube_fitter.lines.h4[k, j].prior)))\n"
+                        "Limits: ($(@sprintf "%.3f" cube_fitter.lines.h4[k, j].limits[1]), $(@sprintf "%.3f" cube_fitter.lines.h4[k, j].limits[2]))\n"
                     pᵢ += 2
                 elseif cube_fitter.lines.profiles[k, j] == :Voigt 
                     msg *= "$(nm)_η:     \t\t $(@sprintf "%.3f" popt[pᵢ]) +/- $(@sprintf "%.3f" perr[pᵢ])      \t " *
-                        "Limits: ($(@sprintf "%.3f" minimum(cube_fitter.lines.η[k, j].prior)), $(@sprintf "%.3f" maximum(cube_fitter.lines.η[k, j].prior)))\n"
+                        "Limits: ($(@sprintf "%.3f" cube_fitter.lines.η[k, j].limits[1]), $(@sprintf "%.3f" cube_fitter.lines.η[k, j].limits[2]))\n"
                     pᵢ += 1
                 end
             end

@@ -2,18 +2,18 @@
 
 
 """
-    assign_outputs(out_params, out_errs, cube_fitter, spaxels, z)
+    assign_outputs(out_params, out_errs, cube_fitter, cube_data, spaxels, z)
 
 Create ParamMaps objects for the parameter values and errors, and a CubeModel object for the full model, and
 fill them with the maximum likelihood values and errors given by out_params and out_errs over each spaxel in
 spaxels.
 """
 function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<:Real}, cube_fitter::CubeFitter,
-    spaxels::CartesianIndices, z::Real)
+    cube_data::NamedTuple, spaxels::CartesianIndices, z::Real, aperture::Bool=false)
 
     # Create the CubeModel and ParamMaps structs to be filled in
-    cube_model = generate_cubemodel(cube_fitter)
-    param_maps, param_errs = generate_parammaps(cube_fitter)
+    cube_model = generate_cubemodel(cube_fitter, aperture)
+    param_maps, param_errs = generate_parammaps(cube_fitter, aperture)
 
     # Loop over each spaxel and fill in the associated fitting parameters into the ParamMaps and CubeModel
     # I know this is long and ugly and looks stupid but it works for now and I'll make it pretty later
@@ -161,7 +161,7 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             end
         end
 
-        N = Float64(abs(nanmaximum(cube_fitter.cube.Iν[index, :])))
+        N = Float64(abs(nanmaximum(cube_data.I[index, :])))
         N = N ≠ 0. ? N : 1.
         if cube_fitter.save_full_model
 
@@ -384,7 +384,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     end
 
     fig = plt.figure()
-    ax = fig.add_subplot(111, projection=python_wcs[0])  # slice the WCS to remove the wavelength axis
+    ax = fig.add_subplot(111, projection=python_wcs)  # slice the WCS to remove the wavelength axis
     # Need to filter out any NaNs in order to use quantile
     vmin = nanminimum(filtered)
     vmax = nanmaximum(filtered)
@@ -628,7 +628,7 @@ function make_movie(cube_fitter::CubeFitter, cube_model::CubeModel; cmap::Symbol
         # Set up plots with gridspec
         fig = plt.figure()
         gs = fig.add_gridspec(ncols=20,  nrows=10)
-        ax1 = fig.add_subplot(py"$(gs)[0:8, 0:18]", projection=cube_fitter.cube.wcs[0])
+        ax1 = fig.add_subplot(py"$(gs)[0:8, 0:18]", projection=cube_fitter.cube.wcs)
         ax2 = fig.add_subplot(py"$(gs)[9:10, :]")
         ax3 = fig.add_subplot(py"$(gs)[0:8, 18:19]")
 
@@ -683,45 +683,45 @@ end
 Save the best fit results for the cube into two FITS files: one for the full 3D intensity model of the cube, split up by
 individual model components, and one for 2D parameter maps of the best-fit parameters for each spaxel in the cube.
 """
-function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::ParamMaps, param_errs::ParamMaps)
+function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel, param_maps::ParamMaps, param_errs::ParamMaps)
 
     # Header information
     hdr = FITSHeader(
         ["TARGNAME", "REDSHIFT", "CHANNEL", "BAND", "PIXAR_SR", "RA", "DEC", "WCSAXES",
-            "CDELT1", "CDELT2", "CDELT3", "CTYPE1", "CTYPE2", "CTYPE3", "CRPIX1", "CRPIX2", "CRPIX3",
-            "CRVAL1", "CRVAL2", "CRVAL3", "CUNIT1", "CUNIT2", "CUNIT3", "PC1_1", "PC1_2", "PC1_3", 
-            "PC2_1", "PC2_2", "PC2_3", "PC3_1", "PC3_2", "PC3_3"],
+            "CDELT1", "CDELT2", "CTYPE1", "CTYPE2", "CRPIX1", "CRPIX2", "CRVAL1", "CRVAL2", "CUNIT1", "CUNIT2", 
+            "PC1_1", "PC1_2", "PC2_1", "PC2_2"],
 
-        # Check if the redshift correction is right for the third WCS axis?
-        [cube_fitter.name, cube_fitter.z, cube_fitter.cube.channel, cube_fitter.cube.band, cube_fitter.cube.Ω, cube_fitter.cube.α, cube_fitter.cube.δ, 
-         cube_fitter.cube.wcs.wcs.naxis, cube_fitter.cube.wcs.wcs.cdelt[1], cube_fitter.cube.wcs.wcs.cdelt[2], cube_fitter.cube.wcs.wcs.cdelt[3], 
-         cube_fitter.cube.wcs.wcs.ctype[1], cube_fitter.cube.wcs.wcs.ctype[2], cube_fitter.cube.wcs.wcs.ctype[3], cube_fitter.cube.wcs.wcs.crpix[1], 
-         cube_fitter.cube.wcs.wcs.crpix[2], cube_fitter.cube.wcs.wcs.crpix[3], cube_fitter.cube.wcs.wcs.crval[1], cube_fitter.cube.wcs.wcs.crval[2], 
-         cube_fitter.cube.wcs.wcs.crval[3], cube_fitter.cube.wcs.wcs.cunit[1].name, cube_fitter.cube.wcs.wcs.cunit[2].name, cube_fitter.cube.wcs.wcs.cunit[3].name, 
-         cube_fitter.cube.wcs.wcs.pc[1,1], cube_fitter.cube.wcs.wcs.pc[1,2], cube_fitter.cube.wcs.wcs.pc[1,3], cube_fitter.cube.wcs.wcs.pc[2,1], cube_fitter.cube.wcs.wcs.pc[2,2], 
-         cube_fitter.cube.wcs.wcs.pc[2,3], cube_fitter.cube.wcs.wcs.pc[3,1], cube_fitter.cube.wcs.wcs.pc[3,2], cube_fitter.cube.wcs.wcs.pc[3,3]],
+        [cube_fitter.name, cube_fitter.z, cube_fitter.cube.channel, cube_fitter.cube.band, cube_fitter.cube.Ω, 
+         cube_fitter.cube.α, cube_fitter.cube.δ, cube_fitter.cube.wcs.wcs.naxis, 
+         cube_fitter.cube.wcs.wcs.cdelt[1], cube_fitter.cube.wcs.wcs.cdelt[2], 
+         cube_fitter.cube.wcs.wcs.ctype[1], cube_fitter.cube.wcs.wcs.ctype[2], 
+         cube_fitter.cube.wcs.wcs.crpix[1], cube_fitter.cube.wcs.wcs.crpix[2], 
+         cube_fitter.cube.wcs.wcs.crval[1], cube_fitter.cube.wcs.wcs.crval[2], 
+         cube_fitter.cube.wcs.wcs.cunit[1].name, cube_fitter.cube.wcs.wcs.cunit[2].name, 
+         cube_fitter.cube.wcs.wcs.pc[1,1], cube_fitter.cube.wcs.wcs.pc[1,2], 
+         cube_fitter.cube.wcs.wcs.pc[2,1], cube_fitter.cube.wcs.wcs.pc[2,2]],
 
         ["Target name", "Target redshift", "MIRI channel", "MIRI band",
         "Solid angle per pixel (rad.)", "Right ascension of target (deg.)", "Declination of target (deg.)",
         "number of World Coordinate System axes", 
-        "first axis increment per pixel", "second axis increment per pixel", "third axis increment per pixel", 
-        "first axis coordinate type", "second axis coordinate type", "third axis coordinate type", 
-        "axis 1 coordinate of the reference pixel", "axis 2 coordinate of the reference pixel", "axis 3 coordinate of the reference pixel",
-        "first axis value at the reference pixel", "second axis value at the reference pixel", "third axis value at the reference pixel",
-        "first axis units", "second axis units", "third axis units",
-        "linear transformation matrix element", "linear transformation matrix element", "linear transformation matrix element",
-        "linear transformation matrix element", "linear transformation matrix element", "linear transformation matrix element",
-        "linear transformation matrix element", "linear transformation matrix element", "linear transformation matrix element"]
+        "first axis increment per pixel", "second axis increment per pixel",
+        "first axis coordinate type", "second axis coordinate type",
+        "axis 1 coordinate of the reference pixel", "axis 2 coordinate of the reference pixel",
+        "first axis value at the reference pixel", "second axis value at the reference pixel",
+        "first axis units", "second axis units",
+        "linear transformation matrix element", "linear transformation matrix element",
+        "linear transformation matrix element", "linear transformation matrix element"]
     )
 
     if cube_fitter.save_full_model
         # Create the 3D intensity model FITS file
-        FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_3D_model.fits"), "w") do f
+        FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_full_model.fits.gz"), "w") do f
 
             @debug "Writing 3D model FITS HDUs"
 
             write(f, Vector{Int}(); header=hdr)                                                         # Primary HDU (empty)
-            write(f, cube_fitter.cube.Iν .* (1 .+ cube_fitter.z); name="DATA")                          # Raw data with nans inserted
+            write(f, cube_data.I .* (1 .+ cube_fitter.z); name="DATA")                                  # Raw data 
+            write(f, cube_data.σ .* (1 .+ cube_fitter.z); name="ERROR")                                 # Error in the raw data
             write(f, cube_model.model; name="MODEL")                                                    # Full intensity model
             write(f, cube_model.stellar; name="STELLAR_CONTINUUM")                                      # Stellar continuum model
             for i ∈ 1:size(cube_model.dust_continuum, 4)
@@ -740,14 +740,14 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
                 write(f, cube_model.hot_dust; name="HOT_DUST")                                          # Hot dust model
             end
             
-            write(f, ["wave"], [cube_fitter.cube.λ .* (1 .+ cube_fitter.z)],                            # wavelength vector
+            write(f, ["wave"], [cube_data.λ .* (1 .+ cube_fitter.z)],                                   # wavelength vector
                 hdutype=TableHDU, name="WAVELENGTH", units=Dict(:wave => "um"))
 
             # Insert physical units into the headers of each HDU -> MegaJansky per steradian for all except
             # the extinction profile, which is a multiplicative constant
             write_key(f["DATA"], "BUNIT", "MJy/sr")
+            write_key(f["ERROR"], "BUNIT", "MJy/sr")
             write_key(f["MODEL"], "BUNIT", "MJy/sr")
-            write_key(f["RESIDUALS"], "BUNIT", "MJy/sr")
             write_key(f["STELLAR_CONTINUUM"], "BUNIT", "MJy/sr")
             for i ∈ 1:size(cube_model.dust_continuum, 4)
                 write_key(f["DUST_CONTINUUM_$i"], "BUNIT", "MJy/sr")
@@ -776,8 +776,6 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
             @debug "Writing 2D parameter map FITS HDUs"
 
             write(f, Vector{Int}(), header=hdr)  # Primary HDU (empty)
-
-            # Iterate over model parameters and make 2D maps
 
             # Stellar continuum parameters
             for parameter ∈ keys(param_data.stellar_continuum)
@@ -839,7 +837,7 @@ function write_fits(cube_fitter::CubeFitter, cube_model::CubeModel, param_maps::
                         bunit = "unitless"
                     end
                     write(f, data; name=name_i)
-                    write_key(f[name_i], "BUNIT", bunit)      
+                    write_key(f[name_i], "BUNIT", bunit)
                 end
             end
             
