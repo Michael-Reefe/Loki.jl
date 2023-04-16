@@ -322,7 +322,9 @@ end
 
 
 function make_aperture(cube::DataCube, type::Symbol, ra::String, dec::String, params...; auto_centroid=false,
-    scale_psf::Bool=false)
+    scale_psf::Bool=false, box_size::Integer=11)
+
+    @info "Creating a(n) $type aperture at $ra, $dec"
 
     # Get the WCS frame from the datacube
     frame = lowercase(cube.wcs.wcs.radesys)
@@ -354,12 +356,18 @@ function make_aperture(cube::DataCube, type::Symbol, ra::String, dec::String, pa
         data = sumdim(cube.Iν, 3)
         err = sqrt.(sumdim(cube.σI.^2, 3))
         mask = trues(size(data))
-        mask[pix_ap.positions[1]-5:pix_ap.positions[1]+5, pix_ap.positions[2]-5:pix_ap.positions[2]+5] .= 0
+        p0 = round.(Int, pix_ap.positions)
+        box_half = fld(box_size, 2)
+        mask[p0[1]-box_half:p0[1]+box_half, p0[2]-box_half:p0[2]+box_half] .= 0
         # Find the centroid using photutils' 2D-gaussian fitting
         # NOTE 1: Make sure to transpose the data array because of numpy's reversed axis order
         # NOTE 2: Add 1 because of python's 0-based indexing
         x_cent, y_cent = py_photutils.centroids.centroid_2dg(data', error=err', mask=mask')
         pix_ap.positions = (x_cent, y_cent)
+        ra_cent, dec_cent = cube.wcs.all_pix2world([[x_cent,y_cent]], 1)'
+        @info "Aperture centroid adjusted to $(format_angle(ha2hms(ra_cent/15); delim=["h","m","s"])), " *
+            "$(format_angle(deg2dms(dec_cent); delim=["d","m","s"]))"
+
     end
 
     if scale_psf
@@ -430,6 +438,8 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
         # Take the wavelength slice
         I = data.Iν[:, :, slice]
         σ = data.σI[:, :, slice]
+        I[I .≤ 0.] .= NaN
+        σ[σ .≤ 0.] .= NaN
         λᵢ = data.λ[slice]
         sub = @sprintf "\\lambda%.2f" λᵢ
     end
@@ -448,9 +458,6 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
     ax1 = ax2 = nothing
 
     # 1D, no NaNs/Infs
-    flatI = I[isfinite.(I)]
-    flatσ = σ[isfinite.(σ)]
-
     if !isnothing(z) && !isnothing(cosmo)
         # Angular and physical scalebars
         pix_as = sqrt(data.Ω) * 180/π * 3600
@@ -479,7 +486,7 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
         # Plot intensity on a 2D map
         ax1 = fig.add_subplot(121, projection=data.wcs)
         ax1.set_title(isnothing(name) ? "" : name)
-        cdata = ax1.imshow(I', origin=:lower, cmap=colormap, vmin=quantile(flatI, 0.01), vmax=quantile(flatI, 0.99))
+        cdata = ax1.imshow(I', origin=:lower, cmap=colormap, vmin=nanquantile(I, 0.01), vmax=nanquantile(I, 0.99))
         fig.colorbar(cdata, ax=ax1, fraction=0.046, pad=0.04, 
             label=(isnothing(logᵢ) ? "" : L"$\log_{%$logᵢ}$(") * L"$I_{%$sub}\,/\,$" * unit_str * (isnothing(logᵢ) ? "" : ")"))
         # ax1.axis(:off)
@@ -498,7 +505,7 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
             ax1.add_artist(scalebar)
         end
 
-        psf = plt.Circle(size(I) .* 0.9, median(data.psf) / pix_as / 2, color="k")
+        psf = plt.Circle(size(I) .* 0.9, isnothing(slice) ? median(data.psf) : data.psf[slice] / pix_as / 2, color="k")
         ax1.add_patch(psf)
         ax1.annotate("PSF", size(I) .* 0.9 .- (0., median(data.psf) / pix_as / 2 + 1.75), ha=:center, va=:center)    
 
@@ -512,7 +519,7 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
         # Plot error on a 2D map
         ax2 = fig.add_subplot(122, projection=data.wcs)
         ax2.set_title(isnothing(name) ? "" : name)
-        cdata = ax2.imshow(σ', origin=:lower, cmap=colormap, vmin=quantile(flatσ, 0.01), vmax=quantile(flatσ, 0.99))
+        cdata = ax2.imshow(σ', origin=:lower, cmap=colormap, vmin=nanquantile(σ, 0.01), vmax=nanquantile(σ, 0.99))
         fig.colorbar(cdata, ax=ax2, fraction=0.046, pad=0.04,
             label=isnothing(logₑ) ? L"$\sigma_{I_{%$sub}}\,/\,$" * unit_str : L"$\sigma_{\log_{%$logᵢ}I_{%$sub}}$")
         # ax2.axis(:off)
@@ -531,7 +538,7 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
             ax2.add_artist(scalebar)
         end
 
-        psf = plt.Circle(size(I) .* 0.9, median(data.psf) / pix_as / 2, color="k")
+        psf = plt.Circle(size(I) .* 0.9, isnothing(slice) ? median(data.psf) : data.psf[slice] / pix_as / 2, color="k")
         ax1.add_patch(psf)
         ax1.annotate("PSF", size(I) .* 0.9 .- (0., median(data.psf) / pix_as / 2 + 1.75), ha=:center, va=:center)    
 

@@ -443,7 +443,7 @@ ArIII_8991 = ["Voigt"]
 SIV_10511 = ["Voigt"]
 
 
-# optional: add [priors] key to specify individual line priors that 
+# optional: add [parameters] key to specify individual line priors that 
 # are different from the defaults
 
-# [priors]
+[parameters]

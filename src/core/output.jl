@@ -683,15 +683,53 @@ end
 Save the best fit results for the cube into two FITS files: one for the full 3D intensity model of the cube, split up by
 individual model components, and one for 2D parameter maps of the best-fit parameters for each spaxel in the cube.
 """
-function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel, param_maps::ParamMaps, param_errs::ParamMaps)
+function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel, param_maps::ParamMaps, param_errs::ParamMaps;
+    aperture::Union{Vector{PyObject},Nothing}=nothing)
+
+    aperture_keys = []
+    aperture_vals = []
+    aperture_comments = []
+    # If using an aperture, extract its properties 
+    if !isnothing(aperture)
+        # Get the RA and Dec of the centroid
+        sky_aperture = aperture[1].to_sky(cube_fitter.cube.wcs)
+        sky_cent = sky_aperture.positions
+        ra_cent = format_angle(ha2hms(sky_cent.ra[1]/15); delim=["h","m","s"])
+        dec_cent = format_angle(deg2dms(sky_cent.dec[1]); delim=["d","m","s"])
+
+        # Get the name (giving the shape of the aperture: circular, elliptical, or rectangular)
+        ap_shape = aperture[1].__class__.__name__
+
+        aperture_keys = ["AP_SHAPE", "AP_RA", "AP_DEC"]
+        aperture_vals = Any[ap_shape, ra_cent, dec_cent]
+        aperture_comments = ["The shape of the spectrum extraction aperture", "The RA of the aperture",
+            "The dec of the aperture"]
+
+        # Get the properties, i.e. radius for circular 
+        if ap_shape == "CircularAperture"
+            append!(aperture_keys, ["AP_RADIUS"])
+            append!(aperture_vals, sky_aperture.r[1])
+            append!(aperture_comments, ["Radius of the aperture, in arcsec"])
+        elseif ap_shape == "EllipticalAperture"
+            append!(aperture_keys, ["AP_A", "AP_B", "AP_PA"])
+            append!(aperture_vals, [sky_aperture.a[1], sky_aperture.b[1], sky_aperture.theta[1]])
+            append!(aperture_comments, ["Semimajor axis of the aperture, in arcsec", 
+                "Semiminor axis of the aperture, in arcsec", "Aperture position angle, in rad."])
+        elseif ap_shape == "RectangularAperture"
+            append!(aperture_keys, ["AP_W", "AP_H", "AP_PA"])
+            append!(aperture_vals, [sky_aperture.w[1], sky_aperture.h[1], sky_aperture.theta[1]])
+            append!(aperture_comments, ["Width of the aperture, in arcsec", 
+                "Height of the aperture, in arcsec", "Aperture position angle, in rad."])
+        end
+    end
 
     # Header information
     hdr = FITSHeader(
-        ["TARGNAME", "REDSHIFT", "CHANNEL", "BAND", "PIXAR_SR", "RA", "DEC", "WCSAXES",
+        cat(["TARGNAME", "REDSHIFT", "CHANNEL", "BAND", "PIXAR_SR", "RA", "DEC", "WCSAXES",
             "CDELT1", "CDELT2", "CTYPE1", "CTYPE2", "CRPIX1", "CRPIX2", "CRVAL1", "CRVAL2", "CUNIT1", "CUNIT2", 
-            "PC1_1", "PC1_2", "PC2_1", "PC2_2"],
+            "PC1_1", "PC1_2", "PC2_1", "PC2_2"], aperture_keys, dims=1),
 
-        [cube_fitter.name, cube_fitter.z, cube_fitter.cube.channel, cube_fitter.cube.band, cube_fitter.cube.Ω, 
+        cat([cube_fitter.name, cube_fitter.z, cube_fitter.cube.channel, cube_fitter.cube.band, cube_fitter.cube.Ω, 
          cube_fitter.cube.α, cube_fitter.cube.δ, cube_fitter.cube.wcs.wcs.naxis, 
          cube_fitter.cube.wcs.wcs.cdelt[1], cube_fitter.cube.wcs.wcs.cdelt[2], 
          cube_fitter.cube.wcs.wcs.ctype[1], cube_fitter.cube.wcs.wcs.ctype[2], 
@@ -699,9 +737,9 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
          cube_fitter.cube.wcs.wcs.crval[1], cube_fitter.cube.wcs.wcs.crval[2], 
          cube_fitter.cube.wcs.wcs.cunit[1].name, cube_fitter.cube.wcs.wcs.cunit[2].name, 
          cube_fitter.cube.wcs.wcs.pc[1,1], cube_fitter.cube.wcs.wcs.pc[1,2], 
-         cube_fitter.cube.wcs.wcs.pc[2,1], cube_fitter.cube.wcs.wcs.pc[2,2]],
+         cube_fitter.cube.wcs.wcs.pc[2,1], cube_fitter.cube.wcs.wcs.pc[2,2]], aperture_vals, dims=1),
 
-        ["Target name", "Target redshift", "MIRI channel", "MIRI band",
+        cat(["Target name", "Target redshift", "MIRI channel", "MIRI band",
         "Solid angle per pixel (rad.)", "Right ascension of target (deg.)", "Declination of target (deg.)",
         "number of World Coordinate System axes", 
         "first axis increment per pixel", "second axis increment per pixel",
@@ -710,7 +748,7 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
         "first axis value at the reference pixel", "second axis value at the reference pixel",
         "first axis units", "second axis units",
         "linear transformation matrix element", "linear transformation matrix element",
-        "linear transformation matrix element", "linear transformation matrix element"]
+        "linear transformation matrix element", "linear transformation matrix element"], aperture_comments, dims=1)
     )
 
     if cube_fitter.save_full_model
@@ -771,7 +809,7 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
     for (index, param_data) ∈ enumerate([param_maps, param_errs])
             
         FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_parameter_" * 
-            (isone(index) ? "maps" : "errs") * ".fits"), "w") do f
+            (isone(index) ? "maps" : "errs") * ".fits.gz"), "w") do f
 
             @debug "Writing 2D parameter map FITS HDUs"
 

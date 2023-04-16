@@ -93,7 +93,8 @@ interpolate_nans!(obs.channels[0], obs.z)
 channel = 0
 
 # Make aperture
-ap = make_aperture(obs.channels[channel], :Circular, "23:03:15.610", "+8:52:26.10", 0.5)
+ap = make_aperture(obs.channels[channel], :Circular, "23:03:15.610", "+8:52:26.10", 0.5, auto_centroid=true,
+    scale_psf=false)
 
 # reproject_channels!(obs, 3, out_id=3, method=:adaptive)
 # interpolate_nans!(obs.channels[3], obs.z)
@@ -113,7 +114,7 @@ ap = make_aperture(obs.channels[channel], :Circular, "23:03:15.610", "+8:52:26.1
 # Create the cube fitting object
 # plot_range=[(7.61, 7.69), (12.77, 12.85)]
 cube_fitter = CubeFitter(obs.channels[channel], obs.z, obs.name * "_ch$(channel)_aperture_test"; 
-    parallel=true, plot_spaxels=:pyplot, plot_maps=true, save_fits=true)
+    parallel=true, plot_spaxels=:both, plot_maps=true, save_fits=true)
 
 # Fit the cube
-fit_cube!(cube_fitter, aperture=ap)
+fit_cube!(cube_fitter, ap)

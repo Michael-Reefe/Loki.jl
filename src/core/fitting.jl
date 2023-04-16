@@ -795,7 +795,7 @@ of a crash.
 - `aperture=nothing`: If specified, perform a fit to the integrated spectrum within the aperture. Must be an `Aperture` object
 from the `photutils` python package (using PyCall).
 """
-function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::CartesianIndex; apertures=nothing, plot_spline=false)
+function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::CartesianIndex; use_ap::Bool=false, plot_spline=false)
 
     local p_out
     local p_err
@@ -830,9 +830,6 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
             # Interpolate the LSF
             lsf_interp = Spline1D(λ, cube_fitter.cube.lsf, k=1)
             lsf_interp_func = x -> lsf_interp(x)
-
-            # If there is an aperture, set the "init" keyword since we're only fitting once
-            use_ap = !isnothing(apertures)
 
             # Fit the spaxel
             σ, popt_c, I_cont, comps_cont, n_free_c, perr_c, covar_c = 
@@ -984,7 +981,7 @@ end
 
 
 """
-    fit_cube!(cube_fitter, aperture=nothing)
+    fit_cube!(cube_fitter)
 
 This is the main cube fitting function!! It's essentially a wrapper function to perform a full fit of an 
 entire IFU cube, calling `fit_spaxel` for each spaxel in a parallel or serial loop depending on the cube_fitter options.  
@@ -994,7 +991,7 @@ cube_fitter options.
 The default behavior is to perform spaxel-by-spaxel fits. However, if an aperture is specified, then fitting
 will only be performed on the integrated spectrum within the aperture.
 """
-function fit_cube!(cube_fitter::CubeFitter; aperture::Union{PyObject,Vector{PyObject},Nothing}=nothing)
+function fit_cube!(cube_fitter::CubeFitter)
 
     @info """\n
     #############################################################################
@@ -1003,9 +1000,8 @@ function fit_cube!(cube_fitter::CubeFitter; aperture::Union{PyObject,Vector{PyOb
     """
     # copy the main log file
     cp(joinpath(@__DIR__, "..", "loki.main.log"), joinpath("output_$(cube_fitter.name)", "loki.main.log"), force=true)
-    use_ap = !isnothing(aperture)
 
-    shape = !use_ap ? size(cube_fitter.cube.Iν) : (1,1,size(cube_fitter.cube.Iν, 3))
+    shape = size(cube_fitter.cube.Iν)
 
     # Prepare output array
     @info "===> Preparing output data structures... <==="
@@ -1024,23 +1020,8 @@ function fit_cube!(cube_fitter::CubeFitter; aperture::Union{PyObject,Vector{PyOb
     $(InteractiveUtils.varinfo(all=true, imported=true, recursive=true))
     """
 
-    # If using a single aperture, extend to length of wavelength axis
-    if !(typeof(aperture) <: Vector) && use_ap
-        aperture = repeat(aperture, shape[3])
-    end
-
-    # If using an aperture, plot the aperture
-    if use_ap
-        plot_2d(cube_fitter.cube, joinpath("output_$(cube_fitter.name)", "aperture_plot_beg.pdf"); err=false, aperture=aperture[1],
-            z=cube_fitter.z, cosmo=cube_fitter.cosmology, slice=1)
-        plot_2d(cube_fitter.cube, joinpath("output_$(cube_fitter.name)", "aperture_plot_mid.pdf"); err=false, aperture=aperture[end÷2],
-            z=cube_fitter.z, cosmo=cube_fitter.cosmology, slice=shape[3]÷2)
-        plot_2d(cube_fitter.cube, joinpath("output_$(cube_fitter.name)", "aperture_plot_end.pdf"); err=false, aperture=aperture[end],
-            z=cube_fitter.z, cosmo=cube_fitter.cosmology, slice=shape[3])
-    end
-
     # Don't repeat if it's already been done, and also dont do the initial fit if we're just fitting in an aperture
-    if all(iszero.(cube_fitter.p_init_cont)) && !use_ap
+    if all(iszero.(cube_fitter.p_init_cont))
         fit_stack!(cube_fitter)
     else
         @info "===> Initial fit to the sum of all spaxels is being skipped, either because it has already " *
@@ -1053,39 +1034,12 @@ function fit_cube!(cube_fitter::CubeFitter; aperture::Union{PyObject,Vector{PyOb
     ##############################################################################################
 
     # Get the indices of all spaxels
-    spaxels = !use_ap ? CartesianIndices(selectdim(cube_fitter.cube.Iν, 3, 1)) : CartesianIndices((1,1))
-
-    # If using an aperture, overwrite the cube_data object with the quantities within
-    # the aperture, which are calculated here.
-    if use_ap
-        # Prepare the 1D arrays
-        I = zeros(Float32, shape)
-        σ = zeros(Float32, shape)
-        area_sr = zeros(shape[3])
-        @debug "Performing aperture photometry to get the integrated spectrum"
-
-        # Loop through each wavelength pixel and perform the aperture photometry
-        for z ∈ 1:shape[3]
-            # Sum up the FLUX within the aperture
-            Fz = cube_fitter.cube.Iν[:, :, z] .* cube_fitter.cube.Ω
-            e_Fz = cube_fitter.cube.σI[:, :, z] .* cube_fitter.cube.Ω
-            _, _, _, F_ap, eF_ap = py_photutils.aperture.aperture_photometry(Fz', aperture[z], 
-                error=e_Fz', mask=cube_fitter.cube.mask[:, :, z]', method="exact")[1]
-
-            # Convert back to intensity by dividing out the aperture area
-            area_sr[z] = aperture[z].area * cube_fitter.cube.Ω
-            I[1,1,z] = F_ap / area_sr[z]
-            σ[1,1,z] = eF_ap / area_sr[z]
-        end
-        cube_data.I = I
-        cube_data.σ = σ
-        cube_data.area_sr = area_sr
-    end
+    spaxels = CartesianIndices(selectdim(cube_fitter.cube.Iν, 3, 1))
 
     # Wrapper function 
     function fit_spax_i(index::CartesianIndex)
 
-        p_out, p_err = fit_spaxel(cube_fitter, cube_data, index; apertures=aperture)
+        p_out, p_err = fit_spaxel(cube_fitter, cube_data, index)
         if !isnothing(p_out)
             out_params[index, :] .= p_out
             out_errs[index, :] .= p_err
@@ -1095,30 +1049,27 @@ function fit_cube!(cube_fitter::CubeFitter; aperture::Union{PyObject,Vector{PyOb
     end
 
     # Use multiprocessing (not threading) to iterate over multiple spaxels at once using multiple CPUs
-    if cube_fitter.parallel && !use_ap
+    if cube_fitter.parallel
         @info "===> Beginning individual spaxel fitting... <==="
         prog = Progress(length(spaxels); showspeed=true)
         progress_pmap(spaxels, progress=prog) do index
             fit_spax_i(index)
         end
-    elseif !use_ap
+    else
         @info "===> Beginning individual spaxel fitting... <==="
         prog = Progress(length(spaxels); showspeed=true)
         for index ∈ spaxels
             fit_spax_i(index)
             next!(prog)
         end
-    else
-        @info "===> Beginninng integrated spectrum fitting... <==="
-        fit_spax_i(spaxels[1])
     end
 
     @info "===> Generating parameter maps and model cubes... <==="
 
     # Create the ParamMaps and CubeModel structs containing the outputs
-    param_maps, param_errs, cube_model = assign_outputs(out_params, out_errs, cube_fitter, cube_data, spaxels, cube_fitter.z, use_ap)
+    param_maps, param_errs, cube_model = assign_outputs(out_params, out_errs, cube_fitter, cube_data, spaxels, cube_fitter.z, false)
 
-    if cube_fitter.plot_maps && !use_ap
+    if cube_fitter.plot_maps
         @info "===> Plotting parameter maps... <==="
         plot_parameter_maps(cube_fitter, param_maps)
     end
@@ -1126,6 +1077,128 @@ function fit_cube!(cube_fitter::CubeFitter; aperture::Union{PyObject,Vector{PyOb
     if cube_fitter.save_fits
         @info "===> Writing FITS outputs... <==="
         write_fits(cube_fitter, cube_data, cube_model, param_maps, param_errs)
+    end
+
+    # Save a copy of the options file used to run the code, so the settings can be referenced/reused
+    # (for example, if you need to recall which lines you tied, what your limits were, etc.)
+    cp(joinpath(@__DIR__, "..", "options", "options.toml"), joinpath("output_$(cube_fitter.name)", "general_options.archive.toml"), force=true)
+    cp(joinpath(@__DIR__, "..", "options", "dust.toml"), joinpath("output_$(cube_fitter.name)", "dust_options.archive.toml"), force=true)
+    cp(joinpath(@__DIR__, "..", "options", "lines.toml"), joinpath("output_$(cube_fitter.name)", "lines_options.archive.toml"), force=true)
+
+    if cube_fitter.make_movies
+        @info "===> Writing MP4 movies... (this may take a while) <==="
+        make_movie(cube_fitter, cube_model)
+    end
+
+    # copy the main log file again
+    cp(joinpath(@__DIR__, "..", "loki.main.log"), joinpath("output_$(cube_fitter.name)", "loki.main.log"), force=true)
+
+    @info """\n
+    #############################################################################
+    ################################### Done!! ##################################
+    #############################################################################
+    """
+
+    # Return the final cube_fitter object, along with the param maps/errs and cube model
+    cube_fitter, param_maps, param_errs, cube_model
+
+end
+
+
+function fit_cube!(cube_fitter::CubeFitter, aperture::PyObject)
+    # Extend the single aperture into an array of apertures and call the corresponding method of fit_cube!
+    apertures = repeat([aperture], length(cube_fitter.cube.λ))
+    fit_cube!(cube_fitter, apertures)
+end
+
+
+function fit_cube!(cube_fitter::CubeFitter, aperture::Vector{PyObject})
+
+    @info """\n
+    #############################################################################
+    ######## BEGINNING FULL CUBE FITTING ROUTINE FOR $(cube_fitter.name) ########
+    #############################################################################
+    """
+    # copy the main log file
+    cp(joinpath(@__DIR__, "..", "loki.main.log"), joinpath("output_$(cube_fitter.name)", "loki.main.log"), force=true)
+
+    shape = (1,1,size(cube_fitter.cube.Iν, 3))
+
+    # Prepare output array
+    @info "===> Preparing output data structures... <==="
+    out_params = SharedArray(ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
+        cube_fitter.n_params_extra + 2) .* NaN)
+    out_errs = SharedArray(ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
+        cube_fitter.n_params_extra + 2) .* NaN)
+
+    # If using an aperture, overwrite the cube_data object with the quantities within
+    # the aperture, which are calculated here.
+    # Prepare the 1D arrays
+    I = zeros(Float32, shape)
+    σ = zeros(Float32, shape)
+    area_sr = zeros(shape[3])
+    @debug "Performing aperture photometry to get the integrated spectrum"
+
+    # Loop through each wavelength pixel and perform the aperture photometry
+    for z ∈ 1:shape[3]
+        # Sum up the FLUX within the aperture
+        Fz = cube_fitter.cube.Iν[:, :, z] .* cube_fitter.cube.Ω
+        e_Fz = cube_fitter.cube.σI[:, :, z] .* cube_fitter.cube.Ω
+        _, _, _, F_ap, eF_ap = py_photutils.aperture.aperture_photometry(Fz', aperture[z], 
+            error=e_Fz', mask=cube_fitter.cube.mask[:, :, z]', method="exact")[1]
+
+        # Convert back to intensity by dividing out the aperture area
+        area_sr[z] = aperture[z].area * cube_fitter.cube.Ω
+        I[1,1,z] = F_ap / area_sr[z]
+        σ[1,1,z] = eF_ap / area_sr[z]
+    end
+    cube_data = (λ=cube_fitter.cube.λ, I=I, σ=σ, area_sr=area_sr)
+
+    ######################### DO AN INITIAL FIT WITH THE SUM OF ALL SPAXELS ###################
+
+    @debug """
+    $(InteractiveUtils.varinfo(all=true, imported=true, recursive=true))
+    """
+
+    # If using an aperture, plot the aperture
+    plot_2d(cube_fitter.cube, joinpath("output_$(cube_fitter.name)", "aperture_plot_beg.pdf"); err=false, aperture=aperture[1],
+        z=cube_fitter.z, cosmo=cube_fitter.cosmology, slice=1)
+    plot_2d(cube_fitter.cube, joinpath("output_$(cube_fitter.name)", "aperture_plot_mid.pdf"); err=false, aperture=aperture[end÷2],
+        z=cube_fitter.z, cosmo=cube_fitter.cosmology, slice=shape[3]÷2)
+    plot_2d(cube_fitter.cube, joinpath("output_$(cube_fitter.name)", "aperture_plot_end.pdf"); err=false, aperture=aperture[end],
+        z=cube_fitter.z, cosmo=cube_fitter.cosmology, slice=shape[3])
+
+    # copy the main log file
+    cp(joinpath(@__DIR__, "..", "loki.main.log"), joinpath("output_$(cube_fitter.name)", "loki.main.log"), force=true)
+
+    ##############################################################################################
+
+    # Get the indices of all spaxels
+    spaxels = CartesianIndices((1,1))
+
+    # Wrapper function 
+    function fit_spax_i(index::CartesianIndex)
+
+        p_out, p_err = fit_spaxel(cube_fitter, cube_data, index; use_ap=true)
+        if !isnothing(p_out)
+            out_params[index, :] .= p_out
+            out_errs[index, :] .= p_err
+        end
+
+        return
+    end
+
+    @info "===> Beginninng integrated spectrum fitting... <==="
+    fit_spax_i(spaxels[1])
+
+    @info "===> Generating parameter maps and model cubes... <==="
+
+    # Create the ParamMaps and CubeModel structs containing the outputs
+    param_maps, param_errs, cube_model = assign_outputs(out_params, out_errs, cube_fitter, cube_data, spaxels, cube_fitter.z, true)
+
+    if cube_fitter.save_fits
+        @info "===> Writing FITS outputs... <==="
+        write_fits(cube_fitter, cube_data, cube_model, param_maps, param_errs, aperture=aperture)
     end
 
     # Save a copy of the options file used to run the code, so the settings can be referenced/reused

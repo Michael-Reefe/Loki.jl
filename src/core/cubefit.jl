@@ -706,7 +706,7 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
             zip(λ_dc, continuum.T_dc)] .* (λ_dc ./ 9.7).^2 ./ 5., 0., Inf)
         
         # Hot dust amplitude
-        λ_hd = clamp(9.7, minimum(λ), maximum(λ))
+        λ_hd = clamp(Wein(continuum.T_hot.value), minimum(λ), maximum(λ))
         A_hd = clamp(quadratic_interp_func(λ_hd, λ, I) / Blackbody_ν(λ_hd, continuum.T_hot.value), 0., Inf) / 2
 
         stellar_pars = [A_s, continuum.T_s.value]
@@ -862,7 +862,7 @@ function get_line_plimits(cube_fitter::CubeFitter, init::Bool)
 
     # Set up the limits vector
     amp_plim = (0., 1.)
-    amp_acomp_plim = (0., 0.5)
+    amp_acomp_plim = (0., 1.)
     ln_plims = Vector{Tuple}()
     ln_lock = BitVector()
     ln_names = Vector{String}()
