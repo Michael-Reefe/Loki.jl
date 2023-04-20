@@ -7,6 +7,8 @@ using Distributed
 using SharedArrays
 
 # Math packages
+using Distributions
+using Random
 using Statistics
 using NaNStatistics
 using QuadGK

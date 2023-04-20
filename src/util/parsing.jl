@@ -101,7 +101,7 @@ function parse_options()::Dict
 
     # Read in the options file
     options = TOML.parsefile(joinpath(@__DIR__, "..", "options", "options.toml"))
-    keylist1 = ["extinction_curve", "extinction_screen", "fit_sil_emission", "fit_all_samin", "subtract_cubic", 
+    keylist1 = ["n_bootstrap", "extinction_curve", "extinction_screen", "fit_sil_emission", "fit_all_samin", "subtract_cubic", 
                 "overwrite", "track_memory", "track_convergence", "save_full_model", "make_movies", "cosmology"]
     keylist2 = ["h", "omega_m", "omega_K", "omega_r"]
 

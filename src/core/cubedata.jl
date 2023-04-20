@@ -286,15 +286,11 @@ function interpolate_nans!(cube::DataCube, z::Real=0.)
         if sum(filt) > 0
             @debug "NaNs found in spaxel $index -- interpolating"
 
-            # Make sure the wavelength vector is linear, since it is assumed later in the function
-            diffs = diff(λ)
-            Δλ = mean(diffs[1])
-            scale = 0.025 / (1 + z)
             finite = isfinite.(I)
-            offset = findfirst(λ[finite] .> (scale + λ[finite][1]))
+            scale = 7
 
             # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
-            λknots = λ[finite][offset+1]:scale:λ[finite][end-offset-1]
+            λknots = λ[finite][(1+scale):scale:(length(λ[finite])-scale)]
             good = []
             for i ∈ eachindex(λknots) 
                 _, λc = findmin(abs.(λknots[i] .- λ))
@@ -924,11 +920,12 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
     mask_out = falses(size(I_out))
 
     # Iteration variables to keep track of
-    wsum = 0
-    for (i, ch_in) ∈ enumerate(channels)
+    for i ∈ eachindex(channels)
 
         # The size of the current channel's wavelength veector
+        ch_in = channels[i]
         wi_size = length(obs.channels[ch_in].λ)
+        wsum = isone(i) ? 0 : sum([length(obs.channels[ch_i].λ) for ch_i in channels[1:(i-1)]])
 
         @info "Reprojecting $(obs.name) channel $ch_in onto the optimal $(size_optimal) WCS grid..."
 
@@ -988,21 +985,19 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
         mask_out_temp[.!isfinite.(mask_out_temp) .| .!isfinite.(I_out[:, :, wsum+1:wsum+wi_size]) .| 
             .!isfinite.(σ_out[:, :, wsum+1:wsum+wi_size])] .= 1
         mask_out[:, :, wsum+1:wsum+wi_size] .= mask_out_temp
-
-        wsum += wi_size
     end
     
     # If an entire channel is masked out, we want to throw away all channels
     # This has to be done after the first loop so that mask_out is not overwritten to be unmasked after it has been masked
-    wsum = 0
-    for (i, ch_in) ∈ enumerate(channels)
+    for i ∈ eachindex(channels)
+        ch_in = channels[i]
         wi_size = length(obs.channels[ch_in].λ)
+        wsum = isone(i) ? 0 : sum([length(obs.channels[ch_i].λ) for ch_i in channels[1:(i-1)]])
         for xᵣ ∈ 1:size_optimal[1], yᵣ ∈ 1:size_optimal[2]
             if all(mask_out[xᵣ, yᵣ, wsum+1:wsum+wi_size])
                 mask_out[xᵣ, yᵣ, :] .= 1
             end
         end
-        wsum += wi_size
     end
 
     # Need an additional correction (fudge) factor for overall channels
@@ -1125,7 +1120,7 @@ function cube_rebin!(obs::Observation, binsize::S, channel::S; out_id::S=0) wher
             ymax = min(y*binsize, size(I_in, 2))
 
             # @debug "($xmin:$xmax, $ymin:$ymax) --> ($x,$y)"
-            @inbounds @simd for z ∈ 1:dims[3]
+            @simd for z ∈ 1:dims[3]
                 # Sum fluxes within the bin
                 I_out[x,y,z] = sumdim(I_in[xmin:xmax, ymin:ymax, z], (1,2), nan=false)
                 # Sum errors in quadrature within the bin

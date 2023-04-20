@@ -360,6 +360,8 @@ struct CubeFitter{T<:Real,S<:Integer}
     # General options
     cosmology::Cosmology.AbstractCosmology
     flexible_wavesol::Bool
+    n_bootstrap::S
+    random_seed::S
 
     p_init_cont::Vector{T}
     p_init_line::Vector{T}
@@ -367,7 +369,8 @@ struct CubeFitter{T<:Real,S<:Integer}
     #= Constructor function --> the inputs taken map directly to fields in the CubeFitter object,
     the rest of the fields are generated in the function from these inputs =#
     function CubeFitter(cube::DataCube, z::Real, name::String; plot_spaxels::Symbol=:pyplot, plot_maps::Bool=true, 
-        plot_range::Union{Vector{<:Tuple},Nothing}=nothing, parallel::Bool=true, save_fits::Bool=true) 
+        plot_range::Union{Vector{<:Tuple},Nothing}=nothing, parallel::Bool=true, save_fits::Bool=true,
+        random_seed::Integer=123456789) 
 
         # Prepare output directories
         @info "Preparing output directories"
@@ -523,6 +526,7 @@ struct CubeFitter{T<:Real,S<:Integer}
         @debug "### There is a total of $(n_params_extra) extra parameters ###"
 
         # Prepare options
+        n_bootstrap = options[:n_bootstrap]
         extinction_curve = options[:extinction_curve]
         extinction_screen = options[:extinction_screen]
         fit_sil_emission = options[:fit_sil_emission]
@@ -549,9 +553,9 @@ struct CubeFitter{T<:Real,S<:Integer}
 
         new{typeof(z), typeof(n_lines)}(cube, z, name, plot_spaxels, plot_maps, plot_range, parallel, 
             save_fits, save_full_model, subtract_cubic, overwrite, track_memory, track_convergence, make_movies, extinction_curve, 
-            extinction_screen, fit_sil_emission, fit_all_samin, continuum, n_dust_cont, n_dust_features, dust_features, n_lines, n_acomps, 
-            n_comps, lines, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, 
-            n_params_extra, cosmo, flexible_wavesol, p_init_cont, p_init_line)
+            extinction_screen, fit_sil_emission, fit_all_samin, continuum, n_dust_cont, n_dust_features, dust_features, 
+            n_lines, n_acomps, n_comps, lines, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, 
+            n_params_extra, cosmo, flexible_wavesol, n_bootstrap, random_seed, p_init_cont, p_init_line)
     end
 
 end

@@ -18,7 +18,7 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
     # Loop over each spaxel and fill in the associated fitting parameters into the ParamMaps and CubeModel
     # I know this is long and ugly and looks stupid but it works for now and I'll make it pretty later
     prog = Progress(length(spaxels); showspeed=true)
-    @inbounds @simd for index ∈ spaxels
+    @simd for index ∈ spaxels
 
         # Set the 2D parameter map outputs
 
@@ -709,18 +709,23 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
         if ap_shape == "CircularAperture"
             append!(aperture_keys, ["AP_RADIUS"])
             append!(aperture_vals, sky_aperture.r[1])
-            append!(aperture_comments, ["Radius of the aperture, in arcsec"])
+            append!(aperture_comments, ["Radius of aperture in arcsec"])
         elseif ap_shape == "EllipticalAperture"
             append!(aperture_keys, ["AP_A", "AP_B", "AP_PA"])
             append!(aperture_vals, [sky_aperture.a[1], sky_aperture.b[1], sky_aperture.theta[1]])
-            append!(aperture_comments, ["Semimajor axis of the aperture, in arcsec", 
-                "Semiminor axis of the aperture, in arcsec", "Aperture position angle, in rad."])
+            append!(aperture_comments, ["Semimajor axis of aperture in arcsec", 
+                "Semiminor axis of aperture in arcsec", "Aperture position angle in rad."])
         elseif ap_shape == "RectangularAperture"
             append!(aperture_keys, ["AP_W", "AP_H", "AP_PA"])
             append!(aperture_vals, [sky_aperture.w[1], sky_aperture.h[1], sky_aperture.theta[1]])
-            append!(aperture_comments, ["Width of the aperture, in arcsec", 
-                "Height of the aperture, in arcsec", "Aperture position angle, in rad."])
+            append!(aperture_comments, ["Width of aperture in arcsec", 
+                "Height of aperture in arcsec", "Aperture position angle in rad."])
         end
+
+        # Also append the aperture area
+        append!(aperture_keys, ["AP_AR_SR"])
+        append!(aperture_vals, [cube_data.area_sr[1]])
+        append!(aperture_comments, ["Area of aperture in steradians"])
     end
 
     # Header information
