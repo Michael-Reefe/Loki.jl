@@ -796,8 +796,8 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
             @debug "Writing 3D model FITS HDUs"
 
             write(f, Vector{Int}(); header=hdr)                                                         # Primary HDU (empty)
-            write(f, cube_data.I .* (1 .+ cube_fitter.z); name="DATA")                                  # Raw data 
-            write(f, cube_data.σ .* (1 .+ cube_fitter.z); name="ERROR")                                 # Error in the raw data
+            write(f, Float32.(cube_data.I .* (1 .+ cube_fitter.z)); name="DATA")                        # Raw data 
+            write(f, Float32.(cube_data.σ .* (1 .+ cube_fitter.z)); name="ERROR")                       # Error in the raw data
             write(f, cube_model.model; name="MODEL")                                                    # Full intensity model
             write(f, cube_model.stellar; name="STELLAR_CONTINUUM")                                      # Stellar continuum model
             for i ∈ 1:size(cube_model.dust_continuum, 4)
