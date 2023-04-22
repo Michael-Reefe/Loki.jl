@@ -566,7 +566,7 @@ end
 
 Generate a CubeModel object corresponding to the options given by the CubeFitter object
 """
-function generate_cubemodel(cube_fitter::CubeFitter, aperture::Bool=false)::CubeModel
+function generate_cubemodel(cube_fitter::CubeFitter, aperture::Bool=false)
     shape = aperture ? (1,1,size(cube_fitter.cube.Iν, 3)) : size(cube_fitter.cube.Iν)
     # Full 3D intensity model array
     @debug "Generating full 3D cube models"
@@ -580,15 +580,18 @@ end
 Generate two ParamMaps objects (for the values and errors) corrresponding to the options given
 by the CubeFitter object
 """
-function generate_parammaps(cube_fitter::CubeFitter, aperture::Bool=false)::Tuple{ParamMaps, ParamMaps}
+function generate_parammaps(cube_fitter::CubeFitter, aperture::Bool=false)
     shape = aperture ? (1,1,size(cube_fitter.cube.Iν, 3)) : size(cube_fitter.cube.Iν)
     # 2D maps of fitting parameters
     @debug "Generating 2D parameter value & error maps"
     param_maps = parammaps_empty(shape, cube_fitter.n_dust_cont, cube_fitter.dust_features.names, cube_fitter.n_lines,
                                  cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol)
-    # 2D maps of fitting parameter 1-sigma errors
-    param_errs = parammaps_empty(shape, cube_fitter.n_dust_cont, cube_fitter.dust_features.names, cube_fitter.n_lines,
+    # 2D maps of fitting parameter +/- 1 sigma errors
+    param_errs_lo = parammaps_empty(shape, cube_fitter.n_dust_cont, cube_fitter.dust_features.names, cube_fitter.n_lines,
                                  cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol)
+    param_errs_up = parammaps_empty(shape, cube_fitter.n_dust_cont, cube_fitter.dust_features.names, cube_fitter.n_lines,
+                                 cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol)
+    param_errs = [param_errs_lo, param_errs_up]
     param_maps, param_errs
 end
 

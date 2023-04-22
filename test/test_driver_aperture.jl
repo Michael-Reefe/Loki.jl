@@ -113,7 +113,7 @@ ap = make_aperture(obs.channels[channel], :Circular, "23:03:15.610", "+8:52:26.1
 
 # Create the cube fitting object
 # plot_range=[(7.61, 7.69), (12.77, 12.85)]
-cube_fitter = CubeFitter(obs.channels[channel], obs.z, obs.name * "_ch$(channel)_aperture_boot"; 
+cube_fitter = CubeFitter(obs.channels[channel], obs.z, obs.name * "_ch$(channel)_aperture_boot_fixed"; 
     parallel=true, plot_spaxels=:both, plot_maps=true, save_fits=true)
 
 # Fit the cube

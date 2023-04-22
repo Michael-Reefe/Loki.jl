@@ -503,7 +503,7 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
 
         psf = plt.Circle(size(I) .* 0.9, isnothing(slice) ? median(data.psf) : data.psf[slice] / pix_as / 2, color="k")
         ax1.add_patch(psf)
-        ax1.annotate("PSF", size(I) .* 0.9 .- (0., median(data.psf) / pix_as / 2 + 1.75), ha=:center, va=:center)    
+        ax1.annotate("PSF", size(I) .* 0.9 .- (0., median(data.psf) / pix_as / 2 * 1.5 + 1.75), ha=:center, va=:center)    
 
         if !isnothing(aperture)
             aperture.plot(ax1, color="k", lw=2)
@@ -536,7 +536,7 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
 
         psf = plt.Circle(size(I) .* 0.9, isnothing(slice) ? median(data.psf) : data.psf[slice] / pix_as / 2, color="k")
         ax1.add_patch(psf)
-        ax1.annotate("PSF", size(I) .* 0.9 .- (0., median(data.psf) / pix_as / 2 + 1.75), ha=:center, va=:center)    
+        ax1.annotate("PSF", size(I) .* 0.9 .- (0., median(data.psf) / pix_as / 2 * 1.5 + 1.75), ha=:center, va=:center)    
 
         if !isnothing(aperture)
             aperture.plot(ax2, color="k", lw=2)

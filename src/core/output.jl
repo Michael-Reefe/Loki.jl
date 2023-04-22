@@ -28,54 +28,70 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
         # Stellar continuum amplitude, temp
         # Convert back to observed-frame amplitudes by multiplying by 1+z
         param_maps.stellar_continuum[:amp][index] = out_params[index, 1] > 0. ? log10(out_params[index, 1]*(1+z))-17 : -Inf 
-        param_errs.stellar_continuum[:amp][index] = out_params[index, 1] > 0. ? out_errs[index, 1] / (log(10) * out_params[index, 1]) : NaN
+        param_errs[1].stellar_continuum[:amp][index] = out_params[index, 1] > 0. ? out_errs[index, 1, 1] / (log(10) * out_params[index, 1]) : NaN
+        param_errs[2].stellar_continuum[:amp][index] = out_params[index, 1] > 0. ? out_errs[index, 1, 2] / (log(10) * out_params[index, 1]) : NaN
         param_maps.stellar_continuum[:temp][index] = out_params[index, 2]
-        param_errs.stellar_continuum[:temp][index] = out_errs[index, 2]
+        param_errs[1].stellar_continuum[:temp][index] = out_errs[index, 2, 1]
+        param_errs[2].stellar_continuum[:temp][index] = out_errs[index, 2, 2]
         pᵢ = 3
 
         # Dust continuum amplitude, temp
         for i ∈ 1:cube_fitter.n_dust_cont
             param_maps.dust_continuum[i][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z))-17 : -Inf
-            param_errs.dust_continuum[i][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / (log(10) * out_params[index, pᵢ]) : NaN
+            param_errs[1].dust_continuum[i][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
+            param_errs[2].dust_continuum[i][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
             param_maps.dust_continuum[i][:temp][index] = out_params[index, pᵢ+1]
-            param_errs.dust_continuum[i][:temp][index] = out_errs[index, pᵢ+1]
+            param_errs[1].dust_continuum[i][:temp][index] = out_errs[index, pᵢ+1, 1]
+            param_errs[2].dust_continuum[i][:temp][index] = out_errs[index, pᵢ+1, 2]
             pᵢ += 2
         end
 
         # Extinction parameters
         param_maps.extinction[:tau_9_7][index] = out_params[index, pᵢ]
-        param_errs.extinction[:tau_9_7][index] = out_errs[index, pᵢ]
+        param_errs[1].extinction[:tau_9_7][index] = out_errs[index, pᵢ, 1]
+        param_errs[2].extinction[:tau_9_7][index] = out_errs[index, pᵢ, 2]
         param_maps.extinction[:tau_ice][index] = out_params[index, pᵢ+1]
-        param_errs.extinction[:tau_ice][index] = out_errs[index, pᵢ+1]
+        param_errs[1].extinction[:tau_ice][index] = out_errs[index, pᵢ+1, 1]
+        param_errs[2].extinction[:tau_ice][index] = out_errs[index, pᵢ+1, 2]
         param_maps.extinction[:tau_ch][index] = out_params[index, pᵢ+2]
-        param_errs.extinction[:tau_ch][index] = out_errs[index, pᵢ+2]
+        param_errs[1].extinction[:tau_ch][index] = out_errs[index, pᵢ+2, 1]
+        param_errs[2].extinction[:tau_ch][index] = out_errs[index, pᵢ+2, 2]
         param_maps.extinction[:beta][index] = out_params[index, pᵢ+3]
-        param_errs.extinction[:beta][index] = out_errs[index, pᵢ+3]
+        param_errs[1].extinction[:beta][index] = out_errs[index, pᵢ+3, 1]
+        param_errs[2].extinction[:beta][index] = out_errs[index, pᵢ+3, 2]
         pᵢ += 4
 
         if cube_fitter.fit_sil_emission
             # Hot dust parameters
             param_maps.hot_dust[:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z))-17 : -Inf
-            param_errs.hot_dust[:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / (log(10) * out_params[index, pᵢ]) : NaN
+            param_errs[1].hot_dust[:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
+            param_errs[2].hot_dust[:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
             param_maps.hot_dust[:temp][index] = out_params[index, pᵢ+1]
-            param_errs.hot_dust[:temp][index] = out_errs[index, pᵢ+1]
+            param_errs[1].hot_dust[:temp][index] = out_errs[index, pᵢ+1, 1]
+            param_errs[2].hot_dust[:temp][index] = out_errs[index, pᵢ+1, 2]
             param_maps.hot_dust[:frac][index] = out_params[index, pᵢ+2]
-            param_errs.hot_dust[:frac][index] = out_errs[index, pᵢ+2]
+            param_errs[1].hot_dust[:frac][index] = out_errs[index, pᵢ+2, 1]
+            param_errs[2].hot_dust[:frac][index] = out_errs[index, pᵢ+2, 2]
             param_maps.hot_dust[:tau_warm][index] = out_params[index, pᵢ+3]
-            param_errs.hot_dust[:tau_warm][index] = out_errs[index, pᵢ+3]
+            param_errs[1].hot_dust[:tau_warm][index] = out_errs[index, pᵢ+3, 1]
+            param_errs[2].hot_dust[:tau_warm][index] = out_errs[index, pᵢ+3, 2]
             param_maps.hot_dust[:tau_cold][index] = out_params[index, pᵢ+4]
-            param_errs.hot_dust[:tau_cold][index] = out_errs[index, pᵢ+4]
+            param_errs[1].hot_dust[:tau_cold][index] = out_errs[index, pᵢ+4, 1]
+            param_errs[2].hot_dust[:tau_cold][index] = out_errs[index, pᵢ+4, 2]
             pᵢ += 5
         end
 
         # Dust feature log(amplitude), mean, FWHM
         for df ∈ cube_fitter.dust_features.names
             param_maps.dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z))-17 : -Inf
-            param_errs.dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / (log(10) * out_params[index, pᵢ]) : NaN
+            param_errs[1].dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
+            param_errs[2].dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
             param_maps.dust_features[df][:mean][index] = out_params[index, pᵢ+1] * (1+z)
-            param_errs.dust_features[df][:mean][index] = out_errs[index, pᵢ+1] * (1+z)
+            param_errs[1].dust_features[df][:mean][index] = out_errs[index, pᵢ+1, 1] * (1+z)
+            param_errs[2].dust_features[df][:mean][index] = out_errs[index, pᵢ+1, 2] * (1+z)
             param_maps.dust_features[df][:fwhm][index] = out_params[index, pᵢ+2] * (1+z)
-            param_errs.dust_features[df][:fwhm][index] = out_errs[index, pᵢ+2] * (1+z)
+            param_errs[1].dust_features[df][:fwhm][index] = out_errs[index, pᵢ+2, 1] * (1+z)
+            param_errs[2].dust_features[df][:fwhm][index] = out_errs[index, pᵢ+2, 2] * (1+z)
             pᵢ += 3
         end
 
@@ -95,66 +111,76 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
 
                     ln = Symbol(cube_fitter.lines.names[k], "_$(j)")
                     amp = out_params[index, pᵢ]
-                    amp_err = out_errs[index, pᵢ]
+                    amp_err = out_errs[index, pᵢ, :]
                     if isone(j)
                         param_maps.lines[ln][:amp][index] = amp
-                        param_errs.lines[ln][:amp][index] = amp_err
+                        param_errs[1].lines[ln][:amp][index] = amp_err[1]
+                        param_errs[2].lines[ln][:amp][index] = amp_err[2]
                         amp_1 = amp
                         amp_1_err = amp_err
                     else
                         param_maps.lines[ln][:amp][index] = amp * amp_1
-                        param_errs.lines[ln][:amp][index] = √((amp * amp_1)^2 * ((amp_1_err / amp_1)^2 + (amp_err / amp)^2))
+                        param_errs[1].lines[ln][:amp][index] = √((amp_1_err[1] * amp)^2 + (amp_err[1] * amp_1)^2)
+                        param_errs[2].lines[ln][:amp][index] = √((amp_1_err[2] * amp)^2 + (amp_err[2] * amp_1)^2)
                     end
                     
                     # Voff parameter
                     voff = out_params[index, pᵢ+1]
-                    voff_err = out_errs[index, pᵢ+1]
+                    voff_err = out_errs[index, pᵢ+1, :]
                     if isone(j)
                         param_maps.lines[ln][:voff][index] = voff
-                        param_errs.lines[ln][:voff][index] = voff_err
+                        param_errs[1].lines[ln][:voff][index] = voff_err[1]
+                        param_errs[2].lines[ln][:voff][index] = voff_err[2]
                         voff_1 = voff
                         voff_1_err = voff_err
                     else
                         param_maps.lines[ln][:voff][index] = voff + voff_1
-                        param_errs.lines[ln][:voff][index] = √(voff_err^2 + voff_1_err^2)
+                        param_errs[1].lines[ln][:voff][index] = √(voff_err[1]^2 + voff_1_err[1]^2)
+                        param_errs[2].lines[ln][:voff][index] = √(voff_err[2]^2 + voff_1_err[2]^2)
                     end
 
                     # Individual voff parameter
                     if !isnothing(cube_fitter.lines.tied_voff[k, j]) && cube_fitter.flexible_wavesol && isone(j)
                         voff_indiv = out_params[index, pᵢ+2]
-                        voff_indiv_err = out_errs[index, pᵢ+2]
+                        voff_indiv_err = out_errs[index, pᵢ+2, :]
                         param_maps.lines[ln][:voff_indiv][index] = voff_indiv
-                        param_errs.lines[ln][:voff_indiv][index] = voff_indiv_err
+                        param_errs[1].lines[ln][:voff_indiv][index] = voff_indiv_err[1]
+                        param_errs[2].lines[ln][:voff_indiv][index] = voff_indiv_err[2]
                         fwhm = out_params[index, pᵢ+3]
-                        fwhm_err = out_errs[index, pᵢ+3]
+                        fwhm_err = out_errs[index, pᵢ+3, :]
                         pᵢ += 4
                     else
                         fwhm = out_params[index, pᵢ+2]
-                        fwhm_err = out_errs[index, pᵢ+2]                        
+                        fwhm_err = out_errs[index, pᵢ+2, :]                        
                         pᵢ += 3
                     end
 
                     # FWHM parameter
                     if isone(j)
                         param_maps.lines[ln][:fwhm][index] = fwhm
-                        param_errs.lines[ln][:fwhm][index] = fwhm_err
+                        param_errs[1].lines[ln][:fwhm][index] = fwhm_err[1]
+                        param_errs[2].lines[ln][:fwhm][index] = fwhm_err[2]
                         fwhm_1 = fwhm
                         fwhm_1_err = fwhm_err
                     else
                         param_maps.lines[ln][:fwhm][index] = fwhm * fwhm_1
-                        param_errs.lines[ln][:fwhm][index] = √((fwhm * fwhm_1)^2 * ((fwhm_1_err / fwhm_1)^2 + (fwhm_err / fwhm)^2))
+                        param_errs[1].lines[ln][:fwhm][index] = √((fwhm_1_err[1] * fwhm)^2 + (fwhm_err[1] * fwhm_1)^2)
+                        param_errs[2].lines[ln][:fwhm][index] = √((fwhm_1_err[2] * fwhm)^2 + (fwhm_err[2] * fwhm_1)^2)
                     end
 
                     # Get Gauss-Hermite 3rd and 4th order moments
                     if cube_fitter.lines.profiles[k, j] == :GaussHermite
                         param_maps.lines[ln][:h3][index] = out_params[index, pᵢ]
-                        param_errs.lines[ln][:h3][index] = out_errs[index, pᵢ]
+                        param_errs[1].lines[ln][:h3][index] = out_errs[index, pᵢ, 1]
+                        param_errs[2].lines[ln][:h3][index] = out_errs[index, pᵢ, 2]
                         param_maps.lines[ln][:h4][index] = out_params[index, pᵢ+1]
-                        param_errs.lines[ln][:h4][index] = out_errs[index, pᵢ+1]
+                        param_errs[1].lines[ln][:h4][index] = out_errs[index, pᵢ+1, 1]
+                        param_errs[2].lines[ln][:h4][index] = out_errs[index, pᵢ+1, 2]
                         pᵢ += 2
                     elseif cube_fitter.lines.profiles[k, j] == :Voigt
                         param_maps.lines[ln][:mixing][index] = out_params[index, pᵢ]
-                        param_errs.lines[ln][:mixing][index] = out_errs[index, pᵢ]
+                        param_errs[1].lines[ln][:mixing][index] = out_errs[index, pᵢ, 1]
+                        param_errs[2].lines[ln][:mixing][index] = out_errs[index, pᵢ, 2]
                         pᵢ += 1
                     end
                 end
@@ -188,10 +214,14 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
         # Dust feature intensity, EQW, and SNR, from calculate_extra_parameters
         for df ∈ cube_fitter.dust_features.names
             param_maps.dust_features[df][:flux][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
-            param_errs.dust_features[df][:flux][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / (log(10) * out_params[index, pᵢ]) : NaN
+            param_errs[1].dust_features[df][:flux][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
+            param_errs[2].dust_features[df][:flux][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
             param_maps.dust_features[df][:eqw][index] = out_params[index, pᵢ+1] * (1+z)
-            param_errs.dust_features[df][:eqw][index] = out_errs[index, pᵢ+1] * (1+z)
+            param_errs[1].dust_features[df][:eqw][index] = out_errs[index, pᵢ+1, 1] * (1+z)
+            param_errs[2].dust_features[df][:eqw][index] = out_errs[index, pᵢ+1, 2] * (1+z)
             param_maps.dust_features[df][:SNR][index] = out_params[index, pᵢ+2]
+            param_errs[1].dust_features[df][:SNR][index] = out_errs[index, pᵢ+2, 1]
+            param_errs[2].dust_features[df][:SNR][index] = out_errs[index, pᵢ+2, 2]
             pᵢ += 3
         end
 
@@ -203,17 +233,21 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
 
                     # Convert amplitudes to the correct units, then take the log
                     amp_norm = param_maps.lines[ln][:amp][index]
-                    amp_norm_err = param_errs.lines[ln][:amp][index]
+                    amp_norm_err = [param_errs[1].lines[ln][:amp][index], param_errs[2].lines[ln][:amp][index]]
                     param_maps.lines[ln][:amp][index] = amp_norm > 0 ? log10(amp_norm * N * (1+z))-17 : -Inf
-                    param_errs.lines[ln][:amp][index] = amp_norm > 0 ? amp_norm_err / (log(10) * amp_norm) : NaN
+                    param_errs[1].lines[ln][:amp][index] = amp_norm > 0 ? amp_norm_err[1] / (log(10) * amp_norm) : NaN
+                    param_errs[2].lines[ln][:amp][index] = amp_norm > 0 ? amp_norm_err[2] / (log(10) * amp_norm) : NaN
 
                     # Line intensity, EQW, and SNR, from calculate_extra_parameters
                     param_maps.lines[ln][:flux][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
-                    param_errs.lines[ln][:flux][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ] / (log(10) * out_params[index, pᵢ]) : NaN
+                    param_errs[1].lines[ln][:flux][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
+                    param_errs[2].lines[ln][:flux][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
                     param_maps.lines[ln][:eqw][index] = out_params[index, pᵢ+1] * (1+z)
-                    param_errs.lines[ln][:eqw][index] = out_errs[index, pᵢ+1] * (1+z)
+                    param_errs[1].lines[ln][:eqw][index] = out_errs[index, pᵢ+1, 1] * (1+z)
+                    param_errs[2].lines[ln][:eqw][index] = out_errs[index, pᵢ+1, 2] * (1+z)
                     param_maps.lines[ln][:SNR][index] = out_params[index, pᵢ+2]
-                    
+                    param_errs[1].lines[ln][:SNR][index] = out_errs[index, pᵢ+2, 1]
+                    param_errs[2].lines[ln][:SNR][index] = out_errs[index, pᵢ+2, 2]
                     pᵢ += 3
                 end
             end
@@ -451,7 +485,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     # Add circle for the PSF FWHM
     psf = plt.Circle(size(data) .* 0.9, psf_fwhm / pix_as / 2, color="k")
     ax.add_patch(psf)
-    ax.annotate("PSF", size(data) .* 0.9 .- (0., psf_fwhm / pix_as / 2 + 1.75), ha=:center, va=:center)
+    ax.annotate("PSF", size(data) .* 0.9 .- (0., psf_fwhm / pix_as / 2 * 1.5 + 1.75), ha=:center, va=:center)
 
     fig.colorbar(cdata, ax=ax, label=bunit)
 
@@ -639,10 +673,9 @@ function make_movie(cube_fitter::CubeFitter, cube_model::CubeModel; cmap::Symbol
         # Get average along the wavelength dimension
         datasum = sumdim(full_data, 3)
         dataavg = datasum ./ size(full_data, 3)
-        flatavg = dataavg[isfinite.(dataavg)]
 
         # Plot the first slice
-        image = ax1.imshow(data', origin=:lower, cmap=cmap, vmin=quantile(flatavg, 0.01), vmax=quantile(flatavg, 0.99))
+        image = ax1.imshow(data', origin=:lower, cmap=cmap, vmin=nanquantile(dataavg, 0.01), vmax=nanquantile(dataavg, 0.99))
         ax1.set_xlabel(" ")
         ax1.set_ylabel(" ")
         # Add colorbar on the side
@@ -683,8 +716,8 @@ end
 Save the best fit results for the cube into two FITS files: one for the full 3D intensity model of the cube, split up by
 individual model components, and one for 2D parameter maps of the best-fit parameters for each spaxel in the cube.
 """
-function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel, param_maps::ParamMaps, param_errs::ParamMaps;
-    aperture::Union{Vector{PyObject},Nothing}=nothing)
+function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel, param_maps::ParamMaps, 
+    param_errs::Vector{<:ParamMaps}; aperture::Union{Vector{PyObject},Nothing}=nothing)
 
     aperture_keys = []
     aperture_vals = []
@@ -811,10 +844,10 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
     end
 
     # Create the 2D parameter map FITS file for the parameters and the errors
-    for (index, param_data) ∈ enumerate([param_maps, param_errs])
-            
+    for (index, param_data) ∈ enumerate([param_maps, param_errs[1], param_errs[2]])
+
         FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_parameter_" * 
-            (isone(index) ? "maps" : "errs") * ".fits.gz"), "w") do f
+            ("maps", "errs_low", "errs_upp")[index] * ".fits.gz"), "w") do f
 
             @debug "Writing 2D parameter map FITS HDUs"
 

@@ -848,7 +848,7 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer,
         # Ref: Gallimore et al. 2010
         comps["hot_dust"] = params[pᵢ] .* Blackbody_ν.(λ, params[pᵢ+1])
         comps["hot_dust"] .*= (1 .- Extinction.(ext_curve, params[pᵢ+3], screen=true))
-        comps["hot_dust"] .*= (1 .- params[pᵢ+2]) .* (1 .- Extinction.(ext_curve, params[pᵢ+4], screen=true))
+        comps["hot_dust"] .*= (1 .- params[pᵢ+2]) .+ params[pᵢ+2] .* Extinction.(ext_curve, params[pᵢ+4], screen=true)
         contin .+= comps["hot_dust"]
         pᵢ += 5
     end
@@ -917,7 +917,7 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer,
         # Ref: Gallimore et al. 2010
         hot_dust = params[pᵢ] .* Blackbody_ν.(λ, params[pᵢ+1])
         hot_dust .*= (1 .- Extinction.(ext_curve, params[pᵢ+3], screen=true))
-        hot_dust .*= (1 .- params[pᵢ+2]) .* (1 .- Extinction.(ext_curve, params[pᵢ+4], screen=true))
+        hot_dust .*= (1 .- params[pᵢ+2]) .+ params[pᵢ+2] .* Extinction.(ext_curve, params[pᵢ+4], screen=true)
         contin .+= hot_dust
         pᵢ += 5
     end
@@ -999,18 +999,39 @@ end
 
 # Combine model_continuum and model_pah_residuals to get the full continuum in one function (after getting the optimized parameters)
 function model_continuum_and_pah(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer,
-    n_dust_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool) where {T<:Real}
+    n_dust_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool,
+    return_components::Bool=true) where {T<:Real}
 
     pars_1 = vcat(params[1:(2+2n_dust_cont+4+(fit_sil_emission ? 5 : 0))], [0., 0.])
     pars_2 = params[(3+2n_dust_cont+4+(fit_sil_emission ? 5 : 0)):end]
 
-    contin_1, ccomps = model_continuum(λ, pars_1, n_dust_cont, extinction_curve, extinction_screen, fit_sil_emission, true)
-    contin_2, pcomps = model_pah_residuals(λ, pars_2, n_dust_feat, ccomps["extinction"], true)
+    if return_components
+        contin_1, ccomps = model_continuum(λ, pars_1, n_dust_cont, extinction_curve, extinction_screen, fit_sil_emission, true)
+        contin_2, pcomps = model_pah_residuals(λ, pars_2, n_dust_feat, ccomps["extinction"], true)
+    else
+        contin_1 = model_continuum(λ, pars_1, n_dust_cont, extinction_curve, extinction_screen, fit_sil_emission)
+        pᵢ = 3 + 2n_dust_cont
+        if extinction_curve == "d+"
+            ext_curve = τ_dp.(λ, pars_1[pᵢ+3])
+        elseif extinction_curve == "kvt"
+            ext_curve = τ_kvt.(λ, pars_1[pᵢ+3])
+        elseif extinction_curve == "ct"
+            ext_curve = τ_ct.(λ)
+        elseif extinction_curve == "ohm"
+            ext_curve = τ_ohm.(λ)
+        else
+            error("Unrecognized extinction curve: $extinction_curve")
+        end
+        ext = Extinction.(ext_curve, pars_1[pᵢ], screen=extinction_screen)
+        contin_2 = model_pah_residuals(λ, pars_2, n_dust_feat, ext)
+    end
 
     contin = contin_1 .+ contin_2
-    comps = merge(ccomps, pcomps)
-
-    contin, comps
+    if return_components
+        comps = merge(ccomps, pcomps)
+        return contin, comps
+    end
+    return contin
 
 end
 
@@ -1511,7 +1532,7 @@ function calculate_eqw(λ::Vector{T}, popt_c::Vector{T}, perr_c::Vector{T}, n_du
     elseif profile == :Gaussian
         # Make sure to use [x] as a vector and take the first element [1] of the result, since the continuum functions
         # were written to be used with vector inputs + outputs
-        cont = x -> model_continuum_and_pah([x], popt_c, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen, fit_sil_emission)[1][1]
+        cont = x -> model_continuum_and_pah([x], popt_c, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen, fit_sil_emission, false)[1]
         eqw = quadgk(x -> Gaussian(x+peak, amp, peak, fwhm) / cont(x+peak), λmin-peak, λmax-peak, order=200)[1]
         if propagate_err
             err_l = eqw - quadgk(x -> Gaussian(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps())) / cont(x+peak),
@@ -1525,7 +1546,7 @@ function calculate_eqw(λ::Vector{T}, popt_c::Vector{T}, perr_c::Vector{T}, n_du
             err = 0.
         end
     elseif profile == :Lorentzian
-        cont = x -> model_continuum_and_pah([x], popt_c, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen, fit_sil_emission)[1][1]
+        cont = x -> model_continuum_and_pah([x], popt_c, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen, fit_sil_emission, false)[1]
         eqw = quadgk(x -> Lorentzian(x+peak, amp, peak, fwhm) / cont(x+peak), λmin-peak, λmax-peak, order=200)[1]
         if propagate_err
             err_l = eqw - quadgk(x -> Lorentzian(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps())) / cont(x+peak),
@@ -1539,7 +1560,7 @@ function calculate_eqw(λ::Vector{T}, popt_c::Vector{T}, perr_c::Vector{T}, n_du
             err = 0.
         end
     elseif profile == :GaussHermite
-        cont = x -> model_continuum_and_pah([x], popt_c, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen, fit_sil_emission)[1][1]
+        cont = x -> model_continuum_and_pah([x], popt_c, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen, fit_sil_emission, false)[1]
         eqw = quadgk(x -> GaussHermite(x+peak, amp, peak, fwhm, h3, h4) / cont(x+peak), λmin-peak, λmax-peak, order=200)[1]
         if propagate_err
             err_l = eqw - quadgk(x -> GaussHermite(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), h3-h3_err, h4-h4_err) / 
@@ -1553,7 +1574,7 @@ function calculate_eqw(λ::Vector{T}, popt_c::Vector{T}, perr_c::Vector{T}, n_du
             err = 0.
         end
     elseif profile == :Voigt
-        cont = x -> model_continuum_and_pah([x], popt_c, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen, fit_sil_emission)[1][1]
+        cont = x -> model_continuum_and_pah([x], popt_c, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen, fit_sil_emission, false)[1]
         eqw = quadgk(x -> Voigt(x+peak, amp, peak, fwhm, η) / cont(x+peak), λmin-peak, λmax-peak, order=200)[1]
         if propagate_err
             err_l = eqw - quadgk(x -> Voigt(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), η-η_err) / 
