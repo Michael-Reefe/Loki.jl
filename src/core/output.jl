@@ -20,6 +20,10 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
     prog = Progress(length(spaxels); showspeed=true)
     @simd for index ∈ spaxels
 
+        # Get the normalization to un-normalized the fitted parameters
+        N = Float64(abs(nanmaximum(cube_data.I[index, :])))
+        N = N ≠ 0. ? N : 1.
+
         # Set the 2D parameter map outputs
 
         # Conversion factor from MJy sr^-1 to erg s^-1 cm^-2 Hz^-1 sr^-1 = 10^6 * 10^-23 = 10^-17
@@ -43,6 +47,16 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             param_maps.dust_continuum[i][:temp][index] = out_params[index, pᵢ+1]
             param_errs[1].dust_continuum[i][:temp][index] = out_errs[index, pᵢ+1, 1]
             param_errs[2].dust_continuum[i][:temp][index] = out_errs[index, pᵢ+1, 2]
+            pᵢ += 2
+        end
+
+        for j ∈ 1:cube_fitter.n_power_law
+            param_maps.power_law[j][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z)*N)-17 : -Inf
+            param_errs[1].power_law[j][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN 
+            param_errs[2].power_law[j][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN 
+            param_maps.power_law[j][:index][index] = out_params[index, pᵢ+1]
+            param_errs[1].power_law[j][:index][index] = out_errs[index, pᵢ+1, 1]
+            param_errs[2].power_law[j][:index][index] = out_errs[index, pᵢ+1, 2]
             pᵢ += 2
         end
 
@@ -83,7 +97,7 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
 
         # Dust feature log(amplitude), mean, FWHM
         for df ∈ cube_fitter.dust_features.names
-            param_maps.dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z))-17 : -Inf
+            param_maps.dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z)*N)-17 : -Inf
             param_errs[1].dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
             param_errs[2].dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
             param_maps.dust_features[df][:mean][index] = out_params[index, pᵢ+1] * (1+z)
@@ -97,8 +111,8 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
 
         if cube_fitter.save_full_model
             # End of continuum parameters: recreate the continuum model
-            I_cont, comps_c = model_continuum_and_pah(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], cube_fitter.n_dust_cont, cube_fitter.n_dust_feat,
-                cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission)
+            I_cont, comps_c = model_continuum_and_pah(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], N, cube_fitter.n_dust_cont, cube_fitter.n_power_law,
+                cube_fitter.n_dust_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission)
         end
 
         # Save marker of the point where the continuum parameters end and the line parameters begin
@@ -187,8 +201,6 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             end
         end
 
-        N = Float64(abs(nanmaximum(cube_data.I[index, :])))
-        N = N ≠ 0. ? N : 1.
         if cube_fitter.save_full_model
 
             # Interpolate the LSF
@@ -199,16 +211,18 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             I_line, comps_l = model_line_residuals(cube_fitter.cube.λ, out_params[index, vᵢ:pᵢ-1], cube_fitter.n_lines, cube_fitter.n_comps,
                 cube_fitter.lines, cube_fitter.flexible_wavesol, comps_c["extinction"], lsf_interp_func, true)
 
-            # Renormalize
-            for comp ∈ keys(comps_l)
-                # (dont include extinction correction here since it's already included in the fitted line amplitudes)
-                comps_l[comp] .*= N
-            end
-            I_line .*= N
-            
-            # Combine the continuum and line models, which both have the extinction profile already applied to them 
+            # Combine the continuum and line models
             I_model = I_cont .+ I_line
             comps = merge(comps_c, comps_l)
+
+            # Renormalize
+            I_model .*= N
+            for comp ∈ keys(comps)
+                if !(comp ∈ ["extinction", "abs_ice", "abs_ch"])
+                    comps[comp] .*= N
+                end
+            end
+            
         end
 
         # Dust feature intensity, EQW, and SNR, from calculate_extra_parameters
@@ -254,7 +268,8 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
         end
 
         # Reduced χ^2 = χ^2 / dof
-        param_maps.reduced_χ2[index] = out_params[index, pᵢ] / out_params[index, pᵢ+1]
+        param_maps.statistics[:chi2][index] = out_params[index, pᵢ]
+        param_maps.statistics[:dof][index] = out_params[index, pᵢ+1]
 
         if cube_fitter.save_full_model
             # Set 3D model cube outputs, shifted back to the observed frame
@@ -262,6 +277,9 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             cube_model.stellar[index, :] .= comps["stellar"] .* (1 .+ z)
             for i ∈ 1:cube_fitter.n_dust_cont
                 cube_model.dust_continuum[index, :, i] .= comps["dust_cont_$i"] .* (1 .+ z)
+            end
+            for l ∈ 1:cube_fitter.n_power_law
+                cube_model.power_law[index, :, l] .= comps["power_law_$l"] .* (1 .+ z)
             end
             for j ∈ 1:cube_fitter.n_dust_feat
                 cube_model.dust_features[index, :, j] .= comps["dust_feat_$j"] .* (1 .+ z)
@@ -384,6 +402,8 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         bunit = L"$W_{\rm eq}$ ($\mu$m)"
     elseif occursin("chi2", String(name_i))
         bunit = L"$\tilde{\chi}^2$"
+    elseif occursin("dof", String(name_i))
+        bunit = "d.o.f."
     elseif occursin("h3", String(name_i))
         bunit = L"$h_3$"
     elseif occursin("h4", String(name_i))
@@ -394,6 +414,8 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         bunit = L"$\beta$"
     elseif occursin("frac", String(name_i))
         bunit = L"$C_f$"
+    elseif occursin("index", String(name_i))
+        bunit = L"$\alpha$"
     end
 
     @debug "Plotting 2D map of $name_i with units $bunit"
@@ -428,7 +450,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         vmax = 1.
     end
     # if taking a voff, make sure vmin/vmax are symmetric and change the colormap to coolwarm
-    if occursin("voff", String(name_i))
+    if occursin("voff", String(name_i)) || occursin("index", String(name_i))
         vabs = max(abs(vmin), abs(vmax))
         vmin = -vabs
         vmax = vabs
@@ -538,6 +560,17 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
         end
     end
 
+    # Power law parameters
+    for j ∈ keys(param_maps.power_law)
+        for parameter ∈ keys(param_maps.power_law[j])
+            data = param_maps.power_law[j][parameter]
+            name_i = join(["power_law", j, parameter], "_")
+            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "continuum", "$(name_i).pdf")
+            plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf),
+                cube_fitter.cosmology, cube_fitter.cube.wcs)
+        end
+    end
+
     # Dust feature (PAH) parameters
     for df ∈ keys(param_maps.dust_features)
         snr = param_maps.dust_features[df][:SNR]
@@ -621,7 +654,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
 
 
     # Reduced chi^2 
-    data = param_maps.reduced_χ2
+    data = param_maps.statistics[:chi2] ./ param_maps.statistics[:dof]
     name_i = "reduced_chi2"
     save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "$(name_i).pdf")
     plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf), 
@@ -801,7 +834,10 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
             write(f, cube_model.model; name="MODEL")                                                    # Full intensity model
             write(f, cube_model.stellar; name="STELLAR_CONTINUUM")                                      # Stellar continuum model
             for i ∈ 1:size(cube_model.dust_continuum, 4)
-                write(f, cube_model.dust_continuum[:, :, :, i]; name="DUST_CONTINUUM_$i")               # Dust continuum models
+                write(f, cube_model.dust_continuum[:, :, :, i]; name="DUST_CONTINUUM_$i")               # Dust continua
+            end
+            for l ∈ 1:size(cube_model.power_law, 4)                                                     # Power laws
+                write(f, cube_model.power_law[:, :, :, l]; name="POWER_LAW_$l")
             end
             for (j, df) ∈ enumerate(cube_fitter.dust_features.names)
                 write(f, cube_model.dust_features[:, :, :, j]; name="$df")                              # Dust feature profiles
@@ -827,6 +863,9 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
             write_key(f["STELLAR_CONTINUUM"], "BUNIT", "MJy/sr")
             for i ∈ 1:size(cube_model.dust_continuum, 4)
                 write_key(f["DUST_CONTINUUM_$i"], "BUNIT", "MJy/sr")
+            end
+            for l ∈ 1:size(cube_model.power_law, 4)
+                write_key(f["POWER_LAW_$l"], "BUNIT", "MJy/sr")
             end
             for df ∈ cube_fitter.dust_features.names
                 write_key(f["$df"], "BUNIT", "MJy/sr")
@@ -878,6 +917,21 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
                     end
                     write(f, data; name=name_i)
                     write_key(f[name_i], "BUNIT", bunit)  
+                end
+            end
+
+            # Power law parameters
+            for l ∈ keys(param_data.power_law)
+                for parameter ∈ keys(param_data.power_law[l])
+                    data = param_data.power_law[l][parameter]
+                    name_i = join(["power_law", l, parameter], "_")
+                    if occursin("amp", String(name_i))
+                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                    elseif occursin("index", String(name_i))
+                        bunit = "unitless"
+                    end
+                    write(f, data; name=name_i)
+                    write_key(f[name_i], "BUNIT", bunit)
                 end
             end
 
@@ -949,12 +1003,14 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
             end
 
             if isone(index)
-                # Reduced chi^2
-                data = param_maps.reduced_χ2
-                name_i = "reduced_chi2"
-                bunit = "unitless"
-                write(f, data; name=name_i)
-                write_key(f[name_i], "BUNIT", bunit)
+                # chi^2 statistics
+                for parameter ∈ keys(param_data.statistics)
+                    data = param_maps.statistics[parameter]
+                    name_i = join(["statistics", parameter], "_")
+                    bunit = "unitless"
+                    write(f, data; name=name_i)
+                    write_key(f[name_i], "BUNIT", bunit)
+                end
             end
         end
     end

@@ -15,7 +15,7 @@ FWHM of the line-spread function as a function of (observed-frame) wavelength.
 # Arguments
 - `channel::String`: The channel of the fit
 """
-function parse_resolving(channel::String)::Function
+function parse_resolving(channel::String)
 
     @debug "Parsing MRS resoling power from resolving_mrs.csv for channel $channel"
 
@@ -92,7 +92,7 @@ end
 Read in the options.toml configuration file, checking that it is formatted correctly,
 and convert it into a julia dictionary.  This deals with general/top-level code configurations.
 """
-function parse_options()::Dict
+function parse_options()
 
     @debug """\n
     Parsing options file
@@ -146,7 +146,7 @@ function parse_dust()
     # Read in the dust file
     dust = TOML.parsefile(joinpath(@__DIR__, "..", "options", "dust.toml"))
     dust_out = Dict()
-    keylist1 = ["stellar_continuum_temp", "dust_continuum_temps", "dust_features", "extinction", "hot_dust"]
+    keylist1 = ["stellar_continuum_temp", "dust_features", "extinction", "hot_dust"]
     keylist2 = ["wave", "fwhm"]
     keylist3 = ["tau_9_7", "tau_ice", "tau_ch", "beta"]
     keylist4 = ["temp", "frac", "tau_warm", "tau_cold"]
@@ -158,9 +158,6 @@ function parse_dust()
     end
     for key ∈ keylist5
         @assert haskey(dust["stellar_continuum_temp"], key) "Missing option $key in stellar continuum temp options!"
-        for dc ∈ dust["dust_continuum_temps"]
-            @assert haskey(dc, key) "Missing option $key in dust continuum temp options!"
-        end
         for df_key ∈ keys(dust["dust_features"])
             for df_key2 ∈ keylist2
                 @assert haskey(dust["dust_features"][df_key], df_key2) "Missing option $df_key2 in dust feature $df_key options!"
@@ -184,13 +181,29 @@ function parse_dust()
     @debug "Stellar continuum:\nTemp $T_s"
 
     # Dust continuum temperatures
-    T_dc = [from_dict(dust["dust_continuum_temps"][i]) for i ∈ eachindex(dust["dust_continuum_temps"])]
-    msg = "Dust continuum:"
-    for dci ∈ T_dc
-        msg *= "\nTemp $dci"
+    if haskey(dust, "dust_continuum_temps")
+        T_dc = [from_dict(dust["dust_continuum_temps"][i]) for i ∈ eachindex(dust["dust_continuum_temps"])]
+        msg = "Dust continuum:"
+        for dci ∈ T_dc
+            msg *= "\nTemp $dci"
+        end
+        @debug msg
+    else
+        T_dc = []
     end
-    @debug msg
-    
+        
+    # Power law indices
+    if haskey(dust, "power_law_indices")
+        α = [from_dict(dust["power_law_indices"][i]) for i ∈ eachindex(dust["power_law_indices"])]
+        msg = "Power laws:"
+        for αi ∈ α
+            msg *= "\nAlpha $αi"
+        end
+        @debug msg
+    else
+        α = []
+    end
+
     # Dust feature central wavelengths and FWHMs
     cent_vals = zeros(length(dust["dust_features"]))
     name = Vector{String}(undef, length(dust["dust_features"]))
@@ -242,7 +255,7 @@ function parse_dust()
     @debug msg
 
     # Create continuum object
-    continuum = Continuum(T_s, T_dc, τ_97, τ_ice, τ_ch, β, T_hot, Cf, τ_warm, τ_cold)
+    continuum = Continuum(T_s, T_dc, α, τ_97, τ_ice, τ_ch, β, T_hot, Cf, τ_warm, τ_cold)
 
     continuum, dust_features
 end
@@ -826,5 +839,6 @@ end
 function silicate_ohm()
     data = CSV.read(joinpath(@__DIR__, "..", "templates", "ohmc.txt"), DataFrame, delim=' ', ignorerepeated=true,
         header=["wave", "ext"])
+    data[!, "ext"] ./= 0.4
     data[!, "wave"], data[!, "ext"]
 end

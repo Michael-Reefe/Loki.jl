@@ -1002,9 +1002,15 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
 
     # Need an additional correction (fudge) factor for overall channels
     if concat_type == :full
+        @info "Normalizing fluxes between channels, and resampling in the overlapping regions"
         # find overlapping regions
         jumps = findall(diff(λ_out) .< 0.)
+        λ_con = zeros(eltype(λ_out), 0)
+        I_con = zeros(eltype(I_out), size(I_out)[1:2]..., 0)
+        σ_con = zeros(eltype(σ_out), size(σ_out)[1:2]..., 0)
+        mask_con = falses(size(mask_out)[1:2]..., 0)
         # rescale channels so the flux level is continuous
+        prev_i2 = 0
         for (i, jump) ∈ enumerate(jumps)
             # find the full scale of the overlapping region
             wave_left, wave_right = λ_out[jump+1], λ_out[jump]
@@ -1017,7 +1023,23 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
             # rescale the flux in the right channel to match the left channel
             I_out[:, :, jump+1:end] .*= med_left ./ med_right
             @info "Minimum/Maximum fudge factor for channel $(i+1): ($(nanminimum(med_left./med_right)), $(nanmaximum(med_left./med_right)))"
+            # resample fluxes in the overlapping regions
+            λ_res = median([diff(λ_out[i1:jump])[1], diff(λ_out[jump+1:i2])[1]])
+            λ_resamp = λ_out[i1]:λ_res:λ_out[i2]
+            ss = sortperm(λ_out[i1:i2])
+            I_resamp, σ_resamp, mask_resamp = resample_conserving_flux(λ_resamp, 
+                λ_out[i1:i2][ss], I_out[:, :, (i1:i2)[ss]], σ_out[:, :, (i1:i2)[ss]], mask_out[:, :, (i1:i2)[ss]])
+            # replace overlapping regions in outputs
+            λ_con = [λ_con; λ_out[prev_i2+1:i1-1]; λ_resamp]
+            I_con = cat(I_con, I_out[:, :, prev_i2+1:i1-1], I_resamp, dims=3)
+            σ_con = cat(σ_con, σ_out[:, :, prev_i2+1:i1-1], σ_resamp, dims=3)
+            mask_con =cat(mask_con, mask_out[:, :, prev_i2+1:i1-1], mask_resamp, dims=3)
+            prev_i2 = i2
         end
+        λ_out = [λ_con; λ_out[prev_i2+1:end]]
+        I_out = cat(I_con, I_out[:, :, prev_i2+1:end], dims=3)
+        σ_out = cat(σ_con, σ_out[:, :, prev_i2+1:end], dims=3)
+        mask_out = cat(mask_con, mask_out[:, :, prev_i2+1:end], dims=3)
     end
 
     # deal with overlapping wavelength data -> sort wavelength vector to be monotonically increasing
@@ -1035,7 +1057,8 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
         I_out, σ_out, mask_out = resample_conserving_flux(λ_lin, λ_out, I_out, σ_out, mask_out)
         λ_out = λ_lin
     else
-        @warn "The wavelength dimension will not be resampled to be linear when concatenating multiple full channels! " 
+        @warn "The wavelength dimension has not be resampled to be linear when concatenating multiple full channels! " *
+              "Only overlapping regions between channels have been resampled to a median resolution!"
     end
 
     # New PSF FWHM function with input in the rest frame

@@ -108,6 +108,7 @@ struct Continuum
     # Continuum parameters
     T_s::Parameter
     T_dc::Vector{Parameter}
+    α::Vector{Parameter}
     τ_97::Parameter
     τ_ice::Parameter
     τ_ch::Parameter
