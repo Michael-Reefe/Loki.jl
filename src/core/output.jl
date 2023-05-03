@@ -15,6 +15,12 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
     cube_model = generate_cubemodel(cube_fitter, aperture)
     param_maps, param_errs = generate_parammaps(cube_fitter, aperture)
 
+    # reference wavelengths for blackbody components
+    stellar_λref = clamp(Wein(cube_fitter.continuum.T_s.value), minimum(cube_data.λ), maximum(cube_data.λ))
+    @debug "Reference wavelength for stellar continuum: $stellar_λref"
+    dust_λrefs = [clamp(Wein(cube_fitter.continuum.T_dc[i].value), minimum(cube_data.λ), maximum(cube_data.λ)) for i in 1:cube_fitter.n_dust_cont]
+    @debug "Reference wavelengths for dust continua: $dust_λrefs"
+
     # Loop over each spaxel and fill in the associated fitting parameters into the ParamMaps and CubeModel
     # I know this is long and ugly and looks stupid but it works for now and I'll make it pretty later
     prog = Progress(length(spaxels); showspeed=true)
@@ -47,17 +53,10 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             param_maps.dust_continuum[i][:temp][index] = out_params[index, pᵢ+1]
             param_errs[1].dust_continuum[i][:temp][index] = out_errs[index, pᵢ+1, 1]
             param_errs[2].dust_continuum[i][:temp][index] = out_errs[index, pᵢ+1, 2]
-            pᵢ += 2
-        end
-
-        for j ∈ 1:cube_fitter.n_power_law
-            param_maps.power_law[j][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z)*N)-17 : -Inf
-            param_errs[1].power_law[j][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN 
-            param_errs[2].power_law[j][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN 
-            param_maps.power_law[j][:index][index] = out_params[index, pᵢ+1]
-            param_errs[1].power_law[j][:index][index] = out_errs[index, pᵢ+1, 1]
-            param_errs[2].power_law[j][:index][index] = out_errs[index, pᵢ+1, 2]
-            pᵢ += 2
+            param_maps.dust_continuum[i][:size][index] = out_params[index, pᵢ+2]
+            param_errs[1].dust_continuum[i][:size][index] = out_errs[index, pᵢ+2, 1]
+            param_errs[2].dust_continuum[i][:size][index] = out_errs[index, pᵢ+2, 2]
+            pᵢ += 3
         end
 
         # Extinction parameters
@@ -75,26 +74,6 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
         param_errs[2].extinction[:beta][index] = out_errs[index, pᵢ+3, 2]
         pᵢ += 4
 
-        if cube_fitter.fit_sil_emission
-            # Hot dust parameters
-            param_maps.hot_dust[:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z))-17 : -Inf
-            param_errs[1].hot_dust[:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
-            param_errs[2].hot_dust[:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
-            param_maps.hot_dust[:temp][index] = out_params[index, pᵢ+1]
-            param_errs[1].hot_dust[:temp][index] = out_errs[index, pᵢ+1, 1]
-            param_errs[2].hot_dust[:temp][index] = out_errs[index, pᵢ+1, 2]
-            param_maps.hot_dust[:frac][index] = out_params[index, pᵢ+2]
-            param_errs[1].hot_dust[:frac][index] = out_errs[index, pᵢ+2, 1]
-            param_errs[2].hot_dust[:frac][index] = out_errs[index, pᵢ+2, 2]
-            param_maps.hot_dust[:tau_warm][index] = out_params[index, pᵢ+3]
-            param_errs[1].hot_dust[:tau_warm][index] = out_errs[index, pᵢ+3, 1]
-            param_errs[2].hot_dust[:tau_warm][index] = out_errs[index, pᵢ+3, 2]
-            param_maps.hot_dust[:tau_cold][index] = out_params[index, pᵢ+4]
-            param_errs[1].hot_dust[:tau_cold][index] = out_errs[index, pᵢ+4, 1]
-            param_errs[2].hot_dust[:tau_cold][index] = out_errs[index, pᵢ+4, 2]
-            pᵢ += 5
-        end
-
         # Dust feature log(amplitude), mean, FWHM
         for df ∈ cube_fitter.dust_features.names
             param_maps.dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z)*N)-17 : -Inf
@@ -111,8 +90,9 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
 
         if cube_fitter.save_full_model
             # End of continuum parameters: recreate the continuum model
-            I_cont, comps_c = model_continuum_and_pah(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], N, cube_fitter.n_dust_cont, cube_fitter.n_power_law,
-                cube_fitter.n_dust_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission)
+            I_cont, comps_c = model_continuum_and_pah(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], cube_fitter.n_dust_cont,
+                cube_fitter.continuum.d_dc, stellar_λref, dust_λrefs, cube_fitter.n_dust_feat, cube_fitter.extinction_curve, 
+                cube_fitter.extinction_screen)
         end
 
         # Save marker of the point where the continuum parameters end and the line parameters begin
@@ -278,14 +258,8 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             for i ∈ 1:cube_fitter.n_dust_cont
                 cube_model.dust_continuum[index, :, i] .= comps["dust_cont_$i"] .* (1 .+ z)
             end
-            for l ∈ 1:cube_fitter.n_power_law
-                cube_model.power_law[index, :, l] .= comps["power_law_$l"] .* (1 .+ z)
-            end
             for j ∈ 1:cube_fitter.n_dust_feat
                 cube_model.dust_features[index, :, j] .= comps["dust_feat_$j"] .* (1 .+ z)
-            end
-            if cube_fitter.fit_sil_emission
-                cube_model.hot_dust[index, :] .= comps["hot_dust"] .* (1 .+ z)
             end
             for j ∈ 1:cube_fitter.n_comps
                 for k ∈ 1:cube_fitter.n_lines
@@ -374,6 +348,8 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         bunit = L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$"
     elseif occursin("temp", String(name_i))
         bunit = L"$T$ (K)"
+    elseif occursin("size", String(name_i))
+        bunit = L"$a$ ($\mu$m)"
     elseif occursin("fwhm", String(name_i)) && occursin("PAH", String(name_i))
         bunit = L"FWHM ($\mu$m)"
     elseif occursin("fwhm", String(name_i)) && !occursin("PAH", String(name_i))
@@ -560,17 +536,6 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
         end
     end
 
-    # Power law parameters
-    for j ∈ keys(param_maps.power_law)
-        for parameter ∈ keys(param_maps.power_law[j])
-            data = param_maps.power_law[j][parameter]
-            name_i = join(["power_law", j, parameter], "_")
-            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "continuum", "$(name_i).pdf")
-            plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf),
-                cube_fitter.cosmology, cube_fitter.cube.wcs)
-        end
-    end
-
     # Dust feature (PAH) parameters
     for df ∈ keys(param_maps.dust_features)
         snr = param_maps.dust_features[df][:SNR]
@@ -593,17 +558,6 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
         save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "extinction", "$(name_i).pdf")
         plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf), 
             cube_fitter.cosmology, cube_fitter.cube.wcs)
-    end
-
-    if cube_fitter.fit_sil_emission
-        # Hot dust parameters
-        for parameter ∈ keys(param_maps.hot_dust)
-            data = param_maps.hot_dust[parameter]
-            name_i = join(["hot_dust", parameter], "_")
-            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "hot_dust", "$(name_i).pdf")
-            plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf), 
-                cube_fitter.cosmology, cube_fitter.cube.wcs)
-        end
     end
 
     # Line parameters
@@ -836,9 +790,6 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
             for i ∈ 1:size(cube_model.dust_continuum, 4)
                 write(f, cube_model.dust_continuum[:, :, :, i]; name="DUST_CONTINUUM_$i")               # Dust continua
             end
-            for l ∈ 1:size(cube_model.power_law, 4)                                                     # Power laws
-                write(f, cube_model.power_law[:, :, :, l]; name="POWER_LAW_$l")
-            end
             for (j, df) ∈ enumerate(cube_fitter.dust_features.names)
                 write(f, cube_model.dust_features[:, :, :, j]; name="$df")                              # Dust feature profiles
             end
@@ -848,10 +799,6 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
             write(f, cube_model.extinction; name="EXTINCTION")                                          # Extinction model
             write(f, cube_model.abs_ice; name="ABS_ICE")                                                # Ice Absorption model
             write(f, cube_model.abs_ch; name="ABS_CH")                                                  # CH Absorption model
-            if cube_fitter.fit_sil_emission
-                write(f, cube_model.hot_dust; name="HOT_DUST")                                          # Hot dust model
-            end
-            
             write(f, ["wave"], [cube_data.λ .* (1 .+ cube_fitter.z)],                                   # wavelength vector
                 hdutype=TableHDU, name="WAVELENGTH", units=Dict(:wave => "um"))
 
@@ -864,9 +811,6 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
             for i ∈ 1:size(cube_model.dust_continuum, 4)
                 write_key(f["DUST_CONTINUUM_$i"], "BUNIT", "MJy/sr")
             end
-            for l ∈ 1:size(cube_model.power_law, 4)
-                write_key(f["POWER_LAW_$l"], "BUNIT", "MJy/sr")
-            end
             for df ∈ cube_fitter.dust_features.names
                 write_key(f["$df"], "BUNIT", "MJy/sr")
             end
@@ -876,9 +820,6 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
             write_key(f["EXTINCTION"], "BUNIT", "unitless")
             write_key(f["ABS_ICE"], "BUNIT", "unitless")
             write_key(f["ABS_CH"], "BUNIT", "unitless")
-            if cube_fitter.fit_sil_emission
-                write_key(f["HOT_DUST"], "BUNIT", "MJy/sr")
-            end
         end
     end
 
@@ -899,7 +840,7 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
                 if occursin("amp", String(name_i))
                     bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
                 elseif occursin("temp", String(name_i))
-                    bunit = "Kelvin"
+                    bunit = "K"
                 end
                 write(f, data; name=name_i)
                 write_key(f[name_i], "BUNIT", bunit)
@@ -913,42 +854,12 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
                     if occursin("amp", String(name_i))
                         bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
                     elseif occursin("temp", String(name_i))
-                        bunit = "Kelvin"
+                        bunit = "K"
+                    elseif occursin("size", String(name_i))
+                        bunit = "um"
                     end
                     write(f, data; name=name_i)
                     write_key(f[name_i], "BUNIT", bunit)  
-                end
-            end
-
-            # Power law parameters
-            for l ∈ keys(param_data.power_law)
-                for parameter ∈ keys(param_data.power_law[l])
-                    data = param_data.power_law[l][parameter]
-                    name_i = join(["power_law", l, parameter], "_")
-                    if occursin("amp", String(name_i))
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
-                    elseif occursin("index", String(name_i))
-                        bunit = "unitless"
-                    end
-                    write(f, data; name=name_i)
-                    write_key(f[name_i], "BUNIT", bunit)
-                end
-            end
-
-            if cube_fitter.fit_sil_emission
-                # Hot dust parameters
-                for parameter ∈ keys(param_data.hot_dust)
-                    data = param_data.hot_dust[parameter]
-                    name_i = join(["hot_dust", parameter], "_")
-                    if occursin("amp", String(name_i))
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
-                    elseif occursin("temp", String(name_i))
-                        bunit = "Kelvin"
-                    elseif occursin("frac", String(name_i)) || occursin("tau", String(name_i))
-                        bunit = "unitless"
-                    end
-                    write(f, data; name=name_i)
-                    write_key(f[name_i], "BUNIT", bunit)
                 end
             end
 

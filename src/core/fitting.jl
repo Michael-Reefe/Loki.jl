@@ -155,8 +155,8 @@ http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
     the initial parameter vector for individual spaxel fits
 """
 function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
-    σ::Vector{<:Real}, mask_lines::BitVector, N::Real; init::Bool=false, use_ap::Bool=false, bootstrap_iter::Bool=false, 
-    p1_boots::Union{Vector{<:Real},Nothing}=nothing) 
+    σ::Vector{<:Real}, mask_lines::BitVector, N::Real, stellar_λref::Real, dust_λrefs::Vector{<:Real}; init::Bool=false, 
+    use_ap::Bool=false, bootstrap_iter::Bool=false, p1_boots::Union{Vector{<:Real},Nothing}=nothing) 
 
     @debug """\n
     #########################################################
@@ -184,11 +184,10 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
 
     # Split up the initial parameter vector into the components that we need for each fitting step
     if !bootstrap_iter
-        pars_1, pars_2 = get_continuum_initial_values(cube_fitter, λ_spax, I_spax, N, init || use_ap)
+        pars_1, pars_2 = get_continuum_initial_values(cube_fitter, λ_spax, I_spax, stellar_λref, dust_λrefs, N, init || use_ap)
     else
-        pars_1 = vcat(p1_boots[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.fit_sil_emission ? 5 : 0))], 
-            p1_boots[end-1:end])
-        pars_2 = p1_boots[(3+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.fit_sil_emission ? 5 : 0)):end-2]
+        pars_1 = vcat(p1_boots[1:(2+3cube_fitter.n_dust_cont+4)], p1_boots[end-1:end])
+        pars_2 = p1_boots[(3+3cube_fitter.n_dust_cont+4):end-2]
     end
 
     # Sort parameters by those that are locked and those that are unlocked
@@ -228,12 +227,12 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         ptot[.~lock_1] .= pfree
         ptot[lock_1] .= p1fix
         if !return_comps
-            model_continuum(x, ptot, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.extinction_curve, 
-                cube_fitter.extinction_screen, cube_fitter.fit_sil_emission)
+            model_continuum(x, ptot, cube_fitter.n_dust_cont, cube_fitter.continuum.d_dc, stellar_λref, dust_λrefs, 
+                cube_fitter.extinction_curve, cube_fitter.extinction_screen)
         else
-            model_continuum(x, ptot, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.extinction_curve, 
-                cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, true)
-        end            
+            model_continuum(x, ptot, cube_fitter.n_dust_cont, cube_fitter.continuum.d_dc, stellar_λref, dust_λrefs, 
+                cube_fitter.extinction_curve, cube_fitter.extinction_screen, true)
+        end
     end
     res_1 = cmpfit(λ_spax, I_spax, σ_spax, fit_step1, p1free, parinfo=parinfo_1, config=config)
 
@@ -246,13 +245,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     for i ∈ 1:cube_fitter.n_dust_cont
         I_cont .+= ccomps["dust_cont_$i"]
     end
-    for j ∈ 1:cube_fitter.n_power_law
-        I_cont .+= ccomps["power_law_$j"]
-    end
     I_cont .*= ccomps["extinction"] .* ccomps["abs_ice"] .* ccomps["abs_ch"]
-    if cube_fitter.fit_sil_emission
-        I_cont .+= ccomps["hot_dust"]
-    end
 
     @debug """\n
     ##########################################################################################################
@@ -305,8 +298,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # @debug "Continuum covariance matrix: \n $covar"
 
     # Create the full model, again only if not bootstrapping
-    I_model, comps = model_continuum_and_pah(λ, popt, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat,
-        cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission)
+    I_model, comps = model_continuum_and_pah(λ, popt, cube_fitter.n_dust_cont, cube_fitter.continuum.d_dc, stellar_λref,
+        dust_λrefs, cube_fitter.n_dust_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen)
 
     if init
         cube_fitter.p_init_cont[:] .= vcat(popt, res_1.param[end-1:end])
@@ -586,7 +579,7 @@ backend (`:pyplot` or `:plotly`).
 - `backend::Symbol`: The backend to use to plot, either `:pyplot` or `:plotly`
 """
 function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<:Real}, σ::Vector{<:Real}, comps::Dict{String, Vector{T}}, 
-    n_dust_cont::Integer, n_power_law::Integer, n_dust_features::Integer, n_comps::Integer, line_wave::Vector{<:Real}, line_names::Vector{Symbol}, screen::Bool, 
+    n_dust_cont::Integer, n_dust_features::Integer, n_comps::Integer, line_wave::Vector{<:Real}, line_names::Vector{Symbol}, screen::Bool, 
     z::Real, χ2red::Real, name::String, label::String; backend::Symbol=:pyplot, I_boot_min::Union{Vector{<:Real},Nothing}=nothing, 
     I_boot_max::Union{Vector{<:Real},Nothing}=nothing, range::Union{Tuple,Nothing}=nothing, spline::Union{Vector{<:Real},Nothing}=nothing) where {T<:Real}
 
@@ -594,16 +587,14 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
     if (backend == :plotly || backend == :both) && isnothing(range)
         # Plot the overall data / model
         trace1 = PlotlyJS.scatter(x=λ, y=I, mode="lines", line=Dict(:color => "black", :width => 1), name="Data", showlegend=true)
-        trace2 = PlotlyJS.scatter(x=λ, y=I_cont, mode="lines", line=Dict(:color => "red", :width => 1), name="Continuum Fit", showlegend=true)
+        trace2 = PlotlyJS.scatter(x=λ, y=I_cont, mode="lines", line=Dict(:color => "orange", :width => 1), name="Continuum Fit", showlegend=true)
         traces = [trace1, trace2]
         # Loop over and plot individual model components
+        ext_full = comps["extinction"] .* comps["abs_ice"] .* comps["abs_ch"]
         for comp ∈ keys(comps)
             if comp == "extinction"
-                append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* comps["abs_ice"] .* comps["abs_ch"] .* maximum(I_cont) .* 1.1, mode="lines", 
+                append!(traces, [PlotlyJS.scatter(x=λ, y=ext_full .* maximum(I_cont) .* 1.1, mode="lines", 
                     line=Dict(:color => "black", :width => 1, :dash => "dash"), name="Extinction")])
-            elseif occursin("hot_dust", comp)
-                append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp], mode="lines", line=Dict(:color => "yellow", :width => 1),
-                    name="Hot Dust")])
             elseif occursin("line", comp)
                 append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* comps["extinction"], mode="lines",
                     line=Dict(:color => "rebeccapurple", :width => 1), name="Lines")])
@@ -617,10 +608,15 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
                           :width => 0.5, :dash => "dash"))])
         end
         # Add the summed up continuum
-        append!(traces, [PlotlyJS.scatter(x=λ, y=comps["extinction"] .* comps["abs_ice"] .* comps["abs_ch"] .* (
-            (n_dust_cont > 0 ? sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] : zeros(length(λ))) .+ 
-            (n_power_law > 0 ? sum([comps["power_law_$j"] for j ∈ 1:n_power_law], dims=1)[1] : zeros(length(λ))) .+ comps["stellar"]),
-            mode="lines", line=Dict(:color => "green", :width => 1), name="Dust+Stellar Continuum")])
+        append!(traces, [PlotlyJS.scatter(x=λ, y=ext_full .* (
+            (n_dust_cont > 0 ? sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] : zeros(length(λ))) .+ comps["stellar"]),
+            mode="lines", line=Dict(:color => "green", :width => 2), name="Dust+Stellar Continuum")])
+        # Individual continuum components
+        append!(traces, [PlotlyJS.scatter(x=λ, y=ext_full .* comps["stellar"], mode="lines", line=Dict(:color => "magenta", :width => 1), name="Stellar continuum")])
+        for i in 1:n_dust_cont
+            append!(traces, [PlotlyJS.scatter(x=λ, y=ext_full .* comps["dust_cont_$i"], mode="lines", line=Dict(:color => "green", :width => 1), name="Dust continuum")])
+        end
+        # Summed up PAHs
         append!(traces, [PlotlyJS.scatter(x=λ, y=sum([comps["dust_feat_$i"] for i ∈ 1:n_dust_features], dims=1)[1] .* comps["extinction"],
             mode="lines", line=Dict(:color => "blue", :width => 1), name="PAHs")])
         if !isnothing(spline)
@@ -698,23 +694,24 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
         ax4 = ax1.twiny()
 
         # full continuum
-        ax1.plot(λ, (comps["extinction"] .* comps["abs_ice"] .* comps["abs_ch"] .* (
-            (n_dust_cont > 0 ? sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] : zeros(length(λ))) .+ 
-            (n_power_law > 0 ? sum([comps["power_law_$j"] for j ∈ 1:n_power_law], dims=1)[1] : zeros(length(λ))) .+ comps["stellar"])
+        ext_full = comps["extinction"] .* comps["abs_ice"] .* comps["abs_ch"]
+        ax1.plot(λ, (ext_full .* (
+            (n_dust_cont > 0 ? sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] : zeros(length(λ))) .+ comps["stellar"])
             ) ./ norm ./ λ, "k--", alpha=0.5, label="Continuum")
+        # individual continuum components
+        ax1.plot(λ, comps["stellar"] .* ext_full ./ norm ./ λ, "g-", label="Stellar continuum")
+        for i in 1:n_dust_cont
+            ax1.plot(λ, comps["dust_cont_$i"] .* ext_full ./ norm ./ λ, "k-", alpha=0.5, label="Dust continuum")
+        end
         # full PAH profile
         ax1.plot(λ, sum([comps["dust_feat_$i"] for i ∈ 1:n_dust_features], dims=1)[1] .* comps["extinction"] ./ norm ./ λ, "-", 
             color="#0065ff", label="PAHs")
         # full line profile
         ax1.plot(λ, sum([haskey(comps, "line_$(i)_$(j)") ? comps["line_$(i)_$(j)"] : zeros(length(λ)) 
             for i ∈ 1:length(line_wave), j ∈ 1:n_comps], dims=(1,2))[1] .* comps["extinction"] ./ norm ./ λ, "-", 
-            color="rebeccapurple", alpha=0.6, label="Lines")
+            color="rebeccapurple", label="Lines")
         # plot extinction
-        ax3.plot(λ, comps["extinction"] .* comps["abs_ice"] .* comps["abs_ch"], "k:", alpha=0.5, label="Extinction")
-        # plot hot dust
-        if haskey(comps, "hot_dust")
-            ax1.plot(λ, comps["hot_dust"] ./ norm ./ λ, "-", color="#8ac800", alpha=0.6, label="Hot Dust")
-        end
+        ax3.plot(λ, ext_full, "k:", alpha=0.5, label="Extinction")
 
         # plot vertical dashed lines for emission line wavelengths
         for (lw, ln) ∈ zip(line_wave, line_names)
@@ -784,9 +781,9 @@ end
 
 # Helper function for fitting one iteration (i.e. for bootstrapping)
 function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
-    σ::Vector{<:Real}, norm::Real, area_sr::Vector{<:Real}, mask_lines::BitVector, I_spline::Vector{<:Real}; bootstrap_iter::Bool=false, 
-    p1_boots_c::Union{Vector{<:Real},Nothing}=nothing, p1_boots_l::Union{Vector{<:Real},Nothing}=nothing, 
-    use_ap::Bool=false, init::Bool=false)
+    σ::Vector{<:Real}, norm::Real, stellar_λref::Real, dust_λrefs::Vector{<:Real}, area_sr::Vector{<:Real}, mask_lines::BitVector, 
+    I_spline::Vector{<:Real}; bootstrap_iter::Bool=false, p1_boots_c::Union{Vector{<:Real},Nothing}=nothing, 
+    p1_boots_l::Union{Vector{<:Real},Nothing}=nothing, use_ap::Bool=false, init::Bool=false)
 
     # Interpolate the LSF
     lsf_interp = Spline1D(λ, cube_fitter.cube.lsf, k=1)
@@ -796,8 +793,8 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
 
     # Fit the spaxel
     popt_c, I_cont, comps_cont, n_free_c, perr_c = 
-        @timeit timer_output "continuum_fit_spaxel" continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, norm, use_ap=use_ap,
-        init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_c)
+        @timeit timer_output "continuum_fit_spaxel" continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, norm,
+        stellar_λref, dust_λrefs, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_c)
     popt_l, I_line, comps_line, n_free_l, perr_l = 
         @timeit timer_output "line_fit_spaxel" line_fit_spaxel(cube_fitter, spaxel, λ, I, σ, I_cont, comps_cont["extinction"], 
         lsf_interp_func, norm, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_l)
@@ -836,8 +833,8 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     if !init
         p_dust, p_lines, p_dust_err, p_lines_err = 
             @timeit timer_output "calculate_extra_parameters" calculate_extra_parameters(λ, I, norm, cube_fitter.n_dust_cont,
-                cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, 
-                cube_fitter.fit_sil_emission, cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, cube_fitter.lines, 
+                cube_fitter.continuum.d_dc, stellar_λref, dust_λrefs, cube_fitter.n_dust_feat, cube_fitter.extinction_curve, 
+                cube_fitter.extinction_screen, cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, cube_fitter.lines, 
                 cube_fitter.flexible_wavesol, lsf_interp_func, popt_c[1:end-2], popt_l, perr_c[1:end-2], perr_l, comps["extinction"], 
                 mask_lines, I_spline, area_sr, !bootstrap_iter)
         p_out = [popt_c[1:end-2]; popt_l; p_dust; p_lines; χ2; dof]
@@ -912,9 +909,16 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
             norm = Float64(abs(nanmaximum(I)))
             norm = norm ≠ 0. ? norm : 1.
 
+            # reference wavelengths for blackbody components
+            stellar_λref = clamp(Wein(cube_fitter.continuum.T_s.value), minimum(λ), maximum(λ))
+            @debug "Reference wavelength for stellar continuum: $stellar_λref"
+            dust_λrefs = [clamp(Wein(cube_fitter.continuum.T_dc[i].value), minimum(λ), maximum(λ)) for i in 1:cube_fitter.n_dust_cont]
+            @debug "Reference wavelengths for dust continua: $dust_λrefs"
+
             # Perform the regular fit
             p_out, p_err, popt_c, popt_l, perr_c, perr_l, I_model, comps, χ2, dof = _fit_spaxel_iterfunc(
-                cube_fitter, spaxel, λ, I, σ, norm, area_sr, mask_lines, I_spline; bootstrap_iter=false, use_ap=use_ap)
+                cube_fitter, spaxel, λ, I, σ, norm, stellar_λref, dust_λrefs, area_sr, mask_lines, I_spline; 
+                bootstrap_iter=false, use_ap=use_ap)
             # Convert p_err into 2 columns for the lower/upper errorbars
             p_err = [p_err p_err]
 
@@ -950,8 +954,8 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
 
                     # Re-perform the fitting on the resampled data
                     pb_i, _, _, _, _, _, Ib_i, _, _, _ = with_logger(NullLogger()) do
-                        _fit_spaxel_iterfunc(cube_fitter, spaxel, λ, I_boot, σ, norm, area_sr, mask_lines_boot, I_spline_boot; 
-                            bootstrap_iter=true, p1_boots_c=popt_c, p1_boots_l=popt_l, use_ap=use_ap)
+                        _fit_spaxel_iterfunc(cube_fitter, spaxel, λ, I_boot, σ, norm, stellar_λref, dust_λrefs, area_sr, 
+                            mask_lines_boot, I_spline_boot; bootstrap_iter=true, p1_boots_c=popt_c, p1_boots_l=popt_l, use_ap=use_ap)
                     end
                     p_boot[:, nboot] .= pb_i
                     I_model_boot[:, nboot] .= Ib_i
@@ -973,8 +977,8 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                 lsf_interp_func = x -> lsf_interp(x)
 
                 # Replace the best-fit model with the 50th percentile model to be consistent with p_out
-                I_boot_cont, comps_boot_cont = model_continuum_and_pah(λ, p_out[1:split1], norm, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, 
-                    cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, true)
+                I_boot_cont, comps_boot_cont = model_continuum_and_pah(λ, p_out[1:split1], cube_fitter.n_dust_cont, cube_fitter.continuum.d_dc,
+                    stellar_λref, dust_λrefs, cube_fitter.n_dust_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, true)
                 I_boot_line, comps_boot_line = model_line_residuals(λ, p_out[split1+1:split2], cube_fitter.n_lines, cube_fitter.n_comps,
                     cube_fitter.lines, cube_fitter.flexible_wavesol, comps_boot_cont["extinction"], lsf_interp_func, true)
 
@@ -1000,13 +1004,13 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
             if cube_fitter.plot_spaxels != :none
                 @debug "Plotting spaxel $spaxel best fit"
                 @timeit timer_output "plot_spaxel_fit" plot_spaxel_fit(λ, I, I_model, σ, comps, 
-                    cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_comps, cube_fitter.lines.λ₀, cube_fitter.lines.names, 
+                    cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, cube_fitter.n_comps, cube_fitter.lines.λ₀, cube_fitter.lines.names, 
                     cube_fitter.extinction_screen, cube_fitter.z, χ2/dof, cube_fitter.name, "spaxel_$(spaxel[1])_$(spaxel[2])", backend=cube_fitter.plot_spaxels,
                     I_boot_min=I_boot_min, I_boot_max=I_boot_max)
                 if !isnothing(cube_fitter.plot_range)
                     for (i, plot_range) ∈ enumerate(cube_fitter.plot_range)
                         @timeit timer_output "plot_line_fit" plot_spaxel_fit(λ, I, I_model, σ, comps,
-                            cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_comps, cube_fitter.lines.λ₀, cube_fitter.lines.names, 
+                            cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, cube_fitter.n_comps, cube_fitter.lines.λ₀, cube_fitter.lines.names, 
                             cube_fitter.extinction_screen, cube_fitter.z, χ2/dof, cube_fitter.name, "lines_$(spaxel[1])_$(spaxel[2])_$i", backend=cube_fitter.plot_spaxels,
                             I_boot_min=I_boot_min, I_boot_max=I_boot_max, range=plot_range)
                     end
@@ -1101,9 +1105,15 @@ function fit_stack!(cube_fitter::CubeFitter)
     norm = abs(nanmaximum(I_sum_init))
     norm = norm ≠ 0. ? norm : 1.
 
+    # reference wavelengths for blackbody components
+    stellar_λref = clamp(Wein(cube_fitter.continuum.T_s.value), minimum(λ_init), maximum(λ_init))
+    @debug "Reference wavelength for stellar continuum: $stellar_λref"
+    dust_λrefs = [clamp(Wein(cube_fitter.continuum.T_dc[i].value), minimum(λ_init), maximum(λ_init)) for i in 1:cube_fitter.n_dust_cont]
+    @debug "Reference wavelengths for dust continua: $dust_λrefs"
+
     I_model_init, comps_init, χ2_init, dof_init = _fit_spaxel_iterfunc(
-        cube_fitter, CartesianIndex(0,0), λ_init, I_sum_init, σ_sum_init, norm, area_sr_init, mask_lines_init, I_spline_init; 
-        bootstrap_iter=false, use_ap=false, init=true)
+        cube_fitter, CartesianIndex(0,0), λ_init, I_sum_init, σ_sum_init, norm, stellar_λref, dust_λrefs, area_sr_init, 
+        mask_lines_init, I_spline_init; bootstrap_iter=false, use_ap=false, init=true)
 
     χ2red_init = χ2_init / dof_init
 
@@ -1111,12 +1121,12 @@ function fit_stack!(cube_fitter::CubeFitter)
     if cube_fitter.plot_spaxels != :none
         @debug "Plotting spaxel sum initial fit"
         plot_spaxel_fit(λ_init, I_sum_init, I_model_init, σ_stat_init, comps_init,
-            cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_comps, cube_fitter.lines.λ₀, cube_fitter.lines.names, 
+            cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, cube_fitter.n_comps, cube_fitter.lines.λ₀, cube_fitter.lines.names, 
             cube_fitter.extinction_screen, cube_fitter.z, χ2red_init, cube_fitter.name, "initial_sum_fit", backend=cube_fitter.plot_spaxels)
         if !isnothing(cube_fitter.plot_range)
             for (i, plot_range) ∈ enumerate(cube_fitter.plot_range)
                 plot_spaxel_fit(λ_init, I_sum_init, I_model_init, σ_stat_init, comps_init,
-                    cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_comps, cube_fitter.lines.λ₀, cube_fitter.lines.names, 
+                    cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, cube_fitter.n_comps, cube_fitter.lines.λ₀, cube_fitter.lines.names, 
                     cube_fitter.extinction_screen, cube_fitter.z, χ2red_init, cube_fitter.name, "initial_sum_line_$i", backend=cube_fitter.plot_spaxels;
                     range=plot_range)
             end

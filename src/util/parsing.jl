@@ -101,7 +101,7 @@ function parse_options()
 
     # Read in the options file
     options = TOML.parsefile(joinpath(@__DIR__, "..", "options", "options.toml"))
-    keylist1 = ["n_bootstrap", "extinction_curve", "extinction_screen", "fit_sil_emission", "fit_all_samin", "parallel",
+    keylist1 = ["n_bootstrap", "extinction_curve", "extinction_screen", "fit_all_samin", "parallel",
                 "plot_spaxels", "plot_maps", "save_fits", "overwrite", "track_memory", "track_convergence", "save_full_model", 
                 "make_movies", "cosmology"]
     keylist2 = ["h", "omega_m", "omega_K", "omega_r"]
@@ -146,11 +146,10 @@ function parse_dust()
 
     # Read in the dust file
     dust = TOML.parsefile(joinpath(@__DIR__, "..", "options", "dust.toml"))
-    dust_out = Dict()
-    keylist1 = ["stellar_continuum_temp", "dust_features", "extinction", "hot_dust"]
+    keylist1 = ["stellar_continuum_temp", "dust_grain_types", "dust_grain_sizes", 
+        "dust_continuum_temps", "dust_features", "extinction"]
     keylist2 = ["wave", "fwhm"]
     keylist3 = ["tau_9_7", "tau_ice", "tau_ch", "beta"]
-    keylist4 = ["temp", "frac", "tau_warm", "tau_cold"]
     keylist5 = ["val", "plim", "locked"]
 
     # Loop through all of the required keys that should be in the file and confirm that they are there
@@ -159,6 +158,12 @@ function parse_dust()
     end
     for key ∈ keylist5
         @assert haskey(dust["stellar_continuum_temp"], key) "Missing option $key in stellar continuum temp options!"
+        for dc ∈ dust["dust_continuum_temps"]
+            @assert haskey(dc, key) "Missing option $key in dust continuum temp options!"
+        end
+        for ds ∈ dust["dust_grain_sizes"]
+            @assert haskey(ds, key) "Missing option $key in dust grain size options!"
+        end
         for df_key ∈ keys(dust["dust_features"])
             for df_key2 ∈ keylist2
                 @assert haskey(dust["dust_features"][df_key], df_key2) "Missing option $df_key2 in dust feature $df_key options!"
@@ -169,10 +174,6 @@ function parse_dust()
             @assert haskey(dust["extinction"], ex_key) "Missing option $ex_key in extinction options!"
             @assert haskey(dust["extinction"][ex_key], key) "Missing option $key in $ex_key options!"
         end
-        for hd_key ∈ keylist4
-            @assert haskey(dust["hot_dust"], hd_key) "Missing option $hd_key in hot dust options!"
-            @assert haskey(dust["hot_dust"][hd_key], key) "Missing option $key in $hd_key options!"
-        end
     end
 
     # Convert the options into Parameter objects, and set them to the output dictionary
@@ -182,28 +183,17 @@ function parse_dust()
     @debug "Stellar continuum:\nTemp $T_s"
 
     # Dust continuum temperatures
-    if haskey(dust, "dust_continuum_temps")
-        T_dc = [from_dict(dust["dust_continuum_temps"][i]) for i ∈ eachindex(dust["dust_continuum_temps"])]
-        msg = "Dust continuum:"
-        for dci ∈ T_dc
-            msg *= "\nTemp $dci"
-        end
-        @debug msg
-    else
-        T_dc = []
+    msg = "Dust continuum:"
+    d_dc = Symbol.(dust["dust_grain_types"])
+    a_dc = [from_dict(dust["dust_grain_sizes"][i]) for i ∈ eachindex(dust["dust_grain_sizes"])]
+    T_dc = [from_dict(dust["dust_continuum_temps"][i]) for i ∈ eachindex(dust["dust_continuum_temps"])]
+    for i ∈ eachindex(d_dc)
+        msg *= "\n----------------"
+        msg *= "\nType: $(d_dc[i])"
+        msg *= "\nSize: $(a_dc[i])"
+        msg *= "\nTemp: $(T_dc[i])"
     end
-        
-    # Power law indices
-    if haskey(dust, "power_law_indices")
-        α = [from_dict(dust["power_law_indices"][i]) for i ∈ eachindex(dust["power_law_indices"])]
-        msg = "Power laws:"
-        for αi ∈ α
-            msg *= "\nAlpha $αi"
-        end
-        @debug msg
-    else
-        α = []
-    end
+    @debug msg
 
     # Dust feature central wavelengths and FWHMs
     cent_vals = zeros(length(dust["dust_features"]))
@@ -240,23 +230,8 @@ function parse_dust()
     msg *= "\nBeta $β"
     @debug msg
 
-    # Hot dust parameters, temperature, covering fraction, warm tau, and cold tau
-    msg = "Hot Dust:"
-    # Write warm_tau and col_tau values based on the provided guess
-    # dust["hot_dust"]["tau_warm"]["val"] = τ_guess
-    # dust["hot_dust"]["tau_cold"]["val"] = τ_guess
-    T_hot = from_dict(dust["hot_dust"]["temp"])
-    msg *= "\nTemp $T_hot"
-    Cf = from_dict(dust["hot_dust"]["frac"])
-    msg *= "\nFrac $Cf"
-    τ_warm = from_dict(dust["hot_dust"]["tau_warm"])
-    msg *= "\nTau_Warm $τ_warm"
-    τ_cold = from_dict(dust["hot_dust"]["tau_cold"])
-    msg *= "\nTau_Cold $τ_cold"
-    @debug msg
-
     # Create continuum object
-    continuum = Continuum(T_s, T_dc, α, τ_97, τ_ice, τ_ch, β, T_hot, Cf, τ_warm, τ_cold)
+    continuum = Continuum(T_s, T_dc, a_dc, d_dc, τ_97, τ_ice, τ_ch, β)
 
     continuum, dust_features
 end
@@ -764,6 +739,72 @@ function read_ice_ch_temps()
         header=["rest_wave", "tau"])
     
     temp1[!, "rest_wave"], temp1[!, "tau"], temp2[!, "rest_wave"], temp2[!, "tau"]
+end
+
+
+function read_draine_q()
+
+    # Get filepaths
+    path_gra = joinpath(@__DIR__, "..", "templates", "draine_q.gra.txt")
+    path_sil = joinpath(@__DIR__, "..", "templates", "draine_q.sil.txt")
+
+    # Regex string for finding the radius of each grain efficiency table
+    rad = r"(?<value>[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?)\s\=\sradius"
+    read_q_file = path -> open(path) do file
+        lines = readlines(file)
+        radii = Float64[]
+        table_start = []
+        for (i, line) in enumerate(lines)
+            m = match(rad, line)
+            if !isnothing(m)
+                m = parse(Float64, m[:value])
+                # If a match is found, save it and save the index so we know where to start parsing the data tables
+                append!(radii, [m])
+                append!(table_start, [i+2])
+            end
+        end
+        wave = zeros(241)
+        q_abs = zeros(length(radii), 241)
+        q_sca = zeros(length(radii), 241)
+        # Loop over each table
+        for (i, start_ind) in enumerate(table_start)
+            # Loop over each wavelength and populate the 2D arrays
+            for j in 1:241
+                wave_j, q_abs_j, q_sca_j, _ = split(lines[start_ind+j-1], " ")
+                if i == table_start[1]
+                    wave[j] = parse(Float64, wave_j)
+                end
+                q_abs[i, j] = parse(Float64, q_abs_j)
+                q_sca[i, j] = parse(Float64, q_sca_j)
+            end
+        end
+        radii, wave, q_abs, q_sca
+    end
+    
+    # Separate absorption and scattering efficiencies as a function of grain radius and wavelength
+    radii_sil, wave_sil, q_abs_sil, q_sca_sil = read_q_file(path_sil)
+    radii_gra, wave_gra, q_abs_gra, q_sca_gra = read_q_file(path_gra)
+
+    # Flip wavelength axis
+    wave_sil = reverse(wave_sil)
+    wave_gra = reverse(wave_gra)
+    q_abs_sil = reverse(q_abs_sil, dims=2)
+    q_sca_sil = reverse(q_sca_sil, dims=2)
+    q_abs_gra = reverse(q_abs_gra, dims=2)
+    q_sca_gra = reverse(q_sca_gra, dims=2)
+
+    # 2D linear interpolation over grain size and wavelength
+    q_abs_sil_func = Spline2D(radii_sil, wave_sil, q_abs_sil, kx=1, ky=1)
+    q_sca_sil_func = Spline2D(radii_sil, wave_sil, q_sca_sil, kx=1, ky=1)
+    q_abs_gra_func = Spline2D(radii_gra, wave_gra, q_abs_gra, kx=1, ky=1)
+    q_sca_gra_func = Spline2D(radii_gra, wave_gra, q_sca_gra, kx=1, ky=1)
+
+    # Convert into structures to hold the data
+    Q_sil = GrainEfficiency(q_abs_sil_func, q_sca_sil_func)
+    Q_gra = GrainEfficiency(q_abs_gra_func, q_sca_gra_func)
+
+    Q_sil, Q_gra
+
 end
 
 

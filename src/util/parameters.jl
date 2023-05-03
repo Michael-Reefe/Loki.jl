@@ -99,7 +99,7 @@ end
 
 
 """
-    Continuum(T_s, T_dc, τ_97, τ_ice, τ_ch, β, T_hot, Cf_hot, τ_warm, τ_cold)
+    Continuum(T_s, T_dc, a_dc, d_dc, τ_97, τ_ice, τ_ch, β, T_hot, Cf_hot, τ_warm, τ_cold)
 
 A container for various continuum modeling parameters.
 """
@@ -108,15 +108,12 @@ struct Continuum
     # Continuum parameters
     T_s::Parameter
     T_dc::Vector{Parameter}
-    α::Vector{Parameter}
+    a_dc::Vector{Parameter}
+    d_dc::Vector{Symbol}
     τ_97::Parameter
     τ_ice::Parameter
     τ_ch::Parameter
     β::Parameter
-    T_hot::Parameter
-    Cf_hot::Parameter
-    τ_warm::Parameter
-    τ_cold::Parameter
 
 end
 
@@ -176,4 +173,10 @@ struct TiedKinematics
     key_fwhm::Vector{Vector{Symbol}}
     fwhm::Vector{Vector{Parameter}}
 
+end
+
+
+struct GrainEfficiency
+    abs::Dierckx.Spline2D
+    sca::Dierckx.Spline2D
 end
