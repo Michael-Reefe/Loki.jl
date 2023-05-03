@@ -101,8 +101,9 @@ function parse_options()
 
     # Read in the options file
     options = TOML.parsefile(joinpath(@__DIR__, "..", "options", "options.toml"))
-    keylist1 = ["n_bootstrap", "extinction_curve", "extinction_screen", "fit_sil_emission", "fit_all_samin", "subtract_cubic", 
-                "overwrite", "track_memory", "track_convergence", "save_full_model", "make_movies", "cosmology"]
+    keylist1 = ["n_bootstrap", "extinction_curve", "extinction_screen", "fit_sil_emission", "fit_all_samin", "parallel",
+                "plot_spaxels", "plot_maps", "save_fits", "overwrite", "track_memory", "track_convergence", "save_full_model", 
+                "make_movies", "cosmology"]
     keylist2 = ["h", "omega_m", "omega_K", "omega_r"]
 
     # Loop through the keys that should be in the file and confirm that they are there

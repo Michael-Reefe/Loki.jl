@@ -246,8 +246,7 @@ end
 
 
 """
-    CubeFitter(cube, z, name; plot_spaxels=plot_spaxels, 
-        plot_maps=plot_maps, parallel=parallel, save_fits=save_fits)
+    CubeFitter(cube, z, name; plot_spaxels=plot_spaxels, plot_maps=plot_maps, save_fits=save_fits)
 
 This is the main structure used for fitting IFU cubes, containing all of the necessary data, metadata,
 fitting options, and associated functions for generating ParamMaps and CubeModel structures to handle the outputs 
@@ -331,13 +330,13 @@ struct CubeFitter{T<:Real,S<:Integer}
     name::String
 
     # Basic fitting options
+    user_mask::Union{Vector{<:Tuple},Nothing}
     plot_spaxels::Symbol
     plot_maps::Bool
     plot_range::Union{Vector{<:Tuple},Nothing}
     parallel::Bool
     save_fits::Bool
     save_full_model::Bool
-    subtract_cubic::Bool
     overwrite::Bool
     track_memory::Bool
     track_convergence::Bool
@@ -383,11 +382,35 @@ struct CubeFitter{T<:Real,S<:Integer}
     p_init_cont::Vector{T}
     p_init_line::Vector{T}
 
-    #= Constructor function --> the inputs taken map directly to fields in the CubeFitter object,
-    the rest of the fields are generated in the function from these inputs =#
-    function CubeFitter(cube::DataCube, z::Real, name::String; plot_spaxels::Symbol=:pyplot, plot_maps::Bool=true, 
-        plot_range::Union{Vector{<:Tuple},Nothing}=nothing, parallel::Bool=true, save_fits::Bool=true,
-        random_seed::Integer=123456789) 
+    #= Constructor function --> the default inputs are all taken from the configuration files, but may be overwritten
+    by the kwargs object using the same syntax as any keyword argument. The rest of the fields are generated in the function 
+    from these inputs =#
+    function CubeFitter(cube::DataCube, z::Real, name::String; kwargs...) 
+        
+        # Prepare options
+        options = parse_options()
+
+        out = copy(options)
+        for key in keys(kwargs)
+            out[key] = kwargs[key]
+        end
+        out[:plot_spaxels] = Symbol(out[:plot_spaxels])
+        if !haskey(out, :plot_range)
+            out[:plot_range] = nothing
+        else
+            out[:plot_range] = [tuple(out[:plot_range][i]...) for i in 1:length(out[:plot_range])]
+            for  pair in out[:plot_range]
+                @assert pair[1] < pair[2] "plot_range pairs must be in ascending order!"
+            end
+        end
+        if !haskey(out, :user_mask)
+            out[:user_mask] = nothing
+        else
+            out[:user_mask] = [tuple(out[:user_mask][i]...) for i in 1:length(out[:user_mask])]
+            for  pair in out[:user_mask]
+                @assert pair[1] < pair[2] "user_mask pairs must be in ascending order!"
+            end
+        end
 
         # Prepare output directories
         @info "Preparing output directories"
@@ -401,7 +424,7 @@ struct CubeFitter{T<:Real,S<:Integer}
         if !isdir(joinpath("output_$name", "spaxel_plots"))
             mkdir(joinpath("output_$name", "spaxel_plots"))
         end
-        if !isdir(joinpath("output_$name", "zoomed_plots")) && !isnothing(plot_range)
+        if !isdir(joinpath("output_$name", "zoomed_plots")) && !isnothing(out[:plot_range])
             mkdir(joinpath("output_$name", "zoomed_plots"))
         end
         # Sub-folder for data files saving the results of individual spaxel fits
@@ -427,7 +450,6 @@ struct CubeFitter{T<:Real,S<:Integer}
         λ = cube.λ
 
         continuum, dust_features = parse_dust()
-        options = parse_options()
         lines, tied_kinematics, flexible_wavesol, tie_voigt_mixing, voigt_mix_tied = parse_lines()
 
         @debug "### Model will include 1 stellar continuum component ###" *
@@ -450,6 +472,11 @@ struct CubeFitter{T<:Real,S<:Integer}
 
         # Only use PAH features within +/-0.5 um of the region being fit (to include wide tails)
         df_filt = [(minimum(λ)-0.5 < dust_features.mean[i].value < maximum(λ)+0.5) for i ∈ 1:length(dust_features.mean)]
+        if !isnothing(out[:user_mask])
+            for pair in out[:user_mask]
+                df_filt .&= [~(pair[1] < dust_features.mean[i].value < pair[2]) for i ∈ 1:length(dust_features.mean)]
+            end
+        end
         dust_features = DustFeatures(dust_features.names[df_filt], 
                                      dust_features.profiles[df_filt],
                                      dust_features.mean[df_filt],
@@ -463,6 +490,11 @@ struct CubeFitter{T<:Real,S<:Integer}
 
         # Only use lines within the wavelength range being fit
         ln_filt = minimum(λ) .< lines.λ₀ .< maximum(λ)
+        if !isnothing(out[:user_mask])
+            for pair in out[:user_mask]
+                ln_filt .&= .~(pair[1] .< lines.λ₀ .< pair[2])
+            end
+        end
         # Convert to a vectorized "TransitionLines" object
         lines = TransitionLines(lines.names[ln_filt], lines.λ₀[ln_filt], lines.profiles[ln_filt, :],
                                 lines.tied_voff[ln_filt, :], lines.tied_fwhm[ln_filt, :], lines.voff[ln_filt, :], 
@@ -549,20 +581,6 @@ struct CubeFitter{T<:Real,S<:Integer}
         @debug "### There is a total of $(n_params_lines) emission line parameters ###"
         @debug "### There is a total of $(n_params_extra) extra parameters ###"
 
-        # Prepare options
-        n_bootstrap = options[:n_bootstrap]
-        extinction_curve = options[:extinction_curve]
-        extinction_screen = options[:extinction_screen]
-        fit_sil_emission = options[:fit_sil_emission]
-        fit_all_samin = options[:fit_all_samin]
-        subtract_cubic = options[:subtract_cubic]
-        overwrite = options[:overwrite]
-        track_memory = options[:track_memory]
-        track_convergence = options[:track_convergence]
-        save_full_model = options[:save_full_model]
-        make_movies = options[:make_movies]
-        cosmo = options[:cosmology]
-
         # Prepare initial best fit parameter options
         @debug "Preparing initial best fit parameter vectors with $(n_params_cont+2) and $(n_params_lines) parameters"
         p_init_cont = zeros(n_params_cont+2)
@@ -575,11 +593,12 @@ struct CubeFitter{T<:Real,S<:Integer}
             p_init_line = readdlm(joinpath("output_$name", "spaxel_binaries", "init_fit_line.csv"), ',', Float64, '\n')[:, 1]
         end
 
-        new{typeof(z), typeof(n_lines)}(cube, z, name, plot_spaxels, plot_maps, plot_range, parallel, 
-            save_fits, save_full_model, subtract_cubic, overwrite, track_memory, track_convergence, make_movies, extinction_curve, 
-            extinction_screen, fit_sil_emission, fit_all_samin, continuum, n_dust_cont, n_power_law, n_dust_features, dust_features, 
-            n_lines, n_acomps, n_comps, lines, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, 
-            n_params_extra, cosmo, flexible_wavesol, n_bootstrap, random_seed, p_init_cont, p_init_line)
+        new{typeof(z), typeof(n_lines)}(cube, z, name, out[:user_mask], out[:plot_spaxels], out[:plot_maps], out[:plot_range], out[:parallel], 
+            out[:save_fits], out[:save_full_model], out[:overwrite], out[:track_memory], out[:track_convergence], out[:make_movies], 
+            out[:extinction_curve], out[:extinction_screen], out[:fit_sil_emission], out[:fit_all_samin], continuum, n_dust_cont, 
+            n_power_law, n_dust_features, dust_features, n_lines, n_acomps, n_comps, lines, tied_kinematics, tie_voigt_mixing, 
+            voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, out[:cosmology], flexible_wavesol, out[:n_bootstrap], out[:random_seed], 
+            p_init_cont, p_init_line)
     end
 
 end
@@ -731,7 +750,7 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
 
         @debug "Calculating initial starting points..."
         pah_frac = repeat([clamp(nanmedian(I)/2, 0., Inf)], 2)
-        cubic_spline = Spline1D(λ, I, k=2)
+        cubic_spline = Spline1D(λ, I, k=3)
 
         # Stellar amplitude
         λ_s = minimum(λ) < 5 ? minimum(λ)+0.1 : 5.1
@@ -848,7 +867,7 @@ function pretty_print_continuum_results(cube_fitter::CubeFitter, popt::Vector{<:
     end
     msg *= "\n#> POWER LAWS <#\n"
     for k ∈ 1:cube_fitter.n_power_law
-        msg *= "Power_law_$(k)_amp: \t\t $(@sprintf "%.3e" popt[pᵢ]) +/- $(@sprintf "%.3e" perr[pᵢ]) [-] \t Limits: (0, Inf)\n"
+        msg *= "Power_law_$(k)_amp: \t\t $(@sprintf "%.3e" popt[pᵢ]) +/- $(@sprintf "%.3e" perr[pᵢ]) [x norm] \t Limits: (0, Inf)\n"
         msg *= "Power_law_$(k)_index: \t\t $(@sprintf "%.3f" popt[pᵢ+1]) +/- $(@sprintf "%.3f" perr[pᵢ+1]) [-] \t Limits: " *
             "($(@sprintf "%.3f" continuum.α[k].limits[1]), $(@sprintf "%.3f" continuum.α[k].limits[2]))" *
             (continuum.α[k].locked ? " (fixed)" : "") * "\n"
@@ -888,8 +907,8 @@ function pretty_print_continuum_results(cube_fitter::CubeFitter, popt::Vector{<:
     end
     msg *= "\n#> DUST FEATURES <#\n"
     for (j, df) ∈ enumerate(cube_fitter.dust_features.names)
-        msg *= "$(df)_amp:\t\t\t $(@sprintf "%.5f" popt[pᵢ]) +/- $(@sprintf "%.5f" perr[pᵢ]) [-] \t Limits: " *
-            "(0, $(@sprintf "%.5f" (nanmaximum(I) / exp(-popt[end-1]))))\n"
+        msg *= "$(df)_amp:\t\t\t $(@sprintf "%.5f" popt[pᵢ]) +/- $(@sprintf "%.5f" perr[pᵢ]) [x norm] \t Limits: " *
+            "(0, $(@sprintf "%.5f" (nanmaximum(I) / exp(-continuum.τ_97.limits[1]))))\n"
         msg *= "$(df)_mean:  \t\t $(@sprintf "%.3f" popt[pᵢ+1]) +/- $(@sprintf "%.3f" perr[pᵢ+1]) μm \t Limits: " *
             "($(@sprintf "%.3f" cube_fitter.dust_features.mean[j].limits[1]), $(@sprintf "%.3f" cube_fitter.dust_features.mean[j].limits[2]))" * 
             (cube_fitter.dust_features.mean[j].locked ? " (fixed)" : "") * "\n"

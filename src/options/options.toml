@@ -1,13 +1,23 @@
 # options.toml: This file contains general options for the code
 
+# parallel: Whether or not to utilize multiple CPUs to fit spaxels in parallel
+parallel = true
+
+# plot_spaxels: The plotting backend for 1D spaxel fits. Can be "pyplot", "plotly", or "both".
+plot_spaxels = "pyplot"
+
+# plot_maps: Whether or not to plot 2D parameter maps at the end of fitting.
+plot_maps = true
+
+# save_fits: Whether or not to save the model parameters and the model itself as FITS files at the end of fitting.
+save_fits = true
+
 # n_bootstrap: The number of bootstrapping iterations to perform during fitting, which
 # is used to estimate the uncertainties on parameters given the uncertainties in the data.
 n_bootstrap = 0
 
-# subtract_cubic: This controls how the continuum will be subtracted during the
-# line fitting step. If true, a cubic spline fit to the continuum will be subtracted.
-# Otherwise, the actual fit to the continuum will be subtracted.
-subtract_cubic = false
+# random_seed: Set the random seed for bootstrapping
+random_seed = 123456789
 
 # overwrite: This controls what to do in case the fit for a certain spaxel
 # has already been performed / saved.  If true, the fit will be performed again
@@ -56,6 +66,8 @@ fit_sil_emission = true
 # to the sum of all spaxels, and subsequent individual-spaxel fits are only done with a local Lev-Mar fit,
 # which is typically sufficient as long as the lines one wishes to fit are prominent in the sum of all spaxels)
 fit_all_samin = false
+
+user_mask = [[11.80, 12.25]]
 
 # cosmology options: Controls the cosmology used for distance / luminosity calculations.
 # If h is set to 1, the distances in plot scale bars will be shown with h^-1 units.

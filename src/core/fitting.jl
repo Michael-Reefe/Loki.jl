@@ -101,19 +101,13 @@ noise.
 
 See also [`mask_emission_lines`](@ref)
 """
-function continuum_cubic_spline(λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vector{<:Real}, z::Real)
-
-    # Copy arrays
-    I_out = copy(I)
-    σ_out = copy(σ)
+function continuum_cubic_spline(λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vector{<:Real}, Δ::Integer=3, thresh::Real=3.)
 
     # Mask out emission lines so that they aren't included in the continuum fit
-    mask_lines = mask_emission_lines(λ, I)
-    I_out[mask_lines] .= NaN
-    σ_out[mask_lines] .= NaN 
+    mask_lines = mask_emission_lines(λ, I; Δ=Δ, thresh=thresh)
 
     # Interpolate the NaNs
-    # Break up cubic spline interpolation into knots 10 pixels long
+    # Break up cubic spline interpolation into knots 7 pixels long
     # (longer than a narrow emission line but not too long)
     scale = 7
 
@@ -123,7 +117,7 @@ function continuum_cubic_spline(λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vecto
     good = []
     for i ∈ eachindex(λknots)
         _, ind = findmin(abs.(λ .- λknots[i]))
-        if !isnan(I_out[ind])
+        if ~mask_lines[ind]
             append!(good, [i])
         end
     end
@@ -131,11 +125,11 @@ function continuum_cubic_spline(λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vecto
     @debug "Performing cubic spline continuum fit with knots at $λknots"
 
     # Do a full cubic spline interpolation of the data
-    I_spline = Spline1D(λ[isfinite.(I_out)], I_out[isfinite.(I_out)], λknots, k=3, bc="extrapolate").(λ)
-    σ_spline = Spline1D(λ[isfinite.(σ_out)], σ_out[isfinite.(σ_out)], λknots, k=3, bc="extrapolate").(λ)
+    I_spline = Spline1D(λ[.~mask_lines], I[.~mask_lines], λknots, k=3, bc="extrapolate").(λ)
+    σ_spline = Spline1D(λ[.~mask_lines], σ[.~mask_lines], λknots, k=3, bc="extrapolate").(λ)
     # Linear interpolation over the lines
-    I_spline[mask_lines] .= Spline1D(λ[isfinite.(I_out)], I_out[isfinite.(I_out)], λknots, k=1, bc="extrapolate").(λ[mask_lines])
-    σ_spline[mask_lines] .= Spline1D(λ[isfinite.(σ_out)], σ_out[isfinite.(σ_out)], λknots, k=1, bc="extrapolate").(λ[mask_lines])
+    I_spline[mask_lines] .= Spline1D(λ[.~mask_lines], I[.~mask_lines], λknots, k=1, bc="extrapolate").(λ[mask_lines])
+    σ_spline[mask_lines] .= Spline1D(λ[.~mask_lines], σ[.~mask_lines], λknots, k=1, bc="extrapolate").(λ[mask_lines])
 
     mask_lines, I_spline, σ_spline
 end
@@ -174,6 +168,16 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     λ_spax = λ[.~mask_lines]
     I_spax = I[.~mask_lines] ./ N
     σ_spax = σ[.~mask_lines] ./ N
+
+    if !isnothing(cube_fitter.user_mask)
+        # Mask out additional regions
+        for pair in cube_fitter.user_mask
+            region = pair[1] .< λ_spax .< pair[2]
+            λ_spax = λ_spax[.~region]
+            I_spax = I_spax[.~region]
+            σ_spax = σ_spax[.~region]
+        end
+    end
 
     # Get the priors and "locked" booleans for each parameter, split up by the 2 steps for the continuum fit
     plims_1, plims_2, lock_1, lock_2 = get_continuum_plimits(cube_fitter)
@@ -359,10 +363,23 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     @debug "Using normalization N=$N"
 
     # Normalized flux and uncertainty by subtracting the continuum fit and dividing by the maximum
+    λnorm = copy(λ)
     Inorm = I ./ N .- continuum
     σnorm = σ ./ N
+    ext_curve_norm = copy(ext_curve)
 
-    plimits, param_lock, param_names, tied_pairs, tied_indices = get_line_plimits(cube_fitter, ext_curve, init || use_ap)
+    if !isnothing(cube_fitter.user_mask)
+        # Mask out additional regions
+        for pair in cube_fitter.user_mask
+            region = pair[1] .< λnorm .< pair[2]
+            λnorm = λnorm[.~region]
+            Inorm = Inorm[.~region]
+            σnorm = σnorm[.~region]
+            ext_curve_norm = ext_curve[.~region]
+        end
+    end
+
+    plimits, param_lock, param_names, tied_pairs, tied_indices = get_line_plimits(cube_fitter, ext_curve_norm, init || use_ap)
     p₀ = get_line_initial_values(cube_fitter, init || use_ap)
 
     # Combine all of the tied parameters
@@ -414,8 +431,8 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
         func(x, ptot)
     end
 
-    if (init || use_ap || cube_fitter.fit_all_samin) && !bootstrap_iter
-    # if false
+    # if (init || use_ap || cube_fitter.fit_all_samin) && !bootstrap_iter
+    if false
         @debug "Beginning Line fitting with Simulated Annealing:"
 
         # Parameter and function tolerance levels for convergence with SAMIN,
@@ -424,13 +441,13 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
         fit_func = (x, p) -> -ln_likelihood(
                                 Inorm, 
                                 model_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
-                                    cube_fitter.flexible_wavesol, ext_curve, lsf_interp_func), 
+                                    cube_fitter.flexible_wavesol, ext_curve_norm, lsf_interp_func), 
                                 σnorm)
         x_tol = 1e-5
-        f_tol = abs(fit_func(λ, p₀) - fit_func(λ, clamp.(p₀ .- x_tol, lower_bounds, upper_bounds)))
+        f_tol = abs(fit_func(λnorm, p₀) - fit_func(λnorm, clamp.(p₀ .- x_tol, lower_bounds, upper_bounds)))
 
         # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
-        res = Optim.optimize(p -> fit_step3(λ, p, fit_func), lbfree_tied, ubfree_tied, pfree_tied, 
+        res = Optim.optimize(p -> fit_step3(λnorm, p, fit_func), lbfree_tied, ubfree_tied, pfree_tied, 
             SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
         
         p₁ = res.minimizer
@@ -465,10 +482,10 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     ############################################# FIT WITH LEVMAR ###################################################
 
     fit_func_2 = (x, p) -> model_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
-        cube_fitter.flexible_wavesol, ext_curve, lsf_interp_func)
+        cube_fitter.flexible_wavesol, ext_curve_norm, lsf_interp_func)
     
-    χ2_before = sum((Inorm .- fit_step3(λ, p₁, fit_func_2)).^2 ./ σnorm.^2)
-    res = cmpfit(λ, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func_2), p₁, parinfo=parinfo, config=config)
+    χ2_before = sum((Inorm .- fit_step3(λnorm, p₁, fit_func_2)).^2 ./ σnorm.^2)
+    res = cmpfit(λnorm, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func_2), p₁, parinfo=parinfo, config=config)
     χ2_after = res.bestnorm
 
     # Check if CMPFit improved the reduced chi^2 at all.  If not, redo simulated annealing.
@@ -478,17 +495,17 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
         fit_func = (x, p) -> -ln_likelihood(
                                 Inorm, 
                                 model_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
-                                    cube_fitter.flexible_wavesol, ext_curve, lsf_interp_func), 
+                                    cube_fitter.flexible_wavesol, ext_curve_norm, lsf_interp_func), 
                                 σnorm)
         x_tol = 1e-5
-        f_tol = abs(fit_func(λ, p₀) - fit_func(λ, clamp.(p₀ .- x_tol, lower_bounds, upper_bounds)))
+        f_tol = abs(fit_func(λnorm, p₀) - fit_func(λnorm, clamp.(p₀ .- x_tol, lower_bounds, upper_bounds)))
 
         # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
-        res = Optim.optimize(p -> fit_step3(λ, p, fit_func), lbfree_tied, ubfree_tied, pfree_tied, 
+        res = Optim.optimize(p -> fit_step3(λnorm, p, fit_func), lbfree_tied, ubfree_tied, pfree_tied, 
             SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
         p₁ = res.minimizer
 
-        res = cmpfit(λ, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func_2), p₁, parinfo=parinfo, config=config)
+        res = cmpfit(λnorm, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func_2), p₁, parinfo=parinfo, config=config)
     end 
 
     @debug "Line CMPFit status: $(res.status)"
@@ -800,6 +817,14 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # Total free parameters
     n_free = n_free_c + n_free_l
     n_data = length(I)
+    n_masked = 0
+    if !isnothing(cube_fitter.user_mask)
+        for pair in cube_fitter.user_mask
+            region = pair[1] .< λ .< pair[2]
+            n_masked += sum(region)
+        end
+    end
+    n_data -= n_masked
 
     # Degrees of freedom
     dof = n_data - n_free
@@ -850,9 +875,9 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
     end
 
     # Perform a cubic spline fit, also obtaining the line mask
-    mask_lines, I_spline, σ_spline = continuum_cubic_spline(λ, I, σ, cube_fitter.z)
-    # l_mask = sum(.!mask_lines)
+    mask_lines, I_spline, σ_spline = continuum_cubic_spline(λ, I, σ)
 
+    # l_mask = sum(.!mask_lines)
     # # Statistical uncertainties based on the local RMS of the residuals with a cubic spline fit
     # σ_stat = [std(I[.!mask_lines][max(i-30,1):min(i+30,l_mask)] .- I_spline[.!mask_lines][max(i-30,1):min(i+30,l_mask)]) for i ∈ 1:l_mask]
     # # We insert at the locations of the lines since the cubic spline does not include them
@@ -863,6 +888,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
     # end
     # @debug "Statistical uncertainties: ($(σ_stat[1]) - $(σ_stat[end]))"
     # σ = hypot.(σ, σ_stat)
+
     resid = I[.!mask_lines] .- I_spline[.!mask_lines]
     σ_stat = std(resid[resid .< 3std(resid)])
     σ .= σ_stat
@@ -917,7 +943,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                     I_boot = I_boots[nboot]
                     # Redo the cubic spline fit
                     mask_lines_boot, I_spline_boot, σ_spline_boot = with_logger(NullLogger()) do 
-                        continuum_cubic_spline(λ, I, σ, cube_fitter.z)
+                        continuum_cubic_spline(λ, I, σ)
                     end
                     # (do not recalculate sigma_stat since it would be increased by a factor of sqrt(2), but in reality
                     # we would have to divide out the sqrt(2) because we now have 2 "measurements")
@@ -1053,7 +1079,7 @@ function fit_stack!(cube_fitter::CubeFitter)
     area_sr_init = cube_fitter.cube.Ω .* sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
 
     # Perform a cubic spline fit, also obtaining the line mask
-    mask_lines_init, I_spline_init, σ_spline_init = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init, cube_fitter.z)
+    mask_lines_init, I_spline_init, σ_spline_init = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init)
     # l_mask = sum(.!mask_lines_init)
 
     # # Statistical uncertainties based on the local RMS of the residuals with a cubic spline fit
