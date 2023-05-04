@@ -107,7 +107,7 @@ ap = make_aperture(obs.channels[channel], :Circular, "23:03:15.610", "+8:52:26.1
 #     scale_psf=false)
 
 # Create the cube fitting object
-cube_fitter = CubeFitter(obs.channels[channel], obs.z, obs.name * "_ch$(channel)_aperture_m_bb_sil_lowtemp_3"; 
+cube_fitter = CubeFitter(obs.channels[channel], obs.z, obs.name * "_ch$(channel)_aperture_m_nuc_emissivity_hotdustmodel"; 
     parallel=true, plot_spaxels=:both, plot_maps=true, save_fits=true)
 
 # Fit the cube
