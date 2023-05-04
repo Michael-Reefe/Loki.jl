@@ -114,6 +114,7 @@ struct Continuum
     τ_ch::Parameter
     β::Parameter
     T_hot::Parameter
+    a_hot::Parameter
     Cf_hot::Parameter
     τ_warm::Parameter
     τ_cold::Parameter
@@ -176,4 +177,10 @@ struct TiedKinematics
     key_fwhm::Vector{Vector{Symbol}}
     fwhm::Vector{Vector{Parameter}}
 
+end
+
+
+struct GrainEfficiency
+    abs::Dierckx.Spline2D
+    sca::Dierckx.Spline2D
 end

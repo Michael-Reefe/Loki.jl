@@ -150,7 +150,7 @@ function parse_dust()
     keylist1 = ["stellar_continuum_temp", "dust_features", "extinction", "hot_dust"]
     keylist2 = ["wave", "fwhm"]
     keylist3 = ["tau_9_7", "tau_ice", "tau_ch", "beta"]
-    keylist4 = ["temp", "frac", "tau_warm", "tau_cold"]
+    keylist4 = ["temp", "size", "frac", "tau_warm", "tau_cold"]
     keylist5 = ["val", "plim", "locked"]
 
     # Loop through all of the required keys that should be in the file and confirm that they are there
@@ -243,10 +243,10 @@ function parse_dust()
     # Hot dust parameters, temperature, covering fraction, warm tau, and cold tau
     msg = "Hot Dust:"
     # Write warm_tau and col_tau values based on the provided guess
-    # dust["hot_dust"]["tau_warm"]["val"] = τ_guess
-    # dust["hot_dust"]["tau_cold"]["val"] = τ_guess
     T_hot = from_dict(dust["hot_dust"]["temp"])
     msg *= "\nTemp $T_hot"
+    a_hot = from_dict(dust["hot_dust"]["size"])
+    msg *= "\nSize $a_hot"
     Cf = from_dict(dust["hot_dust"]["frac"])
     msg *= "\nFrac $Cf"
     τ_warm = from_dict(dust["hot_dust"]["tau_warm"])
@@ -256,7 +256,7 @@ function parse_dust()
     @debug msg
 
     # Create continuum object
-    continuum = Continuum(T_s, T_dc, α, τ_97, τ_ice, τ_ch, β, T_hot, Cf, τ_warm, τ_cold)
+    continuum = Continuum(T_s, T_dc, α, τ_97, τ_ice, τ_ch, β, T_hot, a_hot, Cf, τ_warm, τ_cold)
 
     continuum, dust_features
 end
@@ -764,6 +764,72 @@ function read_ice_ch_temps()
         header=["rest_wave", "tau"])
     
     temp1[!, "rest_wave"], temp1[!, "tau"], temp2[!, "rest_wave"], temp2[!, "tau"]
+end
+
+
+function read_draine_q()
+
+    # Get filepaths
+    path_gra = joinpath(@__DIR__, "..", "templates", "draine_q.gra.txt")
+    path_sil = joinpath(@__DIR__, "..", "templates", "draine_q.sil.txt")
+
+    # Regex string for finding the radius of each grain efficiency table
+    rad = r"(?<value>[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?)\s\=\sradius"
+    read_q_file = path -> open(path) do file
+        lines = readlines(file)
+        radii = Float64[]
+        table_start = []
+        for (i, line) in enumerate(lines)
+            m = match(rad, line)
+            if !isnothing(m)
+                m = parse(Float64, m[:value])
+                # If a match is found, save it and save the index so we know where to start parsing the data tables
+                append!(radii, [m])
+                append!(table_start, [i+2])
+            end
+        end
+        wave = zeros(241)
+        q_abs = zeros(length(radii), 241)
+        q_sca = zeros(length(radii), 241)
+        # Loop over each table
+        for (i, start_ind) in enumerate(table_start)
+            # Loop over each wavelength and populate the 2D arrays
+            for j in 1:241
+                wave_j, q_abs_j, q_sca_j, _ = split(lines[start_ind+j-1], " ")
+                if i == table_start[1]
+                    wave[j] = parse(Float64, wave_j)
+                end
+                q_abs[i, j] = parse(Float64, q_abs_j)
+                q_sca[i, j] = parse(Float64, q_sca_j)
+            end
+        end
+        radii, wave, q_abs, q_sca
+    end
+    
+    # Separate absorption and scattering efficiencies as a function of grain radius and wavelength
+    radii_sil, wave_sil, q_abs_sil, q_sca_sil = read_q_file(path_sil)
+    radii_gra, wave_gra, q_abs_gra, q_sca_gra = read_q_file(path_gra)
+
+    # Flip wavelength axis
+    wave_sil = reverse(wave_sil)
+    wave_gra = reverse(wave_gra)
+    q_abs_sil = reverse(q_abs_sil, dims=2)
+    q_sca_sil = reverse(q_sca_sil, dims=2)
+    q_abs_gra = reverse(q_abs_gra, dims=2)
+    q_sca_gra = reverse(q_sca_gra, dims=2)
+
+    # 2D linear interpolation over grain size and wavelength
+    q_abs_sil_func = Spline2D(radii_sil, wave_sil, q_abs_sil, kx=1, ky=3)
+    q_sca_sil_func = Spline2D(radii_sil, wave_sil, q_sca_sil, kx=1, ky=3)
+    q_abs_gra_func = Spline2D(radii_gra, wave_gra, q_abs_gra, kx=1, ky=3)
+    q_sca_gra_func = Spline2D(radii_gra, wave_gra, q_sca_gra, kx=1, ky=3)
+
+    # Convert into structures to hold the data
+    Q_sil = GrainEfficiency(q_abs_sil_func, q_sca_sil_func)
+    Q_gra = GrainEfficiency(q_abs_gra_func, q_sca_gra_func)
+
+    Q_sil, Q_gra
+
 end
 
 

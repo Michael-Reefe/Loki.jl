@@ -83,16 +83,19 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             param_maps.hot_dust[:temp][index] = out_params[index, pᵢ+1]
             param_errs[1].hot_dust[:temp][index] = out_errs[index, pᵢ+1, 1]
             param_errs[2].hot_dust[:temp][index] = out_errs[index, pᵢ+1, 2]
-            param_maps.hot_dust[:frac][index] = out_params[index, pᵢ+2]
-            param_errs[1].hot_dust[:frac][index] = out_errs[index, pᵢ+2, 1]
-            param_errs[2].hot_dust[:frac][index] = out_errs[index, pᵢ+2, 2]
-            param_maps.hot_dust[:tau_warm][index] = out_params[index, pᵢ+3]
-            param_errs[1].hot_dust[:tau_warm][index] = out_errs[index, pᵢ+3, 1]
-            param_errs[2].hot_dust[:tau_warm][index] = out_errs[index, pᵢ+3, 2]
-            param_maps.hot_dust[:tau_cold][index] = out_params[index, pᵢ+4]
-            param_errs[1].hot_dust[:tau_cold][index] = out_errs[index, pᵢ+4, 1]
-            param_errs[2].hot_dust[:tau_cold][index] = out_errs[index, pᵢ+4, 2]
-            pᵢ += 5
+            param_maps.hot_dust[:size][index] = out_params[index, pᵢ+2]
+            param_errs[1].hot_dust[:size][index] = out_errs[index, pᵢ+2, 1]
+            param_errs[2].hot_dust[:size][index] = out_errs[index, pᵢ+2, 2]
+            param_maps.hot_dust[:frac][index] = out_params[index, pᵢ+3]
+            param_errs[1].hot_dust[:frac][index] = out_errs[index, pᵢ+3, 1]
+            param_errs[2].hot_dust[:frac][index] = out_errs[index, pᵢ+3, 2]
+            param_maps.hot_dust[:tau_warm][index] = out_params[index, pᵢ+4]
+            param_errs[1].hot_dust[:tau_warm][index] = out_errs[index, pᵢ+4, 1]
+            param_errs[2].hot_dust[:tau_warm][index] = out_errs[index, pᵢ+4, 2]
+            param_maps.hot_dust[:tau_cold][index] = out_params[index, pᵢ+5]
+            param_errs[1].hot_dust[:tau_cold][index] = out_errs[index, pᵢ+5, 1]
+            param_errs[2].hot_dust[:tau_cold][index] = out_errs[index, pᵢ+5, 2]
+            pᵢ += 6
         end
 
         # Dust feature log(amplitude), mean, FWHM
@@ -374,6 +377,8 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         bunit = L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$"
     elseif occursin("temp", String(name_i))
         bunit = L"$T$ (K)"
+    elseif occursin("size", String(name_i))
+        bunit = L"$a$ ($\mu$m)"
     elseif occursin("fwhm", String(name_i)) && occursin("PAH", String(name_i))
         bunit = L"FWHM ($\mu$m)"
     elseif occursin("fwhm", String(name_i)) && !occursin("PAH", String(name_i))
@@ -899,7 +904,7 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
                 if occursin("amp", String(name_i))
                     bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
                 elseif occursin("temp", String(name_i))
-                    bunit = "Kelvin"
+                    bunit = "K"
                 end
                 write(f, data; name=name_i)
                 write_key(f[name_i], "BUNIT", bunit)
@@ -913,7 +918,7 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
                     if occursin("amp", String(name_i))
                         bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
                     elseif occursin("temp", String(name_i))
-                        bunit = "Kelvin"
+                        bunit = "K"
                     end
                     write(f, data; name=name_i)
                     write_key(f[name_i], "BUNIT", bunit)  
@@ -943,7 +948,9 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
                     if occursin("amp", String(name_i))
                         bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
                     elseif occursin("temp", String(name_i))
-                        bunit = "Kelvin"
+                        bunit = "K"
+                    elseif occursin("size", String(name_i))
+                        bunit = "um"
                     elseif occursin("frac", String(name_i)) || occursin("tau", String(name_i))
                         bunit = "unitless"
                     end

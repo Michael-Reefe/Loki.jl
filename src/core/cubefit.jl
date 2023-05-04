@@ -110,6 +110,7 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, n_power_law:
     hot_dust = Dict{Symbol, Array{Float64, 2}}()
     hot_dust[:amp] = copy(nan_arr)
     hot_dust[:temp] = copy(nan_arr)
+    hot_dust[:size] = copy(nan_arr)
     hot_dust[:frac] = copy(nan_arr)
     hot_dust[:tau_warm] = copy(nan_arr)
     hot_dust[:tau_cold] = copy(nan_arr)
@@ -555,7 +556,7 @@ struct CubeFitter{T<:Real,S<:Integer}
         end
 
         # Total number of parameters for the continuum and line fits
-        n_params_cont = (2+4) + 2n_dust_cont + 2n_power_law + 3n_dust_features + (options[:fit_sil_emission] ? 5 : 0)
+        n_params_cont = (2+4) + 2n_dust_cont + 2n_power_law + 3n_dust_features + (options[:fit_sil_emission] ? 6 : 0)
         n_params_lines = 0
         for i ∈ 1:n_lines
             for j ∈ 1:n_comps
@@ -663,9 +664,9 @@ function get_continuum_plimits(cube_fitter::CubeFitter)
     df_lock = vcat([[false, mi.locked, fi.locked] for (mi, fi) ∈ zip(dust_features.mean, dust_features.fwhm)]...)
     ext_plim = [continuum.τ_97.limits, continuum.τ_ice.limits, continuum.τ_ch.limits, continuum.β.limits]
     ext_lock = [continuum.τ_97.locked, continuum.τ_ice.locked, continuum.τ_ch.locked, continuum.β.locked]
-    hd_plim = cube_fitter.fit_sil_emission ? [amp_dc_plim, continuum.T_hot.limits, continuum.Cf_hot.limits, 
+    hd_plim = cube_fitter.fit_sil_emission ? [amp_dc_plim, continuum.T_hot.limits, continuum.a_hot.limits, continuum.Cf_hot.limits, 
         continuum.τ_warm.limits, continuum.τ_cold.limits] : []
-    hd_lock = cube_fitter.fit_sil_emission ? [false, continuum.T_hot.locked, continuum.Cf_hot.locked,
+    hd_lock = cube_fitter.fit_sil_emission ? [false, continuum.T_hot.locked, continuum.a_hot.locked, continuum.Cf_hot.locked,
         continuum.τ_warm.locked, continuum.τ_cold.locked] : []
 
     # Split up for the two different stages of continuum fitting -- with templates and then with the PAHs
@@ -734,7 +735,7 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
             # Warm / cold optical depths
             # p₀[pᵢ+3] = τ_97_0
             # p₀[pᵢ+4] = τ_97_0
-            pᵢ += 5
+            pᵢ += 6
         end
 
         # Dust feature amplitudes
@@ -778,7 +779,8 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
         pl_pars = vcat([[Ai, αi.value] for (Ai, αi) ∈ zip(A_pl, continuum.α)]...)
         df_pars = vcat([[Ai, mi.value, fi.value] for (Ai, mi, fi) ∈ zip(A_df, cube_fitter.dust_features.mean, cube_fitter.dust_features.fwhm)]...)
         if cube_fitter.fit_sil_emission
-            hd_pars = [A_hd, continuum.T_hot.value, continuum.Cf_hot.value, continuum.τ_warm.value, continuum.τ_cold.value]
+            hd_pars = [A_hd, continuum.T_hot.value, continuum.a_hot.value, continuum.Cf_hot.value, continuum.τ_warm.value, 
+                continuum.τ_cold.value]
         else
             hd_pars = []
         end
@@ -794,15 +796,15 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
         join(["dust_continuum_amp_$i, dust_continuum_temp_$i" for i ∈ 1:cube_fitter.n_dust_cont], ", ") * 
         join(["power_law_amp_$i, power_law_index_$i" for i ∈ 1:cube_fitter.n_power_law], ", ") *
         ", extinction_tau_97, extinction_tau_ice, extinction_tau_ch, extinction_beta, " *  
-        (cube_fitter.fit_sil_emission ? "hot_dust_amp, hot_dust_temp, hot_dust_covering_frac, hot_dust_tau, cold_dust_tau, " : "") *
+        (cube_fitter.fit_sil_emission ? "hot_dust_amp, hot_dust_temp, hot_dust_size, hot_dust_covering_frac, hot_dust_tau, cold_dust_tau, " : "") *
         join(["$(df)_amp, $(df)_mean, $(df)_fwhm" for df ∈ cube_fitter.dust_features.names], ", ") * "]"
         
     @debug "Continuum Starting Values: \n $p₀"
 
     # Step 1: Stellar + Dust blackbodies, 2 new amplitudes for the PAH templates, and the extinction parameters
-    pars_1 = vcat(p₀[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.fit_sil_emission ? 5 : 0))], pah_frac)
+    pars_1 = vcat(p₀[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.fit_sil_emission ? 6 : 0))], pah_frac)
     # Step 2: The PAH profile amplitudes, centers, and FWHMs
-    pars_2 = p₀[(3+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.fit_sil_emission ? 5 : 0)):end]
+    pars_2 = p₀[(3+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.fit_sil_emission ? 6 : 0)):end]
 
     pars_1, pars_2
 
@@ -892,18 +894,21 @@ function pretty_print_continuum_results(cube_fitter::CubeFitter, popt::Vector{<:
         msg *= "\n#> HOT DUST <#\n"
         msg *= "Hot_dust_amp: \t\t\t $(@sprintf "%.3e" popt[pᵢ]) +/- $(@sprintf "%.3e" perr[pᵢ]) [-] \t Limits: (0, Inf)\n"
         msg *= "Hot_dust_temp: \t\t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) K \t Limits: " *
-            "($(@sprintf "%.0f" continuum.T_hot.limits[1])), $(@sprintf "%.0f" continuum.T_hot.limits[2]))" *
+            "($(@sprintf "%.0f" continuum.T_hot.limits[1]), $(@sprintf "%.0f" continuum.T_hot.limits[2]))" *
             (continuum.T_hot.locked ? " (fixed)" : "") * "\n"
-        msg *= "Hot_dust_frac: \t\t\t $(@sprintf "%.3f" popt[pᵢ+2]) +/- $(@sprintf "%.3f" perr[pᵢ+2]) [-] \t Limits: " *
+        msg *= "Hot_dust_size: \t\t\t $(@sprintf "%.3f" popt[pᵢ+2]) +/- $(@sprintf "%.3f" perr[pᵢ+2]) μm \t Limits: " *
+            "($(@sprintf "%.3f" continuum.a_hot.limits[1]), $(@sprintf "%.3f" continuum.a_hot.limits[2]))" *
+            (continuum.a_hot.locked ? " (fixed)" : "") * "\n"
+        msg *= "Hot_dust_frac: \t\t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3]) [-] \t Limits: " *
             "($(@sprintf "%.3f" continuum.Cf_hot.limits[1]), $(@sprintf "%.3f" continuum.Cf_hot.limits[2]))" *
             (continuum.Cf_hot.locked ? " (fixed)" : "") * "\n"
-        msg *= "Hot_dust_τ: \t\t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3]) [-] \t Limits: " *
+        msg *= "Hot_dust_τ: \t\t\t $(@sprintf "%.3f" popt[pᵢ+4]) +/- $(@sprintf "%.3f" perr[pᵢ+4]) [-] \t Limits: " *
             "($(@sprintf "%.3f" continuum.τ_warm.limits[1]), $(@sprintf "%.3f" continuum.τ_warm.limits[2]))" *
             (continuum.τ_warm.locked ? " (fixed)" : "") * "\n"
-        msg *= "Cold_dust_τ: \t\t\t $(@sprintf "%.3f" popt[pᵢ+4]) +/- $(@sprintf "%.3f" perr[pᵢ+4]) [-] \t Limits: " *
+        msg *= "Cold_dust_τ: \t\t\t $(@sprintf "%.3f" popt[pᵢ+5]) +/- $(@sprintf "%.3f" perr[pᵢ+5]) [-] \t Limits: " *
             "($(@sprintf "%.3f" continuum.τ_cold.limits[1]), $(@sprintf "%.3f" continuum.τ_cold.limits[2]))" *
             (continuum.τ_cold.locked ? " (fixed)" : "") * "\n"
-        pᵢ += 5
+        pᵢ += 6
     end
     msg *= "\n#> DUST FEATURES <#\n"
     for (j, df) ∈ enumerate(cube_fitter.dust_features.names)
