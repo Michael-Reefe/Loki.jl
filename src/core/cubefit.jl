@@ -702,6 +702,7 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
 
         # Stellar amplitude
         A_s = clamp(cubic_spline(stellar_λref)/2, 0., Inf)
+        # A_s = 0.
 
         # Dust feature amplitudes
         A_df = repeat([clamp(nanmedian(I)/2, 0., Inf)], cube_fitter.n_dust_feat)

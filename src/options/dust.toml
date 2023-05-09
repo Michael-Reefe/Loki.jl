@@ -8,7 +8,7 @@
 
 # dust_grain_types: what types of dust grains to include in the model.
 # this affects the absorption/scattering efficiencies and hence the emissivities.
-dust_grain_types = ["sil", "sil", "sil", "sil", "gra", "gra", "gra", "gra"]
+dust_grain_types = ["sil", "sil", "sil", "gra", "gra", "gra"]
 
 # stellar_continuum_temp: the blackbody temperature of the stellar
 # continuum component of the model. Default: 5000 K.
@@ -21,46 +21,38 @@ locked = true
 # Do not allow to vary lower than -3 (0.001 um) or higher than 1 (10 um), since these are the limits
 # of the absorption/scattering efficiency models 
 [[dust_grain_sizes]]
-val = 0.176
+val = 0.1760912591
 plim = [-3.0, 1.0]
-locked = false
+locked = true
 [[dust_grain_sizes]]
-val = 0.176
+val = 0.1760912591
 plim = [-3.0, 1.0]
-locked = false
+locked = true
 [[dust_grain_sizes]]
-val = 0.176
-plim = [-3.0, 1.0]
-locked = false
+val = 0.1760912591
+plim = [-1.0, 0.477]
+locked = true
 [[dust_grain_sizes]]
-val = 0.176
-plim = [-3.0, 1.0]
-locked = false
+val = 0.1760912591
+plim = [-1.0, 0.477]
+locked = true
 [[dust_grain_sizes]]
-val = 0.176
-plim = [-3.0, 1.0]
-locked = false
+val = 0.1760912591
+plim = [-1.0, 0.477]
+locked = true
 [[dust_grain_sizes]]
-val = 0.176
-plim = [-3.0, 1.0]
-locked = false
-[[dust_grain_sizes]]
-val = 0.176
-plim = [-3.0, 1.0]
-locked = false
-[[dust_grain_sizes]]
-val = 0.176
-plim = [-3.0, 1.0]
-locked = false
+val = 0.1760912591
+plim = [-1.0, 0.477]
+locked = true
 
 # dust_continuum_temps: the blackbody temperatures of the dust
 # continuum components of the model.
 [[dust_continuum_temps]]
-val = 35.0
+val = 100.0
 plim = [0.0, 1500.0]
 locked = false
 [[dust_continuum_temps]]
-val = 100.0
+val = 200.0
 plim = [0.0, 1500.0]
 locked = false
 [[dust_continuum_temps]]
@@ -68,23 +60,15 @@ val = 300.0
 plim = [0.0, 1500.0]
 locked = false
 [[dust_continuum_temps]]
-val = 500.0
-plim = [0.0, 1500.0]
-locked = false
-[[dust_continuum_temps]]
-val = 35.0
-plim = [0.0, 1500.0]
-locked = false
-[[dust_continuum_temps]]
 val = 100.0
 plim = [0.0, 1500.0]
 locked = false
 [[dust_continuum_temps]]
-val = 300.0
+val = 200.0
 plim = [0.0, 1500.0]
 locked = false
 [[dust_continuum_temps]]
-val = 500.0
+val = 300.0
 plim = [0.0, 1500.0]
 locked = false
 

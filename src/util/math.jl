@@ -1275,8 +1275,9 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
         flux, f_err = calculate_flux(:Drude, A_cgs, A_cgs_err, μ, μ_err, fwhm, fwhm_err, propagate_err=propagate_err)
 
         # Calculate the equivalent width using the utility function
-        eqw, e_err = calculate_eqw(λ, popt_c, perr_c, N, n_dust_cont, dust_types, stellar_λref, dust_λrefs, n_dust_feat, 
-            extinction_curve, extinction_screen, :Drude, A*N*ext, A_err*N*ext, μ, μ_err, fwhm, fwhm_err, propagate_err=propagate_err)
+        # eqw, e_err = calculate_eqw(λ, popt_c, perr_c, N, n_dust_cont, dust_types, stellar_λref, dust_λrefs, n_dust_feat, 
+            # extinction_curve, extinction_screen, :Drude, A*N*ext, A_err*N*ext, μ, μ_err, fwhm, fwhm_err, propagate_err=propagate_err)
+        eqw, e_err = 0, 0
 
         @debug "PAH feature with ($A_cgs, $μ, $fwhm) and errors ($A_cgs_err, $μ_err, $fwhm_err)"
         @debug "I=$flux, err=$f_err, EQW=$eqw, err=$e_err"
@@ -1407,10 +1408,11 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                     fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err, propagate_err=propagate_err)
 
                 # Calculate the equivalent width using the utility function
-                p_lines[pₒ+1], p_lines_err[pₒ+1] = calculate_eqw(λ, popt_c, perr_c, N, n_dust_cont, dust_types, stellar_λref, dust_λrefs,
-                    n_dust_feat, extinction_curve, extinction_screen, lines.profiles[k, j], amp*N*ext, amp_err*N*ext, 
-                    mean_μm, mean_μm_err, fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err,
-                    propagate_err=propagate_err)
+                # p_lines[pₒ+1], p_lines_err[pₒ+1] = calculate_eqw(λ, popt_c, perr_c, N, n_dust_cont, dust_types, stellar_λref, dust_λrefs,
+                #     n_dust_feat, extinction_curve, extinction_screen, lines.profiles[k, j], amp*N*ext, amp_err*N*ext, 
+                #     mean_μm, mean_μm_err, fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err,
+                #     propagate_err=propagate_err)
+                p_lines[pₒ+1], p_lines_err[pₒ+1] = 0, 0
 
                 # SNR
                 p_lines[pₒ+2] = amp*N*ext / std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)])
