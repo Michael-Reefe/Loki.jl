@@ -32,6 +32,7 @@ using TOML
 using DelimitedFiles
 using CSV
 using DataFrames
+using Serialization
 
 # Plotting packages
 using PlotlyJS
@@ -156,6 +157,8 @@ export DataCube,   # DataCube struct
        Observation, 
 
        # Observation functions
+       save!,
+       load!,
        adjust_wcs_alignment!, 
        reproject_channels!, 
        cube_rebin!, 

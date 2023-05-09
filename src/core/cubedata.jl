@@ -684,6 +684,19 @@ mutable struct Observation
 end
 
 
+function save!(path::String, obs::Observation)
+    if !(path |> dirname |> isdir)
+        path |> dirname |> mkpath
+    end
+    serialize(path, obs)
+end
+
+
+function load!(path::String)
+    deserialize(path)
+end
+
+
 """
     from_fits(filenames::Vector{String}, z)
 

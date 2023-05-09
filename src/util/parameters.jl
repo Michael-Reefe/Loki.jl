@@ -177,6 +177,6 @@ end
 
 
 struct GrainEfficiency
-    abs::Dierckx.Spline2D
-    sca::Dierckx.Spline2D
+    abs::Spline2D
+    sca::Spline2D
 end

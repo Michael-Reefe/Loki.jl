@@ -697,9 +697,9 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
         ext_full = comps["extinction"] .* comps["abs_ice"] .* comps["abs_ch"]
         ax1.plot(λ, (ext_full .* (
             (n_dust_cont > 0 ? sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] : zeros(length(λ))) .+ comps["stellar"])
-            ) ./ norm ./ λ, "k--", alpha=0.5, label="Continuum")
+            ) ./ norm ./ λ, "k-", lw=2, alpha=0.5, label="Continuum")
         # individual continuum components
-        ax1.plot(λ, comps["stellar"] .* ext_full ./ norm ./ λ, "g-", label="Stellar continuum")
+        ax1.plot(λ, comps["stellar"] .* ext_full ./ norm ./ λ, "k-.", alpha=0.5, label="Stellar continuum")
         for i in 1:n_dust_cont
             ax1.plot(λ, comps["dust_cont_$i"] .* ext_full ./ norm ./ λ, "k-", alpha=0.5, label="Dust continuum")
         end

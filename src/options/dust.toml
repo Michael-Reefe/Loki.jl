@@ -8,7 +8,7 @@
 
 # dust_grain_types: what types of dust grains to include in the model.
 # this affects the absorption/scattering efficiencies and hence the emissivities.
-dust_grain_types = ["sil", "sil", "gra", "gra"]
+dust_grain_types = ["sil", "sil", "sil", "sil", "sil", "gra", "gra", "gra", "gra", "gra"]
 
 # stellar_continuum_temp: the blackbody temperature of the stellar
 # continuum component of the model. Default: 5000 K.
@@ -36,24 +36,72 @@ locked = false
 val = 0.0
 plim = [-3.0, 1.0]
 locked = false
+[[dust_grain_sizes]]
+val = 0.0
+plim = [-3.0, 1.0]
+locked = false
+[[dust_grain_sizes]]
+val = 0.0
+plim = [-3.0, 1.0]
+locked = false
+[[dust_grain_sizes]]
+val = 0.0
+plim = [-3.0, 1.0]
+locked = false
+[[dust_grain_sizes]]
+val = 0.0
+plim = [-3.0, 1.0]
+locked = false
+[[dust_grain_sizes]]
+val = 0.0
+plim = [-3.0, 1.0]
+locked = false
+[[dust_grain_sizes]]
+val = 0.0
+plim = [-3.0, 1.0]
+locked = false
 
 # dust_continuum_temps: the blackbody temperatures of the dust
 # continuum components of the model.
 [[dust_continuum_temps]]
-val = 100.0
-plim = [0.0, 300.0]
+val = 50.0
+plim = [0.0, 1500.0]
 locked = false
 [[dust_continuum_temps]]
-val = 1000.0
-plim = [100.0, 1500.0]
+val = 135.0
+plim = [0.0, 1500.0]
 locked = false
 [[dust_continuum_temps]]
-val = 100.0
-plim = [0.0, 300.0]
+val = 200.0
+plim = [0.0, 1500.0]
 locked = false
 [[dust_continuum_temps]]
-val = 1000.0
-plim = [100.0, 1500.0]
+val = 300.0
+plim = [0.0, 1500.0]
+locked = false
+[[dust_continuum_temps]]
+val = 500.0
+plim = [0.0, 1500.0]
+locked = false
+[[dust_continuum_temps]]
+val = 50.0
+plim = [0.0, 1500.0]
+locked = false
+[[dust_continuum_temps]]
+val = 135.0
+plim = [0.0, 1500.0]
+locked = false
+[[dust_continuum_temps]]
+val = 200.0
+plim = [0.0, 1500.0]
+locked = false
+[[dust_continuum_temps]]
+val = 300.0
+plim = [0.0, 1500.0]
+locked = false
+[[dust_continuum_temps]]
+val = 500.0
+plim = [0.0, 1500.0]
 locked = false
 
 # dust_features: each of these specifies a Polycyclic Aromatic 

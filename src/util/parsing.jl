@@ -794,10 +794,10 @@ function read_draine_q()
     q_sca_gra = reverse(q_sca_gra, dims=2)
 
     # 2D linear interpolation over grain size and wavelength
-    q_abs_sil_func = Spline2D(radii_sil, wave_sil, q_abs_sil, kx=1, ky=1)
-    q_sca_sil_func = Spline2D(radii_sil, wave_sil, q_sca_sil, kx=1, ky=1)
-    q_abs_gra_func = Spline2D(radii_gra, wave_gra, q_abs_gra, kx=1, ky=1)
-    q_sca_gra_func = Spline2D(radii_gra, wave_gra, q_sca_gra, kx=1, ky=1)
+    q_abs_sil_func = Spline2D(radii_sil, wave_sil, q_abs_sil, kx=1, ky=3)
+    q_sca_sil_func = Spline2D(radii_sil, wave_sil, q_sca_sil, kx=1, ky=3)
+    q_abs_gra_func = Spline2D(radii_gra, wave_gra, q_abs_gra, kx=1, ky=3)
+    q_sca_gra_func = Spline2D(radii_gra, wave_gra, q_sca_gra, kx=1, ky=3)
 
     # Convert into structures to hold the data
     Q_sil = GrainEfficiency(q_abs_sil_func, q_sca_sil_func)
