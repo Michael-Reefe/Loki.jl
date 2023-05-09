@@ -99,7 +99,7 @@ end
 
 
 """
-    Continuum(T_s, T_dc, a_dc, d_dc, τ_97, τ_ice, τ_ch, β, T_hot, Cf_hot, τ_warm, τ_cold)
+    Continuum(T_s, T_dc, a_dc, d_dc, τ_97, τ_ice, τ_ch, β)
 
 A container for various continuum modeling parameters.
 """

@@ -53,7 +53,7 @@ save_full_model = true
 # extinction profile, "ct" for the Chiar & Tielens (2005) extinction profile,
 # "ohm" for the Ossenkopf, Henning, & Mathis (1992) extinction profile, or "d+" for the 
 # Donnan et al. (2022) extinction profile.
-extinction_curve = "ohm"
+extinction_curve = "d+"
 
 # extinction_screen: Controls whether extinction is modeled as e^-tau (true) or
 # (1 - e^-tau) / tau (false), following PAHFIT.
@@ -67,7 +67,8 @@ fit_sil_emission = true
 # which is typically sufficient as long as the lines one wishes to fit are prominent in the sum of all spaxels)
 fit_all_samin = false
 
-user_mask = [[11.80, 12.25]]
+# user_mask = [[11.80, 12.25]]
+user_mask = []
 
 # cosmology options: Controls the cosmology used for distance / luminosity calculations.
 # If h is set to 1, the distances in plot scale bars will be shown with h^-1 units.
