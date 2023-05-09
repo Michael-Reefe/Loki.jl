@@ -479,7 +479,7 @@ locked = false
 
 # Size, 0.001-10 microns
 [hot_dust.size]
-val = 1.0
+val = 1.5
 plim = [0.001, 10.0]
 locked = false
 

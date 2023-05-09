@@ -396,8 +396,8 @@ temperature T, grain size a, covering fraction Cf, and optical depths τ_warm an
 """
 function silicate_emission(λ, A, T, a, Cf, τ_warm, τ_cold)
 
-    σ = Q_sil_interp.abs.(a, λ) .* π .* a.^2
-    σ_97 = Q_sil_interp.abs(a, 9.7) * π * a^2
+    σ = (Q_sil_interp.abs.(a, λ) .+ Q_sil_interp.sca.(a, λ)) .* π .* a.^2
+    σ_97 = (Q_sil_interp.abs(a, 9.7) + Q_sil_interp.sca(a, 9.7)) * π * a^2
     ext_curve = σ ./ σ_97
 
     bb = @. A * Blackbody_ν(λ, T) * (1 - extinction(ext_curve, τ_warm, screen=true))
