@@ -12,9 +12,11 @@ using Random
 using Statistics
 using NaNStatistics
 using QuadGK
+using NumericalIntegration
 using Dierckx
 using LinearAlgebra
 using EllipsisNotation
+using SpecialFunctions
 
 # Optimization packages
 using Optim
@@ -205,6 +207,7 @@ export DataCube,   # DataCube struct
 include("util/parameters.jl")
 include("util/parsing.jl")
 include("util/math.jl")
+include("util/grain.jl")
 
 include("core/cubedata.jl")
 include("core/cubefit.jl")

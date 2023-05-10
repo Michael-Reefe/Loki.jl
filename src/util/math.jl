@@ -7,20 +7,19 @@ to access it they must use the "Loki" prefix.
 
 # CONSTANTS
 
-const C_KMS::Float64 = 299792.458          # Speed of light in km/s
-const h_ERGS::Float64 = 6.62607015e-27     # Planck constant in erg*s
-const kB_ERGK::Float64 = 1.380649e-16      # Boltzmann constant in erg/K
+const C_KMS = 299792.458          # Speed of light in km/s
+const h_ERGS = 6.62607015e-27     # Planck constant in erg*s
+const kB_ERGK = 1.380649e-16      # Boltzmann constant in erg/K
+const σ_SB = 5.6705e-5            # Stefan-Boltzmann constant in erg/s/cm^2/K^4
 
 # First constant for Planck function, in MJy/sr/μm:
 # 2hν^3/c^2 = 2h(c/λ)^3/c^2 = (2h/c^2 erg/s/cm^2/Hz/sr) * (1e23 Jy per erg/s/cm^2/Hz) / (1e6 MJy/Jy) * (c * 1e9 μm/km)^3 / (λ μm)^3
-const Bν_1::Float64 = 2h_ERGS/(C_KMS*1e5)^2 * 1e23 / 1e6 * (C_KMS*1e9)^3
-
+const Bν_1 = 2h_ERGS/(C_KMS*1e5)^2 * 1e23 / 1e6 * (C_KMS*1e9)^3
 # Second constant for Planck function, in μm*K  
 # hν/kT = hc/λkT = (hc/k cm*K) * (1e4 μm/cm) / (λ μm)
-const Bν_2::Float64 = h_ERGS*(C_KMS*1e5) / kB_ERGK * 1e4
-
+const Bν_2 = h_ERGS*(C_KMS*1e5) / kB_ERGK * 1e4
 # Wein's law constant of proportionality in μm*K
-const b_Wein::Float64 = 2897.771955        
+const b_Wein = 2897.771955        
 
 # Saved Kemper, Vriend, & Tielens (2004) extinction profile
 const kvt_prof::Matrix{Float64} =  [8.0  0.06;
@@ -73,9 +72,6 @@ Smith4_interp = Spline1D(SmithTemps[3], SmithTemps[4]; k=3)
 const IceCHTemp = read_ice_ch_temps()
 Ice_interp = Spline1D(IceCHTemp[1], IceCHTemp[2]; k=3)
 CH_interp = Spline1D(IceCHTemp[3], IceCHTemp[4]; k=3)
-
-# Save silicate and graphite grain efficiencies
-Q_sil_interp, Q_gra_interp = read_draine_q()
 
 ########################################### UTILITY FUNCTIONS ###############################################
 

@@ -793,11 +793,38 @@ function read_draine_q()
     q_abs_gra = reverse(q_abs_gra, dims=2)
     q_sca_gra = reverse(q_sca_gra, dims=2)
 
+    # Output grid for a
+    a = exp10.(range(log10(0.00031622776601683897), log10(10), 91))
+
+    # Extrapolate to the lower a's
+    q_abs_sil_extrap = Vector{Spline1D}(undef, length(wave_sil))
+    q_sca_sil_extrap = Vector{Spline1D}(undef, length(wave_sil))
+    q_abs_gra_extrap = Vector{Spline1D}(undef, length(wave_gra))
+    q_sca_gra_extrap = Vector{Spline1D}(undef, length(wave_gra))
+    for i in eachindex(wave_sil)
+        q_abs_sil_extrap[i] = Spline1D(radii_sil, q_abs_sil[:, i], k=1, bc="extrapolate")
+        q_sca_sil_extrap[i] = Spline1D(radii_sil, q_sca_sil[:, i], k=1, bc="extrapolate")
+        q_abs_gra_extrap[i] = Spline1D(radii_gra, q_abs_gra[:, i], k=1, bc="extrapolate")
+        q_sca_gra_extrap[i] = Spline1D(radii_gra, q_sca_gra[:, i], k=1, bc="extrapolate")
+    end
+    q_abs_sil_full = zeros(length(a), length(wave_sil))
+    q_sca_sil_full = zeros(length(a), length(wave_sil))
+    q_abs_gra_full = zeros(length(a), length(wave_gra))
+    q_sca_gra_full = zeros(length(a), length(wave_gra))
+    for j in eachindex(a)
+        for i in eachindex(wave_sil)
+            q_abs_sil_full[j, i] = q_abs_sil_extrap[i](a[j])
+            q_sca_sil_full[j, i] = q_sca_sil_extrap[i](a[j])
+            q_abs_gra_full[j, i] = q_abs_gra_extrap[i](a[j])
+            q_sca_gra_full[j, i] = q_sca_gra_extrap[i](a[j])
+        end
+    end
+
     # 2D linear interpolation over grain size and wavelength
-    q_abs_sil_func = Spline2D(radii_sil, wave_sil, q_abs_sil, kx=1, ky=3)
-    q_sca_sil_func = Spline2D(radii_sil, wave_sil, q_sca_sil, kx=1, ky=3)
-    q_abs_gra_func = Spline2D(radii_gra, wave_gra, q_abs_gra, kx=1, ky=3)
-    q_sca_gra_func = Spline2D(radii_gra, wave_gra, q_sca_gra, kx=1, ky=3)
+    q_abs_sil_func = Spline2D(a, wave_sil, q_abs_sil_full, kx=1, ky=3)
+    q_sca_sil_func = Spline2D(a, wave_sil, q_sca_sil_full, kx=1, ky=3)
+    q_abs_gra_func = Spline2D(a, wave_gra, q_abs_gra_full, kx=1, ky=3)
+    q_sca_gra_func = Spline2D(a, wave_gra, q_sca_gra_full, kx=1, ky=3)
 
     # Convert into structures to hold the data
     Q_sil = GrainEfficiency(q_abs_sil_func, q_sca_sil_func)
