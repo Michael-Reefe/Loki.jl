@@ -579,8 +579,8 @@ backend (`:pyplot` or `:plotly`).
 - `backend::Symbol`: The backend to use to plot, either `:pyplot` or `:plotly`
 """
 function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<:Real}, σ::Vector{<:Real}, comps::Dict{String, Vector{T}}, 
-    n_dust_cont::Integer, n_dust_features::Integer, n_comps::Integer, line_wave::Vector{<:Real}, line_names::Vector{Symbol}, screen::Bool, 
-    z::Real, χ2red::Real, name::String, label::String; backend::Symbol=:pyplot, I_boot_min::Union{Vector{<:Real},Nothing}=nothing, 
+    n_dust_cont::Integer, dust_types::Vector{Symbol}, n_dust_features::Integer, n_comps::Integer, line_wave::Vector{<:Real}, line_names::Vector{Symbol}, 
+    screen::Bool, z::Real, χ2red::Real, name::String, label::String; backend::Symbol=:pyplot, I_boot_min::Union{Vector{<:Real},Nothing}=nothing, 
     I_boot_max::Union{Vector{<:Real},Nothing}=nothing, range::Union{Tuple,Nothing}=nothing, spline::Union{Vector{<:Real},Nothing}=nothing) where {T<:Real}
 
     # Plotly ---> useful interactive plots for visually inspecting data, but not publication-quality
@@ -699,9 +699,10 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
             (n_dust_cont > 0 ? sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] : zeros(length(λ))) .+ comps["stellar"])
             ) ./ norm ./ λ, "k-", lw=2, alpha=0.5, label="Continuum")
         # individual continuum components
-        ax1.plot(λ, comps["stellar"] .* ext_full ./ norm ./ λ, "k-.", alpha=0.5, label="Stellar continuum")
+        ax1.plot(λ, comps["stellar"] .* ext_full ./ norm ./ λ, "m--", alpha=0.5, label="Stellar continuum")
         for i in 1:n_dust_cont
-            ax1.plot(λ, comps["dust_cont_$i"] .* ext_full ./ norm ./ λ, "k-", alpha=0.5, label="Dust continuum")
+            ax1.plot(λ, comps["dust_cont_$i"] .* ext_full ./ norm ./ λ, dust_types[i]==:sil ? "k--" : "k-.", alpha=0.5,
+                label="Dust continuum")
         end
         # full PAH profile
         ax1.plot(λ, sum([comps["dust_feat_$i"] for i ∈ 1:n_dust_features], dims=1)[1] .* comps["extinction"] ./ norm ./ λ, "-", 
@@ -1004,13 +1005,13 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
             if cube_fitter.plot_spaxels != :none
                 @debug "Plotting spaxel $spaxel best fit"
                 @timeit timer_output "plot_spaxel_fit" plot_spaxel_fit(λ, I, I_model, σ, comps, 
-                    cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, cube_fitter.n_comps, cube_fitter.lines.λ₀, cube_fitter.lines.names, 
+                    cube_fitter.n_dust_cont, cube_fitter.continuum.d_dc, cube_fitter.n_dust_feat, cube_fitter.n_comps, cube_fitter.lines.λ₀, cube_fitter.lines.names, 
                     cube_fitter.extinction_screen, cube_fitter.z, χ2/dof, cube_fitter.name, "spaxel_$(spaxel[1])_$(spaxel[2])", backend=cube_fitter.plot_spaxels,
                     I_boot_min=I_boot_min, I_boot_max=I_boot_max)
                 if !isnothing(cube_fitter.plot_range)
                     for (i, plot_range) ∈ enumerate(cube_fitter.plot_range)
                         @timeit timer_output "plot_line_fit" plot_spaxel_fit(λ, I, I_model, σ, comps,
-                            cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, cube_fitter.n_comps, cube_fitter.lines.λ₀, cube_fitter.lines.names, 
+                            cube_fitter.n_dust_cont, cube_fitter.continuum.d_dc, cube_fitter.n_dust_feat, cube_fitter.n_comps, cube_fitter.lines.λ₀, cube_fitter.lines.names, 
                             cube_fitter.extinction_screen, cube_fitter.z, χ2/dof, cube_fitter.name, "lines_$(spaxel[1])_$(spaxel[2])_$i", backend=cube_fitter.plot_spaxels,
                             I_boot_min=I_boot_min, I_boot_max=I_boot_max, range=plot_range)
                     end
@@ -1121,12 +1122,12 @@ function fit_stack!(cube_fitter::CubeFitter)
     if cube_fitter.plot_spaxels != :none
         @debug "Plotting spaxel sum initial fit"
         plot_spaxel_fit(λ_init, I_sum_init, I_model_init, σ_stat_init, comps_init,
-            cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, cube_fitter.n_comps, cube_fitter.lines.λ₀, cube_fitter.lines.names, 
+            cube_fitter.n_dust_cont, cube_fitter.continuum.d_dc, cube_fitter.n_dust_feat, cube_fitter.n_comps, cube_fitter.lines.λ₀, cube_fitter.lines.names, 
             cube_fitter.extinction_screen, cube_fitter.z, χ2red_init, cube_fitter.name, "initial_sum_fit", backend=cube_fitter.plot_spaxels)
         if !isnothing(cube_fitter.plot_range)
             for (i, plot_range) ∈ enumerate(cube_fitter.plot_range)
                 plot_spaxel_fit(λ_init, I_sum_init, I_model_init, σ_stat_init, comps_init,
-                    cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, cube_fitter.n_comps, cube_fitter.lines.λ₀, cube_fitter.lines.names, 
+                    cube_fitter.n_dust_cont, cube_fitter.continuum.d_dc, cube_fitter.n_dust_feat, cube_fitter.n_comps, cube_fitter.lines.λ₀, cube_fitter.lines.names, 
                     cube_fitter.extinction_screen, cube_fitter.z, χ2red_init, cube_fitter.name, "initial_sum_line_$i", backend=cube_fitter.plot_spaxels;
                     range=plot_range)
             end
