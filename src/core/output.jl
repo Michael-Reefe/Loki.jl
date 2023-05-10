@@ -56,7 +56,10 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             param_maps.dust_continuum[i][:size][index] = out_params[index, pᵢ+2]
             param_errs[1].dust_continuum[i][:size][index] = out_errs[index, pᵢ+2, 1]
             param_errs[2].dust_continuum[i][:size][index] = out_errs[index, pᵢ+2, 2]
-            pᵢ += 3
+            param_maps.dust_continuum[i][:frac][index] = out_params[index, pᵢ+3]
+            param_errs[1].dust_continuum[i][:frac][index] = out_errs[index, pᵢ+3, 1]
+            param_errs[2].dust_continuum[i][:frac][index] = out_errs[index, pᵢ+3, 2]
+            pᵢ += 4
         end
 
         # Extinction parameters
@@ -91,7 +94,7 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
         if cube_fitter.save_full_model
             # End of continuum parameters: recreate the continuum model
             I_cont, comps_c = model_continuum_and_pah(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], cube_fitter.n_dust_cont,
-                cube_fitter.continuum.d_dc, stellar_λref, dust_λrefs, cube_fitter.n_dust_feat, cube_fitter.extinction_curve, 
+                stellar_λref, dust_λrefs, cube_fitter.n_dust_feat, cube_fitter.extinction_curve, 
                 cube_fitter.extinction_screen)
         end
 
@@ -350,6 +353,8 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         bunit = L"$T$ (K)"
     elseif occursin("size", String(name_i))
         bunit = L"$a$ ($\mu$m)"
+    elseif occursin("frac", String(name_i))
+        bunit = L"$f_{\rm gra}$"
     elseif occursin("fwhm", String(name_i)) && occursin("PAH", String(name_i))
         bunit = L"FWHM ($\mu$m)"
     elseif occursin("fwhm", String(name_i)) && !occursin("PAH", String(name_i))
@@ -857,6 +862,8 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
                         bunit = "K"
                     elseif occursin("size", String(name_i))
                         bunit = "um"
+                    elseif occursin("frac", String(name_i))
+                        bunit = "unitless"
                     end
                     write(f, data; name=name_i)
                     write_key(f[name_i], "BUNIT", bunit)  

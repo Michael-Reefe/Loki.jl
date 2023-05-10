@@ -146,8 +146,7 @@ function parse_dust()
 
     # Read in the dust file
     dust = TOML.parsefile(joinpath(@__DIR__, "..", "options", "dust.toml"))
-    keylist1 = ["stellar_continuum_temp", "dust_grain_types", "dust_grain_sizes", 
-        "dust_continuum_temps", "dust_features", "extinction"]
+    keylist1 = ["stellar_continuum_temp", "dust_grain_sizes", "dust_continuum_temps", "dust_features", "extinction"]
     keylist2 = ["wave", "fwhm"]
     keylist3 = ["tau_9_7", "tau_ice", "tau_ch", "beta"]
     keylist5 = ["val", "plim", "locked"]
@@ -184,12 +183,12 @@ function parse_dust()
 
     # Dust continuum temperatures
     msg = "Dust continuum:"
-    d_dc = Symbol.(dust["dust_grain_types"])
     a_dc = [from_dict(dust["dust_grain_sizes"][i]) for i ∈ eachindex(dust["dust_grain_sizes"])]
     T_dc = [from_dict(dust["dust_continuum_temps"][i]) for i ∈ eachindex(dust["dust_continuum_temps"])]
-    for i ∈ eachindex(d_dc)
+    f_dc = repeat([Parameter(0.5, false, (0., 1.))], length(a_dc))
+    for i ∈ eachindex(a_dc)
         msg *= "\n----------------"
-        msg *= "\nType: $(d_dc[i])"
+        msg *= "\nG_Frac: $(f_dc[i])"
         msg *= "\nSize: $(a_dc[i])"
         msg *= "\nTemp: $(T_dc[i])"
     end
@@ -231,7 +230,7 @@ function parse_dust()
     @debug msg
 
     # Create continuum object
-    continuum = Continuum(T_s, T_dc, a_dc, d_dc, τ_97, τ_ice, τ_ch, β)
+    continuum = Continuum(T_s, T_dc, a_dc, f_dc, τ_97, τ_ice, τ_ch, β)
 
     continuum, dust_features
 end

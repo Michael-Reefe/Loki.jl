@@ -109,7 +109,7 @@ struct Continuum
     T_s::Parameter
     T_dc::Vector{Parameter}
     a_dc::Vector{Parameter}
-    d_dc::Vector{Symbol}
+    f_dc::Vector{Parameter}
     τ_97::Parameter
     τ_ice::Parameter
     τ_ch::Parameter

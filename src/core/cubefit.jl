@@ -72,6 +72,7 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, df_names::Ve
         dust_continuum[i][:amp] = copy(nan_arr)
         dust_continuum[i][:temp] = copy(nan_arr)
         dust_continuum[i][:size] = copy(nan_arr)
+        dust_continuum[i][:frac] = copy(nan_arr)
         @debug "dust continuum $i maps with keys $(keys(dust_continuum[i]))"
     end
 
@@ -429,10 +430,10 @@ struct CubeFitter{T<:Real,S<:Integer}
              "\n### at T = $(continuum.T_s.value) K ###"
 
         #### PREPARE OUTPUTS ####
-        n_dust_cont = length(continuum.d_dc)
+        n_dust_cont = length(continuum.f_dc)
         msg = "### Model will include $n_dust_cont dust continuum components ###"
-        for i ∈ eachindex(continuum.d_dc)
-            msg *= "\n### $(continuum.d_dc[i]) grain type  ###"
+        for i ∈ eachindex(continuum.f_dc)
+            msg *= "\n### f = $(continuum.f_dc[i]) graphite fraction ###"
             msg *= "\n### a = $(continuum.a_dc[i].value) um ###"
             msg *= "\n### T = $(continuum.T_dc[i].value) K ###"
         end
@@ -523,7 +524,7 @@ struct CubeFitter{T<:Real,S<:Integer}
         end
 
         # Total number of parameters for the continuum and line fits
-        n_params_cont = (2+4) + 3n_dust_cont + 3n_dust_features
+        n_params_cont = (2+4) + 4n_dust_cont + 3n_dust_features
         n_params_lines = 0
         for i ∈ 1:n_lines
             for j ∈ 1:n_comps
@@ -618,13 +619,15 @@ function get_continuum_plimits(cube_fitter::CubeFitter)
     dust_features = cube_fitter.dust_features
     continuum = cube_fitter.continuum
 
-    amp_dc_plim = (0., Inf)
+    amp_dc_plim = (0., 1.)
     amp_df_plim = (0., clamp(1 / exp(-continuum.τ_97.limits[2]), 1., Inf))
 
     stellar_plim = [amp_dc_plim, continuum.T_s.limits]
     stellar_lock = [false, continuum.T_s.locked]
-    dc_plim = vcat([[amp_dc_plim, Ti.limits, ai.limits] for (Ti, ai) ∈ zip(continuum.T_dc, continuum.a_dc)]...)
-    dc_lock = vcat([[false, Ti.locked, ai.locked] for (Ti, ai) ∈ zip(continuum.T_dc, continuum.a_dc)]...)
+    dc_plim = vcat([[amp_dc_plim, Ti.limits, ai.limits, fi.limits] for (Ti, ai, fi) ∈ 
+        zip(continuum.T_dc, continuum.a_dc, continuum.f_dc)]...)
+    dc_lock = vcat([[false, Ti.locked, ai.locked, fi.locked] for (Ti, ai, fi) ∈ 
+        zip(continuum.T_dc, continuum.a_dc, continuum.f_dc)]...)
     df_plim = vcat([[amp_df_plim, mi.limits, fi.limits] for (mi, fi) ∈ zip(dust_features.mean, dust_features.fwhm)]...)
     df_lock = vcat([[false, mi.locked, fi.locked] for (mi, fi) ∈ zip(dust_features.mean, dust_features.fwhm)]...)
     ext_plim = [continuum.τ_97.limits, continuum.τ_ice.limits, continuum.τ_ch.limits, continuum.β.limits]
@@ -678,7 +681,7 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
         # Dust continuum amplitudes
         for _ ∈ 1:cube_fitter.n_dust_cont
             p₀[pᵢ] *= scale
-            pᵢ += 3
+            pᵢ += 4
         end
 
         # Set optical depth based on the pre-fitting
@@ -711,7 +714,7 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
         A_dc = clamp.([cubic_spline(λ_dci) for λ_dci ∈ dust_λref], 0., Inf)
         
         stellar_pars = [A_s, continuum.T_s.value]
-        dc_pars = vcat([[Ai, Ti.value, ai.value] for (Ai, Ti, ai) ∈ zip(A_dc, continuum.T_dc, continuum.a_dc)]...)
+        dc_pars = vcat([[Ai, Ti.value, ai.value, fi.value] for (Ai, Ti, ai, fi) ∈ zip(A_dc, continuum.T_dc, continuum.a_dc, continuum.f_dc)]...)
         df_pars = vcat([[Ai, mi.value, fi.value] for (Ai, mi, fi) ∈ zip(A_df, cube_fitter.dust_features.mean, cube_fitter.dust_features.fwhm)]...)
 
         extinction_pars = [continuum.τ_97.value, continuum.τ_ice.value, continuum.τ_ch.value, continuum.β.value]
@@ -722,16 +725,16 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
     end
 
     @debug "Continuum Parameter labels: \n [stellar_amp, stellar_temp, " * 
-        join(["dust_continuum_amp_$i, dust_continuum_temp_$i, dust_continuum_grainsize_$i" for i ∈ 1:cube_fitter.n_dust_cont], ", ") * 
-        ", extinction_tau_97, extinction_tau_ice, extinction_tau_ch, extinction_beta, " *  
+        join(["dust_continuum_amp_$i, dust_continuum_temp_$i, dust_continuum_grainsize_$i, dust_continuum_frac_$i" for 
+            i ∈ 1:cube_fitter.n_dust_cont], ", ") * ", extinction_tau_97, extinction_tau_ice, extinction_tau_ch, extinction_beta, " *  
         join(["$(df)_amp, $(df)_mean, $(df)_fwhm" for df ∈ cube_fitter.dust_features.names], ", ") * "]"
         
     @debug "Continuum Starting Values: \n $p₀"
 
     # Step 1: Stellar + Dust blackbodies, 2 new amplitudes for the PAH templates, and the extinction parameters
-    pars_1 = vcat(p₀[1:(2+3cube_fitter.n_dust_cont+4)], pah_frac)
+    pars_1 = vcat(p₀[1:(2+4cube_fitter.n_dust_cont+4)], pah_frac)
     # Step 2: The PAH profile amplitudes, centers, and FWHMs
-    pars_2 = p₀[(3+3cube_fitter.n_dust_cont+4):end]
+    pars_2 = p₀[(3+4cube_fitter.n_dust_cont+4):end]
 
     pars_1, pars_2
 
@@ -796,8 +799,11 @@ function pretty_print_continuum_results(cube_fitter::CubeFitter, popt::Vector{<:
         msg *= "Dust_continuum_$(i)_size: \t\t $(@sprintf "%.3f" popt[pᵢ+2]) +/- $(@sprintf "%.3f" perr[pᵢ+2]) log10(a/um) \t Limits: " *
             "($(@sprintf "%.3f" continuum.a_dc[i].limits[1]), $(@sprintf "%.3f" continuum.a_dc[i].limits[2]))" *
             (continuum.a_dc[i].locked ? " (fixed)" : "") * "\n"
+        msg *= "Dust_continuum_$(i)_frac: \t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3]) [-] \t Limits: " *
+            "($(@sprintf "%.3f" continuum.f_dc[i].limits[1]), $(@sprintf "%.3f" continuum.f_dc[i].limits[2]))" *
+            (continuum.f_dc[i].locked ? " (fixed)" : "") * "\n"
         msg *= "\n"
-        pᵢ += 3
+        pᵢ += 4
     end
     msg *= "\n#> EXTINCTION <#\n"
     msg *= "τ_9.7: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ]) +/- $(@sprintf "%.2f" perr[pᵢ]) [-] \t Limits: " *

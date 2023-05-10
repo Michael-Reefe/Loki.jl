@@ -186,8 +186,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     if !bootstrap_iter
         pars_1, pars_2 = get_continuum_initial_values(cube_fitter, λ_spax, I_spax, stellar_λref, dust_λrefs, N, init || use_ap)
     else
-        pars_1 = vcat(p1_boots[1:(2+3cube_fitter.n_dust_cont+4)], p1_boots[end-1:end])
-        pars_2 = p1_boots[(3+3cube_fitter.n_dust_cont+4):end-2]
+        pars_1 = vcat(p1_boots[1:(2+4cube_fitter.n_dust_cont+4)], p1_boots[end-1:end])
+        pars_2 = p1_boots[(3+4cube_fitter.n_dust_cont+4):end-2]
     end
 
     # Sort parameters by those that are locked and those that are unlocked
@@ -227,10 +227,10 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         ptot[.~lock_1] .= pfree
         ptot[lock_1] .= p1fix
         if !return_comps
-            model_continuum(x, ptot, cube_fitter.n_dust_cont, cube_fitter.continuum.d_dc, stellar_λref, dust_λrefs, 
+            model_continuum(x, ptot, cube_fitter.n_dust_cont, stellar_λref, dust_λrefs, 
                 cube_fitter.extinction_curve, cube_fitter.extinction_screen)
         else
-            model_continuum(x, ptot, cube_fitter.n_dust_cont, cube_fitter.continuum.d_dc, stellar_λref, dust_λrefs, 
+            model_continuum(x, ptot, cube_fitter.n_dust_cont, stellar_λref, dust_λrefs, 
                 cube_fitter.extinction_curve, cube_fitter.extinction_screen, true)
         end
     end
@@ -298,7 +298,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # @debug "Continuum covariance matrix: \n $covar"
 
     # Create the full model, again only if not bootstrapping
-    I_model, comps = model_continuum_and_pah(λ, popt, cube_fitter.n_dust_cont, cube_fitter.continuum.d_dc, stellar_λref,
+    I_model, comps = model_continuum_and_pah(λ, popt, cube_fitter.n_dust_cont, stellar_λref,
         dust_λrefs, cube_fitter.n_dust_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen)
 
     if init
@@ -833,7 +833,7 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     if !init
         p_dust, p_lines, p_dust_err, p_lines_err = 
             @timeit timer_output "calculate_extra_parameters" calculate_extra_parameters(λ, I, norm, cube_fitter.n_dust_cont,
-                cube_fitter.continuum.d_dc, stellar_λref, dust_λrefs, cube_fitter.n_dust_feat, cube_fitter.extinction_curve, 
+                stellar_λref, dust_λrefs, cube_fitter.n_dust_feat, cube_fitter.extinction_curve, 
                 cube_fitter.extinction_screen, cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, cube_fitter.lines, 
                 cube_fitter.flexible_wavesol, lsf_interp_func, popt_c[1:end-2], popt_l, perr_c[1:end-2], perr_l, comps["extinction"], 
                 mask_lines, I_spline, area_sr, !bootstrap_iter)
@@ -977,7 +977,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                 lsf_interp_func = x -> lsf_interp(x)
 
                 # Replace the best-fit model with the 50th percentile model to be consistent with p_out
-                I_boot_cont, comps_boot_cont = model_continuum_and_pah(λ, p_out[1:split1], cube_fitter.n_dust_cont, cube_fitter.continuum.d_dc,
+                I_boot_cont, comps_boot_cont = model_continuum_and_pah(λ, p_out[1:split1], cube_fitter.n_dust_cont,
                     stellar_λref, dust_λrefs, cube_fitter.n_dust_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, true)
                 I_boot_line, comps_boot_line = model_line_residuals(λ, p_out[split1+1:split2], cube_fitter.n_lines, cube_fitter.n_comps,
                     cube_fitter.lines, cube_fitter.flexible_wavesol, comps_boot_cont["extinction"], lsf_interp_func, true)
