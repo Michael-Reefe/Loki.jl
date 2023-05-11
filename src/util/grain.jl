@@ -115,7 +115,7 @@ const B = @. 3/(2π)^(3/2) * exp(-4.5*vsg_σ^2) / (ρ_G * (a0_i * 1e-8)^3 * vsg_
     (1 + erf(3vsg_σ/sqrt(2) + log(a0_i/3.5)/vsg_σ*sqrt(2)))
 
 
-function grain_size_distribution_gra(a::Real, T_bb::Real, T_eq::Real)
+function grain_size_distribution_gra(a::Real, T_eq::Real)
     # Check for hard cutoffs
     T_sub = 1750
     if !(a_min < a < a_max) || T_eq > T_sub
@@ -138,7 +138,7 @@ function grain_size_distribution_gra(a::Real, T_bb::Real, T_eq::Real)
 end
 
 
-function grain_size_distribution_sil(a::Real, T_bb::Real, T_eq::Real)
+function grain_size_distribution_sil(a::Real, T_eq::Real)
     # Check for hard cutoffs
     T_sub = 1400
     if !(a_min < a < a_max) || T_eq > T_sub
@@ -158,30 +158,32 @@ function grain_size_distribution_sil(a::Real, T_bb::Real, T_eq::Real)
 end
 
 
-function grain_size_distribution(a::Real, T_bb::Real, T_eq::Tuple{<:Real,<:Real})
-    grain_size_distribution_sil(a, T_bb, T_eq[1]), grain_size_distribution_gra(a, T_bb, T_eq[2])
+function grain_size_distribution(a::Real, T_eq::Tuple{<:Real,<:Real})
+    grain_size_distribution_sil(a, T_eq[1]), grain_size_distribution_gra(a, T_eq[2])
 end
 
 
-function grain_emissivity(λ::Real, T_bb::Real)
-    # a = exp10.(range(log10(0.00031622776601683897), log10(10), 91))
-    # σ_sil = [grain_σ.(a[j], λ[i], :sil) for i in eachindex(λ), j in eachindex(a)]
-    # σ_gra = [grain_σ.(a[j], λ[i], :gra) for i in eachindex(λ), j in eachindex(a)]
-    # T_eq = grain_Teq.(a, T_bb)
-    # T_eq_sil = [T_eq[i][1] for i in eachindex(T_eq)]
-    # T_eq_gra = [T_eq[i][2] for i in eachindex(T_eq)]
-    # dnda = grain_size_distribution.(a, T_bb, T_eq)
-    # dnda_sil = [dnda[i][1] for i in eachindex(dnda)]
-    # dnda_gra = [dnda[i][2] for i in eachindex(dnda)]
+function grain_emissivity(λ::Vector{<:Real}, T_bb::Real)
+    a = exp10.(range(log10(0.00031622776601683897), log10(10), 91))
+    σ_sil = [grain_σ.(a[j], λ[i], :sil) for i in eachindex(λ), j in eachindex(a)]
+    σ_gra = [grain_σ.(a[j], λ[i], :gra) for i in eachindex(λ), j in eachindex(a)]
+    T_eq = grain_Teq.(a, T_bb)
+    T_eq_sil = [T_eq[i][1] for i in eachindex(T_eq)]
+    T_eq_gra = [T_eq[i][2] for i in eachindex(T_eq)]
+    dnda = grain_size_distribution.(a, T_eq)
+    dnda_sil = [dnda[i][1] for i in eachindex(dnda)]
+    dnda_gra = [dnda[i][2] for i in eachindex(dnda)]
 
-    # Eν_sil = [NumericalIntegration.integrate(a, dnda_sil .* σ_sil[i,:] .* Blackbody_ν.(λ[i], T_eq_sil), Trapezoidal()) for i in eachindex(λ)]
-    # Eν_gra = [NumericalIntegration.integrate(a, dnda_gra .* σ_gra[i,:] .* Blackbody_ν.(λ[i], T_eq_gra), Trapezoidal()) for i in eachindex(λ)]
+    Eν_sil = [NumericalIntegration.integrate(a, dnda_sil .* σ_sil[i,:] .* Blackbody_ν.(λ[i], T_eq_sil), Trapezoidal()) for i in eachindex(λ)]
+    Eν_gra = [NumericalIntegration.integrate(a, dnda_gra .* σ_gra[i,:] .* Blackbody_ν.(λ[i], T_eq_gra), Trapezoidal()) for i in eachindex(λ)]
 
-    integrand(a) = begin 
-        T_eq_sil, T_eq_gra = grain_Teq(a, T_bb)
-        E_sil = grain_σ(a, λ, :sil) * grain_size_distribution_sil(a, T_bb, T_eq_sil) * Blackbody_ν(λ, T_eq_sil)
-        E_gra = grain_σ(a, λ, :gra) * grain_size_distribution_gra(a, T_bb, T_eq_gra) * Blackbody_ν(λ, T_eq_gra)
-        E_sil + E_gra
-    end
-    quadgk(integrand, 3.1622776601683897e-4, 10, maxevals=100)[1]
+    # integrand(a) = begin 
+    #     T_eq_sil, T_eq_gra = grain_Teq(a, T_bb)
+    #     E_sil = grain_σ(a, λ, :sil) * grain_size_distribution_sil(a, T_eq_sil) * Blackbody_ν(λ, T_eq_sil)
+    #     E_gra = grain_σ(a, λ, :gra) * grain_size_distribution_gra(a, T_eq_gra) * Blackbody_ν(λ, T_eq_gra)
+    #     E_sil + E_gra
+    # end
+    # quadgk(integrand, 3.1622776601683897e-4, 10, maxevals=100)[1]
+
+    Eν_sil .+ Eν_gra
 end

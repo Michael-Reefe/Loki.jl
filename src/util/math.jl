@@ -816,8 +816,9 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer,
 
     # Add dust continua at various temperatures
     for i ∈ 1:n_dust_cont
-        comps["dust_cont_$i"] = params[pᵢ] .* dust_emissivity.(λ, params[pᵢ+1], params[pᵢ+2], dust_types[i]) ./
-            dust_emissivity(dust_λrefs[i], params[pᵢ+1], params[pᵢ+2], dust_types[i])
+        # comps["dust_cont_$i"] = params[pᵢ] .* dust_emissivity.(λ, params[pᵢ+1], params[pᵢ+2], dust_types[i]) ./
+            # dust_emissivity(dust_λrefs[i], params[pᵢ+1], params[pᵢ+2], dust_types[i])
+        comps["dust_cont_$i"] = params[pᵢ] .* grain_emissivity(λ, params[pᵢ+1]) ./ grain_emissivity([dust_λrefs[i]], params[pᵢ+1])
         contin .+= comps["dust_cont_$i"] 
         pᵢ += 3
     end
@@ -877,8 +878,9 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer,
 
     # Add dust continua at various temperatures
     for i ∈ 1:n_dust_cont
-        contin .+=  params[pᵢ] .* dust_emissivity.(λ, params[pᵢ+1], params[pᵢ+2], dust_types[i]) ./
-            dust_emissivity(dust_λrefs[i], params[pᵢ+1], params[pᵢ+2], dust_types[i])
+        # contin .+=  params[pᵢ] .* dust_emissivity.(λ, params[pᵢ+1], params[pᵢ+2], dust_types[i]) ./
+            # dust_emissivity(dust_λrefs[i], params[pᵢ+1], params[pᵢ+2], dust_types[i])
+        contin .+= params[pᵢ] .* grain_emissivity(λ, params[pᵢ+1]) ./ grain_emissivity([dust_λrefs[i]], params[pᵢ+1])
         pᵢ += 3
     end
 
