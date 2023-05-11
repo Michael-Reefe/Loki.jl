@@ -808,6 +808,47 @@ function read_draine_q()
 end
 
 
+function read_dorschner_q()
+
+    # Get wavelength, x, y, and a arrays
+    λ = readdlm(joinpath(@__DIR__, "..", "templates", "dorschner_wave.txt"), ' ', Float64, '\n')[:,1]
+    # Pyroxene composition parameter
+    x = readdlm(joinpath(@__DIR__, "..", "templates", "dorschner_x.txt"), ' ', Float64, '\n')[:,1]
+    # Olivine composition parameter
+    y = readdlm(joinpath(@__DIR__, "..", "templates", "dorschner_y.txt"), ' ', Float64, '\n')[:,1]
+    # Grain radius
+    a = exp10.(range(-3, 1, 81))
+    
+    # Read in the Qabs/Qsca arrays and reshape them
+    q_abs_pyr = readdlm(joinpath(@__DIR__, "..", "templates", "dorschner_qabs.pyr.txt"), ' ', Float64, '\n')
+    q_abs_pyr = reshape(q_abs_pyr, (length(λ), length(a), length(x)))
+    q_sca_pyr = readdlm(joinpath(@__DIR__, "..", "templates", "dorschner_qsca.pyr.txt"), ' ', Float64, '\n')
+    q_sca_pyr = reshape(q_sca_pyr, (length(λ), length(a), length(x)))
+    q_abs_oli = readdlm(joinpath(@__DIR__, "..", "templates", "dorschner_qabs.oli.txt"), ' ', Float64, '\n')
+    q_abs_oli = reshape(q_abs_oli, (length(λ), length(a), length(y)))
+    q_sca_oli = readdlm(joinpath(@__DIR__, "..", "templates", "dorschner_qsca.oli.txt"), ' ', Float64, '\n')
+    q_sca_oli = reshape(q_sca_oli, (length(λ), length(a), length(y)))
+
+    # Create interpolating functions
+    Q_pyr = Dict{Int, GrainEfficiency}()
+    Q_oli = Dict{Int, GrainEfficiency}()
+    for i in eachindex(x)
+        q_abs_pyr_func = Spline2D(a, λ, q_abs_pyr[:, :, i]', kx=1, ky=3)
+        q_sca_pyr_func = Spline2D(a, λ, q_sca_pyr[:, :, i]', kx=1, ky=3)
+        Q_pyr[Int(x[i])] = GrainEfficiency(q_abs_pyr_func, q_sca_pyr_func)
+    end
+    for j in eachindex(y)
+        q_abs_oli_func = Spline2D(a, λ, q_abs_oli[:, :, j]', kx=1, ky=3)
+        q_sca_oli_func = Spline2D(a, λ, q_sca_oli[:, :, j]', kx=1, ky=3)
+        Q_oli[Int(y[j])] = GrainEfficiency(q_abs_oli_func, q_sca_oli_func)
+    end
+
+    Q_pyr, Q_oli
+
+end
+
+
+
 """
     read_irs_data(path)
 

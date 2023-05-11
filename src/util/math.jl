@@ -76,6 +76,7 @@ CH_interp = Spline1D(IceCHTemp[3], IceCHTemp[4]; k=3)
 
 # Save silicate and graphite grain efficiencies
 Q_sil_interp, Q_gra_interp = read_draine_q()
+Q_pyr_interp, Q_oli_interp = read_dorschner_q()
 
 ########################################### UTILITY FUNCTIONS ###############################################
 
@@ -396,12 +397,16 @@ either :sil for silicates or :gra for graphite).  See, references
 https://iopscience.iop.org/article/10.3847/1538-4365/228/1/6/pdf and 
 https://iopscience.iop.org/article/10.1086/521588/pdf
 """
-function dust_emissivity(λ::Real, T::Real, loga::Real, dust_type::Symbol)
+function dust_emissivity(λ::Real, T::Real, loga::Real, dust_type::Symbol, pyr_x::Integer=70, oli_y::Integer=50)
     # Absorption efficiency of dust particles
     if dust_type == :sil
         Q = Q_sil_interp.abs
     elseif dust_type == :gra
         Q = Q_gra_interp.abs
+    elseif dust_type == :pyr
+        Q = Q_pyr_interp[pyr_x].abs
+    elseif dust_type == :oli
+        Q = Q_oli_interp[oli_y].abs
     else
         error("Unrecognized dust type: $dust_type")
     end
@@ -807,7 +812,8 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
     addition to the overall fit
 """
 function model_continuum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer, dust_types::Vector{Symbol}, 
-    stellar_λref::T, dust_λrefs::Vector{T}, extinction_curve::String, extinction_screen::Bool, return_components::Bool) where {T<:Real}
+    stellar_λref::T, dust_λrefs::Vector{T}, extinction_curve::String, extinction_screen::Bool, pyr_x::Integer,
+    oli_y::Integer, return_components::Bool) where {T<:Real}
 
     # Prepare outputs
     comps = Dict{String, Vector{Float64}}()
@@ -820,8 +826,8 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer,
 
     # Add dust continua at various temperatures
     for i ∈ 1:n_dust_cont
-        comps["dust_cont_$i"] = params[pᵢ] .* dust_emissivity.(λ, params[pᵢ+1], params[pᵢ+2], dust_types[i]) ./
-            dust_emissivity(dust_λrefs[i], params[pᵢ+1], params[pᵢ+2], dust_types[i])
+        comps["dust_cont_$i"] = params[pᵢ] .* dust_emissivity.(λ, params[pᵢ+1], params[pᵢ+2], dust_types[i], pyr_x, oli_y) ./
+            dust_emissivity(dust_λrefs[i], params[pᵢ+1], params[pᵢ+2], dust_types[i], pyr_x, oli_y)
         contin .+= comps["dust_cont_$i"] 
         pᵢ += 3
     end
@@ -870,7 +876,8 @@ end
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
 function model_continuum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer, dust_types::Vector{Symbol},
-    stellar_λref::T, dust_λrefs::Vector{T}, extinction_curve::String, extinction_screen::Bool) where {T<:Real}
+    stellar_λref::T, dust_λrefs::Vector{T}, extinction_curve::String, extinction_screen::Bool, pyr_x::Integer,
+    oli_y::Integer) where {T<:Real}
 
     # Prepare outputs
     contin = zeros(Float64, length(λ))
@@ -881,8 +888,8 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer,
 
     # Add dust continua at various temperatures
     for i ∈ 1:n_dust_cont
-        contin .+=  params[pᵢ] .* dust_emissivity.(λ, params[pᵢ+1], params[pᵢ+2], dust_types[i]) ./
-            dust_emissivity(dust_λrefs[i], params[pᵢ+1], params[pᵢ+2], dust_types[i])
+        contin .+=  params[pᵢ] .* dust_emissivity.(λ, params[pᵢ+1], params[pᵢ+2], dust_types[i], pyr_x, oli_y) ./
+            dust_emissivity(dust_λrefs[i], params[pᵢ+1], params[pᵢ+2], dust_types[i], pyr_x, oli_y)
         pᵢ += 3
     end
 
@@ -987,18 +994,18 @@ end
 # Combine model_continuum and model_pah_residuals to get the full continuum in one function (after getting the optimized parameters)
 function model_continuum_and_pah(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer, dust_types::Vector{Symbol},
     stellar_λref::T, dust_λrefs::Vector{T}, n_dust_feat::Integer, extinction_curve::String, extinction_screen::Bool,
-    return_components::Bool=true) where {T<:Real}
+    pyr_x::Integer, oli_y::Integer, return_components::Bool=true) where {T<:Real}
 
     pars_1 = vcat(params[1:(2+3n_dust_cont+4)], [0., 0.])
     pars_2 = params[(3+3n_dust_cont+4):end]
 
     if return_components
         contin_1, ccomps = model_continuum(λ, pars_1, n_dust_cont, dust_types, stellar_λref, dust_λrefs, extinction_curve, 
-            extinction_screen, true)
+            extinction_screen, pyr_x, oli_y, true)
         contin_2, pcomps = model_pah_residuals(λ, pars_2, n_dust_feat, ccomps["extinction"], true)
     else
         contin_1 = model_continuum(λ, pars_1, n_dust_cont, dust_types, stellar_λref, dust_λrefs, extinction_curve, 
-            extinction_screen)
+            extinction_screen, pyr_x, oli_y)
         pᵢ = 3 + 3n_dust_cont
         if extinction_curve == "d+"
             ext_curve = τ_dp.(λ, pars_1[pᵢ+3])
@@ -1232,8 +1239,8 @@ Currently this includes the integrated intensity and signal to noise ratios of d
 """
 function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, n_dust_cont::Integer,
     dust_types::Vector{Symbol}, stellar_λref::Real, dust_λrefs::Vector{<:Real}, n_dust_feat::Integer, 
-    extinction_curve::String, extinction_screen::Bool, n_lines::Integer, n_acomps::Integer, n_comps::Integer, 
-    lines::TransitionLines, flexible_wavesol::Bool, lsf::Function, popt_c::Vector{T}, popt_l::Vector{T}, 
+    extinction_curve::String, extinction_screen::Bool, pyr_x::Integer, oli_y::Integer, n_lines::Integer, n_acomps::Integer, 
+    n_comps::Integer, lines::TransitionLines, flexible_wavesol::Bool, lsf::Function, popt_c::Vector{T}, popt_l::Vector{T}, 
     perr_c::Vector{T}, perr_l::Vector{T}, extinction::Vector{T}, mask_lines::BitVector, continuum::Vector{T}, 
     area_sr::Vector{T}, propagate_err::Bool=true) where {T<:Real}
 
@@ -1276,7 +1283,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
 
         # Calculate the equivalent width using the utility function
         # eqw, e_err = calculate_eqw(λ, popt_c, perr_c, N, n_dust_cont, dust_types, stellar_λref, dust_λrefs, n_dust_feat, 
-            # extinction_curve, extinction_screen, :Drude, A*N*ext, A_err*N*ext, μ, μ_err, fwhm, fwhm_err, propagate_err=propagate_err)
+            # extinction_curve, extinction_screen, pyr_x, oli_y, :Drude, A*N*ext, A_err*N*ext, μ, μ_err, fwhm, fwhm_err, propagate_err=propagate_err)
         eqw, e_err = 0, 0
 
         @debug "PAH feature with ($A_cgs, $μ, $fwhm) and errors ($A_cgs_err, $μ_err, $fwhm_err)"
@@ -1409,7 +1416,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
 
                 # Calculate the equivalent width using the utility function
                 # p_lines[pₒ+1], p_lines_err[pₒ+1] = calculate_eqw(λ, popt_c, perr_c, N, n_dust_cont, dust_types, stellar_λref, dust_λrefs,
-                #     n_dust_feat, extinction_curve, extinction_screen, lines.profiles[k, j], amp*N*ext, amp_err*N*ext, 
+                #     n_dust_feat, extinction_curve, extinction_screen, pyr_x, oli_y, lines.profiles[k, j], amp*N*ext, amp_err*N*ext, 
                 #     mean_μm, mean_μm_err, fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err,
                 #     propagate_err=propagate_err)
                 p_lines[pₒ+1], p_lines_err[pₒ+1] = 0, 0
@@ -1487,8 +1494,8 @@ integral of the ratio of the feature profile to the underlying continuum, calcul
 """
 function calculate_eqw(λ::Vector{T}, popt_c::Vector{T}, perr_c::Vector{T}, N::Real, n_dust_cont::Integer,
     dust_types::Vector{Symbol}, stellar_λref::T, dust_λrefs::Vector{T}, n_dust_feat::Integer, extinction_curve::String, 
-    extinction_screen::Bool, profile::Symbol, amp::T, amp_err::T, peak::T, peak_err::T, fwhm::T, fwhm_err::T; 
-    h3::Union{T,Nothing}=nothing, h3_err::Union{T,Nothing}=nothing, h4::Union{T,Nothing}=nothing, 
+    extinction_screen::Bool, pyr_x::Integer, oli_y::Integer, profile::Symbol, amp::T, amp_err::T, peak::T, peak_err::T, fwhm::T, 
+    fwhm_err::T; h3::Union{T,Nothing}=nothing, h3_err::Union{T,Nothing}=nothing, h4::Union{T,Nothing}=nothing, 
     h4_err::Union{T,Nothing}=nothing, η::Union{T,Nothing}=nothing, η_err::Union{T,Nothing}=nothing, 
     propagate_err::Bool=true) where {T<:Real}
 
@@ -1505,7 +1512,8 @@ function calculate_eqw(λ::Vector{T}, popt_c::Vector{T}, perr_c::Vector{T}, N::R
     if profile == :Drude
         # do not shift the drude profiles since x=0 and mu=0 cause problems;
         # the wide wings should allow quadgk to find the solution even without shifting it
-        cont = x -> N * model_continuum([x], popt_c, n_dust_cont, dust_types, stellar_λref, dust_λrefs, extinction_curve, extinction_screen)[1]
+        cont = x -> N * model_continuum([x], popt_c, n_dust_cont, dust_types, stellar_λref, dust_λrefs, extinction_curve, extinction_screen,
+            pyr_x, oli_y)[1]
         eqw = quadgk(x -> Drude(x, amp, peak, fwhm) / cont(x), λmin, λmax, order=200)[1]
         # errors
         if propagate_err
@@ -1523,7 +1531,7 @@ function calculate_eqw(λ::Vector{T}, popt_c::Vector{T}, perr_c::Vector{T}, N::R
         # Make sure to use [x] as a vector and take the first element [1] of the result, since the continuum functions
         # were written to be used with vector inputs + outputs
         cont = x -> N * model_continuum_and_pah([x], popt_c, n_dust_cont, dust_types, stellar_λref, dust_λrefs, 
-            n_dust_feat, extinction_curve, extinction_screen, false)[1]
+            n_dust_feat, extinction_curve, extinction_screen, pyr_x, oli_y, false)[1]
         eqw = quadgk(x -> Gaussian(x+peak, amp, peak, fwhm) / cont(x+peak), λmin-peak, λmax-peak, order=200)[1]
         if propagate_err
             err_l = eqw - quadgk(x -> Gaussian(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps())) / cont(x+peak),
@@ -1538,7 +1546,7 @@ function calculate_eqw(λ::Vector{T}, popt_c::Vector{T}, perr_c::Vector{T}, N::R
         end
     elseif profile == :Lorentzian
         cont = x -> N * model_continuum_and_pah([x], popt_c, n_dust_cont, dust_types, stellar_λref, dust_λrefs, 
-            n_dust_feat, extinction_curve, extinction_screen, false)[1]
+            n_dust_feat, extinction_curve, extinction_screen, pyr_x, oli_y, false)[1]
         eqw = quadgk(x -> Lorentzian(x+peak, amp, peak, fwhm) / cont(x+peak), λmin-peak, λmax-peak, order=200)[1]
         if propagate_err
             err_l = eqw - quadgk(x -> Lorentzian(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps())) / cont(x+peak),
@@ -1553,7 +1561,7 @@ function calculate_eqw(λ::Vector{T}, popt_c::Vector{T}, perr_c::Vector{T}, N::R
         end
     elseif profile == :GaussHermite
         cont = x -> N * model_continuum_and_pah([x], popt_c, n_dust_cont, dust_types, stellar_λref, dust_λrefs, 
-            n_dust_feat, extinction_curve, extinction_screen, false)[1]
+            n_dust_feat, extinction_curve, extinction_screen, pyr_x, oli_y, false)[1]
         eqw = quadgk(x -> GaussHermite(x+peak, amp, peak, fwhm, h3, h4) / cont(x+peak), λmin-peak, λmax-peak, order=200)[1]
         if propagate_err
             err_l = eqw - quadgk(x -> GaussHermite(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), h3-h3_err, h4-h4_err) / 
@@ -1568,7 +1576,7 @@ function calculate_eqw(λ::Vector{T}, popt_c::Vector{T}, perr_c::Vector{T}, N::R
         end
     elseif profile == :Voigt
         cont = x -> N * model_continuum_and_pah([x], popt_c, n_dust_cont, dust_types, stellar_λref, dust_λrefs, 
-            n_dust_feat, extinction_curve, extinction_screen, false)[1]
+            n_dust_feat, extinction_curve, extinction_screen, pyr_x, oli_y, false)[1]
         eqw = quadgk(x -> Voigt(x+peak, amp, peak, fwhm, η) / cont(x+peak), λmin-peak, λmax-peak, order=200)[1]
         if propagate_err
             err_l = eqw - quadgk(x -> Voigt(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), η-η_err) / 

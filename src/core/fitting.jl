@@ -228,10 +228,10 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         ptot[lock_1] .= p1fix
         if !return_comps
             model_continuum(x, ptot, cube_fitter.n_dust_cont, cube_fitter.continuum.d_dc, stellar_λref, dust_λrefs, 
-                cube_fitter.extinction_curve, cube_fitter.extinction_screen)
+                cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.pyr_x, cube_fitter.oli_y)
         else
             model_continuum(x, ptot, cube_fitter.n_dust_cont, cube_fitter.continuum.d_dc, stellar_λref, dust_λrefs, 
-                cube_fitter.extinction_curve, cube_fitter.extinction_screen, true)
+                cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.pyr_x, cube_fitter.oli_y, true)
         end
     end
     res_1 = cmpfit(λ_spax, I_spax, σ_spax, fit_step1, p1free, parinfo=parinfo_1, config=config)
@@ -299,7 +299,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
 
     # Create the full model, again only if not bootstrapping
     I_model, comps = model_continuum_and_pah(λ, popt, cube_fitter.n_dust_cont, cube_fitter.continuum.d_dc, stellar_λref,
-        dust_λrefs, cube_fitter.n_dust_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen)
+        dust_λrefs, cube_fitter.n_dust_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.pyr_x,
+        cube_fitter.oli_y)
 
     if init
         cube_fitter.p_init_cont[:] .= vcat(popt, res_1.param[end-1:end])
@@ -701,7 +702,7 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
         # individual continuum components
         ax1.plot(λ, comps["stellar"] .* ext_full ./ norm ./ λ, "m--", alpha=0.5, label="Stellar continuum")
         for i in 1:n_dust_cont
-            ax1.plot(λ, comps["dust_cont_$i"] .* ext_full ./ norm ./ λ, dust_types[i]==:sil ? "k--" : "k-.", alpha=0.5,
+            ax1.plot(λ, comps["dust_cont_$i"] .* ext_full ./ norm ./ λ, dust_types[i]==:gra ? "k--" : "k-.", alpha=0.5,
                 label="Dust continuum")
         end
         # full PAH profile
@@ -782,8 +783,8 @@ end
 
 # Helper function for fitting one iteration (i.e. for bootstrapping)
 function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
-    σ::Vector{<:Real}, norm::Real, stellar_λref::Real, dust_λrefs::Vector{<:Real}, area_sr::Vector{<:Real}, mask_lines::BitVector, 
-    I_spline::Vector{<:Real}; bootstrap_iter::Bool=false, p1_boots_c::Union{Vector{<:Real},Nothing}=nothing, 
+    σ::Vector{<:Real}, σ_stat::Vector{<:Real}, norm::Real, stellar_λref::Real, dust_λrefs::Vector{<:Real}, area_sr::Vector{<:Real}, 
+    mask_lines::BitVector, I_spline::Vector{<:Real}; bootstrap_iter::Bool=false, p1_boots_c::Union{Vector{<:Real},Nothing}=nothing, 
     p1_boots_l::Union{Vector{<:Real},Nothing}=nothing, use_ap::Bool=false, init::Bool=false)
 
     # Interpolate the LSF
@@ -797,7 +798,7 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         @timeit timer_output "continuum_fit_spaxel" continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, norm,
         stellar_λref, dust_λrefs, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_c)
     popt_l, I_line, comps_line, n_free_l, perr_l = 
-        @timeit timer_output "line_fit_spaxel" line_fit_spaxel(cube_fitter, spaxel, λ, I, σ, I_cont, comps_cont["extinction"], 
+        @timeit timer_output "line_fit_spaxel" line_fit_spaxel(cube_fitter, spaxel, λ, I, σ_stat, I_cont, comps_cont["extinction"], 
         lsf_interp_func, norm, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_l)
 
     # Combine the continuum and line models
@@ -828,16 +829,16 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     dof = n_data - n_free
 
     # chi^2 and reduced chi^2 of the model
-    χ2 = sum(@. (I - I_model)^2 / σ^2)
+    χ2 = sum(@. (I - I_model)^2 / σ_stat^2)
 
     # Add dust feature and line parameters (intensity and SNR)
     if !init
         p_dust, p_lines, p_dust_err, p_lines_err = 
             @timeit timer_output "calculate_extra_parameters" calculate_extra_parameters(λ, I, norm, cube_fitter.n_dust_cont,
                 cube_fitter.continuum.d_dc, stellar_λref, dust_λrefs, cube_fitter.n_dust_feat, cube_fitter.extinction_curve, 
-                cube_fitter.extinction_screen, cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, cube_fitter.lines, 
-                cube_fitter.flexible_wavesol, lsf_interp_func, popt_c[1:end-2], popt_l, perr_c[1:end-2], perr_l, comps["extinction"], 
-                mask_lines, I_spline, area_sr, !bootstrap_iter)
+                cube_fitter.extinction_screen, cube_fitter.pyr_x, cube_fitter.oli_y, cube_fitter.n_lines, cube_fitter.n_acomps, 
+                cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol, lsf_interp_func, popt_c[1:end-2], popt_l, 
+                perr_c[1:end-2], perr_l, comps["extinction"], mask_lines, I_spline, area_sr, !bootstrap_iter)
         p_out = [popt_c[1:end-2]; popt_l; p_dust; p_lines; χ2; dof]
         p_err = [perr_c[1:end-2]; perr_l; p_dust_err; p_lines_err; 0.; 0.]
         
@@ -889,7 +890,8 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
 
     resid = I[.!mask_lines] .- I_spline[.!mask_lines]
     σ_stat = std(resid[resid .< 3std(resid)])
-    σ .= σ_stat
+    σ_stat = repeat([σ_stat], length(σ))
+    # σ .= σ_stat
 
     # Check if the fit has already been performed
     if !isfile(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).csv")) || cube_fitter.overwrite
@@ -918,7 +920,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
 
             # Perform the regular fit
             p_out, p_err, popt_c, popt_l, perr_c, perr_l, I_model, comps, χ2, dof = _fit_spaxel_iterfunc(
-                cube_fitter, spaxel, λ, I, σ, norm, stellar_λref, dust_λrefs, area_sr, mask_lines, I_spline; 
+                cube_fitter, spaxel, λ, I, σ, σ_stat, norm, stellar_λref, dust_λrefs, area_sr, mask_lines, I_spline; 
                 bootstrap_iter=false, use_ap=use_ap)
             # Convert p_err into 2 columns for the lower/upper errorbars
             p_err = [p_err p_err]
@@ -930,7 +932,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                 @debug "Setting the random seed to: $(cube_fitter.random_seed)"
                 Random.seed!(cube_fitter.random_seed)
                 # Resample the data using normal distributions with the statistical uncertainties
-                I_boots = [rand.(Normal.(cube_data.I[spaxel, :], σ)) for _ in 1:cube_fitter.n_bootstrap]
+                I_boots = [rand.(Normal.(cube_data.I[spaxel, :], σ_stat)) for _ in 1:cube_fitter.n_bootstrap]
                 # Initialize 2D parameter array
                 p_boot = SharedArray(zeros(length(p_out), cube_fitter.n_bootstrap))
                 # Initialize bootstrap model array
@@ -955,7 +957,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
 
                     # Re-perform the fitting on the resampled data
                     pb_i, _, _, _, _, _, Ib_i, _, _, _ = with_logger(NullLogger()) do
-                        _fit_spaxel_iterfunc(cube_fitter, spaxel, λ, I_boot, σ, norm, stellar_λref, dust_λrefs, area_sr, 
+                        _fit_spaxel_iterfunc(cube_fitter, spaxel, λ, I_boot, σ, σ_stat, norm, stellar_λref, dust_λrefs, area_sr, 
                             mask_lines_boot, I_spline_boot; bootstrap_iter=true, p1_boots_c=popt_c, p1_boots_l=popt_l, use_ap=use_ap)
                     end
                     p_boot[:, nboot] .= pb_i
@@ -979,7 +981,8 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
 
                 # Replace the best-fit model with the 50th percentile model to be consistent with p_out
                 I_boot_cont, comps_boot_cont = model_continuum_and_pah(λ, p_out[1:split1], cube_fitter.n_dust_cont, cube_fitter.continuum.d_dc,
-                    stellar_λref, dust_λrefs, cube_fitter.n_dust_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, true)
+                    stellar_λref, dust_λrefs, cube_fitter.n_dust_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, 
+                    cube_fitter.pyr_x, cube_fitter.oli_y, true)
                 I_boot_line, comps_boot_line = model_line_residuals(λ, p_out[split1+1:split2], cube_fitter.n_lines, cube_fitter.n_comps,
                     cube_fitter.lines, cube_fitter.flexible_wavesol, comps_boot_cont["extinction"], lsf_interp_func, true)
 
@@ -996,7 +999,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                 end
 
                 # Recalculate chi^2 based on the median model
-                p_out[end-1] = sum(@. (I - I_model)^2/σ^2)
+                p_out[end-1] = sum(@. (I - I_model)^2/σ_stat^2)
                 χ2 = p_out[end-1]
 
             end
@@ -1045,7 +1048,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
             end
 
             # Overwrite the errors with the statistical errors
-            cube_data.σ[spaxel, :] .= σ
+            cube_data.σ[spaxel, :] .= σ_stat
 
             p_out, p_err
         end
@@ -1060,7 +1063,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
     p_err = results[:, 2:3]
 
     # Still need to overwrite the raw errors with the statistical errors
-    cube_data.σ[spaxel, :] .= σ
+    cube_data.σ[spaxel, :] .= σ_stat
 
     p_out, p_err
 
@@ -1113,7 +1116,7 @@ function fit_stack!(cube_fitter::CubeFitter)
     @debug "Reference wavelengths for dust continua: $dust_λrefs"
 
     I_model_init, comps_init, χ2_init, dof_init = _fit_spaxel_iterfunc(
-        cube_fitter, CartesianIndex(0,0), λ_init, I_sum_init, σ_sum_init, norm, stellar_λref, dust_λrefs, area_sr_init, 
+        cube_fitter, CartesianIndex(0,0), λ_init, I_sum_init, σ_sum_init, σ_stat_init, norm, stellar_λref, dust_λrefs, area_sr_init, 
         mask_lines_init, I_spline_init; bootstrap_iter=false, use_ap=false, init=true)
 
     χ2red_init = χ2_init / dof_init
