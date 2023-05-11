@@ -147,9 +147,9 @@ function parse_dust()
     # Read in the dust file
     dust = TOML.parsefile(joinpath(@__DIR__, "..", "options", "dust.toml"))
     keylist1 = ["stellar_continuum_temp", "dust_grain_types", "dust_grain_sizes", 
-        "dust_continuum_temps", "dust_features", "extinction"]
+        "dust_continuum_temps", "dust_optical_depths", "dust_features", "extinction"]
     keylist2 = ["wave", "fwhm"]
-    keylist3 = ["tau_9_7", "tau_ice", "tau_ch", "beta"]
+    keylist3 = ["tau_ice", "tau_ch", "beta"]
     keylist5 = ["val", "plim", "locked"]
 
     # Loop through all of the required keys that should be in the file and confirm that they are there
@@ -163,6 +163,9 @@ function parse_dust()
         end
         for ds ∈ dust["dust_grain_sizes"]
             @assert haskey(ds, key) "Missing option $key in dust grain size options!"
+        end
+        for dt ∈ dust["dust_optical_depths"]
+            @assert haskey(dt, key) "Missing option $key in dust optical depth options!"
         end
         for df_key ∈ keys(dust["dust_features"])
             for df_key2 ∈ keylist2
@@ -187,11 +190,13 @@ function parse_dust()
     d_dc = Symbol.(dust["dust_grain_types"])
     a_dc = [from_dict(dust["dust_grain_sizes"][i]) for i ∈ eachindex(dust["dust_grain_sizes"])]
     T_dc = [from_dict(dust["dust_continuum_temps"][i]) for i ∈ eachindex(dust["dust_continuum_temps"])]
+    τ_dc = [from_dict(dust["dust_optical_depths"][i]) for i ∈ eachindex(dust["dust_optical_depths"])]
     for i ∈ eachindex(d_dc)
         msg *= "\n----------------"
         msg *= "\nType: $(d_dc[i])"
         msg *= "\nSize: $(a_dc[i])"
         msg *= "\nTemp: $(T_dc[i])"
+        msg *= "\nτ_9.7: $(τ_dc[i])"
     end
     @debug msg
 
@@ -220,8 +225,8 @@ function parse_dust()
     msg = "Extinction:"
     # Write tau_9_7 value based on the provided guess
     # dust["extinction"]["tau_9_7"]["val"] = τ_guess
-    τ_97 = from_dict(dust["extinction"]["tau_9_7"])
-    msg *= "\nTau_sil $τ_97"
+    # τ_97 = from_dict(dust["extinction"]["tau_9_7"])
+    # msg *= "\nTau_sil $τ_97"
     τ_ice = from_dict(dust["extinction"]["tau_ice"])
     msg *= "\nTau_ice $τ_ice"
     τ_ch = from_dict(dust["extinction"]["tau_ch"])
@@ -231,7 +236,7 @@ function parse_dust()
     @debug msg
 
     # Create continuum object
-    continuum = Continuum(T_s, T_dc, a_dc, d_dc, τ_97, τ_ice, τ_ch, β)
+    continuum = Continuum(T_s, T_dc, a_dc, τ_dc, d_dc, τ_ice, τ_ch, β)
 
     continuum, dust_features
 end

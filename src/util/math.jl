@@ -813,6 +813,20 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer,
     comps = Dict{String, Vector{Float64}}()
     contin = zeros(Float64, length(λ))
 
+    # Extinction 
+    βᵢ = 3 + 4n_dust_cont + 2
+    if extinction_curve == "d+"
+        τλ = τ_dp.(λ, params[βᵢ])
+    elseif extinction_curve == "kvt"
+        τλ = τ_kvt.(λ, params[βᵢ])
+    elseif extinction_curve == "ct"
+        τλ = τ_ct.(λ)
+    elseif extinction_curve == "ohm"
+        τλ = τ_ohm.(λ)
+    else
+        error("Unrecognized extinction curve: $extinction_curve")
+    end
+
     # Stellar blackbody continuum (usually at 5000 K)
     comps["stellar"] = params[1] .* Blackbody_ν.(λ, params[2]) ./ Blackbody_ν(stellar_λref, params[2])
     contin .+= comps["stellar"]
@@ -822,40 +836,27 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer,
     for i ∈ 1:n_dust_cont
         comps["dust_cont_$i"] = params[pᵢ] .* dust_emissivity.(λ, params[pᵢ+1], params[pᵢ+2], dust_types[i]) ./
             dust_emissivity(dust_λrefs[i], params[pᵢ+1], params[pᵢ+2], dust_types[i])
+        comps["dust_cont_$i"] .*= extinction.(τλ, params[pᵢ+3], screen=extinction_screen)
         contin .+= comps["dust_cont_$i"] 
-        pᵢ += 3
+        pᵢ += 4
     end
-
-    # Extinction 
-    if extinction_curve == "d+"
-        ext_curve = τ_dp.(λ, params[pᵢ+3])
-    elseif extinction_curve == "kvt"
-        ext_curve = τ_kvt.(λ, params[pᵢ+3])
-    elseif extinction_curve == "ct"
-        ext_curve = τ_ct.(λ)
-    elseif extinction_curve == "ohm"
-        ext_curve = τ_ohm.(λ)
-    else
-        error("Unrecognized extinction curve: $extinction_curve")
-    end
-    comps["extinction"] = extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
 
     # Ice+CH Absorption
-    ext_ice = τ_ice.(λ)
-    comps["abs_ice"] = extinction.(ext_ice, params[pᵢ+1], screen=true)
-    ext_ch = τ_ch.(λ)
-    comps["abs_ch"] = extinction.(ext_ch, params[pᵢ+2], screen=true)
+    τλ_ice = τ_ice.(λ)
+    comps["abs_ice"] = extinction.(τλ_ice, params[pᵢ+1], screen=true)
+    τλ_ch = τ_ch.(λ)
+    comps["abs_ch"] = extinction.(τλ_ch, params[pᵢ+2], screen=true)
 
-    contin .*= comps["extinction"] .* comps["abs_ice"] .* comps["abs_ch"]
-    pᵢ += 4
+    contin .*= comps["abs_ice"] .* comps["abs_ch"]
+    pᵢ += 3
 
     # Add Smith+2006 PAH templates
     pah3 = Smith3_interp.(λ)
     comps["pah_temp_3"] = params[pᵢ] .* pah3 ./ maximum(pah3)
-    contin .+= comps["pah_temp_3"] .* comps["extinction"]
+    contin .+= comps["pah_temp_3"]
     pah4 = Smith4_interp.(λ)
     comps["pah_temp_4"] = params[pᵢ+1] .* pah4 ./ maximum(pah4)
-    contin .+= comps["pah_temp_4"] .* comps["extinction"]
+    contin .+= comps["pah_temp_4"]
     # (Not affected by Ice+CH absorption)
     pᵢ += 2
 
@@ -875,6 +876,20 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer,
     # Prepare outputs
     contin = zeros(Float64, length(λ))
 
+    # Get τ as a function of wavelength (normalized at 9.7 μm)
+    βᵢ = 3 + 4n_dust_cont + 2
+    if extinction_curve == "d+"
+        τλ = τ_dp.(λ, params[βᵢ])
+    elseif extinction_curve == "kvt"
+        τλ = τ_kvt.(λ, params[βᵢ])
+    elseif extinction_curve == "ct"
+        τλ = τ_ct.(λ)
+    elseif extinction_curve == "ohm"
+        τλ = τ_ohm.(λ)
+    else
+        error("Unrecognized extinction curve: $extinction_curve")
+    end
+
     # Stellar blackbody continuum (usually at 5000 K)
     contin .+= params[1] .* Blackbody_ν.(λ, params[2]) ./ Blackbody_ν(stellar_λref, params[2])
     pᵢ = 3
@@ -883,37 +898,24 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, n_dust_cont::Integer,
     for i ∈ 1:n_dust_cont
         contin .+=  params[pᵢ] .* dust_emissivity.(λ, params[pᵢ+1], params[pᵢ+2], dust_types[i]) ./
             dust_emissivity(dust_λrefs[i], params[pᵢ+1], params[pᵢ+2], dust_types[i])
-        pᵢ += 3
+        contin .*= extinction.(τλ, params[pᵢ+3], screen=extinction_screen)
+        pᵢ += 4
     end
-
-    # Extinction 
-    if extinction_curve == "d+"
-        ext_curve = τ_dp.(λ, params[pᵢ+3])
-    elseif extinction_curve == "kvt"
-        ext_curve = τ_kvt.(λ, params[pᵢ+3])
-    elseif extinction_curve == "ct"
-        ext_curve = τ_ct.(λ)
-    elseif extinction_curve == "ohm"
-        ext_curve = τ_ohm.(λ)
-    else
-        error("Unrecognized extinction curve: $extinction_curve")
-    end
-    ext = extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
 
     # Ice+CH absorption
-    ext_ice = τ_ice.(λ)
-    abs_ice = extinction.(ext_ice, params[pᵢ+1], screen=true)
-    ext_ch = τ_ch.(λ)
-    abs_ch = extinction.(ext_ch, params[pᵢ+2], screen=true)
+    τλ_ice = τ_ice.(λ)
+    abs_ice = extinction.(τλ_ice, params[pᵢ+1], screen=true)
+    τλ_ch = τ_ch.(λ)
+    abs_ch = extinction.(τλ_ch, params[pᵢ+2], screen=true)
 
-    contin .*= ext .* abs_ice .* abs_ch
-    pᵢ += 4
+    contin .*= abs_ice .* abs_ch
+    pᵢ += 3
 
     # Add Smith+2006 PAH templates
     pah3 = Smith3_interp.(λ)
-    contin .+= params[pᵢ] .* pah3 ./ maximum(pah3) .* ext
+    contin .+= params[pᵢ] .* pah3 ./ maximum(pah3)
     pah4 = Smith4_interp.(λ)
-    contin .+= params[pᵢ+1] .* pah4 ./ maximum(pah4) .* ext
+    contin .+= params[pᵢ+1] .* pah4 ./ maximum(pah4)
     # (Not affected by Ice+CH absorption)
     pᵢ += 2
 
@@ -935,8 +937,7 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in
     addition to the overall fit
 """
-function model_pah_residuals(λ::Vector{T}, params::Vector{T}, n_dust_feat::Integer,
-    ext_curve::Vector{T}, return_components::Bool) where {T<:Real}
+function model_pah_residuals(λ::Vector{T}, params::Vector{T}, n_dust_feat::Integer, return_components::Bool) where {T<:Real}
 
     # Prepare outputs
     comps = Dict{String, Vector{Float64}}()
@@ -950,9 +951,6 @@ function model_pah_residuals(λ::Vector{T}, params::Vector{T}, n_dust_feat::Inte
         pᵢ += 3
     end
 
-    # Apply extinction
-    contin .*= ext_curve
-
     # Return components, if necessary
     if return_components
         return contin, comps
@@ -963,8 +961,7 @@ end
 
 
 # Multiple dispatch for more efficiency
-function model_pah_residuals(λ::Vector{T}, params::Vector{T}, n_dust_feat::Integer,
-    ext_curve::Vector{T}) where {T<:Real}
+function model_pah_residuals(λ::Vector{T}, params::Vector{T}, n_dust_feat::Integer) where {T<:Real}
 
     # Prepare outputs
     contin = zeros(Float64, length(λ))
@@ -976,9 +973,6 @@ function model_pah_residuals(λ::Vector{T}, params::Vector{T}, n_dust_feat::Inte
         pᵢ += 3
     end
 
-    # Apply extinction
-    contin .*= ext_curve
-
     contin
 
 end
@@ -989,30 +983,17 @@ function model_continuum_and_pah(λ::Vector{T}, params::Vector{T}, n_dust_cont::
     stellar_λref::T, dust_λrefs::Vector{T}, n_dust_feat::Integer, extinction_curve::String, extinction_screen::Bool,
     return_components::Bool=true) where {T<:Real}
 
-    pars_1 = vcat(params[1:(2+3n_dust_cont+4)], [0., 0.])
-    pars_2 = params[(3+3n_dust_cont+4):end]
+    pars_1 = vcat(params[1:(2+4n_dust_cont+3)], [0., 0.])
+    pars_2 = params[(3+4n_dust_cont+3):end]
 
     if return_components
         contin_1, ccomps = model_continuum(λ, pars_1, n_dust_cont, dust_types, stellar_λref, dust_λrefs, extinction_curve, 
             extinction_screen, true)
-        contin_2, pcomps = model_pah_residuals(λ, pars_2, n_dust_feat, ccomps["extinction"], true)
+        contin_2, pcomps = model_pah_residuals(λ, pars_2, n_dust_feat, true)
     else
         contin_1 = model_continuum(λ, pars_1, n_dust_cont, dust_types, stellar_λref, dust_λrefs, extinction_curve, 
             extinction_screen)
-        pᵢ = 3 + 3n_dust_cont
-        if extinction_curve == "d+"
-            ext_curve = τ_dp.(λ, pars_1[pᵢ+3])
-        elseif extinction_curve == "kvt"
-            ext_curve = τ_kvt.(λ, pars_1[pᵢ+3])
-        elseif extinction_curve == "ct"
-            ext_curve = τ_ct.(λ)
-        elseif extinction_curve == "ohm"
-            ext_curve = τ_ohm.(λ)
-        else
-            error("Unrecognized extinction curve: $extinction_curve")
-        end
-        ext = extinction.(ext_curve, pars_1[pᵢ], screen=extinction_screen)
-        contin_2 = model_pah_residuals(λ, pars_2, n_dust_feat, ext)
+        contin_2 = model_pah_residuals(λ, pars_2, n_dust_feat)
     end
 
     contin = contin_1 .+ contin_2
@@ -1050,7 +1031,7 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
     addition to the overall fit
 """
 function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_comps::S, lines::TransitionLines, 
-    flexible_wavesol::Bool, ext_curve::Vector{T}, lsf::Function, return_components::Bool) where {T<:Real,S<:Integer}
+    flexible_wavesol::Bool, lsf::Function, return_components::Bool) where {T<:Real,S<:Integer}
 
     # Prepare outputs
     comps = Dict{String, Vector{Float64}}()
@@ -1127,9 +1108,6 @@ function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_co
         end
     end
 
-    # Apply extinction
-    contin .*= ext_curve
-
     # Return components if necessary
     if return_components
         return contin, comps
@@ -1141,7 +1119,7 @@ end
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
 function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_comps::S, lines::TransitionLines, 
-    flexible_wavesol::Bool, ext_curve::Vector{T}, lsf::Function) where {T<:Real,S<:Integer}
+    flexible_wavesol::Bool, lsf::Function) where {T<:Real,S<:Integer}
 
     # Prepare outputs
     contin = zeros(Float64, length(λ))
@@ -1214,9 +1192,6 @@ function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_co
         end
     end
     
-    # Apply extinction
-    contin .*= ext_curve
-
     contin
 
 end
@@ -1234,7 +1209,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     dust_types::Vector{Symbol}, stellar_λref::Real, dust_λrefs::Vector{<:Real}, n_dust_feat::Integer, 
     extinction_curve::String, extinction_screen::Bool, n_lines::Integer, n_acomps::Integer, n_comps::Integer, 
     lines::TransitionLines, flexible_wavesol::Bool, lsf::Function, popt_c::Vector{T}, popt_l::Vector{T}, 
-    perr_c::Vector{T}, perr_l::Vector{T}, extinction::Vector{T}, mask_lines::BitVector, continuum::Vector{T}, 
+    perr_c::Vector{T}, perr_l::Vector{T}, mask_lines::BitVector, continuum::Vector{T}, 
     area_sr::Vector{T}, propagate_err::Bool=true) where {T<:Real}
 
     @debug "Calculating extra parameters"
@@ -1247,7 +1222,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     p_dust_err = zeros(3n_dust_feat)
     pₒ = 1
     # Initial parameter vector index where dust profiles start
-    pᵢ = 3 + 3n_dust_cont + 4
+    pᵢ = 3 + 4n_dust_cont + 3
 
     for ii ∈ 1:n_dust_feat
 
@@ -1268,15 +1243,12 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
             A_cgs_err *= area_sr[cent_ind]
         end
 
-        # Get the extinction profile at the center
-        ext = extinction[cent_ind]
-
         # Calculate the flux using the utility function
         flux, f_err = calculate_flux(:Drude, A_cgs, A_cgs_err, μ, μ_err, fwhm, fwhm_err, propagate_err=propagate_err)
 
         # Calculate the equivalent width using the utility function
         # eqw, e_err = calculate_eqw(λ, popt_c, perr_c, N, n_dust_cont, dust_types, stellar_λref, dust_λrefs, n_dust_feat, 
-            # extinction_curve, extinction_screen, :Drude, A*N*ext, A_err*N*ext, μ, μ_err, fwhm, fwhm_err, propagate_err=propagate_err)
+            # extinction_curve, extinction_screen, :Drude, A*N, A_err*N, μ, μ_err, fwhm, fwhm_err, propagate_err=propagate_err)
         eqw, e_err = 0, 0
 
         @debug "PAH feature with ($A_cgs, $μ, $fwhm) and errors ($A_cgs_err, $μ_err, $fwhm_err)"
@@ -1294,7 +1266,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
 
         # SNR, calculated as (peak amplitude) / (RMS intensity of the surrounding spectrum)
         # include the extinction factor when calculating the SNR
-        p_dust[pₒ+2] = A*N*ext / std(I[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)] .- continuum[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)])
+        p_dust[pₒ+2] = A*N / std(I[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)] .- continuum[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)])
         @debug "integrated flux $(p_dust[pₒ]) +/- $(p_dust_err[pₒ]) " *
             "(erg s^-1 cm^-2 sr^-1), equivalent width $(p_dust[pₒ+1]) +/- $(p_dust_err[pₒ+1]) um, " *
             "and SNR $(p_dust[pₒ+2])"
@@ -1398,9 +1370,6 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                     amp_cgs_err *= area_sr[cent_ind]
                 end
 
-                # Get the extinction factor at the line center
-                ext = extinction[cent_ind]
-
                 @debug "Line with ($amp_cgs, $mean_μm, $fwhm_μm) and errors ($amp_cgs_err, $mean_μm_err, $fwhm_μm_err)"
 
                 # Calculate line flux using the helper function
@@ -1409,13 +1378,13 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
 
                 # Calculate the equivalent width using the utility function
                 # p_lines[pₒ+1], p_lines_err[pₒ+1] = calculate_eqw(λ, popt_c, perr_c, N, n_dust_cont, dust_types, stellar_λref, dust_λrefs,
-                #     n_dust_feat, extinction_curve, extinction_screen, lines.profiles[k, j], amp*N*ext, amp_err*N*ext, 
+                #     n_dust_feat, extinction_curve, extinction_screen, lines.profiles[k, j], amp*N, amp_err*N, 
                 #     mean_μm, mean_μm_err, fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err,
                 #     propagate_err=propagate_err)
                 p_lines[pₒ+1], p_lines_err[pₒ+1] = 0, 0
 
                 # SNR
-                p_lines[pₒ+2] = amp*N*ext / std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)])
+                p_lines[pₒ+2] = amp*N / std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)])
 
                 @debug "integrated flux $(p_lines[pₒ]) +/- $(p_lines_err[pₒ]) " *
                     "(erg s^-1 cm^-2 sr^-1), equivalent width $(p_lines[pₒ+1]) +/- $(p_lines_err[pₒ+1]) um, and SNR $(p_lines[pₒ+1])"

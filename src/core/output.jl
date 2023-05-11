@@ -56,23 +56,23 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             param_maps.dust_continuum[i][:size][index] = out_params[index, pᵢ+2]
             param_errs[1].dust_continuum[i][:size][index] = out_errs[index, pᵢ+2, 1]
             param_errs[2].dust_continuum[i][:size][index] = out_errs[index, pᵢ+2, 2]
-            pᵢ += 3
+            param_maps.dust_continuum[i][:tau][index] = out_params[index, pᵢ+3]
+            param_errs[1].dust_continuum[i][:tau][index] = out_errs[index, pᵢ+3, 1]
+            param_errs[2].dust_continuum[i][:tau][index] = out_errs[index, pᵢ+3, 2]
+            pᵢ += 4
         end
 
         # Extinction parameters
-        param_maps.extinction[:tau_9_7][index] = out_params[index, pᵢ]
-        param_errs[1].extinction[:tau_9_7][index] = out_errs[index, pᵢ, 1]
-        param_errs[2].extinction[:tau_9_7][index] = out_errs[index, pᵢ, 2]
-        param_maps.extinction[:tau_ice][index] = out_params[index, pᵢ+1]
-        param_errs[1].extinction[:tau_ice][index] = out_errs[index, pᵢ+1, 1]
-        param_errs[2].extinction[:tau_ice][index] = out_errs[index, pᵢ+1, 2]
-        param_maps.extinction[:tau_ch][index] = out_params[index, pᵢ+2]
-        param_errs[1].extinction[:tau_ch][index] = out_errs[index, pᵢ+2, 1]
-        param_errs[2].extinction[:tau_ch][index] = out_errs[index, pᵢ+2, 2]
-        param_maps.extinction[:beta][index] = out_params[index, pᵢ+3]
-        param_errs[1].extinction[:beta][index] = out_errs[index, pᵢ+3, 1]
-        param_errs[2].extinction[:beta][index] = out_errs[index, pᵢ+3, 2]
-        pᵢ += 4
+        param_maps.extinction[:tau_ice][index] = out_params[index, pᵢ]
+        param_errs[1].extinction[:tau_ice][index] = out_errs[index, pᵢ, 1]
+        param_errs[2].extinction[:tau_ice][index] = out_errs[index, pᵢ, 2]
+        param_maps.extinction[:tau_ch][index] = out_params[index, pᵢ+1]
+        param_errs[1].extinction[:tau_ch][index] = out_errs[index, pᵢ+1, 1]
+        param_errs[2].extinction[:tau_ch][index] = out_errs[index, pᵢ+1, 2]
+        param_maps.extinction[:beta][index] = out_params[index, pᵢ+2]
+        param_errs[1].extinction[:beta][index] = out_errs[index, pᵢ+2, 1]
+        param_errs[2].extinction[:beta][index] = out_errs[index, pᵢ+2, 2]
+        pᵢ += 3
 
         # Dust feature log(amplitude), mean, FWHM
         for df ∈ cube_fitter.dust_features.names
@@ -189,7 +189,7 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
 
             # End of line parameters: recreate the un-extincted (intrinsic) line model
             I_line, comps_l = model_line_residuals(cube_fitter.cube.λ, out_params[index, vᵢ:pᵢ-1], cube_fitter.n_lines, cube_fitter.n_comps,
-                cube_fitter.lines, cube_fitter.flexible_wavesol, comps_c["extinction"], lsf_interp_func, true)
+                cube_fitter.lines, cube_fitter.flexible_wavesol, lsf_interp_func, true)
 
             # Combine the continuum and line models
             I_model = I_cont .+ I_line
@@ -198,7 +198,7 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             # Renormalize
             I_model .*= N
             for comp ∈ keys(comps)
-                if !(comp ∈ ["extinction", "abs_ice", "abs_ch"])
+                if !(comp ∈ ["abs_ice", "abs_ch"])
                     comps[comp] .*= N
                 end
             end
@@ -268,7 +268,6 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
                     end
                 end
             end
-            cube_model.extinction[index, :] .= comps["extinction"]
             cube_model.abs_ice[index, :] .= comps["abs_ice"]
             cube_model.abs_ch[index, :] .= comps["abs_ch"]
         end
@@ -796,7 +795,6 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
             for (k, line) ∈ enumerate(cube_fitter.lines.names)
                 write(f, cube_model.lines[:, :, :, k]; name="$line")                                    # Emission line profiles
             end
-            write(f, cube_model.extinction; name="EXTINCTION")                                          # Extinction model
             write(f, cube_model.abs_ice; name="ABS_ICE")                                                # Ice Absorption model
             write(f, cube_model.abs_ch; name="ABS_CH")                                                  # CH Absorption model
             write(f, ["wave"], [cube_data.λ .* (1 .+ cube_fitter.z)],                                   # wavelength vector
@@ -817,7 +815,6 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
             for line ∈ cube_fitter.lines.names
                 write_key(f["$line"], "BUNIT", "MJy/sr")
             end
-            write_key(f["EXTINCTION"], "BUNIT", "unitless")
             write_key(f["ABS_ICE"], "BUNIT", "unitless")
             write_key(f["ABS_CH"], "BUNIT", "unitless")
         end

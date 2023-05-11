@@ -8,8 +8,7 @@
 
 # dust_grain_types: what types of dust grains to include in the model.
 # this affects the absorption/scattering efficiencies and hence the emissivities.
-dust_grain_types = ["sil", "sil", "sil", "sil", "sil", "sil", "sil", "sil", "sil", 
-                    "gra", "gra", "gra", "gra", "gra", "gra", "gra", "gra", "gra"]
+dust_grain_types = ["sil", "sil", "gra", "gra"]
 
 # stellar_continuum_temp: the blackbody temperature of the stellar
 # continuum component of the model. Default: 5000 K.
@@ -37,138 +36,43 @@ locked = true
 val = 0.1760912591
 plim = [-1.0, 0.477]
 locked = true
-[[dust_grain_sizes]]
-val = 0.1760912591
-plim = [-1.0, 0.477]
-locked = true
-[[dust_grain_sizes]]
-val = 0.1760912591
-plim = [-1.0, 0.477]
-locked = true
-[[dust_grain_sizes]]
-val = 0.1760912591
-plim = [-1.0, 0.477]
-locked = true
-[[dust_grain_sizes]]
-val = 0.1760912591
-plim = [-1.0, 0.477]
-locked = true
-[[dust_grain_sizes]]
-val = 0.1760912591
-plim = [-3.0, 1.0]
-locked = true
-[[dust_grain_sizes]]
-val = 0.1760912591
-plim = [-3.0, 1.0]
-locked = true
-[[dust_grain_sizes]]
-val = 0.1760912591
-plim = [-1.0, 0.477]
-locked = true
-[[dust_grain_sizes]]
-val = 0.1760912591
-plim = [-1.0, 0.477]
-locked = true
-[[dust_grain_sizes]]
-val = 0.1760912591
-plim = [-1.0, 0.477]
-locked = true
-[[dust_grain_sizes]]
-val = 0.1760912591
-plim = [-1.0, 0.477]
-locked = true
-[[dust_grain_sizes]]
-val = 0.1760912591
-plim = [-1.0, 0.477]
-locked = true
-[[dust_grain_sizes]]
-val = 0.1760912591
-plim = [-1.0, 0.477]
-locked = true
-[[dust_grain_sizes]]
-val = 0.1760912591
-plim = [-1.0, 0.477]
-locked = true
-[[dust_grain_sizes]]
-val = 0.1760912591
-plim = [-1.0, 0.477]
-locked = true
 
 # dust_continuum_temps: the blackbody temperatures of the dust
 # continuum components of the model.
 [[dust_continuum_temps]]
-val = 500.0
-plim = [499.9, 500.1]
-locked = true
+val = 100.0
+plim = [0.0, 1500.0]
+locked = false
 [[dust_continuum_temps]]
 val = 300.0
-plim = [299.9, 300.1]
-locked = true
+plim = [0.0, 1500.0]
+locked = false
 [[dust_continuum_temps]]
-val = 200.0
-plim = [199.9, 200.1]
-locked = true
-[[dust_continuum_temps]]
-val = 135.0
-plim = [134.9, 135.1]
-locked = true
-[[dust_continuum_temps]]
-val = 90.0
-plim = [89.9, 90.1]
-locked = true
-[[dust_continuum_temps]]
-val = 65.0
-plim = [64.9, 65.1]
-locked = true
-[[dust_continuum_temps]]
-val = 50.0
-plim = [49.9, 50.1]
-locked = true
-[[dust_continuum_temps]]
-val = 40.0
-plim = [39.9, 40.1]
-locked = true
-[[dust_continuum_temps]]
-val = 35.0
-plim = [34.9, 35.1]
-locked = true
-[[dust_continuum_temps]]
-val = 500.0
-plim = [499.9, 500.1]
-locked = true
+val = 100.0
+plim = [0.0, 1500.0]
+locked = false
 [[dust_continuum_temps]]
 val = 300.0
-plim = [299.9, 300.1]
-locked = true
-[[dust_continuum_temps]]
-val = 200.0
-plim = [199.9, 200.1]
-locked = true
-[[dust_continuum_temps]]
-val = 135.0
-plim = [134.9, 135.1]
-locked = true
-[[dust_continuum_temps]]
-val = 90.0
-plim = [89.9, 90.1]
-locked = true
-[[dust_continuum_temps]]
-val = 65.0
-plim = [64.9, 65.1]
-locked = true
-[[dust_continuum_temps]]
-val = 50.0
-plim = [49.9, 50.1]
-locked = true
-[[dust_continuum_temps]]
-val = 40.0
-plim = [39.9, 40.1]
-locked = true
-[[dust_continuum_temps]]
-val = 35.0
-plim = [34.9, 35.1]
-locked = true
+plim = [0.0, 1500.0]
+locked = false
 
+# dust_optical_depths
+[[dust_optical_depths]]
+val = 0.1
+plim = [0.0, 10.0]
+locked = false
+[[dust_optical_depths]]
+val = 0.1
+plim = [0.0, 10.0]
+locked = false
+[[dust_optical_depths]]
+val = 0.1
+plim = [0.0, 10.0]
+locked = false
+[[dust_optical_depths]]
+val = 0.1
+plim = [0.0, 10.0]
+locked = false
 
 # dust_features: each of these specifies a Polycyclic Aromatic 
 # Hydrocarbon (PAH) profile to include in the model. Each of these
@@ -571,14 +475,6 @@ val = 1.655
 plim = [0.4, 1.1]
 locked = false
 
-
-# extinction.tau_9_7: the optical depth at 9.7 microns.
-# Default: gets estimated by the continuum at 9.7 microns.
-[extinction.tau_9_7]
-val = 0.1
-plim = [0.0, 10.0]
-locked = false
-
 # extinction.tau_ice: the optical depth from ice absorption
 # at ~6.9 microns (the peak).
 [extinction.tau_ice]
@@ -591,7 +487,7 @@ locked = true
 [extinction.tau_ch]
 val = 0.1
 plim = [0.0, 10.0]
-locked = false
+locked = true
 
 # extinction.beta: the mixing ratio for the extinction profile,
 # between the profile specified in options.toml and a -1.7 index

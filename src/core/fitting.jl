@@ -186,8 +186,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     if !bootstrap_iter
         pars_1, pars_2 = get_continuum_initial_values(cube_fitter, λ_spax, I_spax, stellar_λref, dust_λrefs, N, init || use_ap)
     else
-        pars_1 = vcat(p1_boots[1:(2+3cube_fitter.n_dust_cont+4)], p1_boots[end-1:end])
-        pars_2 = p1_boots[(3+3cube_fitter.n_dust_cont+4):end-2]
+        pars_1 = vcat(p1_boots[1:(2+4cube_fitter.n_dust_cont+3)], p1_boots[end-1:end])
+        pars_2 = p1_boots[(3+4cube_fitter.n_dust_cont+3):end-2]
     end
 
     # Sort parameters by those that are locked and those that are unlocked
@@ -245,7 +245,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     for i ∈ 1:cube_fitter.n_dust_cont
         I_cont .+= ccomps["dust_cont_$i"]
     end
-    I_cont .*= ccomps["extinction"] .* ccomps["abs_ice"] .* ccomps["abs_ch"]
+    I_cont .*= ccomps["abs_ice"] .* ccomps["abs_ch"]
 
     @debug """\n
     ##########################################################################################################
@@ -265,9 +265,9 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         ptot[.~lock_2] .= pfree
         ptot[lock_2] .= p2fix
         if !return_comps
-            model_pah_residuals(x, ptot, cube_fitter.n_dust_feat, ccomps["extinction"])
+            model_pah_residuals(x, ptot, cube_fitter.n_dust_feat)
         else
-            model_pah_residuals(x, ptot, cube_fitter.n_dust_feat, ccomps["extinction"], true)
+            model_pah_residuals(x, ptot, cube_fitter.n_dust_feat, true)
         end
     end
     res_2 = cmpfit(λ_spax, I_spax.-I_cont, σ_spax, fit_step2, p2free, parinfo=parinfo_2, config=config)
@@ -319,7 +319,7 @@ end
 
 
 """
-    line_fit_spaxel(cube_fitter, spaxel, λ, I, σ, continuum, ext_curve, mask_lines, lsf_interp_func; init=init, use_ap=use_ap)
+    line_fit_spaxel(cube_fitter, spaxel, λ, I, σ, continuum, mask_lines, lsf_interp_func; init=init, use_ap=use_ap)
 
 Fit the emission lines of a given spaxel in the DataCube, subtracting the continuum, using the 
 Simulated Annealing and L-BFGS fitting methods with the `Optim` package.
@@ -338,13 +338,11 @@ See Smith, Draine, et al. 2007; http://tir.astro.utoledo.edu/jdsmith/research/pa
 - `σ::Vector{<:Real}`: The 1D error vector
 - `continuum::Vector{<:Real}`: The fitted continuum level of the spaxel being fit (which will be subtracted
     before the lines are fit)
-- `ext_curve::Vector{<:Real}`: The extinction curve of the spaxel being fit (which will be used to calculate
-    extinction-corrected line amplitudes and fluxes)
 - `init::Bool=false`: Flag for the initial fit which fits the sum of all spaxels, to get an estimation for
     the initial parameter vector for individual spaxel fits
 """
 function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real},
-    σ::Vector{<:Real}, continuum::Vector{<:Real}, ext_curve::Vector{<:Real}, lsf_interp_func::Function, N::Real; 
+    σ::Vector{<:Real}, continuum::Vector{<:Real}, lsf_interp_func::Function, N::Real; 
     init::Bool=false, use_ap::Bool=false, bootstrap_iter::Bool=false, p1_boots::Union{Vector{<:Real},Nothing}=nothing)
 
     @debug """\n
@@ -359,7 +357,6 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     λnorm = copy(λ)
     Inorm = I ./ N .- continuum
     σnorm = σ ./ N
-    ext_curve_norm = copy(ext_curve)
 
     if !isnothing(cube_fitter.user_mask)
         # Mask out additional regions
@@ -368,11 +365,10 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
             λnorm = λnorm[.~region]
             Inorm = Inorm[.~region]
             σnorm = σnorm[.~region]
-            ext_curve_norm = ext_curve[.~region]
         end
     end
 
-    plimits, param_lock, param_names, tied_pairs, tied_indices = get_line_plimits(cube_fitter, ext_curve_norm, init || use_ap)
+    plimits, param_lock, param_names, tied_pairs, tied_indices = get_line_plimits(cube_fitter, init || use_ap)
     p₀ = get_line_initial_values(cube_fitter, init || use_ap)
 
     # Combine all of the tied parameters
@@ -434,7 +430,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
         fit_func = (x, p) -> -ln_likelihood(
                                 Inorm, 
                                 model_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
-                                    cube_fitter.flexible_wavesol, ext_curve_norm, lsf_interp_func), 
+                                    cube_fitter.flexible_wavesol, lsf_interp_func), 
                                 σnorm)
         x_tol = 1e-5
         f_tol = abs(fit_func(λnorm, p₀) - fit_func(λnorm, clamp.(p₀ .- x_tol, lower_bounds, upper_bounds)))
@@ -475,7 +471,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     ############################################# FIT WITH LEVMAR ###################################################
 
     fit_func_2 = (x, p) -> model_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
-        cube_fitter.flexible_wavesol, ext_curve_norm, lsf_interp_func)
+        cube_fitter.flexible_wavesol, lsf_interp_func)
     
     χ2_before = sum((Inorm .- fit_step3(λnorm, p₁, fit_func_2)).^2 ./ σnorm.^2)
     res = cmpfit(λnorm, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func_2), p₁, parinfo=parinfo, config=config)
@@ -488,7 +484,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
         fit_func = (x, p) -> -ln_likelihood(
                                 Inorm, 
                                 model_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
-                                    cube_fitter.flexible_wavesol, ext_curve_norm, lsf_interp_func), 
+                                    cube_fitter.flexible_wavesol, lsf_interp_func), 
                                 σnorm)
         x_tol = 1e-5
         f_tol = abs(fit_func(λnorm, p₀) - fit_func(λnorm, clamp.(p₀ .- x_tol, lower_bounds, upper_bounds)))
@@ -536,7 +532,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
 
     # Final optimized fit
     I_model, comps = model_line_residuals(λ, popt, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
-        cube_fitter.flexible_wavesol, ext_curve, lsf_interp_func, true)
+        cube_fitter.flexible_wavesol, lsf_interp_func, true)
 
     if init
         cube_fitter.p_init_line[:] .= copy(popt)
@@ -590,13 +586,13 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
         trace2 = PlotlyJS.scatter(x=λ, y=I_cont, mode="lines", line=Dict(:color => "orange", :width => 1), name="Continuum Fit", showlegend=true)
         traces = [trace1, trace2]
         # Loop over and plot individual model components
-        ext_full = comps["extinction"] .* comps["abs_ice"] .* comps["abs_ch"]
+        ext_full = comps["abs_ice"] .* comps["abs_ch"]
         for comp ∈ keys(comps)
             if comp == "extinction"
                 append!(traces, [PlotlyJS.scatter(x=λ, y=ext_full .* maximum(I_cont) .* 1.1, mode="lines", 
                     line=Dict(:color => "black", :width => 1, :dash => "dash"), name="Extinction")])
             elseif occursin("line", comp)
-                append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* comps["extinction"], mode="lines",
+                append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp], mode="lines",
                     line=Dict(:color => "rebeccapurple", :width => 1), name="Lines")])
             end
         end
@@ -617,7 +613,7 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
             append!(traces, [PlotlyJS.scatter(x=λ, y=ext_full .* comps["dust_cont_$i"], mode="lines", line=Dict(:color => "green", :width => 1), name="Dust continuum")])
         end
         # Summed up PAHs
-        append!(traces, [PlotlyJS.scatter(x=λ, y=sum([comps["dust_feat_$i"] for i ∈ 1:n_dust_features], dims=1)[1] .* comps["extinction"],
+        append!(traces, [PlotlyJS.scatter(x=λ, y=sum([comps["dust_feat_$i"] for i ∈ 1:n_dust_features], dims=1)[1],
             mode="lines", line=Dict(:color => "blue", :width => 1), name="PAHs")])
         if !isnothing(spline)
             append!(traces, [PlotlyJS.scatter(x=λ, y=spline, mode="lines", line=Dict(:color => "red", :width => 1, :dash => "dash"), name="Cubic Spline")])
@@ -694,7 +690,7 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
         ax4 = ax1.twiny()
 
         # full continuum
-        ext_full = comps["extinction"] .* comps["abs_ice"] .* comps["abs_ch"]
+        ext_full = comps["abs_ice"] .* comps["abs_ch"]
         ax1.plot(λ, (ext_full .* (
             (n_dust_cont > 0 ? sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] : zeros(length(λ))) .+ comps["stellar"])
             ) ./ norm ./ λ, "k-", lw=2, alpha=0.5, label="Continuum")
@@ -705,11 +701,11 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
                 label="Dust continuum")
         end
         # full PAH profile
-        ax1.plot(λ, sum([comps["dust_feat_$i"] for i ∈ 1:n_dust_features], dims=1)[1] .* comps["extinction"] ./ norm ./ λ, "-", 
+        ax1.plot(λ, sum([comps["dust_feat_$i"] for i ∈ 1:n_dust_features], dims=1)[1] ./ norm ./ λ, "-", 
             color="#0065ff", label="PAHs")
         # full line profile
         ax1.plot(λ, sum([haskey(comps, "line_$(i)_$(j)") ? comps["line_$(i)_$(j)"] : zeros(length(λ)) 
-            for i ∈ 1:length(line_wave), j ∈ 1:n_comps], dims=(1,2))[1] .* comps["extinction"] ./ norm ./ λ, "-", 
+            for i ∈ 1:length(line_wave), j ∈ 1:n_comps], dims=(1,2))[1] ./ norm ./ λ, "-", 
             color="rebeccapurple", label="Lines")
         # plot extinction
         ax3.plot(λ, ext_full, "k:", alpha=0.5, label="Extinction")
@@ -797,7 +793,7 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         @timeit timer_output "continuum_fit_spaxel" continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, norm,
         stellar_λref, dust_λrefs, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_c)
     popt_l, I_line, comps_line, n_free_l, perr_l = 
-        @timeit timer_output "line_fit_spaxel" line_fit_spaxel(cube_fitter, spaxel, λ, I, σ, I_cont, comps_cont["extinction"], 
+        @timeit timer_output "line_fit_spaxel" line_fit_spaxel(cube_fitter, spaxel, λ, I, σ, I_cont, 
         lsf_interp_func, norm, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_l)
 
     # Combine the continuum and line models
@@ -807,7 +803,7 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # Renormalize
     I_model .*= norm
     for comp ∈ keys(comps)
-        if !(comp ∈ ["extinction", "abs_ice", "abs_ch"])
+        if !(comp ∈ ["abs_ice", "abs_ch"])
             comps[comp] .*= norm
         end
     end
@@ -836,7 +832,7 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
             @timeit timer_output "calculate_extra_parameters" calculate_extra_parameters(λ, I, norm, cube_fitter.n_dust_cont,
                 cube_fitter.continuum.d_dc, stellar_λref, dust_λrefs, cube_fitter.n_dust_feat, cube_fitter.extinction_curve, 
                 cube_fitter.extinction_screen, cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, cube_fitter.lines, 
-                cube_fitter.flexible_wavesol, lsf_interp_func, popt_c[1:end-2], popt_l, perr_c[1:end-2], perr_l, comps["extinction"], 
+                cube_fitter.flexible_wavesol, lsf_interp_func, popt_c[1:end-2], popt_l, perr_c[1:end-2], perr_l,
                 mask_lines, I_spline, area_sr, !bootstrap_iter)
         p_out = [popt_c[1:end-2]; popt_l; p_dust; p_lines; χ2; dof]
         p_err = [perr_c[1:end-2]; perr_l; p_dust_err; p_lines_err; 0.; 0.]
@@ -981,7 +977,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                 I_boot_cont, comps_boot_cont = model_continuum_and_pah(λ, p_out[1:split1], cube_fitter.n_dust_cont, cube_fitter.continuum.d_dc,
                     stellar_λref, dust_λrefs, cube_fitter.n_dust_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, true)
                 I_boot_line, comps_boot_line = model_line_residuals(λ, p_out[split1+1:split2], cube_fitter.n_lines, cube_fitter.n_comps,
-                    cube_fitter.lines, cube_fitter.flexible_wavesol, comps_boot_cont["extinction"], lsf_interp_func, true)
+                    cube_fitter.lines, cube_fitter.flexible_wavesol, lsf_interp_func, true)
 
                 # Reconstruct the full model
                 I_model = I_boot_cont .+ I_boot_line
@@ -990,7 +986,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                 # Renormalize
                 I_model .*= norm
                 for comp ∈ keys(comps)
-                    if !(comp ∈ ["extinction", "abs_ice", "abs_ch"])
+                    if !(comp ∈ ["abs_ice", "abs_ch"])
                         comps[comp] .*= norm
                     end
                 end
