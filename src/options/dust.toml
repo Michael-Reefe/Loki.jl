@@ -8,8 +8,7 @@
 
 # dust_grain_types: what types of dust grains to include in the model.
 # this affects the absorption/scattering efficiencies and hence the emissivities.
-dust_grain_types = ["sil", "sil", 
-                    "gra", "gra", "gra", "gra", "gra", "gra", "gra", "gra", "gra"]
+dust_grain_types = ["sil", "gra", "gra", "gra"]
 
 # stellar_continuum_temp: the blackbody temperature of the stellar
 # continuum component of the model. Default: 5000 K.
@@ -22,96 +21,40 @@ locked = true
 # Do not allow to vary lower than -3 (0.001 um) or higher than 1 (10 um), since these are the limits
 # of the absorption/scattering efficiency models 
 [[dust_grain_sizes]]
-val = 0.1760912591
+val = 0.176
 plim = [-1.0, 1.0]
 locked = false
 [[dust_grain_sizes]]
-val = 0.1760912591
+val = 0.176
 plim = [-1.0, 1.0]
 locked = false
 [[dust_grain_sizes]]
-val = 0.1760912591
+val = 0.176
 plim = [-1.0, 1.0]
 locked = false
 [[dust_grain_sizes]]
-val = 0.1760912591
-plim = [-1.0, 1.0]
-locked = false
-[[dust_grain_sizes]]
-val = 0.1760912591
-plim = [-1.0, 1.0]
-locked = false
-[[dust_grain_sizes]]
-val = 0.1760912591
-plim = [-1.0, 1.0]
-locked = false
-[[dust_grain_sizes]]
-val = 0.1760912591
-plim = [-1.0, 1.0]
-locked = false
-[[dust_grain_sizes]]
-val = 0.1760912591
-plim = [-1.0, 1.0]
-locked = false
-[[dust_grain_sizes]]
-val = 0.1760912591
-plim = [-1.0, 1.0]
-locked = false
-[[dust_grain_sizes]]
-val = 0.1760912591
-plim = [-1.0, 1.0]
-locked = false
-[[dust_grain_sizes]]
-val = 0.1760912591
+val = 0.176
 plim = [-1.0, 1.0]
 locked = false
 
 # dust_continuum_temps: the blackbody temperatures of the dust
 # continuum components of the model.
 [[dust_continuum_temps]]
-val = 100.0
-plim = [0.0, 1500.0]
+val = 200.0
+plim = [0.0, 1600.0]
 locked = false
 [[dust_continuum_temps]]
 val = 200.0
-plim = [0.0, 1500.0]
+plim = [0.0, 300.0]
 locked = false
 [[dust_continuum_temps]]
 val = 500.0
-plim = [499.9, 500.1]
-locked = true
+plim = [300.0, 800.0]
+locked = false
 [[dust_continuum_temps]]
-val = 300.0
-plim = [299.9, 300.1]
-locked = true
-[[dust_continuum_temps]]
-val = 200.0
-plim = [199.9, 200.1]
-locked = true
-[[dust_continuum_temps]]
-val = 135.0
-plim = [134.9, 135.1]
-locked = true
-[[dust_continuum_temps]]
-val = 90.0
-plim = [89.9, 90.1]
-locked = true
-[[dust_continuum_temps]]
-val = 65.0
-plim = [64.9, 65.1]
-locked = true
-[[dust_continuum_temps]]
-val = 50.0
-plim = [49.9, 50.1]
-locked = true
-[[dust_continuum_temps]]
-val = 40.0
-plim = [39.9, 40.1]
-locked = true
-[[dust_continuum_temps]]
-val = 35.0
-plim = [34.9, 35.1]
-locked = true
+val = 1300.0
+plim = [800.0, 1600.0]
+locked = false
 
 # dust_features: each of these specifies a Polycyclic Aromatic 
 # Hydrocarbon (PAH) profile to include in the model. Each of these

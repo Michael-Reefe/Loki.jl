@@ -319,6 +319,7 @@ struct CubeFitter{T<:Real,S<:Integer}
     extinction_curve::String
     extinction_screen::Bool
     fit_all_samin::Bool
+    fit_stellar::Bool
     pyr_x::Integer
     oli_y::Integer
 
@@ -565,10 +566,9 @@ struct CubeFitter{T<:Real,S<:Integer}
 
         new{typeof(z), typeof(n_lines)}(cube, z, name, out[:user_mask], out[:plot_spaxels], out[:plot_maps], out[:plot_range], out[:parallel], 
             out[:save_fits], out[:save_full_model], out[:overwrite], out[:track_memory], out[:track_convergence], out[:make_movies], 
-            out[:extinction_curve], out[:extinction_screen], out[:fit_all_samin], out[:pyr_x], out[:oli_y], continuum, n_dust_cont, 
-            n_dust_features, dust_features, n_lines, n_acomps, n_comps, lines, tied_kinematics, tie_voigt_mixing, 
-            voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, out[:cosmology], flexible_wavesol, out[:n_bootstrap], out[:random_seed], 
-            p_init_cont, p_init_line)
+            out[:extinction_curve], out[:extinction_screen], out[:fit_all_samin], out[:fit_stellar], out[:pyr_x], out[:oli_y], continuum, n_dust_cont, 
+            n_dust_features, dust_features, n_lines, n_acomps, n_comps, lines, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, 
+            n_params_lines, n_params_extra, out[:cosmology], flexible_wavesol, out[:n_bootstrap], out[:random_seed], p_init_cont, p_init_line)
     end
 
 end
@@ -624,7 +624,7 @@ function get_continuum_plimits(cube_fitter::CubeFitter)
     amp_df_plim = (0., clamp(1 / exp(-continuum.τ_97.limits[2]), 1., Inf))
 
     stellar_plim = [amp_dc_plim, continuum.T_s.limits]
-    stellar_lock = [false, continuum.T_s.locked]
+    stellar_lock = [!cube_fitter.fit_stellar, continuum.T_s.locked]
     dc_plim = vcat([[amp_dc_plim, Ti.limits, ai.limits] for (Ti, ai) ∈ zip(continuum.T_dc, continuum.a_dc)]...)
     dc_lock = vcat([[false, Ti.locked, ai.locked] for (Ti, ai) ∈ zip(continuum.T_dc, continuum.a_dc)]...)
     df_plim = vcat([[amp_df_plim, mi.limits, fi.limits] for (mi, fi) ∈ zip(dust_features.mean, dust_features.fwhm)]...)
@@ -703,8 +703,7 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
         cubic_spline = Spline1D(λ, I, k=3)
 
         # Stellar amplitude
-        A_s = clamp(cubic_spline(stellar_λref)/2, 0., Inf)
-        # A_s = 0.
+        A_s = cube_fitter.fit_stellar ? clamp(cubic_spline(stellar_λref)/3, 0., Inf) : 0.
 
         # Dust feature amplitudes
         A_df = repeat([clamp(nanmedian(I)/2, 0., Inf)], cube_fitter.n_dust_feat)
@@ -789,8 +788,11 @@ function pretty_print_continuum_results(cube_fitter::CubeFitter, popt::Vector{<:
     msg *= "################# SPAXEL FIT RESULTS -- CONTINUUM ####################\n"
     msg *= "######################################################################\n"
     msg *= "\n#> STELLAR CONTINUUM <#\n"
-    msg *= "Stellar_amp: \t\t\t $(@sprintf "%.3e" popt[1]) +/- $(@sprintf "%.3e" perr[1]) [-] \t Limits: (0, Inf)\n"
-    msg *= "Stellar_temp: \t\t\t $(@sprintf "%.0f" popt[2]) +/- $(@sprintf "%.3e" perr[2]) K \t (fixed)\n"
+    msg *= "Stellar_amp: \t\t\t $(@sprintf "%.3e" popt[1]) +/- $(@sprintf "%.3e" perr[1]) [-] \t Limits: (0, Inf)" *
+        (cube_fitter.fit_stellar ? "" : " (fixed)") * "\n"
+    msg *= "Stellar_temp: \t\t\t $(@sprintf "%.0f" popt[2]) +/- $(@sprintf "%.3e" perr[2]) K \t Limits: " *
+        "($(@sprintf "%.0f" continuum.T_s.limits[1]), $(@sprintf "%.0f" continuum.T_s.limits[2]))" *
+        (continuum.T_s.locked ? " (fixed)" : "") * "\n"
     pᵢ = 3
     msg *= "\n#> DUST CONTINUUM <#\n"
     for i ∈ 1:cube_fitter.n_dust_cont
