@@ -52,7 +52,7 @@ function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}; Δ::Integer=
         if any([abs(d2f[j]) > thresh * nanstd(d2f[max(1, j-Wi):min(length(λ), j+Wi)]) for Wi ∈ W])
 
             # the width of the mask is based on the peaks in the numerical first derivative
-            w = min(W...)
+            w = 10
             p₁ = nanargmax(df[max(j-w,1):min(j+w,length(df))])
             p₂ = nanargmin(df[max(j-w,1):min(j+w,length(df))])
             n_pix = 4 * (p₂ - p₁)
@@ -795,7 +795,7 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
 
     # Fit the spaxel
     popt_c, I_cont, comps_cont, n_free_c, perr_c = 
-        @timeit timer_output "continuum_fit_spaxel" continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ_stat, mask_lines, norm,
+        @timeit timer_output "continuum_fit_spaxel" continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, norm,
         stellar_λref, dust_λrefs, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_c)
     popt_l, I_line, comps_line, n_free_l, perr_l = 
         @timeit timer_output "line_fit_spaxel" line_fit_spaxel(cube_fitter, spaxel, λ, I, σ_stat, I_cont, comps_cont["extinction"], 
@@ -869,7 +869,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
     area_sr = cube_data.area_sr
 
     # if there are any NaNs, skip over the spaxel
-    if any(.!isfinite.(I))
+    if any(.~isfinite.(I) .| .~isfinite.(σ))
         return nothing, nothing
     end
 
@@ -1086,10 +1086,21 @@ function fit_stack!(cube_fitter::CubeFitter)
     σ_sum_init = sqrt.(sumdim(cube_fitter.cube.σI.^2, (1,2))) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
     area_sr_init = cube_fitter.cube.Ω .* sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
 
+    bad = findall(.~isfinite.(I_sum_init) .| .~isfinite.(σ_sum_init))
+    # Replace with the average of the points to the left and right
+    l = length(I_sum_init)
+    for badi in bad
+        lind = findfirst(x -> isfinite(x), I_sum_init[max(badi-1,1):-1:1])
+        rind = findfirst(x -> isfinite(x), I_sum_init[min(badi+1,l):end])
+        I_sum_init[badi] = (I_sum_init[max(badi-1,1):-1:1][lind] + I_sum_init[min(badi+1,l):end][rind]) / 2
+        σ_sum_init[badi] = (σ_sum_init[max(badi-1,1):-1:1][lind] + σ_sum_init[min(badi+1,l):end][rind]) / 2
+    end
+    @assert all(isfinite.(I_sum_init) .& isfinite.(σ_sum_init)) "Error: Non-finite values found in the summed intensity/error arrays!"
+
     # Perform a cubic spline fit, also obtaining the line mask
     mask_lines_init, I_spline_init, σ_spline_init = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init)
-    # l_mask = sum(.!mask_lines_init)
 
+    # l_mask = sum(.!mask_lines_init)
     # # Statistical uncertainties based on the local RMS of the residuals with a cubic spline fit
     # σ_stat_init = [std(I_sum_init[.!mask_lines_init][max(i-100,1):min(i+100,l_mask)] .- 
     #     I_spline_init[.!mask_lines_init][max(i-100,1):min(i+100,l_mask)]) for i ∈ 1:l_mask]
@@ -1101,7 +1112,8 @@ function fit_stack!(cube_fitter::CubeFitter)
     # end
     # @debug "Statistical uncertainties: ($(σ_stat_init[1]) - $(σ_stat_init[end]))"
     # σ_sum_init = hypot.(σ_sum_init, σ_stat_init)
-    resid = I_sum_init[.!mask_lines_init] .- I_spline_init[.!mask_lines_init]
+
+    resid = I_sum_init[.~mask_lines_init] .- I_spline_init[.~mask_lines_init]
     σ_stat_init = std(resid[resid .< 3std(resid)])
     σ_stat_init = repeat([σ_stat_init], length(σ_sum_init))
     # σ_sum_init .= σ_stat_init
