@@ -765,9 +765,6 @@ function get_continuum_parinfo(n_free_1::S, n_free_2::S, lb_1::Vector{T}, ub_1::
 
     # Create a `config` structure
     config = CMPFit.Config()
-    config.xtol = 1e-16
-    config.ftol = 1e-16
-    config.gtol = 1e-16
 
     parinfo_1, parinfo_2, config
 

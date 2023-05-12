@@ -425,8 +425,8 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
         func(x, ptot)
     end
 
-    if (init || use_ap || cube_fitter.fit_all_samin) && !bootstrap_iter
-    # if false
+    # if (init || use_ap || cube_fitter.fit_all_samin) && !bootstrap_iter
+    if false
         @debug "Beginning Line fitting with Simulated Annealing:"
 
         # Parameter and function tolerance levels for convergence with SAMIN,
@@ -795,7 +795,7 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
 
     # Fit the spaxel
     popt_c, I_cont, comps_cont, n_free_c, perr_c = 
-        @timeit timer_output "continuum_fit_spaxel" continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, norm,
+        @timeit timer_output "continuum_fit_spaxel" continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ_stat, mask_lines, norm,
         stellar_λref, dust_λrefs, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_c)
     popt_l, I_line, comps_line, n_free_l, perr_l = 
         @timeit timer_output "line_fit_spaxel" line_fit_spaxel(cube_fitter, spaxel, λ, I, σ_stat, I_cont, comps_cont["extinction"], 
