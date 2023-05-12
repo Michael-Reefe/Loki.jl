@@ -94,10 +94,10 @@ else
     # Convert to rest-frame wavelength vector, and mask out bad spaxels
     correct!(obs)
     # Concatenate the subchannels of each channel so that we have one cube for each channel
-    for channel ∈ 1:4
-        reproject_channels!(obs, channel, out_id=channel, method=:adaptive) 
+    for i_channel ∈ 1:4
+        reproject_channels!(obs, i_channel, out_id=i_channel, method=:adaptive) 
         # Interpolate NaNs in otherwise good spaxels
-        interpolate_nans!(obs.channels[channel])
+        interpolate_nans!(obs.channels[i_channel])
     end
     reproject_channels!(obs, [1,2,3], out_id=0, method=:adaptive)
     interpolate_nans!(obs.channels[0], obs.z)
@@ -105,8 +105,8 @@ else
 end
 
 # Make aperture
-ap = make_aperture(obs.channels[channel], :Circular, "23:03:15.610", "+8:52:26.10", 0.5, auto_centroid=true,
-    scale_psf=false)
+# ap = make_aperture(obs.channels[channel], :Circular, "23:03:15.610", "+8:52:26.10", 0.5, auto_centroid=true,
+#     scale_psf=false)
 # ap = make_aperture(obs.channels[channel], :Circular, "23:03:15.575", "+8:52:24.80", 0.5, auto_centroid=false,
 #     scale_psf=false)
 
@@ -120,4 +120,4 @@ cube_fitter = CubeFitter(obs.channels[channel], obs.z, name; parallel=true, plot
     plot_maps=true, save_fits=true)
 
 # Fit the cube
-fit_cube!(cube_fitter, ap)
+fit_cube!(cube_fitter)

@@ -425,8 +425,8 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
         func(x, ptot)
     end
 
-    # if (init || use_ap || cube_fitter.fit_all_samin) && !bootstrap_iter
-    if false
+    if (init || use_ap || cube_fitter.fit_all_samin) && !bootstrap_iter
+    # if false
         @debug "Beginning Line fitting with Simulated Annealing:"
 
         # Parameter and function tolerance levels for convergence with SAMIN,
@@ -1103,7 +1103,8 @@ function fit_stack!(cube_fitter::CubeFitter)
     # σ_sum_init = hypot.(σ_sum_init, σ_stat_init)
     resid = I_sum_init[.!mask_lines_init] .- I_spline_init[.!mask_lines_init]
     σ_stat_init = std(resid[resid .< 3std(resid)])
-    σ_sum_init .= σ_stat_init
+    σ_stat_init = repeat([σ_stat_init], length(σ_sum_init))
+    # σ_sum_init .= σ_stat_init
     
     # Get the normalization
     norm = abs(nanmaximum(I_sum_init))
