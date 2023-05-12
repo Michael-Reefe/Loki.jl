@@ -474,7 +474,7 @@ locked = true
 # Temperature, 800-1600 K
 [hot_dust.temp]
 val = 1200.0
-plim = [100.0, 1600.0]
+plim = [200.0, 1600.0]
 locked = false
 
 # Covering fraction (0-1) of cold clouds

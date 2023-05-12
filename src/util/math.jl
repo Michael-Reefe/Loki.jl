@@ -393,7 +393,7 @@ temperature T, covering fraction Cf, and optical depths τ_warm and τ_cold.
 """
 function silicate_emission(λ, ext_curve, A, T, Cf, τ_warm, τ_cold)
     bb = @. A * Blackbody_ν(λ, T) * (1 - extinction(ext_curve, τ_warm, screen=true))
-    @. (1 - Cf) * bb + Cf * bb * extinction(ext_curve, τ_cold, screen=true)
+    @. bb * (1 - Cf) * (1 - extinction(ext_curve, τ_cold, screen=true))
 end
 
 

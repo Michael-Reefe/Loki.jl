@@ -31,6 +31,7 @@ using UnitfulAstro
 using TOML
 using DelimitedFiles
 using CSV
+using Serialization
 using DataFrames
 
 # Plotting packages
@@ -156,6 +157,8 @@ export DataCube,   # DataCube struct
        Observation, 
 
        # Observation functions
+       save!,
+       load!,
        adjust_wcs_alignment!, 
        reproject_channels!, 
        cube_rebin!, 

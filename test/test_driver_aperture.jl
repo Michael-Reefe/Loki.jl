@@ -86,17 +86,24 @@ obs = from_fits(["data/Level3_ch1-long_s3d.fits",
 #                  0.022)
 
 # Convert to rest-frame wavelength vector, and mask out bad spaxels
-correct!(obs)
-
-# Concatenate the subchannels of each channel so that we have one cube for each channel
-for channel ∈ 1:4
-    reproject_channels!(obs, channel, out_id=channel, method=:adaptive) 
-    # Interpolate NaNs in otherwise good spaxels
-    interpolate_nans!(obs.channels[channel])
-end
-reproject_channels!(obs, [1,2,3], out_id=0, method=:adaptive)
-interpolate_nans!(obs.channels[0], obs.z)
 channel = 0
+name = replace(obs.name, " " => "_") * "_ch$(channel)_aperture_m_nuc_emissivity_hotdustmodel"
+
+if isfile(joinpath("output_$name", "processed-data.loki"))
+    obs = load!(joinpath("output_$name", "processed-data.loki"))
+else
+    # Convert to rest-frame wavelength vector, and mask out bad spaxels
+    correct!(obs)
+    # Concatenate the subchannels of each channel so that we have one cube for each channel
+    for i_channel ∈ 1:4
+        reproject_channels!(obs, i_channel, out_id=i_channel, method=:adaptive) 
+        # Interpolate NaNs in otherwise good spaxels
+        interpolate_nans!(obs.channels[i_channel])
+    end
+    reproject_channels!(obs, [1,2,3], out_id=0, method=:adaptive)
+    interpolate_nans!(obs.channels[0], obs.z)
+    save!(joinpath("output_$name", "processed-data.loki"), obs)
+end
 
 # Make aperture
 ap = make_aperture(obs.channels[channel], :Circular, "23:03:15.610", "+8:52:26.10", 0.5, auto_centroid=true,
@@ -107,8 +114,8 @@ ap = make_aperture(obs.channels[channel], :Circular, "23:03:15.610", "+8:52:26.1
 #     scale_psf=false)
 
 # Create the cube fitting object
-cube_fitter = CubeFitter(obs.channels[channel], obs.z, obs.name * "_ch$(channel)_aperture_m_bb_sil_lowtemp_3"; 
-    parallel=true, plot_spaxels=:both, plot_maps=true, save_fits=true)
+cube_fitter = CubeFitter(obs.channels[channel], obs.z, name; parallel=true, plot_spaxels=:both, 
+    plot_maps=true, save_fits=true)
 
 # Fit the cube
 fit_cube!(cube_fitter, ap)
