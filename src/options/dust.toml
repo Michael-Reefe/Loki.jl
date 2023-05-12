@@ -473,8 +473,8 @@ locked = true
 # Hot dust components
 # Temperature, 800-1600 K
 [hot_dust.temp]
-val = 1200.0
-plim = [100.0, 1600.0]
+val = 200.0
+plim = [0.0, 1600.0]
 locked = false
 
 # Size, 0.001-10 microns
