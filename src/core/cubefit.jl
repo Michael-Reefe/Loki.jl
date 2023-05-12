@@ -624,7 +624,7 @@ function get_continuum_plimits(cube_fitter::CubeFitter)
     amp_df_plim = (0., clamp(1 / exp(-continuum.τ_97.limits[2]), 1., Inf))
 
     stellar_plim = [amp_dc_plim, continuum.T_s.limits]
-    stellar_lock = [true, continuum.T_s.locked]
+    stellar_lock = [false, continuum.T_s.locked]
     dc_plim = vcat([[amp_dc_plim, Ti.limits, ai.limits] for (Ti, ai) ∈ zip(continuum.T_dc, continuum.a_dc)]...)
     dc_lock = vcat([[false, Ti.locked, ai.locked] for (Ti, ai) ∈ zip(continuum.T_dc, continuum.a_dc)]...)
     df_plim = vcat([[amp_df_plim, mi.limits, fi.limits] for (mi, fi) ∈ zip(dust_features.mean, dust_features.fwhm)]...)
@@ -703,8 +703,8 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
         cubic_spline = Spline1D(λ, I, k=3)
 
         # Stellar amplitude
-        # A_s = clamp(cubic_spline(stellar_λref)/2, 0., Inf)
-        A_s = 0.
+        A_s = clamp(cubic_spline(stellar_λref)/2, 0., Inf)
+        # A_s = 0.
 
         # Dust feature amplitudes
         A_df = repeat([clamp(nanmedian(I)/2, 0., Inf)], cube_fitter.n_dust_feat)
@@ -766,6 +766,9 @@ function get_continuum_parinfo(n_free_1::S, n_free_2::S, lb_1::Vector{T}, ub_1::
 
     # Create a `config` structure
     config = CMPFit.Config()
+    config.xtol = 1e-16
+    config.ftol = 1e-16
+    config.gtol = 1e-16
 
     parinfo_1, parinfo_2, config
 
