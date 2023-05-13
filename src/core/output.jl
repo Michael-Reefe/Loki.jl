@@ -720,9 +720,9 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
         # Get the name (giving the shape of the aperture: circular, elliptical, or rectangular)
         ap_shape = aperture[1].__class__.__name__
 
-        aperture_keys = ["AP_SHAPE", "AP_RA", "AP_DEC"]
+        aperture_keys = String["AP_SHAPE", "AP_RA", "AP_DEC"]
         aperture_vals = Any[ap_shape, ra_cent, dec_cent]
-        aperture_comments = ["The shape of the spectrum extraction aperture", "The RA of the aperture",
+        aperture_comments = String["The shape of the spectrum extraction aperture", "The RA of the aperture",
             "The dec of the aperture"]
 
         # Get the properties, i.e. radius for circular 
