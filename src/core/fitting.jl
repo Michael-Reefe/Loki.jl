@@ -52,7 +52,7 @@ function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}; Δ::Integer=
         if any([abs(d2f[j]) > thresh * nanstd(d2f[max(1, j-Wi):min(length(λ), j+Wi)]) for Wi ∈ W])
 
             # the width of the mask is based on the peaks in the numerical first derivative
-            w = min(W...)
+            w = 10
             p₁ = nanargmax(df[max(j-w,1):min(j+w,length(df))])
             p₂ = nanargmin(df[max(j-w,1):min(j+w,length(df))])
             n_pix = 4 * (p₂ - p₁)

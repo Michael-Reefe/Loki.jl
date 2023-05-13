@@ -655,7 +655,7 @@ function get_continuum_plimits(cube_fitter::CubeFitter)
     amp_df_plim = (0., clamp(1 / exp(-continuum.τ_97.limits[2]), 1., Inf))
 
     stellar_plim = [amp_dc_plim, continuum.T_s.limits]
-    stellar_lock = [false, continuum.T_s.locked]
+    stellar_lock = [true, continuum.T_s.locked]
     dc_plim = vcat([[amp_dc_plim, Ti.limits] for Ti ∈ continuum.T_dc]...)
     dc_lock = vcat([[false, Ti.locked] for Ti ∈ continuum.T_dc]...)
     pl_plim = vcat([[amp_dc_plim, pl.limits] for pl ∈ continuum.α]...)
@@ -755,7 +755,8 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
 
         # Stellar amplitude
         λ_s = minimum(λ) < 5 ? minimum(λ)+0.1 : 5.1
-        A_s = clamp(cubic_spline(λ_s) * N / Blackbody_ν(λ_s, continuum.T_s.value), 0., Inf) 
+        # A_s = clamp(cubic_spline(λ_s) * N / Blackbody_ν(λ_s, continuum.T_s.value), 0., Inf) 
+        A_s = 0.
 
         # Dust feature amplitudes
         A_df = repeat([clamp(nanmedian(I)/2, 0., Inf)], cube_fitter.n_dust_feat)
@@ -771,8 +772,8 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
                 clamp(nanmedian(I)/2, 0., Inf) for αi ∈ continuum.α]
         
         # Hot dust amplitude
-        λ_hd = clamp(Wein(continuum.T_hot.value), minimum(λ), maximum(λ))
-        A_hd = clamp(cubic_spline(λ_hd) * N / Blackbody_ν(λ_hd, continuum.T_hot.value), 0., Inf) / 2
+        λ_hd = clamp(9.7, minimum(λ), maximum(λ))
+        A_hd = clamp(cubic_spline(λ_hd), 0., Inf) / 2
 
         stellar_pars = [A_s, continuum.T_s.value]
         dc_pars = vcat([[Ai, Ti.value] for (Ai, Ti) ∈ zip(A_dc, continuum.T_dc)]...)

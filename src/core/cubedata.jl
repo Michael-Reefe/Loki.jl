@@ -300,8 +300,8 @@ function interpolate_nans!(cube::DataCube, z::Real=0.)
             end
             λknots = λknots[good]
             # ONLY replace NaN values, keep the rest of the data as-is
-            I[filt] .= Spline1D(λ[isfinite.(I)], I[isfinite.(I)], λknots, k=3, bc="extrapolate").(λ[filt])
-            σ[filt] .= Spline1D(λ[isfinite.(σ)], σ[isfinite.(σ)], λknots, k=3, bc="extrapolate").(λ[filt])
+            I[filt] .= Spline1D(λ[isfinite.(I)], I[isfinite.(I)], λknots, k=1, bc="extrapolate").(λ[filt])
+            σ[filt] .= Spline1D(λ[isfinite.(σ)], σ[isfinite.(σ)], λknots, k=1, bc="extrapolate").(λ[filt])
 
             # Reassign data in cube structure
             cube.Iν[index, :] .= I
@@ -681,6 +681,19 @@ mutable struct Observation
         new(channels, name, z, α, δ, instrument, detector, rest_frame, masked)
     end
     
+end
+
+
+function save!(path::String, obs::Observation)
+    if !(path |> dirname |> isdir)
+        path |> dirname |> mkpath
+    end
+    serialize(path, obs)
+end
+
+
+function load!(path::String)
+    deserialize(path)
 end
 
 
