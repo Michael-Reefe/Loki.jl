@@ -17,16 +17,20 @@ locked = true
 # continuum components of the model. Defaults: 500, 300, 200, 135,
 # 90, 65, 50, 40, and 35 K.
 [[dust_continuum_temps]]
+val = 40.0
+plim = [25.0, 1500.0]
+locked = false
+[[dust_continuum_temps]]
 val = 90.0
-plim = [0.0, 1500.0]
+plim = [25.0, 1500.0]
 locked = false
 [[dust_continuum_temps]]
 val = 250.0
-plim = [0.0, 1500.0]
+plim = [25.0, 1500.0]
 locked = false
 [[dust_continuum_temps]]
 val = 500.0
-plim = [0.0, 1500.0]
+plim = [25.0, 1500.0]
 locked = false
 # [[dust_continuum_temps]]
 # val = 500.0
