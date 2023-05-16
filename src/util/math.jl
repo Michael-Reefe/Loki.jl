@@ -384,7 +384,7 @@ Simple power law function where the flux is proportional to the wavelength to th
 normalized at 9.7 um.
 """
 @inline function power_law(λ::Real, α::Real)
-    (λ/9.7)^α
+    (λ/10.)^α
 end
 
 
@@ -394,10 +394,19 @@ end
 A hot silicate dust emission profile, i.e. Gallimore et al. (2010), with an amplitude A,
 temperature T, grain size a, covering fraction Cf, and optical depths τ_warm and τ_cold.
 """
-function silicate_emission(λ, A, T, a)
+function silicate_emission(λ, ext_curve, A, T, a, Cf, τ_warm, τ_cold)
     σ = Q_sil_interp.abs.(a, λ) .* π .* a.^2
     σ_97 = Q_sil_interp.abs.(a, 9.7) * π * a^2
     @. A * Blackbody_ν(λ, T) * σ / (Blackbody_ν(9.7, T) * σ_97)
+end
+
+
+function agn_emission(λ)
+    if λ < 10
+        power_law(λ, 0.46)
+    else
+        Blackbody_ν(λ, 1000) / Blackbody_ν(10, 1000)
+    end
 end
 
 
@@ -841,10 +850,16 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
     contin .*= comps["extinction"] .* comps["abs_ice"] .* comps["abs_ch"]
     pᵢ += 4
 
+    # AGN emission
+    agn = params[pᵢ] .* agn_emission.(λ)
+    comps["agn"] = (1 .- params[pᵢ+1]).*agn .+ params[pᵢ+1].*agn.*comps["extinction"]
+    contin .+= comps["agn"]
+    pᵢ += 2
+
     if fit_sil_emission
         # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
         # Ref: Gallimore et al. 2010
-        comps["hot_dust"] = silicate_emission(λ, params[pᵢ:pᵢ+2]...)
+        comps["hot_dust"] = silicate_emission(λ, ext_curve, params[pᵢ:pᵢ+5]...)
         contin .+= comps["hot_dust"]
         pᵢ += 6
     end
@@ -914,10 +929,15 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
     contin .*= ext .* abs_ice .* abs_ch
     pᵢ += 4
 
+    # AGN emission
+    agn = params[pᵢ] .* agn_emission.(λ)
+    contin .+= (1 .- params[pᵢ+1]).*agn .+ params[pᵢ+1].*agn.*ext
+    pᵢ += 2
+
     if fit_sil_emission
         # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
         # Ref: Gallimore et al. 2010
-        contin .+= silicate_emission(λ, params[pᵢ:pᵢ+2]...)
+        contin .+= silicate_emission(λ, ext_curve, params[pᵢ:pᵢ+5]...)
         pᵢ += 6
     end
 
@@ -1001,8 +1021,8 @@ function model_continuum_and_pah(λ::Vector{T}, params::Vector{T}, N::Real, n_du
     n_dust_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool,
     return_components::Bool=true) where {T<:Real}
 
-    pars_1 = vcat(params[1:(2+2n_dust_cont+2n_power_law+4+(fit_sil_emission ? 6 : 0))], [0., 0.])
-    pars_2 = params[(3+2n_dust_cont+2n_power_law+4+(fit_sil_emission ? 6 : 0)):end]
+    pars_1 = vcat(params[1:(2+2+2n_dust_cont+2n_power_law+4+(fit_sil_emission ? 6 : 0))], [0., 0.])
+    pars_2 = params[(3+2+2n_dust_cont+2n_power_law+4+(fit_sil_emission ? 6 : 0)):end]
 
     if return_components
         contin_1, ccomps = model_continuum(λ, pars_1, N, n_dust_cont, n_power_law, extinction_curve, extinction_screen,
@@ -1258,7 +1278,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     p_dust_err = zeros(3n_dust_feat)
     pₒ = 1
     # Initial parameter vector index where dust profiles start
-    pᵢ = 3 + 2n_dust_cont + 2n_power_law + 4 + (fit_sil_emission ? 6 : 0)
+    pᵢ = 3 + 2 + 2n_dust_cont + 2n_power_law + 4 + (fit_sil_emission ? 6 : 0)
 
     for ii ∈ 1:n_dust_feat
 

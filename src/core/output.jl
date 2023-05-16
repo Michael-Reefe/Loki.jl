@@ -75,6 +75,14 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
         param_errs[2].extinction[:beta][index] = out_errs[index, pᵢ+3, 2]
         pᵢ += 4
 
+        param_maps.agn_continuum[:amp][index] = out_params[index, pᵢ]
+        param_errs[1].agn_continuum[:amp][index] = out_errs[index, pᵢ, 1]
+        param_errs[2].agn_continuum[:amp][index] = out_errs[index, pᵢ, 2]
+        param_maps.agn_continuum[:frac][index] = out_params[index, pᵢ+1]
+        param_errs[1].agn_continuum[:frac][index] = out_errs[index, pᵢ+1, 1]
+        param_errs[2].agn_continuum[:frac][index] = out_errs[index, pᵢ+1, 2]
+        pᵢ += 2
+
         if cube_fitter.fit_sil_emission
             # Hot dust parameters
             param_maps.hot_dust[:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z))-17 : -Inf
@@ -278,6 +286,7 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             # Set 3D model cube outputs, shifted back to the observed frame
             cube_model.model[index, :] .= I_model .* (1 .+ z)
             cube_model.stellar[index, :] .= comps["stellar"] .* (1 .+ z)
+            cube_model.agn[index, :] .= comps["agn"] .* (1 .+ z)
             for i ∈ 1:cube_fitter.n_dust_cont
                 cube_model.dust_continuum[index, :, i] .= comps["dust_cont_$i"] .* (1 .+ z)
             end
@@ -549,6 +558,14 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
     for parameter ∈ keys(param_maps.stellar_continuum)
         data = param_maps.stellar_continuum[parameter]
         name_i = join(["stellar_continuum", parameter], "_")
+        save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "continuum", "$(name_i).pdf")
+        plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf), 
+            cube_fitter.cosmology, cube_fitter.cube.wcs)
+    end
+
+    for parameter ∈ keys(param_maps.agn_continuum)
+        data = param_maps.agn_continuum[parameter]
+        name_i = join(["agn_continuum", parameter], "_")
         save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "continuum", "$(name_i).pdf")
         plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf), 
             cube_fitter.cosmology, cube_fitter.cube.wcs)
@@ -838,6 +855,7 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
             write(f, Float32.(cube_data.σ .* (1 .+ cube_fitter.z)); name="ERROR")                       # Error in the raw data
             write(f, cube_model.model; name="MODEL")                                                    # Full intensity model
             write(f, cube_model.stellar; name="STELLAR_CONTINUUM")                                      # Stellar continuum model
+            write(f, cube_model.agn; name="AGN_CONTINUUM")                                              # AGN continuum model
             for i ∈ 1:size(cube_model.dust_continuum, 4)
                 write(f, cube_model.dust_continuum[:, :, :, i]; name="DUST_CONTINUUM_$i")               # Dust continua
             end
@@ -866,6 +884,7 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
             write_key(f["ERROR"], "BUNIT", "MJy/sr")
             write_key(f["MODEL"], "BUNIT", "MJy/sr")
             write_key(f["STELLAR_CONTINUUM"], "BUNIT", "MJy/sr")
+            write_key(f["AGN_CONTINUUM"], "BUNIT", "MJy/sr")
             for i ∈ 1:size(cube_model.dust_continuum, 4)
                 write_key(f["DUST_CONTINUUM_$i"], "BUNIT", "MJy/sr")
             end
@@ -905,6 +924,19 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
                     bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
                 elseif occursin("temp", String(name_i))
                     bunit = "K"
+                end
+                write(f, data; name=name_i)
+                write_key(f[name_i], "BUNIT", bunit)
+            end
+
+            # AGN continuum parameters
+            for parameter ∈ keys(param_data.agn_continuum)
+                data = param_data.agn_continuum[parameter]
+                name_i = join(["agn_continuum", parameter], "_")
+                if occursin("amp", String(name_i))
+                    bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                elseif occursin("frac", String(name_i))
+                    bunit = "unitless"
                 end
                 write(f, data; name=name_i)
                 write_key(f[name_i], "BUNIT", bunit)

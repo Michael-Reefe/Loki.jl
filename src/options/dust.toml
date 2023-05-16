@@ -498,7 +498,7 @@ locked = false
 [hot_dust.size]
 val = 1.5
 plim = [1e-3, 10.0]
-locked = false
+locked = true
 
 # Covering fraction (0-1) of cold clouds
 [hot_dust.frac]
@@ -508,12 +508,12 @@ locked = false
 
 # Optical depth of warm dust
 [hot_dust.tau_warm]
-val = 1.0
+val = 0.1
 plim = [0.0, 1000.0]
 locked = false
 
 # Optical depth of cold dust
 [hot_dust.tau_cold]
-val = 1.0
+val = 0.1
 plim = [0.0, 1000.0]
 locked = false
