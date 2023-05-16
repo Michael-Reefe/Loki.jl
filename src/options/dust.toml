@@ -17,6 +17,23 @@ locked = true
 # continuum components of the model. Defaults: 500, 300, 200, 135,
 # 90, 65, 50, 40, and 35 K.
 # [[dust_continuum_temps]]
+# val = 50.0
+# plim = [25.0, 1500.0]
+# locked = false
+# [[dust_continuum_temps]]
+# val = 100.0
+# plim = [25.0, 1500.0]
+# locked = false
+# [[dust_continuum_temps]]
+# val = 300.0
+# plim = [25.0, 1500.0]
+# locked = false
+# [[dust_continuum_temps]]
+# val = 1300.0
+# plim = [25.0, 1500.0]
+# locked = false
+
+# [[dust_continuum_temps]]
 # val = 35.0
 # plim = [25.0, 50.0]
 # locked = false
@@ -491,7 +508,7 @@ locked = true
 # Temperature, 800-1600 K
 [hot_dust.temp]
 val = 400.0
-plim = [200.0, 1500.0]
+plim = [25.0, 1500.0]
 locked = false
 
 # Size, absolute limits: 0.001-10 microns
