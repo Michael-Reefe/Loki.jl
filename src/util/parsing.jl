@@ -150,7 +150,7 @@ function parse_dust()
     keylist1 = ["stellar_continuum_temp", "dust_features", "extinction", "hot_dust"]
     keylist2 = ["wave", "fwhm"]
     keylist3 = ["tau_9_7", "tau_ice", "tau_ch", "beta"]
-    keylist4 = ["temp", "frac", "tau_warm", "tau_cold"]
+    keylist4 = ["temp", "frac", "tau_warm", "tau_cold", "peak"]
     keylist5 = ["val", "plim", "locked"]
 
     # Loop through all of the required keys that should be in the file and confirm that they are there
@@ -253,10 +253,12 @@ function parse_dust()
     msg *= "\nTau_Warm $τ_warm"
     τ_cold = from_dict(dust["hot_dust"]["tau_cold"])
     msg *= "\nTau_Cold $τ_cold"
+    peak = from_dict(dust["hot_dust"]["peak"])
+    msg *= "\nPeak $peak"
     @debug msg
 
     # Create continuum object
-    continuum = Continuum(T_s, T_dc, α, τ_97, τ_ice, τ_ch, β, T_hot, Cf, τ_warm, τ_cold)
+    continuum = Continuum(T_s, T_dc, α, τ_97, τ_ice, τ_ch, β, T_hot, Cf, τ_warm, τ_cold, peak)
 
     continuum, dust_features
 end

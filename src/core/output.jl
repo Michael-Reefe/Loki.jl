@@ -92,7 +92,10 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             param_maps.hot_dust[:tau_cold][index] = out_params[index, pᵢ+4]
             param_errs[1].hot_dust[:tau_cold][index] = out_errs[index, pᵢ+4, 1]
             param_errs[2].hot_dust[:tau_cold][index] = out_errs[index, pᵢ+4, 2]
-            pᵢ += 5
+            param_maps.hot_dust[:peak][index] = out_params[index, pᵢ+5]
+            param_errs[1].hot_dust[:peak][index] = out_errs[index, pᵢ+5, 1]
+            param_errs[2].hot_dust[:peak][index] = out_errs[index, pᵢ+5, 2]
+            pᵢ += 6
         end
 
         # Dust feature log(amplitude), mean, FWHM
@@ -378,7 +381,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         bunit = L"FWHM ($\mu$m)"
     elseif occursin("fwhm", String(name_i)) && !occursin("PAH", String(name_i))
         bunit = L"FWHM (km s$^{-1}$)"
-    elseif occursin("mean", String(name_i))
+    elseif occursin("mean", String(name_i)) || occursin("peak", String(name_i))
         bunit = L"$\mu$ ($\mu$m)"
     elseif occursin("voff", String(name_i))
         bunit = L"$v_{\rm off}$ (km s$^{-1}$)"
@@ -946,6 +949,8 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
                         bunit = "Kelvin"
                     elseif occursin("frac", String(name_i)) || occursin("tau", String(name_i))
                         bunit = "unitless"
+                    elseif occursin("peak", String(name_i))
+                        bunit = "um"
                     end
                     write(f, data; name=name_i)
                     write_key(f[name_i], "BUNIT", bunit)

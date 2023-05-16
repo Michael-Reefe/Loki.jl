@@ -473,7 +473,7 @@ locked = true
 # Hot dust components
 # Temperature, 800-1600 K
 [hot_dust.temp]
-val = 400.0
+val = 1200.0
 plim = [200.0, 1600.0]
 locked = false
 
@@ -493,4 +493,10 @@ locked = false
 [hot_dust.tau_cold]
 val = 0.1
 plim = [0.0, 1000.0]
+locked = false
+
+# Peak wavelength of the silicate emission profile
+[hot_dust.peak]
+val = 10.0178
+plim = [9.5, 11.0]
 locked = false
