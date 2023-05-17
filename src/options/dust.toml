@@ -485,7 +485,7 @@ locked = true
 # Hot dust components
 # Temperature, 800-1600 K
 [hot_dust.temp]
-val = 400.0
+val = 500.0
 plim = [100.0, 1500.0]
 locked = false
 
