@@ -394,8 +394,8 @@ temperature T, covering fraction Cf, and optical depths τ_warm and τ_cold.
 function silicate_emission(λ, A, T, Cf, τ_warm, τ_cold, λ_peak)
     # Shift the peak to the desired wavelength
     o_peak = 10.0178
-    v = Doppler_shift_v(λ_peak, o_peak)
-    λshift = Doppler_shift_λ.(λ, -v) 
+    Δλ = o_peak - λ_peak
+    λshift = λ .+ Δλ
     ext_curve = τ_ohm.(λshift)
 
     bb = @. A * Blackbody_ν(λ, T) * (1 - extinction(ext_curve, τ_warm, screen=true))

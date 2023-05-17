@@ -14,8 +14,20 @@ plim = [4999.9, 5000.1]
 locked = true
 
 # dust_continuum_temps: the blackbody temperatures of the dust
-# continuum components of the model. Defaults: 500, 300, 200, 135,
+# continuum components of the model. Defaults: 300, 200, 135,
 # 90, 65, 50, 40, and 35 K.
+[[dust_continuum_temps]]
+val = 1500.0
+plim = [1499.9, 1500.1]
+locked = true
+[[dust_continuum_temps]]
+val = 1000.0
+plim = [999.9, 1000.1]
+locked = true
+[[dust_continuum_temps]]
+val = 750.0
+plim = [749.9, 750.1]
+locked = true
 [[dust_continuum_temps]]
 val = 500.0
 plim = [499.9, 500.1]
@@ -445,7 +457,7 @@ locked = false
 [extinction.tau_9_7]
 val = 0.0
 plim = [0.0, 10.0]
-locked = true
+locked = false
 
 # extinction.tau_ice: the optical depth from ice absorption
 # at ~6.9 microns (the peak).
@@ -473,8 +485,8 @@ locked = true
 # Hot dust components
 # Temperature, 800-1600 K
 [hot_dust.temp]
-val = 1200.0
-plim = [200.0, 1600.0]
+val = 400.0
+plim = [100.0, 1500.0]
 locked = false
 
 # Covering fraction (0-1) of cold clouds
@@ -499,4 +511,4 @@ locked = false
 [hot_dust.peak]
 val = 10.0178
 plim = [9.5, 11.0]
-locked = false
+locked = true

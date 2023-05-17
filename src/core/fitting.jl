@@ -52,7 +52,7 @@ function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}; Δ::Integer=
         if any([abs(d2f[j]) > thresh * nanstd(d2f[max(1, j-Wi):min(length(λ), j+Wi)]) for Wi ∈ W])
 
             # the width of the mask is based on the peaks in the numerical first derivative
-            w = min(W...)
+            w = 10
             p₁ = nanargmax(df[max(j-w,1):min(j+w,length(df))])
             p₂ = nanargmin(df[max(j-w,1):min(j+w,length(df))])
             n_pix = 4 * (p₂ - p₁)
@@ -590,6 +590,8 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
     z::Real, χ2red::Real, name::String, label::String; backend::Symbol=:pyplot, I_boot_min::Union{Vector{<:Real},Nothing}=nothing, 
     I_boot_max::Union{Vector{<:Real},Nothing}=nothing, range::Union{Tuple,Nothing}=nothing, spline::Union{Vector{<:Real},Nothing}=nothing) where {T<:Real}
 
+    fit_sil_emission = haskey(comps, "hot_dust")
+
     # Plotly ---> useful interactive plots for visually inspecting data, but not publication-quality
     if (backend == :plotly || backend == :both) && isnothing(range)
         # Plot the overall data / model
@@ -621,8 +623,13 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
             (n_dust_cont > 0 ? sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] : zeros(length(λ))) .+ 
             (n_power_law > 0 ? sum([comps["power_law_$j"] for j ∈ 1:n_power_law], dims=1)[1] : zeros(length(λ))) .+ comps["stellar"]),
             mode="lines", line=Dict(:color => "green", :width => 1), name="Dust+Stellar Continuum")])
+        # Summed up PAH features
         append!(traces, [PlotlyJS.scatter(x=λ, y=sum([comps["dust_feat_$i"] for i ∈ 1:n_dust_features], dims=1)[1] .* comps["extinction"],
             mode="lines", line=Dict(:color => "blue", :width => 1), name="PAHs")])
+        # Individual PAH features
+        for i in 1:n_dust_features
+            append!(traces, [PlotlyJS.scatter(x=λ, y=comps["dust_feat_$i"] .* comps["extinction"], mode="lines", line=Dict(:color => "blue", :width => 1), name="PAHs")])
+        end
         if !isnothing(spline)
             append!(traces, [PlotlyJS.scatter(x=λ, y=spline, mode="lines", line=Dict(:color => "red", :width => 1, :dash => "dash"), name="Cubic Spline")])
         end
@@ -698,10 +705,17 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
         ax4 = ax1.twiny()
 
         # full continuum
-        ax1.plot(λ, (comps["extinction"] .* comps["abs_ice"] .* comps["abs_ch"] .* (
+        ext_full = comps["extinction"] .* comps["abs_ice"] .* comps["abs_ch"] 
+        ax1.plot(λ, ext_full .* (
             (n_dust_cont > 0 ? sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] : zeros(length(λ))) .+ 
-            (n_power_law > 0 ? sum([comps["power_law_$j"] for j ∈ 1:n_power_law], dims=1)[1] : zeros(length(λ))) .+ comps["stellar"])
-            ) ./ norm ./ λ, "k--", alpha=0.5, label="Continuum")
+            (n_power_law > 0 ? sum([comps["power_law_$j"] for j ∈ 1:n_power_law], dims=1)[1] : zeros(length(λ))) .+ 
+            comps["stellar"] .+ (fit_sil_emission ? comps["hot_dust"] : zeros(length(λ)))
+            ) ./ norm ./ λ, "k-", lw=2, alpha=0.5, label="Continuum")
+        # individual continuum components
+        ax1.plot(λ, comps["stellar"] .* ext_full ./ norm ./ λ, "m--", alpha=0.5, label="Stellar continuum")
+        for i in 1:n_dust_cont
+            ax1.plot(λ, comps["dust_cont_$i"] .* ext_full ./ norm ./ λ, "k-", alpha=0.5, label="Dust continuum")
+        end
         # full PAH profile
         ax1.plot(λ, sum([comps["dust_feat_$i"] for i ∈ 1:n_dust_features], dims=1)[1] .* comps["extinction"] ./ norm ./ λ, "-", 
             color="#0065ff", label="PAHs")
@@ -1077,6 +1091,17 @@ function fit_stack!(cube_fitter::CubeFitter)
     I_sum_init = sumdim(cube_fitter.cube.Iν, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
     σ_sum_init = sqrt.(sumdim(cube_fitter.cube.σI.^2, (1,2))) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
     area_sr_init = cube_fitter.cube.Ω .* sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+
+    bad = findall(.~isfinite.(I_sum_init) .| .~isfinite.(σ_sum_init))
+    # Replace with the average of the points to the left and right
+    l = length(I_sum_init)
+    for badi in bad
+        lind = findfirst(x -> isfinite(x), I_sum_init[max(badi-1,1):-1:1])
+        rind = findfirst(x -> isfinite(x), I_sum_init[min(badi+1,l):end])
+        I_sum_init[badi] = (I_sum_init[max(badi-1,1):-1:1][lind] + I_sum_init[min(badi+1,l):end][rind]) / 2
+        σ_sum_init[badi] = (σ_sum_init[max(badi-1,1):-1:1][lind] + σ_sum_init[min(badi+1,l):end][rind]) / 2
+    end
+    @assert all(isfinite.(I_sum_init) .& isfinite.(σ_sum_init)) "Error: Non-finite values found in the summed intensity/error arrays!"
 
     # Perform a cubic spline fit, also obtaining the line mask
     mask_lines_init, I_spline_init, σ_spline_init = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init)
