@@ -1097,6 +1097,17 @@ function fit_stack!(cube_fitter::CubeFitter)
     I_sum_init = sumdim(cube_fitter.cube.Iν, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
     σ_sum_init = sqrt.(sumdim(cube_fitter.cube.σI.^2, (1,2))) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
     area_sr_init = cube_fitter.cube.Ω .* sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+    
+    bad = findall(.~isfinite.(I_sum_init) .| .~isfinite.(σ_sum_init))
+    # Replace with the average of the points to the left and right
+    l = length(I_sum_init)
+    for badi in bad
+        lind = findfirst(x -> isfinite(x), I_sum_init[max(badi-1,1):-1:1])
+        rind = findfirst(x -> isfinite(x), I_sum_init[min(badi+1,l):end])
+        I_sum_init[badi] = (I_sum_init[max(badi-1,1):-1:1][lind] + I_sum_init[min(badi+1,l):end][rind]) / 2
+        σ_sum_init[badi] = (σ_sum_init[max(badi-1,1):-1:1][lind] + σ_sum_init[min(badi+1,l):end][rind]) / 2
+    end
+    @assert all(isfinite.(I_sum_init) .& isfinite.(σ_sum_init)) "Error: Non-finite values found in the summed intensity/error arrays!"
 
     # Perform a cubic spline fit, also obtaining the line mask
     mask_lines_init, I_spline_init, σ_spline_init = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init)

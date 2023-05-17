@@ -51,8 +51,8 @@ locked = true
 # locked = false
 
 [[dust_continuum_temps]]
-val = 2000.0
-plim = [1999.9, 2000.1]
+val = 1500.0
+plim = [1499.9, 1500.1]
 locked = true
 [[dust_continuum_temps]]
 val = 1000.0
@@ -67,20 +67,20 @@ val = 500.0
 plim = [499.9, 500.1]
 locked = true
 [[dust_continuum_temps]]
-val = 350.0
-plim = [349.9, 350.1]
+val = 300.0
+plim = [299.9, 300.1]
 locked = true
 [[dust_continuum_temps]]
-val = 225.0
-plim = [224.9, 225.1]
+val = 200.0
+plim = [199.9, 200.1]
 locked = true
 [[dust_continuum_temps]]
-val = 150.0
-plim = [149.9, 150.1]
+val = 135.0
+plim = [134.9, 135.1]
 locked = true
 [[dust_continuum_temps]]
-val = 100.0
-plim = [99.9, 100.1]
+val = 90.0
+plim = [89.9, 90.1]
 locked = true
 [[dust_continuum_temps]]
 val = 65.0
@@ -610,7 +610,7 @@ locked = true
 # Temperature, 800-1600 K
 [hot_dust.temp]
 val = 400.0
-plim = [25.0, 1500.0]
+plim = [100.0, 1500.0]
 locked = false
 
 # Size, absolute limits: 0.001-10 microns
