@@ -485,8 +485,8 @@ locked = true
 # Hot dust components
 # Temperature, 800-1600 K
 [hot_dust.temp]
-val = 500.0
-plim = [100.0, 1500.0]
+val = 400.0
+plim = [200.0, 1500.0]
 locked = false
 
 # Covering fraction (0-1) of cold clouds
@@ -498,7 +498,7 @@ locked = false
 # Optical depth of warm dust
 [hot_dust.tau_warm]
 val = 0.1
-plim = [0.0, 1000.0]
+plim = [0.0, 1.0]
 locked = false
 
 # Optical depth of cold dust
