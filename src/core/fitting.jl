@@ -632,9 +632,13 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
             mode="lines", line=Dict(:color => "red", :width => 2), name="Dust+Stellar Continuum")])
         # Add summed up PAH features
         append!(traces, [PlotlyJS.scatter(x=λ, y=sum([comps["dust_feat_$i"] for i ∈ 1:n_dust_features], dims=1)[1] .* comps["extinction"],
-            mode="lines", line=Dict(:color => "blue", :width => 1), name="PAHs")])
+            mode="lines", line=Dict(:color => "blue", :width => 2), name="PAHs")])
         if !isnothing(spline)
             append!(traces, [PlotlyJS.scatter(x=λ, y=spline, mode="lines", line=Dict(:color => "red", :width => 1, :dash => "dash"), name="Cubic Spline")])
+        end
+        # Individual PAH features
+        for i in 1:n_dust_features
+            append!(traces, [PlotlyJS.scatter(x=λ, y=comps["dust_feat_$i"] .* comps["extinction"], mode="lines", line=Dict(:color => "blue", :width => 1), name="PAHs")])
         end
         # axes labels / titles / fonts
         layout = PlotlyJS.Layout(
