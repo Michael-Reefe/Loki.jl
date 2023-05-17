@@ -394,11 +394,11 @@ end
 A hot silicate dust emission profile, i.e. Gallimore et al. (2010), with an amplitude A,
 temperature T, grain size a, covering fraction Cf, and optical depths τ_warm and τ_cold.
 """
-function silicate_emission(λ, A, T, a, Cf, τ_warm, τ_cold)
+function silicate_emission(λ, ext_curve, A, T, a, Cf, τ_warm, τ_cold)
     σ = Q_sil_interp.abs.(a, λ) .* π .* a.^2
     σ_97 = Q_sil_interp.abs.(a, 9.7) * π * a^2
     bb = @. Blackbody_ν(λ, T) * σ
-    bb = @. (1 - Cf)*bb + Cf*bb*extinction(σ ./ σ_97, τ_cold, screen=true)
+    bb = @. (1 - Cf)*bb + Cf*bb*extinction(ext_curve, τ_cold, screen=true)
     bb97 = Blackbody_ν(9.7, T) * σ_97
     bb97 = (1 - Cf)*bb97 + Cf*bb97*extinction(1., τ_cold, screen=true)
     A .* bb ./ bb97
@@ -848,7 +848,7 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
     if fit_sil_emission
         # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
         # Ref: Gallimore et al. 2010
-        comps["hot_dust"] = silicate_emission(λ, params[pᵢ:pᵢ+5]...)
+        comps["hot_dust"] = silicate_emission(λ, ext_curve, params[pᵢ:pᵢ+5]...)
         contin .+= comps["hot_dust"]
         pᵢ += 6
     end
@@ -921,7 +921,7 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
     if fit_sil_emission
         # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
         # Ref: Gallimore et al. 2010
-        contin .+= silicate_emission(λ, params[pᵢ:pᵢ+5]...)
+        contin .+= silicate_emission(λ, ext_curve, params[pᵢ:pᵢ+5]...)
         pᵢ += 6
     end
 

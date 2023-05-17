@@ -627,8 +627,8 @@ locked = false
 
 # Optical depth of warm dust
 [hot_dust.tau_warm]
-val = 1.0
-plim = [0.0, 1000.0]
+val = 0.1
+plim = [0.0, 1.0]
 locked = false
 
 # Optical depth of cold dust
