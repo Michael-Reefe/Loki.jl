@@ -51,24 +51,36 @@ locked = true
 # locked = false
 
 [[dust_continuum_temps]]
+val = 2000.0
+plim = [1999.9, 2000.1]
+locked = true
+[[dust_continuum_temps]]
+val = 1000.0
+plim = [999.9, 1000.1]
+locked = true
+[[dust_continuum_temps]]
+val = 750.0
+plim = [749.9, 750.1]
+locked = true
+[[dust_continuum_temps]]
 val = 500.0
 plim = [499.9, 500.1]
 locked = true
 [[dust_continuum_temps]]
-val = 300.0
-plim = [299.9, 300.1]
+val = 350.0
+plim = [349.9, 350.1]
 locked = true
 [[dust_continuum_temps]]
-val = 200.0
-plim = [199.9, 200.1]
+val = 225.0
+plim = [224.9, 225.1]
 locked = true
 [[dust_continuum_temps]]
-val = 135.0
-plim = [134.9, 135.1]
+val = 150.0
+plim = [149.9, 150.1]
 locked = true
 [[dust_continuum_temps]]
-val = 90.0
-plim = [89.9, 90.1]
+val = 100.0
+plim = [99.9, 100.1]
 locked = true
 [[dust_continuum_temps]]
 val = 65.0
