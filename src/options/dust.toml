@@ -29,7 +29,7 @@ locked = true
 # plim = [25.0, 1500.0]
 # locked = false
 # [[dust_continuum_temps]]
-# val = 1300.0
+# val = 500.0
 # plim = [25.0, 1500.0]
 # locked = false
 
@@ -278,27 +278,37 @@ plim = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_7.75".fwhm]
-val = 0.100
+val = 0.160
 plim = [0.4, 1.4]
 locked = false
 
-[dust_features."PAH_7.84".wave]
-val = 7.84
+[dust_features."PAH_7.85".wave]
+val = 7.85
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_7.84".fwhm]
-val = 0.184
+[dust_features."PAH_7.85".fwhm]
+val = 0.152
 plim = [0.4, 1.4]
 locked = false
 
-[dust_features."PAH_7.91".wave]
-val = 7.91
+[dust_features."PAH_8.00".wave]
+val = 8.00
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_7.91".fwhm]
+[dust_features."PAH_8.00".fwhm]
 val = 0.285
+plim = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_8.31".wave]
+val = 8.31
+plim = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_8.31".fwhm]
+val = 0.206
 plim = [0.4, 1.4]
 locked = false
 
@@ -422,43 +432,33 @@ locked = false
 # plim = [0.4, 1.4]
 # locked = false
 
-[dust_features."PAH_12.62".wave]
-val = 12.62
+[dust_features."PAH_12.50".wave]
+val = 12.50
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_12.62".fwhm]
-val = 0.585
+[dust_features."PAH_12.50".fwhm]
+val = 0.505
 plim = [0.4, 1.4]
 locked = false
 
-[dust_features."PAH_12.66".wave]
-val = 12.66
+[dust_features."PAH_12.60".wave]
+val = 12.60
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_12.66".fwhm]
-val = 0.116
+[dust_features."PAH_12.60".fwhm]
+val = 0.300
 plim = [0.4, 1.4]
 locked = false
 
-[dust_features."PAH_12.71".wave]
-val = 12.71
+[dust_features."PAH_12.69".wave]
+val = 12.69
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_12.71".fwhm]
+[dust_features."PAH_12.69".fwhm]
 val = 0.165
-plim = [0.4, 1.4]
-locked = false
-
-[dust_features."PAH_12.88".wave]
-val = 12.88
-plim = [-0.05, 0.05]
-locked = false
-
-[dust_features."PAH_12.88".fwhm]
-val = 0.700
 plim = [0.4, 1.4]
 locked = false
 
@@ -610,7 +610,7 @@ locked = true
 # Temperature, 800-1600 K
 [hot_dust.temp]
 val = 400.0
-plim = [100.0, 1500.0]
+plim = [200.0, 1500.0]
 locked = false
 
 # Size, absolute limits: 0.001-10 microns
@@ -626,13 +626,7 @@ plim = [0.0, 1.0]
 locked = false
 
 # Optical depth of warm dust
-[hot_dust.tau_warm]
+[hot_dust.tau_hot]
 val = 0.1
-plim = [0.0, 1.0]
-locked = false
-
-# Optical depth of cold dust
-[hot_dust.tau_cold]
-val = 1.0
 plim = [0.0, 1000.0]
 locked = false

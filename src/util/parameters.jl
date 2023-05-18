@@ -116,8 +116,7 @@ struct Continuum
     T_hot::Parameter
     a_hot::Parameter
     Cf_hot::Parameter
-    τ_warm::Parameter
-    τ_cold::Parameter
+    τ_hot::Parameter
 
 end
 

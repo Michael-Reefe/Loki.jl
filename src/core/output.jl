@@ -89,13 +89,10 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             param_maps.hot_dust[:frac][index] = out_params[index, pᵢ+3]
             param_errs[1].hot_dust[:frac][index] = out_errs[index, pᵢ+3, 1]
             param_errs[2].hot_dust[:frac][index] = out_errs[index, pᵢ+3, 2]
-            param_maps.hot_dust[:tau_warm][index] = out_params[index, pᵢ+4]
-            param_errs[1].hot_dust[:tau_warm][index] = out_errs[index, pᵢ+4, 1]
-            param_errs[2].hot_dust[:tau_warm][index] = out_errs[index, pᵢ+4, 2]
-            param_maps.hot_dust[:tau_cold][index] = out_params[index, pᵢ+5]
-            param_errs[1].hot_dust[:tau_cold][index] = out_errs[index, pᵢ+5, 1]
-            param_errs[2].hot_dust[:tau_cold][index] = out_errs[index, pᵢ+5, 2]
-            pᵢ += 6
+            param_maps.hot_dust[:tau_hot][index] = out_params[index, pᵢ+4]
+            param_errs[1].hot_dust[:tau_hot][index] = out_errs[index, pᵢ+4, 1]
+            param_errs[2].hot_dust[:tau_hot][index] = out_errs[index, pᵢ+4, 2]
+            pᵢ += 5
         end
 
         # Dust feature log(amplitude), mean, FWHM
@@ -390,10 +387,8 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     elseif occursin("SNR", String(name_i))
         bunit = L"$S/N$"
     elseif occursin("tau", String(name_i))
-        if occursin("warm", String(name_i))
-            bunit = L"$\tau_{\rm warm}$"
-        elseif occursin("cold", String(name_i))
-            bunit = L"$\tau_{\rm cold}$"
+        if occursin("hot", String(name_i))
+            bunit = L"$\tau_{\rm hot}$"
         elseif occursin("ice", String(name_i))
             bunit = L"$\tau_{\rm ice}$"
         elseif occursin("ch", String(name_i))

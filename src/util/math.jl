@@ -394,13 +394,13 @@ end
 A hot silicate dust emission profile, i.e. Gallimore et al. (2010), with an amplitude A,
 temperature T, grain size a, covering fraction Cf, and optical depths τ_warm and τ_cold.
 """
-function silicate_emission(λ, ext_curve, A, T, a, Cf, τ_warm, τ_cold)
+function silicate_emission(λ, A, T, a, Cf, τ_hot)
     σ = Q_sil_interp.abs.(a, λ) .* π .* a.^2
     σ_97 = Q_sil_interp.abs.(a, 9.7) * π * a^2
     bb = @. Blackbody_ν(λ, T) * σ
-    bb = @. (1 - Cf)*bb + Cf*bb*extinction(ext_curve, τ_cold, screen=true)
+    bb = @. (1 - Cf)*bb + Cf*bb*extinction(σ ./ σ_97, τ_hot, screen=true)
     bb97 = Blackbody_ν(9.7, T) * σ_97
-    bb97 = (1 - Cf)*bb97 + Cf*bb97*extinction(1., τ_cold, screen=true)
+    bb97 = (1 - Cf)*bb97 + Cf*bb97*extinction(1., τ_hot, screen=true)
     A .* bb ./ bb97
 end
 
@@ -848,9 +848,9 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
     if fit_sil_emission
         # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
         # Ref: Gallimore et al. 2010
-        comps["hot_dust"] = silicate_emission(λ, ext_curve, params[pᵢ:pᵢ+5]...)
+        comps["hot_dust"] = silicate_emission(λ, params[pᵢ:pᵢ+4]...)
         contin .+= comps["hot_dust"]
-        pᵢ += 6
+        pᵢ += 5
     end
 
     # Add Smith+2006 PAH templates
@@ -921,8 +921,8 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
     if fit_sil_emission
         # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
         # Ref: Gallimore et al. 2010
-        contin .+= silicate_emission(λ, ext_curve, params[pᵢ:pᵢ+5]...)
-        pᵢ += 6
+        contin .+= silicate_emission(λ, params[pᵢ:pᵢ+4]...)
+        pᵢ += 5
     end
 
     # Add Smith+2006 PAH templates
@@ -1005,8 +1005,8 @@ function model_continuum_and_pah(λ::Vector{T}, params::Vector{T}, N::Real, n_du
     n_dust_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool,
     return_components::Bool=true) where {T<:Real}
 
-    pars_1 = vcat(params[1:(2+2n_dust_cont+2n_power_law+4+(fit_sil_emission ? 6 : 0))], [0., 0.])
-    pars_2 = params[(3+2n_dust_cont+2n_power_law+4+(fit_sil_emission ? 6 : 0)):end]
+    pars_1 = vcat(params[1:(2+2n_dust_cont+2n_power_law+4+(fit_sil_emission ? 5 : 0))], [0., 0.])
+    pars_2 = params[(3+2n_dust_cont+2n_power_law+4+(fit_sil_emission ? 5 : 0)):end]
 
     if return_components
         contin_1, ccomps = model_continuum(λ, pars_1, N, n_dust_cont, n_power_law, extinction_curve, extinction_screen,
@@ -1262,7 +1262,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     p_dust_err = zeros(3n_dust_feat)
     pₒ = 1
     # Initial parameter vector index where dust profiles start
-    pᵢ = 3 + 2n_dust_cont + 2n_power_law + 4 + (fit_sil_emission ? 6 : 0)
+    pᵢ = 3 + 2n_dust_cont + 2n_power_law + 4 + (fit_sil_emission ? 5 : 0)
 
     for ii ∈ 1:n_dust_feat
 
@@ -1290,9 +1290,9 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
         flux, f_err = calculate_flux(:Drude, A_cgs, A_cgs_err, μ, μ_err, fwhm, fwhm_err, propagate_err=propagate_err)
 
         # Calculate the equivalent width using the utility function
-        # eqw, e_err = calculate_eqw(λ, popt_c, perr_c, N, n_dust_cont, n_power_law, n_dust_feat, extinction_curve, extinction_screen,
-            # fit_sil_emission, :Drude, A*N*ext, A_err*N*ext, μ, μ_err, fwhm, fwhm_err, propagate_err=propagate_err)
-        eqw, e_err = 0., 0.
+        eqw, e_err = calculate_eqw(λ, popt_c, perr_c, N, n_dust_cont, n_power_law, n_dust_feat, extinction_curve, extinction_screen,
+            fit_sil_emission, :Drude, A*N*ext, A_err*N*ext, μ, μ_err, fwhm, fwhm_err, propagate_err=propagate_err)
+        # eqw, e_err = 0., 0.
 
         @debug "PAH feature with ($A_cgs, $μ, $fwhm) and errors ($A_cgs_err, $μ_err, $fwhm_err)"
         @debug "I=$flux, err=$f_err, EQW=$eqw, err=$e_err"
@@ -1423,11 +1423,11 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                     fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err, propagate_err=propagate_err)
 
                 # Calculate the equivalent width using the utility function
-                # p_lines[pₒ+1], p_lines_err[pₒ+1] = calculate_eqw(λ, popt_c, perr_c, N, n_dust_cont, n_power_law, n_dust_feat,
-                    # extinction_curve, extinction_screen, fit_sil_emission, lines.profiles[k, j], amp*N*ext, amp_err*N*ext, 
-                    # mean_μm, mean_μm_err, fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err,
-                    # propagate_err=propagate_err)
-                p_lines[pₒ+1], p_lines_err[pₒ+1] = 0., 0.
+                p_lines[pₒ+1], p_lines_err[pₒ+1] = calculate_eqw(λ, popt_c, perr_c, N, n_dust_cont, n_power_law, n_dust_feat,
+                    extinction_curve, extinction_screen, fit_sil_emission, lines.profiles[k, j], amp*N*ext, amp_err*N*ext, 
+                    mean_μm, mean_μm_err, fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err,
+                    propagate_err=propagate_err)
+                # p_lines[pₒ+1], p_lines_err[pₒ+1] = 0., 0.
 
                 # SNR
                 p_lines[pₒ+2] = amp*N*ext / std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)])

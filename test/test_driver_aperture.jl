@@ -86,7 +86,7 @@ obs = from_fits(["data/Level3_ch1-long_s3d.fits",
 #                  0.022)
 
 channel = 0
-name = replace(obs.name, " " => "_") * "_ch$(channel)_aperture_m_nuc_emissivity_hotdustmodel_1"
+name = replace(obs.name, " " => "_") * "_ch$(channel)_aperture_m_nuc_emissivity_hotdustmodel_0"
 
 if isfile("processed-data.loki")
     obs = load!("processed-data.loki")
