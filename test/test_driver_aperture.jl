@@ -87,7 +87,7 @@ obs = from_fits(["data/Level3_ch1-long_s3d.fits",
 
 # Convert to rest-frame wavelength vector, and mask out bad spaxels
 channel = 0
-name = replace(obs.name, " " => "_") * "_ch$(channel)_aperture_m_sf_emissivity_hotdustmodel_1"
+name = replace(obs.name, " " => "_") * "_ch$(channel)_aperture_m_sf_emissivity_hotdustmodel_0"
 
 if isfile("processed-data.loki")
     obs = load!("processed-data.loki")
@@ -107,7 +107,7 @@ end
 
 # Make aperture
 # ap = make_aperture(obs.channels[channel], :Circular, "23:03:15.610", "+8:52:26.10", 0.5, auto_centroid=true,
-    # scale_psf=false)
+#     scale_psf=false)
 ap = make_aperture(obs.channels[channel], :Circular, "23:03:15.575", "+8:52:24.80", 0.5, auto_centroid=false,
     scale_psf=false)
 # ap = make_aperture(obs.channels[channel], :Circular, "01:07:47.525", "-17:30:25.25", 0.5, auto_centroid=true,

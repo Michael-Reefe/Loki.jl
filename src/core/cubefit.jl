@@ -771,7 +771,7 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
         
         # Hot dust amplitude
         λ_hd = clamp(Wein(continuum.T_hot.value), minimum(λ), maximum(λ))
-        A_hd = clamp(cubic_spline(λ_hd) * N / Blackbody_ν(λ_hd, continuum.T_hot.value), 0., Inf) / 2
+        A_hd = clamp(cubic_spline(λ_hd) * N / Blackbody_ν(λ_hd, continuum.T_hot.value), 0., Inf) / 5
 
         stellar_pars = [A_s, continuum.T_s.value]
         dc_pars = vcat([[Ai, Ti.value] for (Ai, Ti) ∈ zip(A_dc, continuum.T_dc)]...)

@@ -77,6 +77,7 @@ locked = true
 # are modeled using Drude profiles.  The names should follow the
 # general format of "PAH_X.XX", filling in X with the central wavelength
 # up to 2 decimal places (or more if necessary).
+
 [dust_features."PAH_3.29".wave]
 val = 3.29
 plim = [-0.05, 0.05]
@@ -177,6 +178,16 @@ val = 0.189
 plim = [0.4, 1.4]
 locked = false
 
+# [dust_features."PAH_6.44".wave]
+# val = 6.44
+# plim = [-0.05, 0.05]
+# locked = false
+
+# [dust_features."PAH_6.44".fwhm]
+# val = 0.378
+# plim = [0.4, 1.4]
+# locked = false
+
 [dust_features."PAH_6.69".wave]
 val = 6.69
 plim = [-0.05, 0.05]
@@ -233,27 +244,37 @@ plim = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_7.75".fwhm]
-val = 0.100
+val = 0.160
 plim = [0.4, 1.4]
 locked = false
 
-[dust_features."PAH_7.84".wave]
-val = 7.84
+[dust_features."PAH_7.85".wave]
+val = 7.85
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_7.84".fwhm]
-val = 0.184
+[dust_features."PAH_7.85".fwhm]
+val = 0.152
 plim = [0.4, 1.4]
 locked = false
 
-[dust_features."PAH_7.91".wave]
-val = 7.91
+[dust_features."PAH_8.00".wave]
+val = 8.00
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_7.91".fwhm]
+[dust_features."PAH_8.00".fwhm]
 val = 0.285
+plim = [0.4, 1.4]
+locked = false
+
+[dust_features."PAH_8.31".wave]
+val = 8.31
+plim = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_8.31".fwhm]
+val = 0.206
 plim = [0.4, 1.4]
 locked = false
 
@@ -377,43 +398,33 @@ locked = false
 # plim = [0.4, 1.4]
 # locked = false
 
-[dust_features."PAH_12.62".wave]
-val = 12.62
+[dust_features."PAH_12.50".wave]
+val = 12.50
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_12.62".fwhm]
-val = 0.585
+[dust_features."PAH_12.50".fwhm]
+val = 0.505
 plim = [0.4, 1.4]
 locked = false
 
-[dust_features."PAH_12.66".wave]
-val = 12.66
+[dust_features."PAH_12.60".wave]
+val = 12.60
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_12.66".fwhm]
-val = 0.116
+[dust_features."PAH_12.60".fwhm]
+val = 0.300
 plim = [0.4, 1.4]
 locked = false
 
-[dust_features."PAH_12.71".wave]
-val = 12.71
+[dust_features."PAH_12.69".wave]
+val = 12.69
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_12.71".fwhm]
+[dust_features."PAH_12.69".fwhm]
 val = 0.165
-plim = [0.4, 1.4]
-locked = false
-
-[dust_features."PAH_12.88".wave]
-val = 12.88
-plim = [-0.05, 0.05]
-locked = false
-
-[dust_features."PAH_12.88".fwhm]
-val = 0.700
 plim = [0.4, 1.4]
 locked = false
 

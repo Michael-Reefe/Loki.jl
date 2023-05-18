@@ -70,6 +70,7 @@ function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}; Δ::Integer=
     mask[11.10 .< λ .< 11.15] .= 0
     mask[11.17 .< λ .< 11.24] .= 0
     mask[11.26 .< λ .< 11.355] .= 0
+    mask[12.5 .< λ .< 12.8] .= 0
 
     # Clip outliers in flux -- sensitive to both positive and negative spikes
     I_med = [nanmedian(I[max(i-10Δ,1):min(i+10Δ,length(I))]) for i in 1:length(I)]
@@ -1135,12 +1136,12 @@ function fit_stack!(cube_fitter::CubeFitter)
     # Plot the fit
     if cube_fitter.plot_spaxels != :none
         @debug "Plotting spaxel sum initial fit"
-        plot_spaxel_fit(λ_init, I_sum_init, I_model_init, σ_stat_init, comps_init,
+        plot_spaxel_fit(λ_init, I_sum_init, I_model_init, σ_sum_init, comps_init,
             cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_comps, cube_fitter.lines.λ₀, cube_fitter.lines.names, 
             cube_fitter.extinction_screen, cube_fitter.z, χ2red_init, cube_fitter.name, "initial_sum_fit", backend=cube_fitter.plot_spaxels)
         if !isnothing(cube_fitter.plot_range)
             for (i, plot_range) ∈ enumerate(cube_fitter.plot_range)
-                plot_spaxel_fit(λ_init, I_sum_init, I_model_init, σ_stat_init, comps_init,
+                plot_spaxel_fit(λ_init, I_sum_init, I_model_init, σ_sum_init, comps_init,
                     cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_comps, cube_fitter.lines.λ₀, cube_fitter.lines.names, 
                     cube_fitter.extinction_screen, cube_fitter.z, χ2red_init, cube_fitter.name, "initial_sum_line_$i", backend=cube_fitter.plot_spaxels;
                     range=plot_range)
