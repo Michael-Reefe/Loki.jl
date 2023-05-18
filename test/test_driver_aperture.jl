@@ -100,7 +100,7 @@ else
         interpolate_nans!(obs.channels[channel])
     end
     reproject_channels!(obs, [1,2,3], out_id=0, method=:adaptive)
-    interpolate_nans!(obs.channels[0], obs.z)
+    interpolate_nans!(obs.channels[0])
     save!("processed-data.loki", obs)
 end
 

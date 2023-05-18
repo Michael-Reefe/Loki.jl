@@ -264,7 +264,7 @@ get the general shape of the continuum but not fit noise or lines.
 
 See also [`DataCube`](@ref)
 """
-function interpolate_nans!(cube::DataCube, z::Real=0.)
+function interpolate_nans!(cube::DataCube)
 
     λ = cube.λ
     @debug "Interpolating NaNs in cube with channel $(cube.channel), band $(cube.band):"
@@ -1036,7 +1036,8 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
         med_left = dropdims(nanmedian(I_out[:, :, i1:jump], dims=3), dims=3)
         med_right = dropdims(nanmedian(I_out[:, :, jump+1:i2], dims=3), dims=3)
         # rescale the flux in the right channel to match the left channel
-        I_out[:, :, jump+1:end] .*= med_left ./ med_right
+        scale = clamp.(med_left ./ med_right, 0.5, 1.5)
+        I_out[:, :, jump+1:end] .*= scale
         @info "Minimum/Maximum fudge factor for channel $(i+1): ($(nanminimum(med_left./med_right)), $(nanmaximum(med_left./med_right)))"
         if concat_type == :full
             # resample fluxes in the overlapping regions
