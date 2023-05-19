@@ -187,9 +187,9 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     if !bootstrap_iter
         pars_1, pars_2 = get_continuum_initial_values(cube_fitter, λ_spax, I_spax, N, init || use_ap)
     else
-        pars_1 = vcat(p1_boots[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.fit_sil_emission ? 5 : 0))], 
+        pars_1 = vcat(p1_boots[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.fit_sil_emission ? 6 : 0))], 
             p1_boots[end-1:end])
-        pars_2 = p1_boots[(3+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.fit_sil_emission ? 5 : 0)):end-2]
+        pars_2 = p1_boots[(3+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.fit_sil_emission ? 6 : 0)):end-2]
     end
 
     # Sort parameters by those that are locked and those that are unlocked
@@ -620,7 +620,8 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
                           :width => 0.5, :dash => "dash"))])
         end
         # Add the summed up continuum
-        append!(traces, [PlotlyJS.scatter(x=λ, y=comps["extinction"] .* comps["abs_ice"] .* comps["abs_ch"] .* (
+        append!(traces, [PlotlyJS.scatter(x=λ, y=(fit_sil_emission ? comps["hot_dust"] : zeros(length(λ))) .+
+            comps["extinction"] .* comps["abs_ice"] .* comps["abs_ch"] .* (
             (n_dust_cont > 0 ? sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] : zeros(length(λ))) .+ 
             (n_power_law > 0 ? sum([comps["power_law_$j"] for j ∈ 1:n_power_law], dims=1)[1] : zeros(length(λ))) .+ comps["stellar"]),
             mode="lines", line=Dict(:color => "green", :width => 1), name="Dust+Stellar Continuum")])
@@ -707,11 +708,10 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
 
         # full continuum
         ext_full = comps["extinction"] .* comps["abs_ice"] .* comps["abs_ch"] 
-        ax1.plot(λ, ext_full .* (
+        ax1.plot(λ, ((fit_sil_emission ? comps["hot_dust"] : zeros(length(λ))) .+ ext_full .* (
             (n_dust_cont > 0 ? sum([comps["dust_cont_$i"] for i ∈ 1:n_dust_cont], dims=1)[1] : zeros(length(λ))) .+ 
             (n_power_law > 0 ? sum([comps["power_law_$j"] for j ∈ 1:n_power_law], dims=1)[1] : zeros(length(λ))) .+ 
-            comps["stellar"] .+ (fit_sil_emission ? comps["hot_dust"] : zeros(length(λ)))
-            ) ./ norm ./ λ, "k-", lw=2, alpha=0.5, label="Continuum")
+            comps["stellar"])) ./ norm ./ λ, "k-", lw=2, alpha=0.5, label="Continuum")
         # individual continuum components
         ax1.plot(λ, comps["stellar"] .* ext_full ./ norm ./ λ, "m--", alpha=0.5, label="Stellar continuum")
         for i in 1:n_dust_cont

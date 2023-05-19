@@ -117,6 +117,7 @@ struct Continuum
     Cf_hot::Parameter
     τ_warm::Parameter
     τ_cold::Parameter
+    sil_peak::Parameter
 
 end
 

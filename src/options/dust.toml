@@ -17,18 +17,6 @@ locked = true
 # continuum components of the model. Defaults: 300, 200, 135,
 # 90, 65, 50, 40, and 35 K.
 [[dust_continuum_temps]]
-val = 1500.0
-plim = [1499.9, 1500.1]
-locked = true
-[[dust_continuum_temps]]
-val = 1000.0
-plim = [999.9, 1000.1]
-locked = true
-[[dust_continuum_temps]]
-val = 750.0
-plim = [749.9, 750.1]
-locked = true
-[[dust_continuum_temps]]
 val = 500.0
 plim = [499.9, 500.1]
 locked = true
@@ -574,8 +562,8 @@ locked = true
 # Hot dust components
 # Temperature, 800-1600 K
 [hot_dust.temp]
-val = 400.0
-plim = [200.0, 1500.0]
+val = 1200.0
+plim = [800.0, 1600.0]
 locked = false
 
 # Covering fraction (0-1) of cold clouds
@@ -587,7 +575,7 @@ locked = false
 # Optical depth of warm dust
 [hot_dust.tau_warm]
 val = 0.1
-plim = [0.0, 1.0]
+plim = [0.0, 1000.0]
 locked = false
 
 # Optical depth of cold dust
@@ -595,3 +583,9 @@ locked = false
 val = 0.1
 plim = [0.0, 1000.0]
 locked = false
+
+# Peak location of 10 um silicate emission feature
+[hot_dust.peak]
+val = 10.466
+plim = [10.0, 10.8]
+locked = true

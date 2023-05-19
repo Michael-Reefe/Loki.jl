@@ -92,7 +92,10 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             param_maps.hot_dust[:tau_cold][index] = out_params[index, pᵢ+4]
             param_errs[1].hot_dust[:tau_cold][index] = out_errs[index, pᵢ+4, 1]
             param_errs[2].hot_dust[:tau_cold][index] = out_errs[index, pᵢ+4, 2]
-            pᵢ += 5
+            param_maps.hot_dust[:sil_peak][index] = out_params[index, pᵢ+5]
+            param_errs[1].hot_dust[:sil_peak][index] = out_errs[index, pᵢ+5, 1]
+            param_errs[2].hot_dust[:sil_peak][index] = out_errs[index, pᵢ+5, 2]
+            pᵢ += 6
         end
 
         # Dust feature log(amplitude), mean, FWHM
