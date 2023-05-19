@@ -532,7 +532,7 @@ locked = false
 # extinction.tau_9_7: the optical depth at 9.7 microns.
 # Default: gets estimated by the continuum at 9.7 microns.
 [extinction.tau_9_7]
-val = 0.0
+val = 0.1
 plim = [0.0, 10.0]
 locked = false
 
@@ -586,6 +586,6 @@ locked = false
 
 # Peak location of 10 um silicate emission feature
 [hot_dust.peak]
-val = 10.466
+val = 10.1
 plim = [10.0, 10.8]
-locked = true
+locked = false
