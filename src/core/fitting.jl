@@ -181,136 +181,67 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     end
 
     # Get the priors and "locked" booleans for each parameter, split up by the 2 steps for the continuum fit
-    plims_1, plims_2, lock_1, lock_2 = get_continuum_plimits(cube_fitter)
+    plims, lock = get_continuum_plimits(cube_fitter)
 
     # Split up the initial parameter vector into the components that we need for each fitting step
     if !bootstrap_iter
-        pars_1, pars_2 = get_continuum_initial_values(cube_fitter, λ_spax, I_spax, N, init || use_ap)
+        pars_0 = get_continuum_initial_values(cube_fitter, λ_spax, I_spax, N, init || use_ap)
     else
-        pars_1 = vcat(p1_boots[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.fit_sil_emission ? 6 : 0))], 
-            p1_boots[end-1:end])
-        pars_2 = p1_boots[(3+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.fit_sil_emission ? 6 : 0)):end-2]
+        pars_0 = p1_boots
     end
 
     # Sort parameters by those that are locked and those that are unlocked
-    p1fix = pars_1[lock_1]
-    p1free = pars_1[.~lock_1]
-    p2fix = pars_2[lock_2]
-    p2free = pars_2[.~lock_2]
+    pfix = pars_0[lock]
+    pfree = pars_0[.~lock]
 
     # Count free parameters
-    n_free_1 = sum(.~lock_1)
-    n_free_2 = sum(.~lock_2)
+    n_free = sum(.~lock)
 
     # Lower/upper bounds
-    lb_1 = [pl[1] for pl in plims_1[.~lock_1]]
-    ub_1 = [pl[2] for pl in plims_1[.~lock_1]]
-    lb_2 = [pl[1] for pl in plims_2[.~lock_2]]
-    ub_2 = [pl[2] for pl in plims_2[.~lock_2]]
+    lb = [pl[1] for pl in plims[.~lock]]
+    ub = [pl[2] for pl in plims[.~lock]]
 
     # Convert parameter limits into CMPFit object
-    parinfo_1, parinfo_2, config = get_continuum_parinfo(n_free_1, n_free_2, lb_1, ub_1, lb_2, ub_2)
+    parinfo, config = get_continuum_parinfo(n_free, lb, ub)
 
     @debug """\n
     ##########################################################################################################
-    ########################## STEP 1 - FIT THE BLACKBODY CONTINUUM WITH PAH TEMPLATES #######################
+    ########################################## FITTING THE CONTINUUM #########################################
     ##########################################################################################################
     """
-    @debug "Continuum Step 1 Parameters: \n $pars_1"
-    @debug "Continuum Parameters locked? \n $lock_1"
-    @debug "Continuum Lower limits: \n $([pl[1] for pl in plims_1])"
-    @debug "Continuum Upper limits: \n $([pl[2] for pl in plims_1])"
+    @debug "Continuum Parameters: \n $pars_0"
+    @debug "Continuum Parameters locked? \n $lock"
+    @debug "Continuum Lower limits: \n $lb"
+    @debug "Continuum Upper limits: \n $ub"
 
-    @debug "Beginning continuum fitting with Levenberg-Marquardt least squares (CMPFit):"
-
-    # Wrapper fitting function separating the free and fixed parameters
-    function fit_step1(x, pfree, return_comps=false)
-        ptot = zeros(Float64, length(pars_1))
-        ptot[.~lock_1] .= pfree
-        ptot[lock_1] .= p1fix
-        if !return_comps
-            model_continuum(x, ptot, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.extinction_curve, 
-                cube_fitter.extinction_screen, cube_fitter.fit_sil_emission)
-        else
-            model_continuum(x, ptot, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.extinction_curve, 
-                cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, true)
-        end            
+    function fit_cont(x, pfree)
+        ptot = zeros(Float64, length(pars_0))
+        ptot[.~lock] .= pfree
+        ptot[lock] .= pfix
+        model_continuum(x, ptot, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat,
+            cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission)
     end
-    res_1 = cmpfit(λ_spax, I_spax, σ_spax, fit_step1, p1free, parinfo=parinfo_1, config=config)
+    res = cmpfit(λ_spax, I_spax, σ_spax, fit_cont, pfree, parinfo=parinfo, config=config)
 
-    @debug "Continuum CMPFit Step 1 status: $(res_1.status)"
+    popt = zeros(length(pars_0))
+    popt[.~lock] .= res.param
+    popt[lock] .= pfix
 
-    # Create continuum without the PAH features
-    _, ccomps = fit_step1(λ_spax, res_1.param, true)
-
-    I_cont = ccomps["stellar"]
-    for i ∈ 1:cube_fitter.n_dust_cont
-        I_cont .+= ccomps["dust_cont_$i"]
-    end
-    for j ∈ 1:cube_fitter.n_power_law
-        I_cont .+= ccomps["power_law_$j"]
-    end
-    I_cont .*= ccomps["extinction"] .* ccomps["abs_ice"] .* ccomps["abs_ch"]
-    if cube_fitter.fit_sil_emission
-        I_cont .+= ccomps["hot_dust"]
-    end
-
-    @debug """\n
-    ##########################################################################################################
-    ################################# STEP 2 - FIT THE PAHs AS DRUDE PROFILES ################################
-    ##########################################################################################################
-    """
-    @debug "Continuum Step 2 Parameters: \n $pars_2"
-    @debug "Continuum Parameters locked? \n $lock_2"
-    @debug "Continuum Lower limits: \n $([pl[1] for pl in plims_2])"
-    @debug "Continuum Upper limits: \n $([pl[2] for pl in plims_2])"
-
-    @debug "Beginning continuum fitting with Levenberg-Marquardt least squares (CMPFit):"
-
-    # Wrapper function
-    function fit_step2(x, pfree, return_comps=false)
-        ptot = zeros(Float64, length(pars_2))
-        ptot[.~lock_2] .= pfree
-        ptot[lock_2] .= p2fix
-        if !return_comps
-            model_pah_residuals(x, ptot, cube_fitter.n_dust_feat, ccomps["extinction"])
-        else
-            model_pah_residuals(x, ptot, cube_fitter.n_dust_feat, ccomps["extinction"], true)
-        end
-    end
-    res_2 = cmpfit(λ_spax, I_spax.-I_cont, σ_spax, fit_step2, p2free, parinfo=parinfo_2, config=config)
-
-    @debug "Continuum CMPFit Step 2 status: $(res_2.status)"
-
-    # Get combined best fit results
-    lock = vcat(lock_1[1:end-2], lock_2)
-
-    # Combined Best fit parameters
-    popt = zeros(length(pars_1)+length(pars_2)-2)
-    popt[.~lock] .= vcat(res_1.param[1:end-2], res_2.param)
-    popt[lock] .= vcat(p1fix, p2fix)
-
-    # Only bother with the uncertainties if not bootstrapping
+    perr = zeros(length(popt))
     if !bootstrap_iter
-        # Combined 1-sigma uncertainties
-        perr = zeros(length(popt))
-        perr[.~lock] .= vcat(res_1.perror[1:end-2], res_2.perror)
-    else
-        perr = zeros(length(popt))
+        perr[.~lock] .= res.perror
     end
-
-    n_free = n_free_1 + n_free_2 - 2
 
     @debug "Best fit continuum parameters: \n $popt"
     @debug "Continuum parameter errors: \n $perr"
     # @debug "Continuum covariance matrix: \n $covar"
 
     # Create the full model, again only if not bootstrapping
-    I_model, comps = model_continuum_and_pah(λ, popt, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat,
-        cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission)
+    I_model, comps = model_continuum(λ, popt, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat,
+        cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, true)
 
     if init
-        cube_fitter.p_init_cont[:] .= vcat(popt, res_1.param[end-1:end])
+        cube_fitter.p_init_cont[:] .= popt
         # Save the results to a file 
         # save running best fit parameters in case the fitting is interrupted
         open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_cont.csv"), "w") do f
@@ -321,7 +252,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # Print the results (to the logger)
     pretty_print_continuum_results(cube_fitter, popt, perr, I_spax)
 
-    vcat(popt, res_1.param[end-1:end]), I_model, comps, n_free, vcat(perr, res_1.perror[end-1:end])
+    popt, I_model, comps, n_free, perr
 end
 
 
@@ -853,10 +784,10 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
             @timeit timer_output "calculate_extra_parameters" calculate_extra_parameters(λ, I, norm, cube_fitter.n_dust_cont,
                 cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, 
                 cube_fitter.fit_sil_emission, cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, cube_fitter.lines, 
-                cube_fitter.flexible_wavesol, lsf_interp_func, popt_c[1:end-2], popt_l, perr_c[1:end-2], perr_l, comps["extinction"], 
+                cube_fitter.flexible_wavesol, lsf_interp_func, popt_c, popt_l, perr_c, perr_l, comps["extinction"], 
                 mask_lines, I_spline, area_sr, !bootstrap_iter)
-        p_out = [popt_c[1:end-2]; popt_l; p_dust; p_lines; χ2; dof]
-        p_err = [perr_c[1:end-2]; perr_l; p_dust_err; p_lines_err; 0.; 0.]
+        p_out = [popt_c; popt_l; p_dust; p_lines; χ2; dof]
+        p_err = [perr_c; perr_l; p_dust_err; p_lines_err; 0.; 0.]
         
         return p_out, p_err, popt_c, popt_l, perr_c, perr_l, I_model, comps, χ2, dof
     end
@@ -988,7 +919,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                 lsf_interp_func = x -> lsf_interp(x)
 
                 # Replace the best-fit model with the 50th percentile model to be consistent with p_out
-                I_boot_cont, comps_boot_cont = model_continuum_and_pah(λ, p_out[1:split1], norm, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, 
+                I_boot_cont, comps_boot_cont = model_continuum(λ, p_out[1:split1], norm, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, 
                     cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, true)
                 I_boot_line, comps_boot_line = model_line_residuals(λ, p_out[split1+1:split2], cube_fitter.n_lines, cube_fitter.n_comps,
                     cube_fitter.lines, cube_fitter.flexible_wavesol, comps_boot_cont["extinction"], lsf_interp_func, true)

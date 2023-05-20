@@ -93,7 +93,6 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, n_power_law:
         dust_features[n][:mean] = copy(nan_arr)
         dust_features[n][:fwhm] = copy(nan_arr)
         dust_features[n][:flux] = copy(nan_arr)
-        dust_features[n][:eqw] = copy(nan_arr)
         dust_features[n][:SNR] = copy(nan_arr)
         @debug "dust feature $n maps with keys $(keys(dust_features[n]))"
     end
@@ -138,7 +137,7 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, n_power_law:
                     pnames = [pnames; :mixing]
                 end
                 # Append parameters for flux, equivalent width, and signal-to-noise ratio, which are NOT fitting parameters, but are of interest
-                pnames = [pnames; :flux; :eqw; :SNR]
+                pnames = [pnames; :flux; :SNR]
                 for pname ∈ pnames
                     lines[line][pname] = copy(nan_arr)
                 end
@@ -577,14 +576,14 @@ struct CubeFitter{T<:Real,S<:Integer}
                 end
             end
         end
-        n_params_extra = 3 * (n_dust_features + n_lines + n_acomps)
+        n_params_extra = 2 * (n_dust_features + n_lines + n_acomps)
         @debug "### There is a total of $(n_params_cont) continuum parameters ###"
         @debug "### There is a total of $(n_params_lines) emission line parameters ###"
         @debug "### There is a total of $(n_params_extra) extra parameters ###"
 
         # Prepare initial best fit parameter options
         @debug "Preparing initial best fit parameter vectors with $(n_params_cont+2) and $(n_params_lines) parameters"
-        p_init_cont = zeros(n_params_cont+2)
+        p_init_cont = zeros(n_params_cont)
         p_init_line = zeros(n_params_lines)
 
         # If a fit has been run previously, read in the file containing the rolling best fit parameters
@@ -670,13 +669,10 @@ function get_continuum_plimits(cube_fitter::CubeFitter)
         continuum.τ_warm.locked, continuum.τ_cold.locked, continuum.sil_peak.locked] : []
 
     # Split up for the two different stages of continuum fitting -- with templates and then with the PAHs
-    plims_1 = Vector{Tuple}(vcat(stellar_plim, dc_plim, pl_plim, ext_plim, hd_plim, [amp_df_plim, amp_df_plim]))
-    lock_1 = BitVector(vcat(stellar_lock, dc_lock, pl_lock, ext_lock, hd_lock, [false, false]))
-    plims_2 = Vector{Tuple}(df_plim)
-    lock_2 = BitVector(df_lock)
+    plims = Vector{Tuple}(vcat(stellar_plim, dc_plim, pl_plim, ext_plim, hd_plim, df_plim))
+    lock = BitVector(vcat(stellar_lock, dc_lock, pl_lock, ext_lock, hd_lock, df_lock))
 
-    plims_1, plims_2, lock_1, lock_2
-
+    plims, lock
 end
 
 
@@ -694,8 +690,7 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
         @debug "Using initial best fit continuum parameters..."
 
         # Set the parameters to the best parameters
-        p₀ = copy(cube_fitter.p_init_cont)[1:end-2]
-        pah_frac = copy(cube_fitter.p_init_cont)[end-1:end]
+        p₀ = copy(cube_fitter.p_init_cont)
 
         # pull out optical depth that was pre-fit
         # τ_97_0 = cube_fitter.τ_guess[parse(Int, cube_fitter.cube.channel)][spaxel]
@@ -706,9 +701,6 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
         scale = max(nanmedian(I), 1e-10) * N / nanmedian(sumdim(cube_fitter.cube.Iν, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2)))
         max_amp = 1 / exp(-max_τ)
 
-        # PAH template strengths
-        pah_frac .*= scale
-        
         # Stellar amplitude
         p₀[1] *= scale
         pᵢ = 3
@@ -750,7 +742,6 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
         continuum = cube_fitter.continuum
 
         @debug "Calculating initial starting points..."
-        pah_frac = repeat([clamp(nanmedian(I)/2, 0., Inf)], 2)
         cubic_spline = Spline1D(λ, I, k=3)
 
         # Stellar amplitude
@@ -772,8 +763,8 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
         
         # Hot dust amplitude
         λ_hd = clamp(Wein(continuum.T_hot.value), minimum(λ), maximum(λ))
-        A_hd = clamp(cubic_spline(λ_hd) * N / silicate_emission(λ_hd, 1.0, continuum.T_hot.value,
-            continuum.Cf_hot.value, continuum.τ_warm.value, continuum.τ_cold.value, continuum.sil_peak.value), 0., Inf)
+        A_hd = clamp(cubic_spline(λ_hd) * N / silicate_emission([λ_hd], 1.0, continuum.T_hot.value,
+            continuum.Cf_hot.value, continuum.τ_warm.value, continuum.τ_cold.value, continuum.sil_peak.value)[1], 0., Inf) / 5
 
         stellar_pars = [A_s, continuum.T_s.value]
         dc_pars = vcat([[Ai, Ti.value] for (Ai, Ti) ∈ zip(A_dc, continuum.T_dc)]...)
@@ -802,13 +793,7 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
         
     @debug "Continuum Starting Values: \n $p₀"
 
-    # Step 1: Stellar + Dust blackbodies, 2 new amplitudes for the PAH templates, and the extinction parameters
-    pars_1 = vcat(p₀[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.fit_sil_emission ? 6 : 0))], pah_frac)
-    # Step 2: The PAH profile amplitudes, centers, and FWHMs
-    pars_2 = p₀[(3+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.fit_sil_emission ? 6 : 0)):end]
-
-    pars_1, pars_2
-
+    p₀
 end
 
 
@@ -818,28 +803,20 @@ end
 Get the CMPFit parinfo and config objects for a given CubeFitter object, given the vector of initial valuels,
 limits, and boolean locked values.
 """
-function get_continuum_parinfo(n_free_1::S, n_free_2::S, lb_1::Vector{T}, ub_1::Vector{T}, 
-    lb_2::Vector{T}, ub_2::Vector{T}) where {S<:Integer,T<:Real}
+function get_continuum_parinfo(n_free::S, lb::Vector{T}, ub::Vector{T}) where {S<:Integer,T<:Real}
 
-    parinfo_1 = CMPFit.Parinfo(n_free_1)
-    parinfo_2 = CMPFit.Parinfo(n_free_2)
+    parinfo = CMPFit.Parinfo(n_free)
 
-    for pᵢ ∈ 1:n_free_1
-        parinfo_1[pᵢ].fixed = 0
-        parinfo_1[pᵢ].limited = (1,1)
-        parinfo_1[pᵢ].limits = (lb_1[pᵢ], ub_1[pᵢ])
-    end
-
-    for pᵢ ∈ 1:n_free_2
-        parinfo_2[pᵢ].fixed = 0
-        parinfo_2[pᵢ].limited = (1,1)
-        parinfo_2[pᵢ].limits = (lb_2[pᵢ], ub_2[pᵢ])
+    for pᵢ ∈ 1:n_free
+        parinfo[pᵢ].fixed = 0
+        parinfo[pᵢ].limited = (1,1)
+        parinfo[pᵢ].limits = (lb[pᵢ], ub[pᵢ])
     end
 
     # Create a `config` structure
     config = CMPFit.Config()
 
-    parinfo_1, parinfo_2, config
+    parinfo, config
 
 end
 

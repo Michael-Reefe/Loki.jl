@@ -114,8 +114,8 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
 
         if cube_fitter.save_full_model
             # End of continuum parameters: recreate the continuum model
-            I_cont, comps_c = model_continuum_and_pah(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], N, cube_fitter.n_dust_cont, cube_fitter.n_power_law,
-                cube_fitter.n_dust_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission)
+            I_cont, comps_c = model_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], N, cube_fitter.n_dust_cont, cube_fitter.n_power_law,
+                cube_fitter.n_dust_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, true)
         end
 
         # Save marker of the point where the continuum parameters end and the line parameters begin
@@ -233,13 +233,10 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             param_maps.dust_features[df][:flux][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
             param_errs[1].dust_features[df][:flux][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
             param_errs[2].dust_features[df][:flux][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
-            param_maps.dust_features[df][:eqw][index] = out_params[index, pᵢ+1] * (1+z)
-            param_errs[1].dust_features[df][:eqw][index] = out_errs[index, pᵢ+1, 1] * (1+z)
-            param_errs[2].dust_features[df][:eqw][index] = out_errs[index, pᵢ+1, 2] * (1+z)
-            param_maps.dust_features[df][:SNR][index] = out_params[index, pᵢ+2]
-            param_errs[1].dust_features[df][:SNR][index] = out_errs[index, pᵢ+2, 1]
-            param_errs[2].dust_features[df][:SNR][index] = out_errs[index, pᵢ+2, 2]
-            pᵢ += 3
+            param_maps.dust_features[df][:SNR][index] = out_params[index, pᵢ+1]
+            param_errs[1].dust_features[df][:SNR][index] = out_errs[index, pᵢ+1, 1]
+            param_errs[2].dust_features[df][:SNR][index] = out_errs[index, pᵢ+1, 2]
+            pᵢ += 2
         end
 
         for k ∈ 1:cube_fitter.n_lines
@@ -259,13 +256,10 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
                     param_maps.lines[ln][:flux][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
                     param_errs[1].lines[ln][:flux][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
                     param_errs[2].lines[ln][:flux][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
-                    param_maps.lines[ln][:eqw][index] = out_params[index, pᵢ+1] * (1+z)
-                    param_errs[1].lines[ln][:eqw][index] = out_errs[index, pᵢ+1, 1] * (1+z)
-                    param_errs[2].lines[ln][:eqw][index] = out_errs[index, pᵢ+1, 2] * (1+z)
-                    param_maps.lines[ln][:SNR][index] = out_params[index, pᵢ+2]
-                    param_errs[1].lines[ln][:SNR][index] = out_errs[index, pᵢ+2, 1]
-                    param_errs[2].lines[ln][:SNR][index] = out_errs[index, pᵢ+2, 2]
-                    pᵢ += 3
+                    param_maps.lines[ln][:SNR][index] = out_params[index, pᵢ+1]
+                    param_errs[1].lines[ln][:SNR][index] = out_errs[index, pᵢ+1, 1]
+                    param_errs[2].lines[ln][:SNR][index] = out_errs[index, pᵢ+1, 2]
+                    pᵢ += 2
                 end
             end
         end
