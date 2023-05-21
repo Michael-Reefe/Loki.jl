@@ -125,7 +125,8 @@ end
 """
     DustFeatures(names, profiles, mean, fwhm)
 
-A container for the modeling parameters relating to PAH dust features.
+A container for the modeling parameters relating to PAH dust features
+and absorption features.
 """
 struct DustFeatures
 

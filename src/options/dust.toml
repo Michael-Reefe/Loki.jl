@@ -166,16 +166,6 @@ val = 0.189
 plim = [0.4, 1.4]
 locked = false
 
-# [dust_features."PAH_6.44".wave]
-# val = 6.44
-# plim = [-0.05, 0.05]
-# locked = false
-
-# [dust_features."PAH_6.44".fwhm]
-# val = 0.378
-# plim = [0.4, 1.4]
-# locked = false
-
 [dust_features."PAH_6.69".wave]
 val = 6.69
 plim = [-0.05, 0.05]
@@ -386,23 +376,13 @@ locked = false
 # plim = [0.4, 1.4]
 # locked = false
 
-[dust_features."PAH_12.50".wave]
-val = 12.50
+[dust_features."PAH_12.62".wave]
+val = 12.62
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_12.50".fwhm]
-val = 0.505
-plim = [0.4, 1.4]
-locked = false
-
-[dust_features."PAH_12.60".wave]
-val = 12.60
-plim = [-0.05, 0.05]
-locked = false
-
-[dust_features."PAH_12.60".fwhm]
-val = 0.300
+[dust_features."PAH_12.62".fwhm]
+val = 0.530
 plim = [0.4, 1.4]
 locked = false
 
@@ -529,6 +509,24 @@ val = 1.655
 plim = [0.4, 1.1]
 locked = false
 
+# Absorption features (also modeled with Drude profiles)
+# Caution: it's seems to be better to estimate and lock these parameters rather than fitting for them
+# since this HCO+ feature is right on top of some PAH features that tend to want to cancel each other out.
+[absorption_features."abs_HCO+_12.1".wave]
+val = 12.05
+plim = [-0.1, 0.1]
+locked = true
+
+[absorption_features."abs_HCO+_12.1".fwhm]
+val = 0.125
+plim = [0.4, 1.4]
+locked = true
+
+# Other potential absorption features:
+# C2H2 @ 13.7 um
+# HCN  @ 14.0 um
+# HNC  @ 21.7 um
+
 # extinction.tau_9_7: the optical depth at 9.7 microns.
 # Default: gets estimated by the continuum at 9.7 microns.
 [extinction.tau_9_7]
@@ -536,19 +534,19 @@ val = 0.1
 plim = [0.0, 10.0]
 locked = false
 
-# extinction.tau_ice: the optical depth from ice absorption
-# at ~6.9 microns (the peak).
+# extinction.tau_ice: *not* an actual optical depth -- this is
+# a fraction of the CH optical depth that applies to the ice feature
 [extinction.tau_ice]
-val = 0.0
-plim = [0.0, 10.0]
-locked = true
+val = 0.48
+plim = [0.43, 0.53]
+locked = false
 
 # extinction.tau_ch: the optical depth from CH absorption
 # at ~6.9 microns (the peak).
 [extinction.tau_ch]
-val = 0.0
+val = 0.1
 plim = [0.0, 10.0]
-locked = true
+locked = false
 
 # extinction.beta: the mixing ratio for the extinction profile,
 # between the profile specified in options.toml and a -1.7 index
@@ -586,6 +584,6 @@ locked = false
 
 # Peak location of 10 um silicate emission feature
 [hot_dust.peak]
-val = 10.1
+val = 10.421
 plim = [10.0, 10.8]
-locked = false
+locked = true

@@ -75,6 +75,19 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
         param_errs[2].extinction[:beta][index] = out_errs[index, pᵢ+3, 2]
         pᵢ += 4
 
+        for ab ∈ cube_fitter.abs_features.names
+            param_maps.abs_features[ab][:tau][index] = out_params[index, pᵢ]
+            param_errs[1].abs_features[ab][:tau][index] = out_errs[index, pᵢ, 1]
+            param_errs[2].abs_features[ab][:tau][index] = out_errs[index, pᵢ, 2]
+            param_maps.abs_features[ab][:mean][index] = out_params[index, pᵢ+1] * (1+z)
+            param_errs[1].abs_features[ab][:mean][index] = out_errs[index, pᵢ+1, 1] * (1+z)
+            param_errs[2].abs_features[ab][:mean][index] = out_errs[index, pᵢ+1, 2] * (1+z)
+            param_maps.abs_features[ab][:fwhm][index] = out_params[index, pᵢ+2] * (1+z)
+            param_errs[1].abs_features[ab][:fwhm][index] = out_errs[index, pᵢ+2, 1] * (1+z)
+            param_errs[2].abs_features[ab][:fwhm][index] = out_errs[index, pᵢ+2, 2] * (1+z)
+            pᵢ += 3
+        end
+
         if cube_fitter.fit_sil_emission
             # Hot dust parameters
             param_maps.hot_dust[:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z))-17 : -Inf
@@ -115,7 +128,8 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
         if cube_fitter.save_full_model
             # End of continuum parameters: recreate the continuum model
             I_cont, comps_c = model_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], N, cube_fitter.n_dust_cont, cube_fitter.n_power_law,
-                cube_fitter.n_dust_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, true)
+                cube_fitter.n_dust_feat, cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, 
+                true)
         end
 
         # Save marker of the point where the continuum parameters end and the line parameters begin
@@ -281,6 +295,9 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             for j ∈ 1:cube_fitter.n_dust_feat
                 cube_model.dust_features[index, :, j] .= comps["dust_feat_$j"] .* (1 .+ z)
             end
+            for m ∈ 1:cube_fitter.n_abs_feat
+                cube_model.abs_features[index, :, m] .= comps["abs_feat_$m"]
+            end
             if cube_fitter.fit_sil_emission
                 cube_model.hot_dust[index, :] .= comps["hot_dust"] .* (1 .+ z)
             end
@@ -371,9 +388,9 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         bunit = L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$"
     elseif occursin("temp", String(name_i))
         bunit = L"$T$ (K)"
-    elseif occursin("fwhm", String(name_i)) && occursin("PAH", String(name_i))
+    elseif occursin("fwhm", String(name_i)) && (occursin("PAH", String(name_i)) || occursin("abs", String(name_i)))
         bunit = L"FWHM ($\mu$m)"
-    elseif occursin("fwhm", String(name_i)) && !occursin("PAH", String(name_i))
+    elseif occursin("fwhm", String(name_i)) && !occursin("PAH", String(name_i)) && !occursin("abs", String(name_i))
         bunit = L"FWHM (km s$^{-1}$)"
     elseif occursin("mean", String(name_i)) || occursin("peak", String(name_i))
         bunit = L"$\mu$ ($\mu$m)"
@@ -390,8 +407,10 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
             bunit = L"$\tau_{\rm ice}$"
         elseif occursin("ch", String(name_i))
             bunit = L"$\tau_{\rm CH}$"
-        else
+        elseif occursin("9_7", String(name_i))
             bunit = L"$\tau_{9.7}$"
+        else
+            bunit = L"$\tau$"
         end
     elseif occursin("flux", String(name_i))
         bunit = L"$\log_{10}(F /$ erg s$^{-1}$ cm$^{-2}$)"
@@ -488,9 +507,15 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     n_pix = 1/sqrt(Ω) * θ   # number of pixels = (pixels per radian) * radians
     unit = "pc"
     # convert to kpc if l is more than 1000 pc
-    if l ≥ 1000
-        l = Int(l / 1000)
+    if l ≥ 10^3
+        l = Int(l / 10^3)
         unit = "kpc"
+    elseif l ≥ 10^6
+        l = Int(l / 10^6)
+        unit = "Mpc"
+    elseif l ≥ 10^9
+        l = Int(l / 10^9)
+        unit = "Gpc"
     end
     if cosmo.h ≈ 1.0
         scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, L"%$l$h^{-1}$ %$unit", "lower left", pad=1, color=:black, 
@@ -580,6 +605,19 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "dust_features", "$(name_i).pdf")
             plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=parameter !== :SNR ? snr : nothing, snr_thresh=snr_thresh)
+        end
+    end
+
+    # Absorption feature parameters
+    for ab ∈ keys(param_maps.abs_features)
+        snr = exp.(param_maps.abs_features[ab][:tau]) .- 1
+        wave_i = nanmedian(param_maps.abs_features[ab][:mean]) / (1 + cube_fitter.z)
+        for parameter ∈ keys(param_maps.abs_features[ab])
+            data = param_maps.abs_features[ab][parameter]
+            name_i = join([ab, parameter], "_")
+            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "absorption_features", "$(name_i).pdf")
+            plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
+                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr, snr_thresh=0.05)
         end
     end
 
@@ -839,6 +877,9 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
             for (j, df) ∈ enumerate(cube_fitter.dust_features.names)
                 write(f, cube_model.dust_features[:, :, :, j]; name="$df")                              # Dust feature profiles
             end
+            for (m, ab) ∈ enumerate(cube_fitter.abs_features.names)                                     
+                write(f, cube_model.abs_features[:, :, :, m]; name="$ab")                               # Absorption feature profiles
+            end
             for (k, line) ∈ enumerate(cube_fitter.lines.names)
                 write(f, cube_model.lines[:, :, :, k]; name="$line")                                    # Emission line profiles
             end
@@ -866,6 +907,9 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
             end
             for df ∈ cube_fitter.dust_features.names
                 write_key(f["$df"], "BUNIT", "MJy/sr")
+            end
+            for ab ∈ cube_fitter.abs_features.names
+                write_key(f["$ab"], "BUNIT", "unitless")
             end
             for line ∈ cube_fitter.lines.names
                 write_key(f["$line"], "BUNIT", "MJy/sr")
@@ -964,6 +1008,21 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
                         bunit = "log10(F / erg s^-1 cm^-2)"
                     elseif occursin("SNR", String(name_i))
                         bunit = "unitless"
+                    end
+                    write(f, data; name=name_i)
+                    write_key(f[name_i], "BUNIT", bunit)
+                end
+            end
+
+            # Absorption feature parameters
+            for ab ∈ keys(param_data.abs_features)
+                for parameter ∈ keys(param_data.abs_features[ab])
+                    data = param_data.abs_features[ab][parameter]
+                    name_i = join(["abs_features", ab, parameter], "_")
+                    if occursin("tau", String(name_i))
+                        bunit = "unitless"
+                    elseif occursin("fwhm", String(name_i)) || occursin("mean", String(name_i)) || occursin("eqw", String(name_i))
+                        bunit = "um"
                     end
                     write(f, data; name=name_i)
                     write_key(f[name_i], "BUNIT", bunit)

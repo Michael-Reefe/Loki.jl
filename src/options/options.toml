@@ -47,18 +47,18 @@ make_movies = false
 # format. If false, the model parameters will still be saved (the model can be
 # easily reconstructed by simply rerunning the code with this option enabled, as the
 # fitting data for each spaxel will already be saved)
-save_full_model = true
+save_full_model = false
 
 # extinction_curve: May be "kvt" for the Kemper, Vriend, & Tielens (2004) 
 # extinction profile, "ct" for the Chiar & Tielens (2005) extinction profile,
 # "ohm" for the Ossenkopf, Henning, & Mathis (1992) extinction profile, or "d+" for the 
 # Donnan et al. (2022) extinction profile.
 extinction_curve = "d+"
-# WARNING: Current implementation of KVT and CT profiles are computationally slow, use with caution
+# WARNING: Current implementation of KVT profile is computationally slow, use with caution
 
 # extinction_screen: Controls whether extinction is modeled as e^-tau (true) or
 # (1 - e^-tau) / tau (false), following PAHFIT.
-extinction_screen = false
+extinction_screen = true
 
 # whether or not to fit silicate emission
 fit_sil_emission = true
@@ -74,7 +74,7 @@ user_mask = []
 # cosmology options: Controls the cosmology used for distance / luminosity calculations.
 # If h is set to 1, the distances in plot scale bars will be shown with h^-1 units.
 [cosmology]
-h = 1.0          # Hubble constant (in km s^-1 Mpc^-1) / 100
-omega_m = 0.3    # matter density parameter
-omega_K = 0.0    # curvature density parameter
-omega_r = 0.0    # radiation density parameter
+h = 1.0           # Hubble constant (in km s^-1 Mpc^-1) / 100
+omega_m = 0.27    # matter density parameter
+omega_K = 0.0     # curvature density parameter
+omega_r = 0.0     # radiation density parameter

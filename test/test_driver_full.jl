@@ -80,7 +80,7 @@ obs = from_fits(["data/Level3_ch1-long_s3d.fits",
 #                  0.022)
 
 channel = 0
-name = replace(obs.name, " " => "_") * "_ch$(channel)_full_5-17-23"
+name = replace(obs.name, " " => "_") * "_ch$(channel)_full_5-19-23"
 
 if isfile("processed-data.loki")
     obs = load!("processed-data.loki")

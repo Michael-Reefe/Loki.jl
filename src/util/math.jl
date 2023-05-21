@@ -539,18 +539,17 @@ function τ_kvt(λ::Real, β::Real)
 end
 
 
-function τ_ct(λ::Real)
+function τ_ct(λ::Vector{<:Real})
 
     mx = argmax(CT_prof[1])
     λ_mx = CT_prof[1][mx]
-    if λ > λ_mx
-        ext = CT_prof[2][mx] * (λ_mx/λ)^1.7
-    else
-        ext = CT_interp(λ)
-    end
+
+    ext = CT_interp(λ)
+    w_mx = findall(λ .> λ_mx)
+    ext[w_mx] .= CT_prof[2][mx] .* (λ_mx./λ[w_mx]).^1.7
 
     _, wh = findmin(x -> abs(x - 9.7), CT_prof[1])
-    ext /= CT_prof[2][wh]
+    ext ./= CT_prof[2][wh]
 
     ext
 end
@@ -793,7 +792,8 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
     addition to the overall fit
 """
 function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont::Integer, n_power_law::Integer, n_dust_feat::Integer,
-    extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, return_components::Bool) where {T<:Real}
+    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, 
+    return_components::Bool) where {T<:Real}
 
     # Prepare outputs
     comps = Dict{String, Vector{Float64}}()
@@ -824,7 +824,7 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
     elseif extinction_curve == "kvt"
         ext_curve = τ_kvt.(λ, params[pᵢ+3])
     elseif extinction_curve == "ct"
-        ext_curve = τ_ct.(λ)
+        ext_curve = τ_ct(λ)
     elseif extinction_curve == "ohm"
         ext_curve = τ_ohm(λ)
     else
@@ -834,24 +834,33 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
 
     # Ice+CH Absorption
     ext_ice = τ_ice(λ)
-    comps["abs_ice"] = extinction.(ext_ice, params[pᵢ+1], screen=true)
+    comps["abs_ice"] = extinction.(ext_ice, params[pᵢ+1] * params[pᵢ+2], screen=true)
     ext_ch = τ_ch(λ)
     comps["abs_ch"] = extinction.(ext_ch, params[pᵢ+2], screen=true)
-
-    contin .*= comps["extinction"] .* comps["abs_ice"] .* comps["abs_ch"]
     pᵢ += 4
+
+    # Other absorption features
+    abs_tot = ones(Float64, length(λ))
+    for k ∈ 1:n_abs_feat
+        prof = Drude.(λ, 1.0, params[pᵢ+1:pᵢ+2]...)
+        comps["abs_feat_$k"] = extinction.(prof, params[pᵢ], screen=true)
+        abs_tot .*= comps["abs_feat_$k"]
+        pᵢ += 3
+    end
+
+    contin .*= comps["extinction"] .* comps["abs_ice"] .* comps["abs_ch"] .* abs_tot
 
     if fit_sil_emission
         # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
         # Ref: Gallimore et al. 2010
         comps["hot_dust"] = silicate_emission(λ, params[pᵢ:pᵢ+5]...) ./ N
-        contin .+= comps["hot_dust"]
+        contin .+= comps["hot_dust"] .* comps["abs_ice"] .* comps["abs_ch"] .* abs_tot
         pᵢ += 6
     end
 
     for j ∈ 1:n_dust_feat
         comps["dust_feat_$j"] = Drude.(λ, params[pᵢ:pᵢ+2]...)
-        contin .+= comps["dust_feat_$j"] .* comps["extinction"]
+        contin .+= comps["dust_feat_$j"] .* comps["extinction"] 
         pᵢ += 3
     end
 
@@ -866,7 +875,7 @@ end
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
 function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont::Integer, n_power_law::Integer, n_dust_feat::Integer,
-    extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool) where {T<:Real}
+    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool) where {T<:Real}
 
     # Prepare outputs
     contin = zeros(Float64, length(λ))
@@ -893,7 +902,7 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
     elseif extinction_curve == "kvt"
         ext_curve = τ_kvt.(λ, params[pᵢ+3])
     elseif extinction_curve == "ct"
-        ext_curve = τ_ct.(λ)
+        ext_curve = τ_ct(λ)
     elseif extinction_curve == "ohm"
         ext_curve = τ_ohm(λ)
     else
@@ -903,22 +912,30 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
 
     # Ice+CH absorption
     ext_ice = τ_ice(λ)
-    abs_ice = extinction.(ext_ice, params[pᵢ+1], screen=true)
+    abs_ice = extinction.(ext_ice, params[pᵢ+1] * params[pᵢ+2], screen=true)
     ext_ch = τ_ch(λ)
     abs_ch = extinction.(ext_ch, params[pᵢ+2], screen=true)
-
-    contin .*= ext .* abs_ice .* abs_ch
     pᵢ += 4
+
+    # Other absorption features
+    abs_tot = ones(Float64, length(λ))
+    for k ∈ 1:n_abs_feat
+        prof = Drude.(λ, 1.0, params[pᵢ+1:pᵢ+2]...)
+        abs_tot .*= extinction.(prof, params[pᵢ], screen=true)
+        pᵢ += 3
+    end
+    
+    contin .*= ext .* abs_ice .* abs_ch .* abs_tot
 
     if fit_sil_emission
         # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
         # Ref: Gallimore et al. 2010
-        contin .+= silicate_emission(λ, params[pᵢ:pᵢ+5]...) ./ N
+        contin .+= silicate_emission(λ, params[pᵢ:pᵢ+5]...) ./ N .* abs_ice .* abs_ch .* abs_tot
         pᵢ += 6
     end
 
     for j ∈ 1:n_dust_feat
-        contin .+= Drude.(λ, params[pᵢ:pᵢ+2]...) .* ext
+        contin .+= Drude.(λ, params[pᵢ:pᵢ+2]...) .* ext 
         pᵢ += 3
     end
 
@@ -1133,11 +1150,11 @@ Calculate extra parameters that are not fit, but are nevertheless important to k
 Currently this includes the integrated intensity and signal to noise ratios of dust features and emission lines.
 """
 function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, n_dust_cont::Integer,
-    n_power_law::Integer, n_dust_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool,
-    n_lines::Integer, n_acomps::Integer, n_comps::Integer, lines::TransitionLines, flexible_wavesol::Bool, 
+    n_power_law::Integer, n_dust_feat::Integer, n_abs_feat::Integer, fit_sil_emission::Bool, n_lines::Integer, 
+    n_acomps::Integer, n_comps::Integer, lines::TransitionLines, flexible_wavesol::Bool, 
     lsf::Function, popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}, 
-    extinction::Vector{T}, mask_lines::BitVector, continuum::Vector{T}, area_sr::Vector{T},
-    propagate_err::Bool=true) where {T<:Real}
+    extinction::Vector{T}, mask_lines::BitVector, continuum::Vector{T}, 
+    area_sr::Vector{T}, propagate_err::Bool=true) where {T<:Real}
 
     @debug "Calculating extra parameters"
 
@@ -1149,7 +1166,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     p_dust_err = zeros(2n_dust_feat)
     pₒ = 1
     # Initial parameter vector index where dust profiles start
-    pᵢ = 3 + 2n_dust_cont + 2n_power_law + 4 + (fit_sil_emission ? 6 : 0)
+    pᵢ = 3 + 2n_dust_cont + 2n_power_law + 4 + 3n_abs_feat + (fit_sil_emission ? 6 : 0)
 
     for ii ∈ 1:n_dust_feat
 
@@ -1171,7 +1188,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
         end
 
         # Get the extinction profile at the center
-        ext = extinction[cent_ind]
+        ext = extinction[cent_ind] 
 
         # Calculate the flux using the utility function
         flux, f_err = calculate_flux(:Drude, A_cgs, A_cgs_err, μ, μ_err, fwhm, fwhm_err, propagate_err=propagate_err)
