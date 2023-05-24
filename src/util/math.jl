@@ -392,7 +392,7 @@ A hot silicate dust emission profile, i.e. Gallimore et al. (2010), with an ampl
 temperature T, covering fraction Cf, and optical depths τ_warm and τ_cold.
 """
 function silicate_emission(λ, A, T, Cf, τ_warm, τ_cold, λ_peak)
-    o_peak = 10.1
+    o_peak = 10.0178
     Δλ = o_peak - λ_peak
     λshift = λ .+ Δλ
     ext_curve = τ_ohm(λshift)

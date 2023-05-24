@@ -186,16 +186,6 @@ val = 0.935
 plim = [0.4, 1.1]
 locked = false
 
-# [dust_features."PAH_7.60".wave]
-# val = 7.60
-# plim = [-0.05, 0.05]
-# locked = false
-
-# [dust_features."PAH_7.60".fwhm]
-# val = 0.334
-# plim = [0.4, 1.4]
-# locked = false
-
 [dust_features."PAH_7.52".wave]
 val = 7.52
 plim = [-0.05, 0.05]
@@ -216,15 +206,15 @@ val = 0.152
 plim = [0.4, 1.4]
 locked = false
 
-[dust_features."PAH_7.75".wave]
-val = 7.75
-plim = [-0.05, 0.05]
-locked = false
+# [dust_features."PAH_7.60".wave]
+# val = 7.60
+# plim = [-0.05, 0.05]
+# locked = false
 
-[dust_features."PAH_7.75".fwhm]
-val = 0.160
-plim = [0.4, 1.4]
-locked = false
+# [dust_features."PAH_7.60".fwhm]
+# val = 0.334
+# plim = [0.4, 1.4]
+# locked = false
 
 [dust_features."PAH_7.85".wave]
 val = 7.85
@@ -232,7 +222,7 @@ plim = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_7.85".fwhm]
-val = 0.152
+val = 0.416
 plim = [0.4, 1.4]
 locked = false
 

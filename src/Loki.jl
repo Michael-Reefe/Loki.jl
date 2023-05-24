@@ -44,7 +44,6 @@ using Logging
 using LoggingExtras
 using Dates
 using InteractiveUtils
-using TimerOutputs
 using ColorSchemes
 using LaTeXStrings
 
@@ -75,9 +74,6 @@ const BIG::UInt8 = 16
 
 # Date format for the log files
 const date_format::String = "yyyy-mm-dd HH:MM:SS"
-
-# Timer object for logging the performance of the code, if the settings are enabled
-const timer_output::TimerOutput = TimerOutput()
 
 # This lock is used to control write access to the convergence log file, since
 # multiple parallel processes may try to write to it at once.

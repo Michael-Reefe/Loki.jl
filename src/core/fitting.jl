@@ -752,11 +752,9 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     lsf_interp_func = x -> lsf_interp(x)
 
     # Fit the spaxel
-    popt_c, I_cont, comps_cont, n_free_c, perr_c = 
-        @timeit timer_output "continuum_fit_spaxel" continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, norm, use_ap=use_ap,
+    popt_c, I_cont, comps_cont, n_free_c, perr_c = continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, norm, use_ap=use_ap,
         init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_c)
-    popt_l, I_line, comps_line, n_free_l, perr_l = 
-        @timeit timer_output "line_fit_spaxel" line_fit_spaxel(cube_fitter, spaxel, λ, I, σ, I_cont, comps_cont["extinction"], 
+    popt_l, I_line, comps_line, n_free_l, perr_l = line_fit_spaxel(cube_fitter, spaxel, λ, I, σ, I_cont, comps_cont["extinction"], 
         lsf_interp_func, norm, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_l)
 
     # Combine the continuum and line models
@@ -792,8 +790,7 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
 
     # Add dust feature and line parameters (intensity and SNR)
     if !init
-        p_dust, p_lines, p_dust_err, p_lines_err = 
-            @timeit timer_output "calculate_extra_parameters" calculate_extra_parameters(λ, I, norm, cube_fitter.n_dust_cont,
+        p_dust, p_lines, p_dust_err, p_lines_err = calculate_extra_parameters(λ, I, norm, cube_fitter.n_dust_cont,
                 cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_abs_feat, cube_fitter.fit_sil_emission, 
                 cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol, 
                 lsf_interp_func, popt_c, popt_l, perr_c, perr_l, comps["extinction"], mask_lines, I_spline, area_sr, 
@@ -925,14 +922,15 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                 I_boot_min = dropdims(nanminimum(I_model_boot, dims=2), dims=2)
                 I_boot_max = dropdims(nanmaximum(I_model_boot, dims=2), dims=2)
 
-                split1 = length(popt_c) - 2
-                split2 = length(popt_c) - 2 + length(popt_l)
+                split1 = length(popt_c)
+                split2 = length(popt_c) + length(popt_l)
                 lsf_interp = Spline1D(λ, cube_fitter.cube.lsf, k=1)
                 lsf_interp_func = x -> lsf_interp(x)
 
                 # Replace the best-fit model with the 50th percentile model to be consistent with p_out
-                I_boot_cont, comps_boot_cont = model_continuum(λ, p_out[1:split1], norm, cube_fitter.n_dust_cont, cube_fitter.n_dust_feat, 
-                    cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, true)
+                I_boot_cont, comps_boot_cont = model_continuum(λ, p_out[1:split1], norm, cube_fitter.n_dust_cont, cube_fitter.n_power_law, 
+                    cube_fitter.n_dust_feat, cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, 
+                    cube_fitter.fit_sil_emission, true)
                 I_boot_line, comps_boot_line = model_line_residuals(λ, p_out[split1+1:split2], cube_fitter.n_lines, cube_fitter.n_comps,
                     cube_fitter.lines, cube_fitter.flexible_wavesol, comps_boot_cont["extinction"], lsf_interp_func, true)
 
@@ -957,18 +955,18 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
 
             # Plot the fit
             if cube_fitter.plot_spaxels != :none
-                @debug "Plotting spaxel $spaxel best fit"
-                @timeit timer_output "plot_spaxel_fit" plot_spaxel_fit(λ, I, I_model, σ, comps, 
-                    cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_abs_feat, cube_fitter.n_comps, 
-                    cube_fitter.lines.λ₀, cube_fitter.lines.names, cube_fitter.extinction_screen, cube_fitter.z, χ2/dof, cube_fitter.name, 
-                    "spaxel_$(spaxel[1])_$(spaxel[2])", backend=cube_fitter.plot_spaxels, I_boot_min=I_boot_min, I_boot_max=I_boot_max)
+                @debug "Plotting spaxel $spaxel best fit" 
+                plot_spaxel_fit(λ, I, I_model, σ, comps, 
+                cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_abs_feat, cube_fitter.n_comps, 
+                cube_fitter.lines.λ₀, cube_fitter.lines.names, cube_fitter.extinction_screen, cube_fitter.z, χ2/dof, cube_fitter.name, 
+                "spaxel_$(spaxel[1])_$(spaxel[2])", backend=cube_fitter.plot_spaxels, I_boot_min=I_boot_min, I_boot_max=I_boot_max)
                 if !isnothing(cube_fitter.plot_range)
                     for (i, plot_range) ∈ enumerate(cube_fitter.plot_range)
-                        @timeit timer_output "plot_line_fit" plot_spaxel_fit(λ, I, I_model, σ, comps,
-                            cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_abs_feat, cube_fitter.n_comps, 
-                            cube_fitter.lines.λ₀, cube_fitter.lines.names, cube_fitter.extinction_screen, cube_fitter.z, χ2/dof, cube_fitter.name, 
-                            "lines_$(spaxel[1])_$(spaxel[2])_$i", backend=cube_fitter.plot_spaxels, I_boot_min=I_boot_min, I_boot_max=I_boot_max, 
-                            range=plot_range)
+                        plot_spaxel_fit(λ, I, I_model, σ, comps,
+                        cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_abs_feat, cube_fitter.n_comps, 
+                        cube_fitter.lines.λ₀, cube_fitter.lines.names, cube_fitter.extinction_screen, cube_fitter.z, χ2/dof, cube_fitter.name, 
+                        "lines_$(spaxel[1])_$(spaxel[2])_$i", backend=cube_fitter.plot_spaxels, I_boot_min=I_boot_min, I_boot_max=I_boot_max, 
+                        range=plot_range)
                     end
                 end
             end
@@ -977,7 +975,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
             # serialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).LOKI"), (p_out=p_out, p_err=p_err))
             # save output as csv file
             open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).csv"), "w") do f 
-                @timeit timer_output "writedlm" writedlm(f, [p_out p_err], ',')
+                writedlm(f, [p_out p_err], ',')
             end
  
             # save memory allocations & other logistic data to a separate log file
@@ -994,8 +992,6 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                     print(f, """
                     $(InteractiveUtils.varinfo(all=true, imported=true, recursive=true))
                     """)
-
-                    print_timer(f, timer_output, sortby=:name)
                 end
             end
 

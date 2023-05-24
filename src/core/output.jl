@@ -678,11 +678,11 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh)
 
             # Total equivalent width
-            total_eqw = sum([param_maps.lines[comp][:eqw] for comp in component_keys])
-            name_i = join([name, "total_eqw"], "_")
-            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(name)", "$(name_i).pdf")
-            plot_parameter_map(total_eqw, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
-                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh)
+            # total_eqw = sum([param_maps.lines[comp][:eqw] for comp in component_keys])
+            # name_i = join([name, "total_eqw"], "_")
+            # save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(name)", "$(name_i).pdf")
+            # plot_parameter_map(total_eqw, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
+            #     cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh)
             
         end
     end
@@ -831,9 +831,9 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
 
     # Header information
     hdr = FITSHeader(
-        cat(["TARGNAME", "REDSHIFT", "CHANNEL", "BAND", "PIXAR_SR", "RA", "DEC", "WCSAXES",
+        Vector{String}(cat(["TARGNAME", "REDSHIFT", "CHANNEL", "BAND", "PIXAR_SR", "RA", "DEC", "WCSAXES",
             "CDELT1", "CDELT2", "CTYPE1", "CTYPE2", "CRPIX1", "CRPIX2", "CRVAL1", "CRVAL2", "CUNIT1", "CUNIT2", 
-            "PC1_1", "PC1_2", "PC2_1", "PC2_2"], aperture_keys, dims=1),
+            "PC1_1", "PC1_2", "PC2_1", "PC2_2"], aperture_keys, dims=1)),
 
         cat([cube_fitter.name, cube_fitter.z, cube_fitter.cube.channel, cube_fitter.cube.band, cube_fitter.cube.Ω, 
          cube_fitter.cube.α, cube_fitter.cube.δ, cube_fitter.cube.wcs.wcs.naxis, 
@@ -845,7 +845,7 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
          cube_fitter.cube.wcs.wcs.pc[1,1], cube_fitter.cube.wcs.wcs.pc[1,2], 
          cube_fitter.cube.wcs.wcs.pc[2,1], cube_fitter.cube.wcs.wcs.pc[2,2]], aperture_vals, dims=1),
 
-        cat(["Target name", "Target redshift", "MIRI channel", "MIRI band",
+        Vector{String}(cat(["Target name", "Target redshift", "MIRI channel", "MIRI band",
         "Solid angle per pixel (rad.)", "Right ascension of target (deg.)", "Declination of target (deg.)",
         "number of World Coordinate System axes", 
         "first axis increment per pixel", "second axis increment per pixel",
@@ -854,7 +854,7 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
         "first axis value at the reference pixel", "second axis value at the reference pixel",
         "first axis units", "second axis units",
         "linear transformation matrix element", "linear transformation matrix element",
-        "linear transformation matrix element", "linear transformation matrix element"], aperture_comments, dims=1)
+        "linear transformation matrix element", "linear transformation matrix element"], aperture_comments, dims=1))
     )
 
     if cube_fitter.save_full_model
