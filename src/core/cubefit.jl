@@ -50,7 +50,7 @@ end
 A constructor function for making a default empty ParamMaps structure with all necessary fields for a given
 fit of a DataCube.
 """
-function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, n_power_law::Integer, df_names::Vector{String}, 
+function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, n_power_law::Integer, cf_dustfeat::DustFeatures,
     ab_names::Vector{String}, n_lines::S, n_comps::S, cf_lines::TransitionLines, 
     flexible_wavesol::Bool)::ParamMaps where {S<:Integer}
 
@@ -89,11 +89,15 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, n_power_law:
 
     # Add dust features fitting parameters
     dust_features = Dict{String, Dict{Symbol, Array{Float64, 2}}}()
-    for n ∈ df_names
+    for (i, n) ∈ enumerate(cf_dustfeat.names)
         dust_features[n] = Dict{Symbol, Array{Float64, 2}}()
         dust_features[n][:amp] = copy(nan_arr)
         dust_features[n][:mean] = copy(nan_arr)
         dust_features[n][:fwhm] = copy(nan_arr)
+        if cf_dustfeat.profiles[i] == :PearsonIV
+            dust_features[n][:index] = copy(nan_arr)
+            dust_features[n][:cutoff] = copy(nan_arr)
+        end
         dust_features[n][:flux] = copy(nan_arr)
         dust_features[n][:SNR] = copy(nan_arr)
         @debug "dust feature $n maps with keys $(keys(dust_features[n]))"
@@ -498,7 +502,9 @@ struct CubeFitter{T<:Real,S<:Integer}
         dust_features = DustFeatures(dust_features.names[df_filt], 
                                      dust_features.profiles[df_filt],
                                      dust_features.mean[df_filt],
-                                     dust_features.fwhm[df_filt])
+                                     dust_features.fwhm[df_filt],
+                                     dust_features.index[df_filt],
+                                     dust_features.cutoff[df_filt])
         n_dust_features = length(dust_features.names)
         msg = "### Model will include $n_dust_features dust feature (PAH) components ###"
         for df_mn ∈ dust_features.mean
@@ -516,7 +522,9 @@ struct CubeFitter{T<:Real,S<:Integer}
         abs_features = DustFeatures(abs_features.names[ab_filt],
                                     abs_features.profiles[ab_filt],
                                     abs_features.mean[ab_filt],
-                                    abs_features.fwhm[ab_filt])
+                                    abs_features.fwhm[ab_filt],
+                                    abs_features.index[ab_filt],
+                                    abs_features.cutoff[ab_filt])
         n_abs_features = length(abs_features.names)
         msg = "### Model will include $n_abs_features absorption feature components ###"
         for ab_mn ∈ abs_features.mean
@@ -591,7 +599,8 @@ struct CubeFitter{T<:Real,S<:Integer}
         end
 
         # Total number of parameters for the continuum and line fits
-        n_params_cont = (2+4) + 2n_dust_cont + 2n_power_law + 3n_dust_features + 3n_abs_features + (options[:fit_sil_emission] ? 6 : 0)
+        n_params_cont = (2+4) + 2n_dust_cont + 2n_power_law + 3n_abs_features + (options[:fit_sil_emission] ? 6 : 0)
+        n_params_cont += 3 * sum(dust_features.profiles .== :Drude) + 5 * sum(dust_features.profiles .== :PearsonIV)
         n_params_lines = 0
         for i ∈ 1:n_lines
             for j ∈ 1:n_comps
@@ -664,14 +673,14 @@ function generate_parammaps(cube_fitter::CubeFitter, aperture::Bool=false)
     shape = aperture ? (1,1,size(cube_fitter.cube.Iν, 3)) : size(cube_fitter.cube.Iν)
     # 2D maps of fitting parameters
     @debug "Generating 2D parameter value & error maps"
-    param_maps = parammaps_empty(shape, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.names, 
+    param_maps = parammaps_empty(shape, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features, 
                                  cube_fitter.abs_features.names, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
                                  cube_fitter.flexible_wavesol)
     # 2D maps of fitting parameter +/- 1 sigma errors
-    param_errs_lo = parammaps_empty(shape, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.names, 
+    param_errs_lo = parammaps_empty(shape, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features, 
                                  cube_fitter.abs_features.names, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
                                  cube_fitter.flexible_wavesol)
-    param_errs_up = parammaps_empty(shape, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.names, 
+    param_errs_up = parammaps_empty(shape, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features, 
                                  cube_fitter.abs_features.names, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
                                  cube_fitter.flexible_wavesol)
     param_errs = [param_errs_lo, param_errs_up]
@@ -701,8 +710,18 @@ function get_continuum_plimits(cube_fitter::CubeFitter)
     dc_lock = vcat([[false, Ti.locked] for Ti ∈ continuum.T_dc]...)
     pl_plim = vcat([[amp_dc_plim, pl.limits] for pl ∈ continuum.α]...)
     pl_lock = vcat([[false, pl.locked] for pl ∈ continuum.α]...)
-    df_plim = vcat([[amp_df_plim, mi.limits, fi.limits] for (mi, fi) ∈ zip(dust_features.mean, dust_features.fwhm)]...)
-    df_lock = vcat([[false, mi.locked, fi.locked] for (mi, fi) ∈ zip(dust_features.mean, dust_features.fwhm)]...)
+
+    df_plim = Tuple{Float64,Float64}[]
+    df_lock = Bool[]
+    for n in 1:length(dust_features.names)
+        append!(df_plim, [amp_df_plim, dust_features.mean[n].limits, dust_features.fwhm[n].limits])
+        append!(df_lock, [false, dust_features.mean[n].locked, dust_features.fwhm[n].locked])
+        if dust_features.profiles[n] == :PearsonIV
+            append!(df_plim, [dust_features.index[n].limits, dust_features.cutoff[n].limits])
+            append!(df_lock, [dust_features.index[n].locked, dust_features.cutoff[n].locked])
+        end
+    end
+
     ab_plim = vcat([[amp_ab_plim, mi.limits, fi.limits] for (mi, fi) ∈ zip(abs_features.mean, abs_features.fwhm)]...)
     ab_lock = vcat([[false, mi.locked, fi.locked] for (mi, fi) ∈ zip(abs_features.mean, abs_features.fwhm)]...)
     ext_plim = [continuum.τ_97.limits, continuum.τ_ice.limits, continuum.τ_ch.limits, continuum.β.limits]
@@ -780,6 +799,9 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
         for i ∈ 1:cube_fitter.n_dust_feat
             p₀[pᵢ] = clamp(p₀[pᵢ]*scale, 0., max_amp)
             pᵢ += 3
+            if cube_fitter.dust_features.profiles[i] == :PearsonIV
+                pᵢ += 2
+            end
         end
 
     # Otherwise, we estimate the initial parameters based on the data
@@ -818,7 +840,15 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
         stellar_pars = [A_s, continuum.T_s.value]
         dc_pars = vcat([[Ai, Ti.value] for (Ai, Ti) ∈ zip(A_dc, continuum.T_dc)]...)
         pl_pars = vcat([[Ai, αi.value] for (Ai, αi) ∈ zip(A_pl, continuum.α)]...)
-        df_pars = vcat([[Ai, mi.value, fi.value] for (Ai, mi, fi) ∈ zip(A_df, cube_fitter.dust_features.mean, cube_fitter.dust_features.fwhm)]...)
+        
+        df_pars = Float64[]
+        for n in 1:length(cube_fitter.dust_features.names)
+            append!(df_pars, [A_df[n], cube_fitter.dust_features.mean[n].value, cube_fitter.dust_features.fwhm[n].value])
+            if cube_fitter.dust_features.profiles[n] == :PearsonIV
+                append!(df_pars, [cube_fitter.dust_features.index[n].value, cube_fitter.dust_features.cutoff[n].value])
+            end
+        end
+        
         ab_pars = vcat([[Ai, mi.value, fi.value] for (Ai, mi, fi) ∈ zip(A_ab, cube_fitter.abs_features.mean, cube_fitter.abs_features.fwhm)]...)
         if cube_fitter.fit_sil_emission
             hd_pars = [A_hd, continuum.T_hot.value, continuum.Cf_hot.value, continuum.τ_warm.value, continuum.τ_cold.value,
@@ -840,7 +870,8 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
         ", extinction_tau_97, extinction_tau_ice, extinction_tau_ch, extinction_beta, " *  
         join(["$(ab)_tau, $(ab)_mean, $(ab)_fwhm" for ab ∈ cube_fitter.abs_features.names], ", ") *
         (cube_fitter.fit_sil_emission ? ", hot_dust_amp, hot_dust_temp, hot_dust_covering_frac, hot_dust_tau_warm, hot_dust_tau_cold, hot_dust_sil_peak, " : ", ") *
-        join(["$(df)_amp, $(df)_mean, $(df)_fwhm" for df ∈ cube_fitter.dust_features.names], ", ") * "]"
+        join(["$(df)_amp, $(df)_mean, $(df)_fwhm" * (cube_fitter.dust_features.profiles[n] == :PearsonIV ? ", $(df)_index, $(df)_cutoff" : "") for 
+            (n, df) ∈ enumerate(cube_fitter.dust_features.names)], ", ") * "]"
         
     @debug "Continuum Starting Values: \n $p₀"
 
@@ -962,6 +993,15 @@ function pretty_print_continuum_results(cube_fitter::CubeFitter, popt::Vector{<:
         msg *= "$(df)_fwhm:  \t\t $(@sprintf "%.3f" popt[pᵢ+2]) +/- $(@sprintf "%.3f" perr[pᵢ+2]) μm \t Limits: " *
             "($(@sprintf "%.3f" cube_fitter.dust_features.fwhm[j].limits[1]), $(@sprintf "%.3f" cube_fitter.dust_features.fwhm[j].limits[2]))" * 
             (cube_fitter.dust_features.fwhm[j].locked ? " (fixed)" : "") * "\n"
+        if cube_fitter.dust_features.profiles[j] == :PearsonIV
+            msg *= "$(df)_index:  \t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3]) μm \t Limits: " *
+                "($(@sprintf "%.3f" cube_fitter.dust_features.index[j].limits[1]), $(@sprintf "%.3f" cube_fitter.dust_features.index[j].limits[2]))" * 
+                (cube_fitter.dust_features.index[j].locked ? " (fixed)" : "") * "\n"
+            msg *= "$(df)_cutoff:  \t\t $(@sprintf "%.3f" popt[pᵢ+4]) +/- $(@sprintf "%.3f" perr[pᵢ+4]) μm \t Limits: " *
+                "($(@sprintf "%.3f" cube_fitter.dust_features.cutoff[j].limits[1]), $(@sprintf "%.3f" cube_fitter.dust_features.cutoff[j].limits[2]))" * 
+                (cube_fitter.dust_features.cutoff[j].locked ? " (fixed)" : "") * "\n"
+            pᵢ += 2
+        end
         msg *= "\n"
         pᵢ += 3
     end

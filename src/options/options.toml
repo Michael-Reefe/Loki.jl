@@ -14,7 +14,7 @@ save_fits = true
 
 # n_bootstrap: The number of bootstrapping iterations to perform during fitting, which
 # is used to estimate the uncertainties on parameters given the uncertainties in the data.
-n_bootstrap = 100
+n_bootstrap = 0
 
 # random_seed: Set the random seed for bootstrapping
 random_seed = 123456789

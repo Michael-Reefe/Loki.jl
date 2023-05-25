@@ -269,6 +269,18 @@ See CAFE (Marshall et al. 2007), PAHFIT (Smith, Draine et al. 2007)
 
 
 """
+    ∫PearsonIV(A, a, ν, m)
+
+Integral of a Pearson type-IV profile.
+"""
+∫PearsonIV(A, a, m, ν) = begin 
+    n = (1 + (-ν/(2m))^2)^-m * exp(-ν * atan(-ν/(2m)))
+    k = 1/(√(π)*a) * gamma(m) / gamma(m - 1/2) * abs2(gamma(m + im*ν/2) / gamma(m))
+    A/n/k
+end
+
+
+"""
     MJysr_to_cgs(MJy, λ)
 
 Convert specific intensity in MegaJanskys per steradian to CGS units 
@@ -413,6 +425,20 @@ Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.uto
 """
 @inline function Drude(x::Real, A::Real, μ::Real, FWHM::Real)
     A * (FWHM/μ)^2 / ((x/μ - μ/x)^2 + (FWHM/μ)^2)
+end
+
+
+"""
+    PearsonIV(x, A, μ, a, m, ν)
+
+Calculate a Pearson Type-IV profile at location `x`, with amplitude `A`, unextinguished central value `μ`, width
+parameter `a`, index `m`, and exponential cutoff `ν`.
+
+See Pearson (1895), and https://iopscience.iop.org/article/10.3847/1538-4365/ac4989/pdf
+"""
+function PearsonIV(x::Real, A::Real, μ::Real, a::Real, m::Real, ν::Real)
+    n = (1 + (-ν/(2m))^2)^-m * exp(-ν * atan(-ν/(2m)))
+    A/n * (1 + ((x - μ)/a)^2)^-m * exp(-ν * atan((x - μ)/a))
 end
 
 
@@ -791,9 +817,8 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
-function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont::Integer, n_power_law::Integer, n_dust_feat::Integer,
-    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, 
-    return_components::Bool) where {T<:Real}
+function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
+    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, return_components::Bool) where {T<:Real}
 
     # Prepare outputs
     comps = Dict{String, Vector{Float64}}()
@@ -858,10 +883,15 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
         pᵢ += 6
     end
 
-    for j ∈ 1:n_dust_feat
-        comps["dust_feat_$j"] = Drude.(λ, params[pᵢ:pᵢ+2]...)
+    for (j, prof) ∈ enumerate(dust_prof)
+        if prof == :Drude
+            comps["dust_feat_$j"] = Drude.(λ, params[pᵢ:pᵢ+2]...)
+            pᵢ += 3
+        elseif prof == :PearsonIV
+            comps["dust_feat_$j"] = PearsonIV.(λ, params[pᵢ:pᵢ+4]...)
+            pᵢ += 5
+        end
         contin .+= comps["dust_feat_$j"] .* comps["extinction"] 
-        pᵢ += 3
     end
 
     # Return components if necessary
@@ -874,7 +904,7 @@ end
 
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
-function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont::Integer, n_power_law::Integer, n_dust_feat::Integer,
+function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
     n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool) where {T<:Real}
 
     # Prepare outputs
@@ -934,9 +964,22 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
         pᵢ += 6
     end
 
-    for j ∈ 1:n_dust_feat
-        contin .+= Drude.(λ, params[pᵢ:pᵢ+2]...) .* ext 
-        pᵢ += 3
+    if all(dust_prof .== :Drude)
+        for j ∈ 1:length(dust_prof) 
+            contin .+= Drude.(λ, params[pᵢ:pᵢ+2]...)
+            pᵢ += 3
+        end
+    else
+        for (j, prof) ∈ enumerate(dust_prof)
+            if prof == :Drude
+                df = Drude.(λ, params[pᵢ:pᵢ+2]...)
+                pᵢ += 3
+            elseif prof == :PearsonIV
+                df = PearsonIV.(λ, params[pᵢ:pᵢ+4]...)
+                pᵢ += 5
+            end
+            contin .+= df .* ext
+        end
     end
 
     contin
@@ -1150,8 +1193,8 @@ Calculate extra parameters that are not fit, but are nevertheless important to k
 Currently this includes the integrated intensity and signal to noise ratios of dust features and emission lines.
 """
 function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, n_dust_cont::Integer,
-    n_power_law::Integer, n_dust_feat::Integer, n_abs_feat::Integer, fit_sil_emission::Bool, n_lines::Integer, 
-    n_acomps::Integer, n_comps::Integer, lines::TransitionLines, flexible_wavesol::Bool, 
+    n_power_law::Integer, n_dust_feat::Integer, dust_profiles::Vector{Symbol}, n_abs_feat::Integer, fit_sil_emission::Bool, 
+    n_lines::Integer, n_acomps::Integer, n_comps::Integer, lines::TransitionLines, flexible_wavesol::Bool, 
     lsf::Function, popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}, 
     extinction::Vector{T}, mask_lines::BitVector, continuum::Vector{T}, 
     area_sr::Vector{T}, propagate_err::Bool=true) where {T<:Real}
@@ -1190,14 +1233,27 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
         # Get the extinction profile at the center
         ext = extinction[cent_ind] 
 
-        # Calculate the flux using the utility function
-        flux, f_err = calculate_flux(:Drude, A_cgs, A_cgs_err, μ, μ_err, fwhm, fwhm_err, propagate_err=propagate_err)
+        prof = dust_profiles[ii]
+        if prof == :PearsonIV
+            m, m_err = popt_c[pᵢ+3], perr_c[pᵢ+3]
+            ν, ν_err = popt_c[pᵢ+4], perr_c[pᵢ+4]
+        else
+            m, m_err = 0., 0.
+            ν, ν_err = 0., 0.
+        end
 
-        @debug "PAH feature with ($A_cgs, $μ, $fwhm) and errors ($A_cgs_err, $μ_err, $fwhm_err)"
+        # Calculate the flux using the utility function
+        flux, f_err = calculate_flux(prof, A_cgs, A_cgs_err, μ, μ_err, fwhm, fwhm_err, 
+            m=m, m_err=m_err, ν=ν, ν_err=ν_err, propagate_err=propagate_err)
+
+        @debug "PAH feature ($prof) with ($A_cgs, $μ, $fwhm, $m, $ν) and errors ($A_cgs_err, $μ_err, $fwhm_err, $m_err, $ν_err)"
         @debug "I=$flux, err=$f_err"
 
         # increment the parameter index
         pᵢ += 3
+        if prof == :PearsonIV
+            pᵢ += 2
+        end
 
         # flux units: erg s^-1 cm^-2 sr^-1 (integrated over μm)
         p_dust[pₒ] = flux
@@ -1340,15 +1396,25 @@ Calculate the integrated flux of a spectral feature, i.e. a PAH or emission line
 of the feature profile, using an analytic form if available, otherwise integrating numerically with QuadGK.
 """
 function calculate_flux(profile::Symbol, amp::T, amp_err::T, peak::T, peak_err::T, fwhm::T, fwhm_err::T;
-    h3::Union{T,Nothing}=nothing, h3_err::Union{T,Nothing}=nothing, h4::Union{T,Nothing}=nothing, 
-    h4_err::Union{T,Nothing}=nothing, η::Union{T,Nothing}=nothing, η_err::Union{T,Nothing}=nothing,
-    propagate_err::Bool=true) where {T<:Real}
+    m::Union{T,Nothing}=nothing, m_err::Union{T,Nothing}=nothing, ν::Union{T,Nothing}=nothing,
+    ν_err::Union{T,Nothing}=nothing, h3::Union{T,Nothing}=nothing, h3_err::Union{T,Nothing}=nothing, 
+    h4::Union{T,Nothing}=nothing, h4_err::Union{T,Nothing}=nothing, η::Union{T,Nothing}=nothing, 
+    η_err::Union{T,Nothing}=nothing, propagate_err::Bool=true) where {T<:Real}
 
     # Evaluate the line profiles according to whether there is a simple analytic form
     # otherwise, integrate numerically with quadgk
     if profile == :Drude
         # (integral = π/2 * A * fwhm)
         flux, f_err = propagate_err ? ∫Drude(amp, amp_err, fwhm, fwhm_err) : (∫Drude(amp, fwhm), 0.)
+    elseif profile == :PearsonIV
+        flux = ∫PearsonIV(amp, fwhm, m, ν)
+        if propagate_err
+            e_upp = ∫PearsonIV(amp+amp_err, fwhm+fwhm_err, m+m_err, ν+ν_err) - flux
+            e_low = flux - ∫PearsonIV(max(amp-amp_err, 0.), max(fwhm-fwhm_err, eps()), max(m-m_err, 0.5), ν-ν_err)
+            f_err = (e_upp + e_low) / 2
+        else
+            f_err = 0.
+        end
     elseif profile == :Gaussian
         # (integral = √(π / (4log(2))) * A * fwhm)
         flux, f_err = propagate_err ? ∫Gaussian(amp, amp_err, fwhm, fwhm_err) : (∫Gaussian(amp, fwhm), 0.)

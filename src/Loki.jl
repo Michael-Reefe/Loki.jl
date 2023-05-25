@@ -15,6 +15,7 @@ using QuadGK
 using Dierckx
 using LinearAlgebra
 using EllipsisNotation
+using SpecialFunctions
 
 # Optimization packages
 using Optim

@@ -96,21 +96,16 @@ obs = from_fits(["data/NGC_6552_ch1-long_s3d.fits",
 channel = 0
 name = replace(obs.name, " " => "_") * "_ch$(channel)_full_5-19-23"
 
-if isfile("processed-data.loki")
-    obs = load!("processed-data.loki")
-else
-    # Convert to rest-frame wavelength vector, and mask out bad spaxels
-    correct!(obs)
-    # Concatenate the subchannels of each channel so that we have one cube for each channel
-    for i_channel ∈ 1:4
-        reproject_channels!(obs, i_channel, out_id=i_channel, method=:adaptive) 
-        # Interpolate NaNs in otherwise good spaxels
-        interpolate_nans!(obs.channels[i_channel])
-    end
-    reproject_channels!(obs, [1,2,3], out_id=0, method=:adaptive)
-    interpolate_nans!(obs.channels[0], obs.z)
-    save!("processed-data.loki", obs)
+# Convert to rest-frame wavelength vector, and mask out bad spaxels
+correct!(obs)
+# Concatenate the subchannels of each channel so that we have one cube for each channel
+for i_channel ∈ 1:4
+    reproject_channels!(obs, i_channel, out_id=i_channel, method=:adaptive) 
+    # Interpolate NaNs in otherwise good spaxels
+    interpolate_nans!(obs.channels[i_channel])
 end
+reproject_channels!(obs, [1,2,3], out_id=0, method=:adaptive)
+interpolate_nans!(obs.channels[0], obs.z)
 
 # Do the optical depth pre-fitting
 # τ_guess = fit_optical_depth(obs)

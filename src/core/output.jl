@@ -112,7 +112,7 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
         end
 
         # Dust feature log(amplitude), mean, FWHM
-        for df ∈ cube_fitter.dust_features.names
+        for (k, df) ∈ enumerate(cube_fitter.dust_features.names)
             param_maps.dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z)*N)-17 : -Inf
             param_errs[1].dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
             param_errs[2].dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
@@ -122,14 +122,23 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             param_maps.dust_features[df][:fwhm][index] = out_params[index, pᵢ+2] * (1+z)
             param_errs[1].dust_features[df][:fwhm][index] = out_errs[index, pᵢ+2, 1] * (1+z)
             param_errs[2].dust_features[df][:fwhm][index] = out_errs[index, pᵢ+2, 2] * (1+z)
+            if cube_fitter.dust_features.profiles[k] == :PearsonIV
+                param_maps.dust_features[df][:index][index] = out_params[index, pᵢ+3]
+                param_errs[1].dust_features[df][:index][index] = out_errs[index, pᵢ+3, 1] 
+                param_errs[2].dust_features[df][:index][index] = out_errs[index, pᵢ+3, 2]
+                param_maps.dust_features[df][:cutoff][index] = out_params[index, pᵢ+4]
+                param_errs[1].dust_features[df][:cutoff][index] = out_errs[index, pᵢ+4, 1] 
+                param_errs[2].dust_features[df][:cutoff][index] = out_errs[index, pᵢ+4, 2]
+                pᵢ += 2
+            end
             pᵢ += 3
         end
 
         if cube_fitter.save_full_model
             # End of continuum parameters: recreate the continuum model
             I_cont, comps_c = model_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], N, cube_fitter.n_dust_cont, cube_fitter.n_power_law,
-                cube_fitter.n_dust_feat, cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, 
-                true)
+                cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, 
+                cube_fitter.fit_sil_emission, true)
         end
 
         # Save marker of the point where the continuum parameters end and the line parameters begin
@@ -430,8 +439,12 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         bunit = L"$\beta$"
     elseif occursin("frac", String(name_i))
         bunit = L"$C_f$"
-    elseif occursin("index", String(name_i))
+    elseif occursin("index", String(name_i)) && occursin("PAH", String(name_i))
+        bunit = L"$m"
+    elseif occursin("index", String(name_i)) && !occursin("PAH", String(name_i))
         bunit = L"$\alpha$"
+    elseif occursin("cutoff", String(name_i))
+        bunit = L"$\nu"
     end
 
     @debug "Plotting 2D map of $name_i with units $bunit"
@@ -610,14 +623,13 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
 
     # Absorption feature parameters
     for ab ∈ keys(param_maps.abs_features)
-        snr = exp.(param_maps.abs_features[ab][:tau]) .- 1
         wave_i = nanmedian(param_maps.abs_features[ab][:mean]) / (1 + cube_fitter.z)
         for parameter ∈ keys(param_maps.abs_features[ab])
             data = param_maps.abs_features[ab][parameter]
             name_i = join([ab, parameter], "_")
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "absorption_features", "$(name_i).pdf")
             plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
-                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr, snr_thresh=0.05)
+                cube_fitter.cosmology, cube_fitter.cube.wcs)
         end
     end
 
@@ -1006,7 +1018,7 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
                         bunit = "um"
                     elseif occursin("flux", String(name_i))
                         bunit = "log10(F / erg s^-1 cm^-2)"
-                    elseif occursin("SNR", String(name_i))
+                    elseif occursin("SNR", String(name_i)) || occursin("index", String(name_i)) || occursin("cutoff", String(name_i))
                         bunit = "unitless"
                     end
                     write(f, data; name=name_i)

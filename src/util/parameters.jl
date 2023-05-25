@@ -134,6 +134,8 @@ struct DustFeatures
     profiles::Vector{Symbol}
     mean::Vector{Parameter}
     fwhm::Vector{Parameter}
+    index::Vector{Union{Parameter,Nothing}}
+    cutoff::Vector{Union{Parameter,Nothing}}
 
 end
 

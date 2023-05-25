@@ -227,7 +227,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         ptot = zeros(Float64, length(pars_0))
         ptot[.~lock] .= pfree
         ptot[lock] .= pfix
-        model_continuum(x, ptot, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat,
+        model_continuum(x, ptot, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
             cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission)
     end
     res = cmpfit(λ_spax, I_spax, σ_spax, fit_cont, pfree, parinfo=parinfo, config=config)
@@ -246,7 +246,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # @debug "Continuum covariance matrix: \n $covar"
 
     # Create the full model, again only if not bootstrapping
-    I_model, comps = model_continuum(λ, popt, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat,
+    I_model, comps = model_continuum(λ, popt, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
         cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, true)
 
     if init
@@ -791,10 +791,10 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # Add dust feature and line parameters (intensity and SNR)
     if !init
         p_dust, p_lines, p_dust_err, p_lines_err = calculate_extra_parameters(λ, I, norm, cube_fitter.n_dust_cont,
-                cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_abs_feat, cube_fitter.fit_sil_emission, 
-                cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol, 
-                lsf_interp_func, popt_c, popt_l, perr_c, perr_l, comps["extinction"], mask_lines, I_spline, area_sr, 
-                !bootstrap_iter)
+                cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, 
+                cube_fitter.fit_sil_emission, cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, cube_fitter.lines, 
+                cube_fitter.flexible_wavesol, lsf_interp_func, popt_c, popt_l, perr_c, perr_l, comps["extinction"], mask_lines, 
+                I_spline, area_sr, !bootstrap_iter)
         p_out = [popt_c; popt_l; p_dust; p_lines; χ2; dof]
         p_err = [perr_c; perr_l; p_dust_err; p_lines_err; 0.; 0.]
         

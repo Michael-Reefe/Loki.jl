@@ -851,6 +851,15 @@ function adjust_wcs_alignment!(obs::Observation, channels; box_size::Integer=11)
             # NOTE 2: Add 1 because of python's 0-based indexing
             x_cent, y_cent = py_photutils.centroids.centroid_2dg(data', error=err', mask=mask') .+ 1
 
+            fig, ax = plt.subplots()
+            data[data .≤ 0] .= NaN
+            logdata = log10.(data)
+            ax.imshow(logdata', origin=:lower, cmap=:cubehelix, vmin=nanquantile(logdata, 0.01), vmax=nanquantile(logdata, 0.99))
+            ax.plot(x_cent-1, y_cent-1, "rx", ms=10)
+            nm = replace(obs.name, " " => "_")
+            plt.savefig(nm * "_centroid_$(channel)_$k.pdf", dpi=300, bbox_inches=:tight)
+            plt.close()
+
             # Convert pixel coordinates to physical coordinates using the WCS transformation with the argument for 1-based indexing
             c_coords[k, :] .= wcs.all_pix2world([[x_cent, y_cent]], 1)'
             @debug "The centroid location of channel $channel is ($x_cent, $y_cent) pixels " *
@@ -1014,29 +1023,29 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
     end
 
     # Need an additional correction (fudge) factor for overall channels
+    jumps = findall(diff(λ_out) .< 0.)
     if concat_type == :full
-        @info "Normalizing fluxes between channels, and resampling in the overlapping regions"
-        # find overlapping regions
-        jumps = findall(diff(λ_out) .< 0.)
         λ_con = zeros(eltype(λ_out), 0)
         I_con = zeros(eltype(I_out), size(I_out)[1:2]..., 0)
         σ_con = zeros(eltype(σ_out), size(σ_out)[1:2]..., 0)
         mask_con = falses(size(mask_out)[1:2]..., 0)
-        # rescale channels so the flux level is continuous
         prev_i2 = 0
-        for (i, jump) ∈ enumerate(jumps)
-            # find the full scale of the overlapping region
-            wave_left, wave_right = λ_out[jump+1], λ_out[jump]
-            _, i1 = findmin(abs.(λ_out[1:jump] .- wave_left))
-            _, i2 = findmin(abs.(λ_out[jump+1:end] .- wave_right))
-            i2 += jump
-            # get the median fluxes from both channels over the full region
-            med_left = dropdims(nanmedian(I_out[:, :, i1:jump], dims=3), dims=3)
-            med_right = dropdims(nanmedian(I_out[:, :, jump+1:i2], dims=3), dims=3)
-            # rescale the flux in the right channel to match the left channel
-            scale = clamp.(med_left ./ med_right, 0.5, 1.5)
-            I_out[:, :, jump+1:end] .*= scale
-            @info "Minimum/Maximum fudge factor for channel $(i+1): ($(nanminimum(med_left./med_right)), $(nanmaximum(med_left./med_right)))"
+    end
+    # rescale channels so the flux level is continuous
+    for (i, jump) ∈ enumerate(jumps)
+        # find the full scale of the overlapping region
+        wave_left, wave_right = λ_out[jump+1], λ_out[jump]
+        _, i1 = findmin(abs.(λ_out[1:jump] .- wave_left))
+        _, i2 = findmin(abs.(λ_out[jump+1:end] .- wave_right))
+        i2 += jump
+        # get the median fluxes from both channels over the full region
+        med_left = dropdims(nanmedian(I_out[:, :, i1:jump], dims=3), dims=3)
+        med_right = dropdims(nanmedian(I_out[:, :, jump+1:i2], dims=3), dims=3)
+        # rescale the flux in the right channel to match the left channel
+        scale = clamp.(med_left ./ med_right, 0.5, 1.5)
+        I_out[:, :, jump+1:end] .*= scale
+        @info "Minimum/Maximum fudge factor for channel $(i+1): ($(nanminimum(med_left./med_right)), $(nanmaximum(med_left./med_right)))"
+        if concat_type == :full
             # resample fluxes in the overlapping regions
             λ_res = median([diff(λ_out[i1:jump])[1], diff(λ_out[jump+1:i2])[1]])
             λ_resamp = λ_out[i1]:λ_res:λ_out[i2]
@@ -1050,6 +1059,8 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
             mask_con =cat(mask_con, mask_out[:, :, prev_i2+1:i1-1], mask_resamp, dims=3)
             prev_i2 = i2
         end
+    end
+    if concat_type == :full
         λ_out = [λ_con; λ_out[prev_i2+1:end]]
         I_out = cat(I_con, I_out[:, :, prev_i2+1:end], dims=3)
         σ_out = cat(σ_con, σ_out[:, :, prev_i2+1:end], dims=3)

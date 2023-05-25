@@ -146,8 +146,7 @@ function parse_dust()
 
     # Read in the dust file
     dust = TOML.parsefile(joinpath(@__DIR__, "..", "options", "dust.toml"))
-    dust_out = Dict()
-    keylist1 = ["stellar_continuum_temp", "dust_features", "absorption_features", "extinction", "hot_dust"]
+    keylist1 = ["stellar_continuum_temp", "dust_features", "extinction", "hot_dust"]
     keylist2 = ["wave", "fwhm"]
     keylist3 = ["tau_9_7", "tau_ice", "tau_ch", "beta"]
     keylist4 = ["temp", "frac", "tau_warm", "tau_cold", "peak"]
@@ -165,10 +164,12 @@ function parse_dust()
                 @assert haskey(dust["dust_features"][df_key][df_key2], key) "Missing option $key in dust features $df_key, $df_key2 options!"
             end
         end
-        for abs_key ∈ keys(dust["absorption_features"])
-            for abs_key2 ∈ keylist2
-                @assert haskey(dust["absorption_features"][abs_key], abs_key2) "Missing option $abs_key2 in absorption feature $abs_key options!"
-                @assert haskey(dust["absorption_features"][abs_key][abs_key2], key) "Missing option $key in absorption features $abs_key, $abs_key2 options!"
+        if haskey(dust, "absorption_features")
+            for abs_key ∈ keys(dust["absorption_features"])
+                for abs_key2 ∈ keylist2
+                    @assert haskey(dust["absorption_features"][abs_key], abs_key2) "Missing option $abs_key2 in absorption feature $abs_key options!"
+                    @assert haskey(dust["absorption_features"][abs_key][abs_key2], key) "Missing option $key in absorption features $abs_key, $abs_key2 options!"
+                end
             end
         end
         for ex_key ∈ keylist3
@@ -216,6 +217,9 @@ function parse_dust()
     name = Vector{String}(undef, length(dust["dust_features"]))
     mean = Vector{Parameter}(undef, length(dust["dust_features"]))
     fwhm = Vector{Parameter}(undef, length(dust["dust_features"]))
+    index = Vector{Union{Parameter,Nothing}}(nothing, length(dust["dust_features"]))
+    cutoff = Vector{Union{Parameter,Nothing}}(nothing, length(dust["dust_features"]))
+    profiles = [:Drude for _ in 1:length(name)]
 
     msg = "Dust features:"
     for (i, df) ∈ enumerate(keys(dust["dust_features"]))
@@ -224,34 +228,51 @@ function parse_dust()
         msg *= "\nWave $(mean[i])"
         fwhm[i] = from_dict_fwhm(dust["dust_features"][df]["fwhm"])
         msg *= "\nFWHM $(fwhm[i])"
+        if haskey(dust["dust_features"][df], "index")
+            index[i] = from_dict(dust["dust_features"][df]["index"])
+            profiles[i] = :PearsonIV
+            msg *= "\nIndex $(index[i])"
+        end
+        if haskey(dust["dust_features"][df], "cutoff")
+            cutoff[i] = from_dict(dust["dust_features"][df]["cutoff"])
+            profiles[i] = :PearsonIV
+            msg *= "\nCutoff $(cutoff[i])"
+        end
         cent_vals[i] = mean[i].value
     end
     @debug msg
 
     # Sort by cent_vals
     ss = sortperm(cent_vals)
-    dust_features = DustFeatures(name[ss], [:Drude for _ in 1:length(name)], mean[ss], fwhm[ss])
+    dust_features = DustFeatures(name[ss], profiles[ss], mean[ss], fwhm[ss], index[ss], cutoff[ss])
 
     # Repeat for absorption features
-    cent_vals = zeros(length(dust["absorption_features"]))
-    name = Vector{String}(undef, length(dust["absorption_features"]))
-    mean = Vector{Parameter}(undef, length(dust["absorption_features"]))
-    fwhm = Vector{Parameter}(undef, length(dust["absorption_features"]))
+    if haskey(dust, "absorption_features")
+        cent_vals = zeros(length(dust["absorption_features"]))
+        name = Vector{String}(undef, length(dust["absorption_features"]))
+        mean = Vector{Parameter}(undef, length(dust["absorption_features"]))
+        fwhm = Vector{Parameter}(undef, length(dust["absorption_features"]))
 
-    msg = "Absorption features:"
-    for (i, ab) ∈ enumerate(keys(dust["absorption_features"]))
-        name[i] = ab
-        mean[i] = from_dict_wave(dust["absorption_features"][ab]["wave"])
-        msg *= "\nWave $(mean[i])"
-        fwhm[i] = from_dict_fwhm(dust["absorption_features"][ab]["fwhm"])
-        msg *= "\nFWHM $(fwhm[i])"
-        cent_vals[i] = mean[i].value
+        msg = "Absorption features:"
+        for (i, ab) ∈ enumerate(keys(dust["absorption_features"]))
+            name[i] = ab
+            mean[i] = from_dict_wave(dust["absorption_features"][ab]["wave"])
+            msg *= "\nWave $(mean[i])"
+            fwhm[i] = from_dict_fwhm(dust["absorption_features"][ab]["fwhm"])
+            msg *= "\nFWHM $(fwhm[i])"
+            cent_vals[i] = mean[i].value
+        end
+        @debug msg
+
+        # Sort by cent_vals
+        ss = sortperm(cent_vals)
+        abs_features = DustFeatures(name[ss], [:Drude for _ in 1:length(name)], mean[ss], fwhm[ss],
+            Union{Parameter,Nothing}[nothing for _ in 1:length(name)], 
+            Union{Parameter,Nothing}[nothing for _ in 1:length(name)]) 
+    else
+        abs_features = DustFeatures(String[], Symbol[], Parameter[], Parameter[], Vector{Union{Parameter,Nothing}}(),
+            Vector{Union{Parameter,Nothing}}())
     end
-    @debug msg
-
-    # Sort by cent_vals
-    ss = sortperm(cent_vals)
-    abs_features = DustFeatures(name[ss], [:Drude for _ in 1:length(name)], mean[ss], fwhm[ss]) 
 
     # Extinction parameters, optical depth and mixing ratio
     msg = "Extinction:"
