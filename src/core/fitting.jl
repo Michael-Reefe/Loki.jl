@@ -13,16 +13,24 @@ CubeFitter. An example of this is provided in the test driver files in the test 
 """
 mask_emission_lines(λ, I, σ)
 
-Mask out emission lines in a given spectrum.
+Mask out emission lines in a given spectrum using a numerical second derivative and flagging 
+negative(positive) spikes, indicating strong concave-downness(upness) up to some tolerance threshold (i.e. 3-sigma).
+The widths of the lines are estimated using the number of pixels for which the numerical first derivative
+is above some (potentially different) tolerance threshold.
 
 # Arguments
 - `λ::Vector{<:Real}`: The wavelength vector of the spectrum
 - `I::Vector{<:Real}`: The flux vector of the spectrum
-- `σ::Vector{<:Real}`: The uncertainty vector of the spectrum
+- `Δ::Integer=3`: The resolution (width) of the numerical derivative calculations, in pixels
+- `thresh2::Real=3.`: The sensitivity threshold for flagging lines with the second derivative test, in units of the RMS.
+- `thresh1::Real=1.`: The sensitivity threshold for estimating line widths with the first derivative test, in units of the RMS.
+- `W::Tuple`: The half-window sizes used to calculate the variance in the numerical second derivative.
+- `override`: List of pairs of wavelength boundaries between which the mask should be forced to be false.
 
 See also [`continuum_cubic_spline`](@ref)
 """
-function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}; Δ::Integer=3, thresh::Real=3.)
+function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}; Δ::Integer=3, thresh2::Real=3., 
+    thresh1::Real=1., W::Tuple=(30, 1000), override=nothing)
 
     diffs = diff(λ)
     # Numerical derivative width in microns
@@ -38,8 +46,7 @@ function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}; Δ::Integer=
         d2f[i] = (I[min(length(λ), i+Δ)] - 2I[i] + I[max(1, i-Δ)]) / h^2
     end
     mask = falses(length(λ))
-    W = (30, 1000)
-
+ 
     λref = [5.7, 10.0, 16.0, 18.4]
     # Reference regions relatively free of lines and PAHs 
     regref = Dict(1 => 5.65 .< λ .< 5.88,
@@ -50,27 +57,23 @@ function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}; Δ::Integer=
     # Find where the second derivative is significantly concave-down 
     for j ∈ 1:length(λ)
         # Only consider the spectrum within +/- W pixels from the point in question
-        if any([abs(d2f[j]) > thresh * nanstd(d2f[max(1, j-Wi):min(length(λ), j+Wi)]) for Wi ∈ W])
-
+        if any([abs(d2f[j]) > thresh2 * nanstd(d2f[max(1, j-Wi):min(length(λ), j+Wi)]) for Wi ∈ W])
             # the width of the mask is based on how many pixels have a first derivative above the noise level
-            w = 30
+            w = minimum(W)
             reg = argmin(abs.(λ[j] .- λref))
             rms = nanstd(df[regref[reg]])
-            n_pix = sum(abs.(df[max(j-w,1):min(j+w,length(df))]) .> rms)
-            # p₁ = nanargmax(df[max(j-w,1):min(j+w,length(df))])
-            # p₂ = nanargmin(df[max(j-w,1):min(j+w,length(df))])
-            # n_pix = 2 * (p₂ - p₁)
-            # n_pix = n_pix > 0 ? n_pix : 1
+            n_pix = sum(abs.(df[max(j-w,1):min(j+w,length(df))]) .> thresh1 .* rms)
             mask[max(j-fld(n_pix,2),1):min(j+fld(n_pix,2),length(mask))] .= 1
         end
     end
 
     # Don't mask out this region that tends to trick this method sometimes
-    mask[7.82 .< λ .< 7.89] .= 0
-    mask[11.10 .< λ .< 11.15] .= 0
-    mask[11.17 .< λ .< 11.24] .= 0
-    mask[11.26 .< λ .< 11.355] .= 0
-    mask[12.5 .< λ .< 12.79] .= 0
+    if isnothing(override)
+        override = [(7.82, 7.89), (11.10, 11.15), (11.17, 11.24), (11.26, 11.355), (12.5, 12.79)]
+    end
+    for pair in override
+        mask[pair[1] .< λ .< pair[2]] .= 0
+    end
 
     # Clip outliers in flux -- sensitive to both positive and negative spikes
     I_med = [nanmedian(I[max(i-10Δ,1):min(i+10Δ,length(I))]) for i in 1:length(I)]
