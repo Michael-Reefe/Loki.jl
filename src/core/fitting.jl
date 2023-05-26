@@ -11,26 +11,24 @@ CubeFitter. An example of this is provided in the test driver files in the test 
 
 
 """
-mask_emission_lines(λ, I, σ)
+    mask_emission_lines(λ, I)
 
 Mask out emission lines in a given spectrum using a numerical second derivative and flagging 
-negative(positive) spikes, indicating strong concave-downness(upness) up to some tolerance threshold (i.e. 3-sigma).
-The widths of the lines are estimated using the number of pixels for which the numerical first derivative
-is above some (potentially different) tolerance threshold.
+negative spikes (indicating strong concave-downness) up to some tolerance threshold (i.e. 3-sigma)
 
 # Arguments
 - `λ::Vector{<:Real}`: The wavelength vector of the spectrum
 - `I::Vector{<:Real}`: The flux vector of the spectrum
-- `Δ::Integer=3`: The resolution (width) of the numerical derivative calculations, in pixels
-- `thresh2::Real=3.`: The sensitivity threshold for flagging lines with the second derivative test, in units of the RMS.
-- `thresh1::Real=1.`: The sensitivity threshold for estimating line widths with the first derivative test, in units of the RMS.
-- `W::Tuple`: The half-window sizes used to calculate the variance in the numerical second derivative.
-- `override`: List of pairs of wavelength boundaries between which the mask should be forced to be false.
+- `Δ::Integer=3`: The half-width of the numerical second derivative approximation, in pixels
+- `W::Real=0.5`: The half-width of the window with which to calculate the standard deviation of the derivative of the spectrum
+    in comparison to the point in question
+- `thresh::Real=3`: The threshold by which to count a spike as a line that should be masked, in units
+    of sigma.
+- `n_inc_thresh::Integer=3`: The number of times that the flux is allowed to increase before cutting off the edge of the line mask.
 
 See also [`continuum_cubic_spline`](@ref)
 """
-function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}; Δ::Integer=3, thresh2::Real=3., 
-    thresh1::Real=1., W::Tuple=(30, 1000), override=nothing)
+function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}; Δ::Integer=3, thresh::Real=3., n_inc_thresh::Integer=3)
 
     diffs = diff(λ)
     # Numerical derivative width in microns
@@ -46,39 +44,50 @@ function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}; Δ::Integer=
         d2f[i] = (I[min(length(λ), i+Δ)] - 2I[i] + I[max(1, i-Δ)]) / h^2
     end
     mask = falses(length(λ))
- 
-    λref = [5.7, 10.0, 16.0, 18.4]
-    # Reference regions relatively free of lines and PAHs 
-    regref = Dict(1 => 5.65 .< λ .< 5.88,
-                  2 => 9.71 .< λ .< 10.45,
-                  3 => 15.66 .< λ .< 16.98,
-                  4 => 18.00 .< λ .< 18.65)
+    W = (30, 1000)
 
     # Find where the second derivative is significantly concave-down 
-    for j ∈ 1:length(λ)
+    for j ∈ 7:(length(λ)-7)
         # Only consider the spectrum within +/- W pixels from the point in question
-        if any([abs(d2f[j]) > thresh2 * nanstd(d2f[max(1, j-Wi):min(length(λ), j+Wi)]) for Wi ∈ W])
-            # the width of the mask is based on how many pixels have a first derivative above the noise level
-            w = minimum(W)
-            reg = argmin(abs.(λ[j] .- λref))
-            rms = nanstd(df[regref[reg]])
-            n_pix = sum(abs.(df[max(j-w,1):min(j+w,length(df))]) .> thresh1 .* rms)
-            mask[max(j-fld(n_pix,2),1):min(j+fld(n_pix,2),length(mask))] .= 1
+        if any([abs(d2f[j]) > thresh * nanstd(d2f[max(1, j-Wi):min(length(λ), j+Wi)]) for Wi ∈ W])
+
+            n_pix_l = 0
+            n_pix_r = 0
+
+            # Travel left/right from the center until the flux goes up 3 times
+            n_inc = 0
+            while n_inc < n_inc_thresh
+                dI = I[j-n_pix_l-1] - I[j-n_pix_l]
+                if dI > 0
+                    n_inc += 1
+                end
+                if j-n_pix_l-1 == 1
+                    break
+                end
+                n_pix_l += 1
+            end
+            n_inc = 0
+            while n_inc < n_inc_thresh
+                dI = I[j+n_pix_r+1] - I[j+n_pix_r]
+                if dI > 0
+                    n_inc += 1
+                end
+                if j+n_pix_r+1 == length(I)
+                    break
+                end
+                n_pix_r += 1
+            end
+
+            mask[max(j-n_pix_l,1):min(j+n_pix_r,length(mask))] .= 1
+
         end
     end
 
-    # Don't mask out this region that tends to trick this method sometimes
-    if isnothing(override)
-        override = [(7.82, 7.89), (11.10, 11.15), (11.17, 11.24), (11.26, 11.355), (12.5, 12.79)]
-    end
-    for pair in override
-        mask[pair[1] .< λ .< pair[2]] .= 0
-    end
-
-    # Clip outliers in flux -- sensitive to both positive and negative spikes
-    I_med = [nanmedian(I[max(i-10Δ,1):min(i+10Δ,length(I))]) for i in 1:length(I)]
-    outliers = [abs(I[i] - I_med[i]) > 2 * nanstd((I - I_med)[max(i-10Δ,1):min(i+10Δ,length(I))]) for i in 1:length(I)]
-    mask .|= outliers
+    # Don't mask out these regions that tends to trick this method sometimes
+    mask[11.10 .< λ .< 11.15] .= 0
+    mask[11.17 .< λ .< 11.24] .= 0
+    mask[11.26 .< λ .< 11.355] .= 0
+    # mask[12.5 .< λ .< 12.79] .= 0
 
     # Force the beginning/end few pixels to be unmasked to prevent runaway splines at the edges
     mask[1:7] .= 0
@@ -827,27 +836,34 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
     area_sr = cube_data.area_sr
 
     # if there are any NaNs, skip over the spaxel
-    if any(.!isfinite.(I))
+    if any(.~isfinite.(I))
         return nothing, nothing
+    end
+
+    # If there are any 0s, fill them in
+    bad = findall((I .== 0.) .| (σ .== 0.))
+    # Replace with the average of the points to the left and right
+    l = length(I)
+    for badi in bad
+        lind = findfirst(x -> isfinite(x), I[max(badi-1,1):-1:1])
+        rind = findfirst(x -> isfinite(x), I[min(badi+1,l):end])
+        I[badi] = (I[max(badi-1,1):-1:1][lind] + I[min(badi+1,l):end][rind]) / 2
+        σ[badi] = (σ[max(badi-1,1):-1:1][lind] + σ[min(badi+1,l):end][rind]) / 2
     end
 
     # Perform a cubic spline fit, also obtaining the line mask
     mask_lines, I_spline, σ_spline = continuum_cubic_spline(λ, I, σ)
 
-    # l_mask = sum(.!mask_lines)
-    # # Statistical uncertainties based on the local RMS of the residuals with a cubic spline fit
-    # σ_stat = [std(I[.!mask_lines][max(i-30,1):min(i+30,l_mask)] .- I_spline[.!mask_lines][max(i-30,1):min(i+30,l_mask)]) for i ∈ 1:l_mask]
-    # # We insert at the locations of the lines since the cubic spline does not include them
-    # l_all = length(λ)
-    # line_inds = (1:l_all)[mask_lines]
-    # for line_ind ∈ line_inds
-    #     insert!(σ_stat, line_ind, σ_stat[max(line_ind-1, 1)])
-    # end
-    # @debug "Statistical uncertainties: ($(σ_stat[1]) - $(σ_stat[end]))"
-    # σ = hypot.(σ, σ_stat)
-
-    resid = I[.!mask_lines] .- I_spline[.!mask_lines]
-    σ_stat = std(resid[resid .< 3std(resid)])
+    l_mask = sum(.~mask_lines)
+    # Statistical uncertainties based on the local RMS of the residuals with a cubic spline fit
+    σ_stat = [std(I[.~mask_lines][max(i-500,1):min(i+500,l_mask)] .- I_spline[.~mask_lines][max(i-500,1):min(i+500,l_mask)]) for i ∈ 1:l_mask]
+    # We insert at the locations of the lines since the cubic spline does not include them
+    l_all = length(λ)
+    line_inds = (1:l_all)[mask_lines]
+    for line_ind ∈ line_inds
+        insert!(σ_stat, line_ind, σ_stat[max(line_ind-1, 1)])
+    end
+    @debug "Statistical uncertainties: ($(σ_stat[1]) - $(σ_stat[end]))"
     σ .= σ_stat
 
     # Check if the fit has already been performed
@@ -1033,10 +1049,10 @@ function fit_stack!(cube_fitter::CubeFitter)
     # Collect the data
     λ_init = cube_fitter.cube.λ
     I_sum_init = sumdim(cube_fitter.cube.Iν, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
-    σ_sum_init = sqrt.(sumdim(cube_fitter.cube.σI.^2, (1,2))) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+    σ_sum_init = sqrt.(sumdim(cube_fitter.cube.σI.^2, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2)))
     area_sr_init = cube_fitter.cube.Ω .* sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
 
-    bad = findall(.~isfinite.(I_sum_init) .| .~isfinite.(σ_sum_init))
+    bad = findall(.~isfinite.(I_sum_init) .| .~isfinite.(σ_sum_init) .| (I_sum_init .== 0.) .| (σ_sum_init .== 0.))
     # Replace with the average of the points to the left and right
     l = length(I_sum_init)
     for badi in bad
@@ -1049,21 +1065,19 @@ function fit_stack!(cube_fitter::CubeFitter)
 
     # Perform a cubic spline fit, also obtaining the line mask
     mask_lines_init, I_spline_init, σ_spline_init = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init)
-    # l_mask = sum(.!mask_lines_init)
 
-    # # Statistical uncertainties based on the local RMS of the residuals with a cubic spline fit
-    # σ_stat_init = [std(I_sum_init[.!mask_lines_init][max(i-100,1):min(i+100,l_mask)] .- 
-    #     I_spline_init[.!mask_lines_init][max(i-100,1):min(i+100,l_mask)]) for i ∈ 1:l_mask]
-    # # We insert at the locations of the lines since the cubic spline does not include them
-    # l_all = length(λ_init)
-    # line_inds = (1:l_all)[mask_lines_init]
-    # for line_ind ∈ line_inds
-    #     insert!(σ_stat_init, line_ind, σ_stat_init[max(line_ind-1, 1)])
-    # end
-    # @debug "Statistical uncertainties: ($(σ_stat_init[1]) - $(σ_stat_init[end]))"
+    l_mask = sum(.~mask_lines_init)
+    # Statistical uncertainties based on the local RMS of the residuals with a cubic spline fit
+    σ_stat_init = [std(I_sum_init[.~mask_lines_init][max(i-500,1):min(i+500,l_mask)] .- 
+        I_spline_init[.~mask_lines_init][max(i-500,1):min(i+500,l_mask)]) for i ∈ 1:l_mask]
+    # We insert at the locations of the lines since the cubic spline does not include them
+    l_all = length(λ_init)
+    line_inds = (1:l_all)[mask_lines_init]
+    for line_ind ∈ line_inds
+        insert!(σ_stat_init, line_ind, σ_stat_init[max(line_ind-1, 1)])
+    end
+    @debug "Statistical uncertainties: ($(σ_stat_init[1]) - $(σ_stat_init[end]))"
     # σ_sum_init = hypot.(σ_sum_init, σ_stat_init)
-    resid = I_sum_init[.!mask_lines_init] .- I_spline_init[.!mask_lines_init]
-    σ_stat_init = std(resid[resid .< 3std(resid)])
     σ_sum_init .= σ_stat_init
     
     # Get the normalization
