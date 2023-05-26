@@ -966,7 +966,7 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
 
     if all(dust_prof .== :Drude)
         for j ∈ 1:length(dust_prof) 
-            contin .+= Drude.(λ, params[pᵢ:pᵢ+2]...)
+            contin .+= Drude.(λ, params[pᵢ:pᵢ+2]...) .* ext
             pᵢ += 3
         end
     else

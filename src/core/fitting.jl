@@ -11,20 +11,14 @@ CubeFitter. An example of this is provided in the test driver files in the test 
 
 
 """
-    mask_emission_lines(λ, I)
+mask_emission_lines(λ, I, σ)
 
-Mask out emission lines in a given spectrum using a numerical second derivative and flagging 
-negative spikes (indicating strong concave-downness) up to some tolerance threshold (i.e. 3-sigma)
+Mask out emission lines in a given spectrum.
 
 # Arguments
 - `λ::Vector{<:Real}`: The wavelength vector of the spectrum
 - `I::Vector{<:Real}`: The flux vector of the spectrum
-- `Δ::Integer=3`: The half-width of the numerical second derivative approximation, in pixels
-- `W::Real=0.5`: The half-width of the window with which to calculate the standard deviation of the derivative of the spectrum
-    in comparison to the point in question
-- `thresh::Real=3`: The threshold by which to count a spike as a line that should be masked, in units
-    of sigma.
-- `n_iter::Integer=2`: How many iterations to perform the derivative test after masking the previous results
+- `σ::Vector{<:Real}`: The uncertainty vector of the spectrum
 
 See also [`continuum_cubic_spline`](@ref)
 """
@@ -46,32 +40,37 @@ function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}; Δ::Integer=
     mask = falses(length(λ))
     W = (30, 1000)
 
+    λref = [5.7, 10.0, 16.0, 18.4]
+    # Reference regions relatively free of lines and PAHs 
+    regref = Dict(1 => 5.65 .< λ .< 5.88,
+                  2 => 9.71 .< λ .< 10.45,
+                  3 => 15.66 .< λ .< 16.98,
+                  4 => 18.00 .< λ .< 18.65)
+
     # Find where the second derivative is significantly concave-down 
     for j ∈ 1:length(λ)
         # Only consider the spectrum within +/- W pixels from the point in question
         if any([abs(d2f[j]) > thresh * nanstd(d2f[max(1, j-Wi):min(length(λ), j+Wi)]) for Wi ∈ W])
 
-            # the width of the mask is based on the peaks in the numerical first derivative
-            w = 10
-            p₁ = nanargmax(df[max(j-w,1):min(j+w,length(df))])
-            p₂ = nanargmin(df[max(j-w,1):min(j+w,length(df))])
-            n_pix = 4 * (p₂ - p₁)
-            n_pix = n_pix > 0 ? n_pix : 1
-            # If n_pix is too wide it may not be a line, so we dont mask it
-            if abs(λ[p₂] - λ[p₁])/λ[(p₁+p₂)÷2] * C_KMS > 1000
-                n_pix = 0
-            end
-            mask[max(j-n_pix,1):min(j+n_pix,length(mask))] .= 1
-
+            # the width of the mask is based on how many pixels have a first derivative above the noise level
+            w = 30
+            reg = argmin(abs.(λ[j] .- λref))
+            rms = nanstd(df[regref[reg]])
+            n_pix = sum(abs.(df[max(j-w,1):min(j+w,length(df))]) .> rms)
+            # p₁ = nanargmax(df[max(j-w,1):min(j+w,length(df))])
+            # p₂ = nanargmin(df[max(j-w,1):min(j+w,length(df))])
+            # n_pix = 2 * (p₂ - p₁)
+            # n_pix = n_pix > 0 ? n_pix : 1
+            mask[max(j-fld(n_pix,2),1):min(j+fld(n_pix,2),length(mask))] .= 1
         end
     end
 
     # Don't mask out this region that tends to trick this method sometimes
+    mask[7.82 .< λ .< 7.89] .= 0
     mask[11.10 .< λ .< 11.15] .= 0
     mask[11.17 .< λ .< 11.24] .= 0
     mask[11.26 .< λ .< 11.355] .= 0
-    mask[12.5 .< λ .< 12.8] .= 0
-    mask[12.79 .< λ .< 12.84] .= 1
+    mask[12.5 .< λ .< 12.79] .= 0
 
     # Clip outliers in flux -- sensitive to both positive and negative spikes
     I_med = [nanmedian(I[max(i-10Δ,1):min(i+10Δ,length(I))]) for i in 1:length(I)]
@@ -103,10 +102,10 @@ noise.
 
 See also [`mask_emission_lines`](@ref)
 """
-function continuum_cubic_spline(λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vector{<:Real}, Δ::Integer=3, thresh::Real=3.)
+function continuum_cubic_spline(λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vector{<:Real})
 
     # Mask out emission lines so that they aren't included in the continuum fit
-    mask_lines = mask_emission_lines(λ, I; Δ=Δ, thresh=thresh)
+    mask_lines = mask_emission_lines(λ, I)
 
     # Interpolate the NaNs
     # Break up cubic spline interpolation into knots 7 pixels long
@@ -533,7 +532,7 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
     spline::Union{Vector{<:Real},Nothing}=nothing) where {T<:Real}
 
     fit_sil_emission = haskey(comps, "hot_dust")
-    abs_feat = n_abs_features ≥ 1 ? prod([comps["abs_feat_$i"] for i ∈ 1:n_abs_features]) : ones(length(λ))
+    abs_feat = n_abs_features ≥ 1 ? reduce(.*, [comps["abs_feat_$i"] for i ∈ 1:n_abs_features]) : ones(length(λ))
     abs_full = comps["abs_ice"] .* comps["abs_ch"] .* abs_feat
     ext_full = abs_full .* comps["extinction"]
 

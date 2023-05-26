@@ -87,10 +87,11 @@ obs = from_fits(["data/Level3_ch1-long_s3d.fits",
 
 # Convert to rest-frame wavelength vector, and mask out bad spaxels
 channel = 0
-name = replace(obs.name, " " => "_") * "_ch$(channel)_aperture_m_sf_emissivity_hotdustmodel_1"
+nm = replace(obs.name, " " => "_") 
+name = nm * "_ch$(channel)_aperture_m_nuc_emissivity_hotdustmodel_0_2"
 
-if isfile("processed-data.loki")
-    obs = load!("processed-data.loki")
+if isfile("processed-data-$nm.loki")
+    obs = load!("processed-data-$nm.loki")
 else
     # Convert to rest-frame wavelength vector, and mask out bad spaxels
     correct!(obs)
@@ -102,17 +103,23 @@ else
     end
     reproject_channels!(obs, [1,2,3], out_id=0, method=:adaptive)
     interpolate_nans!(obs.channels[0], obs.z)
-    save!("processed-data.loki", obs)
+    save!("processed-data-$nm.loki", obs)
 end
 
 # Make aperture
-# ap = make_aperture(obs.channels[channel], :Circular, "23:03:15.610", "+8:52:26.10", 0.5, auto_centroid=true,
-#     scale_psf=false)
-ap = make_aperture(obs.channels[channel], :Circular, "23:03:15.575", "+8:52:24.80", 0.5, auto_centroid=false,
+ap = make_aperture(obs.channels[channel], :Circular, "23:03:15.610", "+8:52:26.10", 0.5, auto_centroid=true,
     scale_psf=false)
-# ap = make_aperture(obs.channels[channel], :Circular, "01:07:47.525", "-17:30:25.25", 0.5, auto_centroid=true,
+# ap = make_aperture(obs.channels[channel], :Circular, "23:03:15.575", "+8:52:24.80", 0.5, auto_centroid=false,
 #     scale_psf=false)
+# ap = make_aperture(obs.channels[channel], :Rectangular, "23:03:15.692", "+8:52:26.622", 0.13, 0.13, 0.,
+    # auto_centroid=false, scale_psf=false)
+
 # ap = make_aperture(obs.channels[channel], :Circular, "18:00:07.21", "+66:36:54.5", 0.5, auto_centroid=true,
+#     scale_psf=false)
+# ap = make_aperture(obs.channels[channel], :Rectangular, "18:00:7.17613", "+66:36:55.19675", 0.13, 0.13, 0., 
+#     auto_centroid=false, scale_psf=false)
+
+# ap = make_aperture(obs.channels[channel], :Circular, "01:07:47.525", "-17:30:25.25", 0.5, auto_centroid=true,
 #     scale_psf=false)
 
 # Create the cube fitting object
