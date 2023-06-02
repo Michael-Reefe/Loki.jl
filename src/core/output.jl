@@ -31,7 +31,7 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
 
         # Stellar continuum amplitude, temp
         # Convert back to observed-frame amplitudes by multiplying by 1+z
-        param_maps.stellar_continuum[:amp][index] = out_params[index, 1] > 0. ? log10(out_params[index, 1]*(1+z))-17 : -Inf 
+        param_maps.stellar_continuum[:amp][index] = out_params[index, 1] > 0. ? log10(out_params[index, 1]*(1+z)) : -Inf 
         param_errs[1].stellar_continuum[:amp][index] = out_params[index, 1] > 0. ? out_errs[index, 1, 1] / (log(10) * out_params[index, 1]) : NaN
         param_errs[2].stellar_continuum[:amp][index] = out_params[index, 1] > 0. ? out_errs[index, 1, 2] / (log(10) * out_params[index, 1]) : NaN
         param_maps.stellar_continuum[:temp][index] = out_params[index, 2]
@@ -41,7 +41,7 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
 
         # Dust continuum amplitude, temp
         for i ∈ 1:cube_fitter.n_dust_cont
-            param_maps.dust_continuum[i][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z))-17 : -Inf
+            param_maps.dust_continuum[i][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z)) : -Inf
             param_errs[1].dust_continuum[i][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
             param_errs[2].dust_continuum[i][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
             param_maps.dust_continuum[i][:temp][index] = out_params[index, pᵢ+1]
@@ -51,7 +51,7 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
         end
 
         for j ∈ 1:cube_fitter.n_power_law
-            param_maps.power_law[j][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z)*N)-17 : -Inf
+            param_maps.power_law[j][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z)) : -Inf
             param_errs[1].power_law[j][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN 
             param_errs[2].power_law[j][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN 
             param_maps.power_law[j][:index][index] = out_params[index, pᵢ+1]
@@ -90,7 +90,7 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
 
         if cube_fitter.fit_sil_emission
             # Hot dust parameters
-            param_maps.hot_dust[:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z))-17 : -Inf
+            param_maps.hot_dust[:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z)) : -Inf
             param_errs[1].hot_dust[:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
             param_errs[2].hot_dust[:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
             param_maps.hot_dust[:temp][index] = out_params[index, pᵢ+1]
@@ -394,7 +394,17 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
 
     # I know this is ugly but I couldn't figure out a better way to do it lmao
     if occursin("amp", String(name_i))
-        bunit = L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$"
+        if occursin("stellar_continuum", String(name_i))
+            bunit = L"$\log_{10}(A_{*})$" # normalized
+        elseif occursin("dust_continuum", String(name_i))
+            bunit = L"$\log_{10}(A_{\rm dust})$" # normalized
+        elseif occursin("power_law", String(name_i))
+            bunit = L"$\log_{10}(A_{\rm pl})$" # normalized
+        elseif occursin("hot_dust", String(name_i))
+            bunit = L"$\log_{10}(A_{\rm sil})$" # normalized
+        else
+            bunit = L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$"
+        end
     elseif occursin("temp", String(name_i))
         bunit = L"$T$ (K)"
     elseif occursin("fwhm", String(name_i)) && (occursin("PAH", String(name_i)) || occursin("abs", String(name_i)))
@@ -440,11 +450,11 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     elseif occursin("frac", String(name_i))
         bunit = L"$C_f$"
     elseif occursin("index", String(name_i)) && occursin("PAH", String(name_i))
-        bunit = L"$m"
+        bunit = L"$m$"
     elseif occursin("index", String(name_i)) && !occursin("PAH", String(name_i))
         bunit = L"$\alpha$"
     elseif occursin("cutoff", String(name_i))
-        bunit = L"$\nu"
+        bunit = L"$\nu$"
     end
 
     @debug "Plotting 2D map of $name_i with units $bunit"
@@ -839,6 +849,10 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
         append!(aperture_keys, ["AP_AR_SR"])
         append!(aperture_vals, [cube_data.area_sr[1]])
         append!(aperture_comments, ["Area of aperture in steradians"])
+    else
+        append!(aperture_keys, ["PIX_AR_SR"])
+        append!(aperture_vals, [cube_data.area_sr[1]])
+        append!(aperture_comments, ["Area of pixel in steradians"])
     end
 
     # Header information

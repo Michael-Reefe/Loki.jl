@@ -762,9 +762,11 @@ function resample_conserving_flux(new_wave::AbstractVector, old_wave::AbstractVe
             new_fluxes[.., j] ./= sum(old_widths[start:stop])
 
             if !isnothing(err)
-                e_widths = old_widths[start:stop] .* permutedims(err[.., start:stop], (ndims(err), range(1, ndims(err)-1)...))
-                new_errs[.., j] .= .√(sumdim(e_widths.^2, 1, nan=false))   # -> preserve NaNs
-                new_errs[.., j] ./= sum(old_widths[start:stop])
+                # e_widths = old_widths[start:stop] .* permutedims(err[.., start:stop], (ndims(err), range(1, ndims(err)-1)...))
+                # new_errs[.., j] .= .√(sumdim(e_widths.^2, 1, nan=false))   # -> preserve NaNs
+                # new_errs[.., j] ./= sum(old_widths[start:stop])
+                e_widths = permutedims(err[.., start:stop], (ndims(err), range(1, ndims(err)-1)...))
+                new_errs[.., j] .= dropdims(median(e_widths, dims=1), dims=1)
             end
 
             # Put the old bin widths back to their initial values

@@ -29,8 +29,7 @@ is above some (potentially different) tolerance threshold.
 
 See also [`continuum_cubic_spline`](@ref)
 """
-function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}; Δ::Integer=3, thresh2::Real=3., 
-    thresh1::Real=1., W::Tuple=(30, 1000), override=nothing)
+function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}; Δ::Integer=3, thresh::Real=3., n_inc_thresh::Integer=3)
 
     diffs = diff(λ)
     # Numerical derivative width in microns
@@ -46,39 +45,50 @@ function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}; Δ::Integer=
         d2f[i] = (I[min(length(λ), i+Δ)] - 2I[i] + I[max(1, i-Δ)]) / h^2
     end
     mask = falses(length(λ))
- 
-    λref = [5.7, 10.0, 16.0, 18.4]
-    # Reference regions relatively free of lines and PAHs 
-    regref = Dict(1 => 5.65 .< λ .< 5.88,
-                  2 => 9.71 .< λ .< 10.45,
-                  3 => 15.66 .< λ .< 16.98,
-                  4 => 18.00 .< λ .< 18.65)
+    W = (30, 1000)
 
     # Find where the second derivative is significantly concave-down 
-    for j ∈ 1:length(λ)
+    for j ∈ 7:(length(λ)-7)
         # Only consider the spectrum within +/- W pixels from the point in question
-        if any([abs(d2f[j]) > thresh2 * nanstd(d2f[max(1, j-Wi):min(length(λ), j+Wi)]) for Wi ∈ W])
-            # the width of the mask is based on how many pixels have a first derivative above the noise level
-            w = minimum(W)
-            reg = argmin(abs.(λ[j] .- λref))
-            rms = nanstd(df[regref[reg]])
-            n_pix = sum(abs.(df[max(j-w,1):min(j+w,length(df))]) .> thresh1 .* rms)
-            mask[max(j-fld(n_pix,2),1):min(j+fld(n_pix,2),length(mask))] .= 1
+        if any([abs(d2f[j]) > thresh * nanstd(d2f[max(1, j-Wi):min(length(λ), j+Wi)]) for Wi ∈ W])
+
+            n_pix_l = 0
+            n_pix_r = 0
+
+            # Travel left/right from the center until the flux goes up 3 times
+            n_inc = 0
+            while n_inc < n_inc_thresh
+                dI = I[j-n_pix_l-1] - I[j-n_pix_l]
+                if dI > 0
+                    n_inc += 1
+                end
+                if j-n_pix_l-1 == 1
+                    break
+                end
+                n_pix_l += 1
+            end
+            n_inc = 0
+            while n_inc < n_inc_thresh
+                dI = I[j+n_pix_r+1] - I[j+n_pix_r]
+                if dI > 0
+                    n_inc += 1
+                end
+                if j+n_pix_r+1 == length(I)
+                    break
+                end
+                n_pix_r += 1
+            end
+
+            mask[max(j-n_pix_l,1):min(j+n_pix_r,length(mask))] .= 1
+
         end
     end
 
-    # Don't mask out this region that tends to trick this method sometimes
-    if isnothing(override)
-        override = [(7.82, 7.89), (11.10, 11.15), (11.17, 11.24), (11.26, 11.355), (12.5, 12.79)]
-    end
-    for pair in override
-        mask[pair[1] .< λ .< pair[2]] .= 0
-    end
-
-    # Clip outliers in flux -- sensitive to both positive and negative spikes
-    I_med = [nanmedian(I[max(i-10Δ,1):min(i+10Δ,length(I))]) for i in 1:length(I)]
-    outliers = [abs(I[i] - I_med[i]) > 2 * nanstd((I - I_med)[max(i-10Δ,1):min(i+10Δ,length(I))]) for i in 1:length(I)]
-    mask .|= outliers
+    # Don't mask out these regions that tends to trick this method sometimes
+    mask[11.10 .< λ .< 11.15] .= 0
+    mask[11.17 .< λ .< 11.24] .= 0
+    mask[11.26 .< λ .< 11.355] .= 0
+    # mask[12.5 .< λ .< 12.79] .= 0
 
     # Force the beginning/end few pixels to be unmasked to prevent runaway splines at the edges
     mask[1:7] .= 0
@@ -159,7 +169,7 @@ http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
     the initial parameter vector for individual spaxel fits
 """
 function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
-    σ::Vector{<:Real}, mask_lines::BitVector, N::Real; init::Bool=false, use_ap::Bool=false, bootstrap_iter::Bool=false, 
+    σ::Vector{<:Real}, mask_lines::BitVector, mask_bad::BitVector, N::Real; init::Bool=false, use_ap::Bool=false, bootstrap_iter::Bool=false, 
     p1_boots::Union{Vector{<:Real},Nothing}=nothing) 
 
     @debug """\n
@@ -179,7 +189,10 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     I_spax[mask_lines] .= Spline1D(λ_spax[.~mask_lines], I_spax[.~mask_lines], λknots, k=1, bc="extrapolate").(λ[mask_lines]) 
     σ_spax[mask_lines] .= Spline1D(λ_spax[.~mask_lines], σ_spax[.~mask_lines], λknots, k=1, bc="extrapolate").(λ[mask_lines])
 
-    # Mask out the spectrum with the line mask, and normalize
+    # Masked spectrum
+    λ_spax = λ_spax[.~mask_bad]
+    I_spax = I_spax[.~mask_bad]
+    σ_spax = σ_spax[.~mask_bad]
 
     if !isnothing(cube_fitter.user_mask)
         # Mask out additional regions
@@ -233,6 +246,13 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
             cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission)
     end
     res = cmpfit(λ_spax, I_spax, σ_spax, fit_cont, pfree, parinfo=parinfo, config=config)
+    n = 1
+    while res.niter < 5
+        @warn "LM Solver is stuck on the initial state for the continuum fit of spaxel $spaxel. Retrying..."
+        # For some reason, masking out a pixel or two seems to fix the problem. This loop shouldn't ever need more than 1 iteration.
+        res = cmpfit(λ_spax[1+n:end-n], I_spax[1+n:end-n], σ_spax[1+n:end-n], fit_cont, pfree, parinfo=parinfo, config=config)
+        n += 1
+    end 
 
     popt = zeros(length(pars_0))
     popt[.~lock] .= res.param
@@ -294,7 +314,7 @@ See Smith, Draine, et al. 2007; http://tir.astro.utoledo.edu/jdsmith/research/pa
     the initial parameter vector for individual spaxel fits
 """
 function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real},
-    σ::Vector{<:Real}, continuum::Vector{<:Real}, ext_curve::Vector{<:Real}, lsf_interp_func::Function, N::Real; 
+    σ::Vector{<:Real}, mask_bad::BitVector, continuum::Vector{<:Real}, ext_curve::Vector{<:Real}, lsf_interp_func::Function, N::Real; 
     init::Bool=false, use_ap::Bool=false, bootstrap_iter::Bool=false, p1_boots::Union{Vector{<:Real},Nothing}=nothing)
 
     @debug """\n
@@ -311,14 +331,14 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     σnorm = σ ./ N
     ext_curve_norm = copy(ext_curve)
 
+    # This ensures that any lines that fall within the masked regions will go to 0
+    Inorm[mask_bad] .= 0.
+
     if !isnothing(cube_fitter.user_mask)
         # Mask out additional regions
         for pair in cube_fitter.user_mask
             region = pair[1] .< λnorm .< pair[2]
-            λnorm = λnorm[.~region]
-            Inorm = Inorm[.~region]
-            σnorm = σnorm[.~region]
-            ext_curve_norm = ext_curve[.~region]
+            Inorm[region] .= 0.
         end
     end
 
@@ -427,28 +447,13 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     fit_func_2 = (x, p) -> model_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
         cube_fitter.flexible_wavesol, ext_curve_norm, lsf_interp_func)
     
-    χ2_before = sum((Inorm .- fit_step3(λnorm, p₁, fit_func_2)).^2 ./ σnorm.^2)
     res = cmpfit(λnorm, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func_2), p₁, parinfo=parinfo, config=config)
-    χ2_after = res.bestnorm
-
-    # Check if CMPFit improved the reduced chi^2 at all.  If not, redo simulated annealing.
-    if χ2_after ≥ χ2_before && !init && !use_ap
-        @warn "The Levenberg-Marquardt solver for spaxel $spaxel did not improve the chi-squared. Re-running with simulated annealing."
-
-        fit_func = (x, p) -> -ln_likelihood(
-                                Inorm, 
-                                model_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
-                                    cube_fitter.flexible_wavesol, ext_curve_norm, lsf_interp_func), 
-                                σnorm)
-        x_tol = 1e-5
-        f_tol = abs(fit_func(λnorm, p₀) - fit_func(λnorm, clamp.(p₀ .- x_tol, lower_bounds, upper_bounds)))
-
-        # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
-        res = Optim.optimize(p -> fit_step3(λnorm, p, fit_func), lbfree_tied, ubfree_tied, pfree_tied, 
-            SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
-        p₁ = res.minimizer
-
-        res = cmpfit(λnorm, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func_2), p₁, parinfo=parinfo, config=config)
+    n = 1
+    while res.niter < 5
+        @warn "LM Solver is stuck on the initial state for the line fit of spaxel $spaxel. Retrying..."
+        res = cmpfit(λnorm[1+n:end-n], Inorm[1+n:end-n], σnorm[1+n:end-n], (x, p) -> fit_step3(x, p, fit_func_2), 
+            p₁, parinfo=parinfo, config=config)
+        n += 1
     end 
 
     @debug "Line CMPFit status: $(res.status)"
@@ -528,10 +533,11 @@ backend (`:pyplot` or `:plotly`).
 - `label::String`: A label for the individual spaxel being plotted, to be put in the file name
 - `backend::Symbol`: The backend to use to plot, either `:pyplot` or `:plotly`
 """
-function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<:Real}, σ::Vector{<:Real}, comps::Dict{String, Vector{T}}, 
-    n_dust_cont::Integer, n_power_law::Integer, n_dust_features::Integer, n_abs_features::Integer, n_comps::Integer, line_wave::Vector{<:Real}, 
-    line_names::Vector{Symbol}, screen::Bool, z::Real, χ2red::Real, name::String, label::String; backend::Symbol=:pyplot, 
-    I_boot_min::Union{Vector{<:Real},Nothing}=nothing, I_boot_max::Union{Vector{<:Real},Nothing}=nothing, range::Union{Tuple,Nothing}=nothing, 
+function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<:Real}, σ::Vector{<:Real}, mask_bad::BitVector, 
+    comps::Dict{String, Vector{T}}, n_dust_cont::Integer, n_power_law::Integer, n_dust_features::Integer, n_abs_features::Integer, 
+    n_comps::Integer, line_wave::Vector{<:Real}, line_names::Vector{Symbol}, screen::Bool, z::Real, χ2red::Real, name::String, 
+    label::String; backend::Symbol=:pyplot, I_boot_min::Union{Vector{<:Real},Nothing}=nothing, 
+    I_boot_max::Union{Vector{<:Real},Nothing}=nothing, range::Union{Tuple,Nothing}=nothing, 
     spline::Union{Vector{<:Real},Nothing}=nothing) where {T<:Real}
 
     fit_sil_emission = haskey(comps, "hot_dust")
@@ -681,6 +687,21 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
             ax2.axvline(lw, linestyle="--", color="k", lw=0.5, alpha=0.5)
         end
 
+        # Shade in masked regions
+        l_edges = findall(diff(mask_bad) .== 1) .+ 1
+        r_edges = findall(diff(mask_bad) .== -1)
+        # Edge cases
+        if mask_bad[1] == 1
+            l_edges = [1; l_edges]
+        end
+        if mask_bad[end] == 1
+            r_edges = [r_edges; length(λ)]
+        end
+        for (le, re) in zip(l_edges, r_edges)
+            ax1.axvspan(λ[le], λ[re], alpha=0.5, color="k")
+            ax2.axvspan(λ[le], λ[re], alpha=0.5, color="k")
+        end
+
         line_mask = falses(length(λ))
         for ln ∈ line_wave
             window_size = 3000. / C_KMS * ln
@@ -743,8 +764,8 @@ end
 
 # Helper function for fitting one iteration (i.e. for bootstrapping)
 function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
-    σ::Vector{<:Real}, norm::Real, area_sr::Vector{<:Real}, mask_lines::BitVector, I_spline::Vector{<:Real}; bootstrap_iter::Bool=false, 
-    p1_boots_c::Union{Vector{<:Real},Nothing}=nothing, p1_boots_l::Union{Vector{<:Real},Nothing}=nothing, 
+    σ::Vector{<:Real}, norm::Real, area_sr::Vector{<:Real}, mask_lines::BitVector, mask_bad::BitVector, I_spline::Vector{<:Real}; 
+    bootstrap_iter::Bool=false, p1_boots_c::Union{Vector{<:Real},Nothing}=nothing, p1_boots_l::Union{Vector{<:Real},Nothing}=nothing, 
     use_ap::Bool=false, init::Bool=false)
 
     # Interpolate the LSF
@@ -754,9 +775,9 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     lsf_interp_func = x -> lsf_interp(x)
 
     # Fit the spaxel
-    popt_c, I_cont, comps_cont, n_free_c, perr_c = continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, norm, use_ap=use_ap,
-        init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_c)
-    popt_l, I_line, comps_line, n_free_l, perr_l = line_fit_spaxel(cube_fitter, spaxel, λ, I, σ, I_cont, comps_cont["extinction"], 
+    popt_c, I_cont, comps_cont, n_free_c, perr_c = continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, mask_bad, norm, 
+        use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_c)
+    popt_l, I_line, comps_line, n_free_l, perr_l = line_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_bad, I_cont, comps_cont["extinction"], 
         lsf_interp_func, norm, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_l)
 
     # Combine the continuum and line models
@@ -775,7 +796,7 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # Total free parameters
     n_free = n_free_c + n_free_l
     n_data = length(I)
-    n_masked = 0
+    n_masked = sum(mask_bad)
     if !isnothing(cube_fitter.user_mask)
         for pair in cube_fitter.user_mask
             region = pair[1] .< λ .< pair[2]
@@ -788,7 +809,7 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     dof = n_data - n_free
 
     # chi^2 and reduced chi^2 of the model
-    χ2 = sum(@. (I - I_model)^2 / σ^2)
+    χ2 = sum(@. (I[.~mask_bad] - I_model[.~mask_bad])^2 / σ[.~mask_bad]^2)
 
     # Add dust feature and line parameters (intensity and SNR)
     if !init
@@ -833,6 +854,8 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
 
     # Perform a cubic spline fit, also obtaining the line mask
     mask_lines, I_spline, σ_spline = continuum_cubic_spline(λ, I, σ)
+    mask_bad = use_ap ? falses(length(λ)) : cube_fitter.cube.mask[spaxel, :]
+    mask = mask_lines .| mask_bad
 
     # l_mask = sum(.!mask_lines)
     # # Statistical uncertainties based on the local RMS of the residuals with a cubic spline fit
@@ -846,7 +869,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
     # @debug "Statistical uncertainties: ($(σ_stat[1]) - $(σ_stat[end]))"
     # σ = hypot.(σ, σ_stat)
 
-    resid = I[.!mask_lines] .- I_spline[.!mask_lines]
+    resid = I[.~mask] .- I_spline[.~mask]
     σ_stat = std(resid[resid .< 3std(resid)])
     σ .= σ_stat
 
@@ -871,7 +894,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
 
             # Perform the regular fit
             p_out, p_err, popt_c, popt_l, perr_c, perr_l, I_model, comps, χ2, dof = _fit_spaxel_iterfunc(
-                cube_fitter, spaxel, λ, I, σ, norm, area_sr, mask_lines, I_spline; bootstrap_iter=false, use_ap=use_ap)
+                cube_fitter, spaxel, λ, I, σ, norm, area_sr, mask_lines, mask_bad, I_spline; bootstrap_iter=false, use_ap=use_ap)
             # Convert p_err into 2 columns for the lower/upper errorbars
             p_err = [p_err p_err]
 
@@ -907,7 +930,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
 
                     # Re-perform the fitting on the resampled data
                     pb_i, _, _, _, _, _, Ib_i, _, _, _ = with_logger(NullLogger()) do
-                        _fit_spaxel_iterfunc(cube_fitter, spaxel, λ, I_boot, σ, norm, area_sr, mask_lines_boot, I_spline_boot; 
+                        _fit_spaxel_iterfunc(cube_fitter, spaxel, λ, I_boot, σ, norm, area_sr, mask_lines_boot, mask_bad, I_spline_boot; 
                             bootstrap_iter=true, p1_boots_c=popt_c, p1_boots_l=popt_l, use_ap=use_ap)
                     end
                     p_boot[:, nboot] .= pb_i
@@ -958,13 +981,13 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
             # Plot the fit
             if cube_fitter.plot_spaxels != :none
                 @debug "Plotting spaxel $spaxel best fit" 
-                plot_spaxel_fit(λ, I, I_model, σ, comps, 
+                plot_spaxel_fit(λ, I, I_model, σ, mask_bad, comps, 
                 cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_abs_feat, cube_fitter.n_comps, 
                 cube_fitter.lines.λ₀, cube_fitter.lines.names, cube_fitter.extinction_screen, cube_fitter.z, χ2/dof, cube_fitter.name, 
                 "spaxel_$(spaxel[1])_$(spaxel[2])", backend=cube_fitter.plot_spaxels, I_boot_min=I_boot_min, I_boot_max=I_boot_max)
                 if !isnothing(cube_fitter.plot_range)
                     for (i, plot_range) ∈ enumerate(cube_fitter.plot_range)
-                        plot_spaxel_fit(λ, I, I_model, σ, comps,
+                        plot_spaxel_fit(λ, I, I_model, σ, mask_bad, comps,
                         cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_abs_feat, cube_fitter.n_comps, 
                         cube_fitter.lines.λ₀, cube_fitter.lines.names, cube_fitter.extinction_screen, cube_fitter.z, χ2/dof, cube_fitter.name, 
                         "lines_$(spaxel[1])_$(spaxel[2])_$i", backend=cube_fitter.plot_spaxels, I_boot_min=I_boot_min, I_boot_max=I_boot_max, 
@@ -1049,6 +1072,8 @@ function fit_stack!(cube_fitter::CubeFitter)
 
     # Perform a cubic spline fit, also obtaining the line mask
     mask_lines_init, I_spline_init, σ_spline_init = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init)
+    mask_bad_init = falses(length(λ_init))
+
     # l_mask = sum(.!mask_lines_init)
 
     # # Statistical uncertainties based on the local RMS of the residuals with a cubic spline fit
@@ -1062,7 +1087,8 @@ function fit_stack!(cube_fitter::CubeFitter)
     # end
     # @debug "Statistical uncertainties: ($(σ_stat_init[1]) - $(σ_stat_init[end]))"
     # σ_sum_init = hypot.(σ_sum_init, σ_stat_init)
-    resid = I_sum_init[.!mask_lines_init] .- I_spline_init[.!mask_lines_init]
+
+    resid = I_sum_init[.~mask_lines_init] .- I_spline_init[.~mask_lines_init]
     σ_stat_init = std(resid[resid .< 3std(resid)])
     σ_sum_init .= σ_stat_init
     
@@ -1071,24 +1097,24 @@ function fit_stack!(cube_fitter::CubeFitter)
     norm = norm ≠ 0. ? norm : 1.
 
     I_model_init, comps_init, χ2_init, dof_init = _fit_spaxel_iterfunc(
-        cube_fitter, CartesianIndex(0,0), λ_init, I_sum_init, σ_sum_init, norm, area_sr_init, mask_lines_init, I_spline_init; 
-        bootstrap_iter=false, use_ap=false, init=true)
+        cube_fitter, CartesianIndex(0,0), λ_init, I_sum_init, σ_sum_init, norm, area_sr_init, mask_lines_init, mask_bad_init, 
+        I_spline_init; bootstrap_iter=false, use_ap=false, init=true)
 
     χ2red_init = χ2_init / dof_init
 
     # Plot the fit
     if cube_fitter.plot_spaxels != :none
         @debug "Plotting spaxel sum initial fit"
-        plot_spaxel_fit(λ_init, I_sum_init, I_model_init, σ_sum_init, comps_init,
+        plot_spaxel_fit(λ_init, I_sum_init, I_model_init, σ_sum_init, mask_bad_init, comps_init,
             cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_abs_feat, cube_fitter.n_comps, 
             cube_fitter.lines.λ₀, cube_fitter.lines.names, cube_fitter.extinction_screen, cube_fitter.z, χ2red_init, cube_fitter.name, 
-            "initial_sum_fit", backend=cube_fitter.plot_spaxels)
+            "initial_sum_fit", backend=:both)
         if !isnothing(cube_fitter.plot_range)
             for (i, plot_range) ∈ enumerate(cube_fitter.plot_range)
-                plot_spaxel_fit(λ_init, I_sum_init, I_model_init, σ_sum_init, comps_init,
+                plot_spaxel_fit(λ_init, I_sum_init, I_model_init, σ_sum_init, mask_bad_init, comps_init,
                     cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_abs_feat, cube_fitter.n_comps, 
                     cube_fitter.lines.λ₀, cube_fitter.lines.names, cube_fitter.extinction_screen, cube_fitter.z, χ2red_init, cube_fitter.name, 
-                    "initial_sum_line_$i", backend=cube_fitter.plot_spaxels; range=plot_range)
+                    "initial_sum_line_$i", backend=:both; range=plot_range)
             end
         end
             

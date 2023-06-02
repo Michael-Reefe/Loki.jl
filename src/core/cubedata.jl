@@ -1041,10 +1041,18 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
         # get the median fluxes from both channels over the full region
         med_left = dropdims(nanmedian(I_out[:, :, i1:jump], dims=3), dims=3)
         med_right = dropdims(nanmedian(I_out[:, :, jump+1:i2], dims=3), dims=3)
-        # rescale the flux in the right channel to match the left channel
-        scale = clamp.(med_left ./ med_right, 0.5, 1.5)
-        I_out[:, :, jump+1:end] .*= scale
-        @info "Minimum/Maximum fudge factor for channel $(i+1): ($(nanminimum(med_left./med_right)), $(nanmaximum(med_left./med_right)))"
+        # rescale the flux to match between the channels, using the channel at 10 um (2B) as the reference point
+        if wave_left < 9.8 / (1 + obs.z)
+            scale = clamp.(med_right ./ med_left, 0.5, 1.5)
+            I_out[:, :, 1:jump] .*= scale
+            σ_out[:, :, 1:jump] .*= scale
+            @info "Minimum/Maximum scale factor for channel $(i+1): ($(nanminimum(med_right./med_left)), $(nanmaximum(med_right./med_left)))"
+        else
+            scale = clamp.(med_left ./ med_right, 0.5, 1.5)
+            I_out[:, :, jump+1:end] .*= scale
+            σ_out[:, :, jump+1:end] .*= scale
+            @info "Minimum/Maximum scale factor for channel $(i+1): ($(nanminimum(med_left./med_right)), $(nanmaximum(med_left./med_right)))"
+        end
         if concat_type == :full
             # resample fluxes in the overlapping regions
             λ_res = median([diff(λ_out[i1:jump])[1], diff(λ_out[jump+1:i2])[1]])

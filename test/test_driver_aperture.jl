@@ -88,7 +88,7 @@ obs = from_fits(["data/Level3_ch1-long_s3d.fits",
 # Convert to rest-frame wavelength vector, and mask out bad spaxels
 channel = 0
 nm = replace(obs.name, " " => "_") 
-name = nm * "_ch$(channel)_aperture_m_nuc_emissivity_hotdustmodel_0_2"
+name = nm * "_ch$(channel)_aperture_m_nuc_emissivity_hotdustmodel_0_4"
 
 if isfile("processed-data-$nm.loki")
     obs = load!("processed-data-$nm.loki")
