@@ -780,8 +780,8 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
             pᵢ += 2
         end
 
-        # Set optical depth based on the initial guess (not the initial fit)
-        p₀[pᵢ] = cube_fitter.continuum.τ_97.value
+        # Set optical depth based on the initial guess or the initial fit (whichever is larger)
+        p₀[pᵢ] = max(cube_fitter.continuum.τ_97.value, p₀[pᵢ])
         pᵢ += 4
         # Do not adjust absorption feature amplitudes since they are multiplicative
         pᵢ += 3*cube_fitter.n_abs_feat
@@ -897,6 +897,7 @@ function get_continuum_parinfo(n_free::S, lb::Vector{T}, ub::Vector{T}) where {S
 
     # Create a `config` structure
     config = CMPFit.Config()
+    config.maxiter = 500
 
     parinfo, config
 

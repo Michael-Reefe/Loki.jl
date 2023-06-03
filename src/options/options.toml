@@ -47,7 +47,7 @@ make_movies = false
 # format. If false, the model parameters will still be saved (the model can be
 # easily reconstructed by simply rerunning the code with this option enabled, as the
 # fitting data for each spaxel will already be saved)
-save_full_model = false
+save_full_model = true
 
 # extinction_curve: May be "kvt" for the Kemper, Vriend, & Tielens (2004) 
 # extinction profile, "ct" for the Chiar & Tielens (2005) extinction profile,
@@ -58,7 +58,7 @@ extinction_curve = "d+"
 
 # extinction_screen: Controls whether extinction is modeled as e^-tau (true) or
 # (1 - e^-tau) / tau (false), following PAHFIT.
-extinction_screen = true
+extinction_screen = false
 
 # whether or not to fit silicate emission
 fit_sil_emission = true

@@ -497,6 +497,10 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
             cmap = :RdBu_r
         end
     end
+    if occursin("chi2", String(name_i))
+        vmin = 0
+        vmax = 30
+    end
     # default cmap is magma for FWHMs and equivalent widths
     if (occursin("fwhm", String(name_i)) || occursin("eqw", String(name_i))) && cmap == :cubehelix
         cmap = :magma

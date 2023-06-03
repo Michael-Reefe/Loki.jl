@@ -254,6 +254,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, Î
         n += 1
     end 
 
+    @debug "Continuum CMPFit Status: $(res.status)"
+
     popt = zeros(length(pars_0))
     popt[.~lock] .= res.param
     popt[lock] .= pfix
