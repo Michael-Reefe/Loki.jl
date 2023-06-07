@@ -372,7 +372,7 @@ This is the same as `voff_plim`, but for the additional line profiles given by `
 
 `acomp_fwhm_plim = [[1.0, 5.0]]`
 
-This is the same as `fwhm_plim`, but for the additional line profiles given by `n_acomps`. Like `acomp_voff_plim`, this is a 2D list where the first dimension should have a length of `n_acomps` and the second dimension should be 2. **N.B.** that the FWHM of the additional components here are **multiplicative factors with the main component.** So limits of `[1.0, 5.0]` signify that the additional component may have a FWHM 1-5$\times$ larger than the main FWHM.
+This is the same as `fwhm_plim`, but for the additional line profiles given by `n_acomps`. Like `acomp_voff_plim`, this is a 2D list where the first dimension should have a length of `n_acomps` and the second dimension should be 2. **N.B.** that the FWHM of the additional components here are **multiplicative factors with the main component.** So limits of `[1.0, 5.0]` signify that the additional component may have a FWHM 1-5x larger than the main FWHM.
 
 **Kinematic Groups:**
 
@@ -426,7 +426,7 @@ HI_Hu_gamma     = 5.908
 Lines may be arbitrarily added to or removed from this list based on what the user wishes to fit. It is not strictly necessary to adhere to any naming conventions for the lines, but doing so makes it easier when creating kinematic groups. As such, these are the conventions I have followed in the default line list:
 * For hydrogen recombination lines, names should be formatted as "HI_[SS]_[LLL]" where "SS" is the abbreviated name of the series (i.e. the Brackett, Pfund, and Humphreys series shown above) and [LLL] is the greek letter corresponding to the specific transition in the series, starting from alpha.
 * For molecular hydrogen lines, names should be formatted as "H2[VV]_[RR]" where [VV] are the vibrational quantum numbers of the transition and [RR] are the rotational quantum numbers of the transition, i.e. "H200_S3" for the H<sub>2</sub> 0-0 S(3) line.
-* Lines for ionized species should be formatted as "[ION]_[WAVE]" where [ION] is the name of the ion and [WAVE] is the wavelength of the line in microns to three decimals, with the decimal removed. For example, "NeVI_7652" for the [Ne VI] $\lambda$7.652 line.
+* Lines for ionized species should be formatted as "[ION]_[WAVE]" where [ION] is the name of the ion and [WAVE] is the wavelength of the line in microns to three decimals, with the decimal removed. For example, "NeVI_7652" for the [Ne VI] λ7.652 line.
 
 **Profiles:**
 
@@ -442,7 +442,7 @@ The [profiles] dictionary gives the master reference for while profiles to use f
 NeVI_7652 = ["Voigt"]
 ```
 
-The [acomps] dictionary acts similarly to the [profiles] dictionary, but for the additional line components specified by `n_acomps.` In other words, this is the location where you actually specify which lines, if any, should have additional profiles, and what types of profiles they should be. In the example above, the [Ne VI] $\lambda$7.652 line is given one additional Voigt profile. This means that, in total, this line will be fit with two Voigt profiles. You will notice that the entries here are lists of strings, meaning one can add an arbitrary number of additional profiles to each line. However, there is an upper limit on the number of additional profiles given by `n_acomps.`
+The [acomps] dictionary acts similarly to the [profiles] dictionary, but for the additional line components specified by `n_acomps.` In other words, this is the location where you actually specify which lines, if any, should have additional profiles, and what types of profiles they should be. In the example above, the [Ne VI] λ7.652 line is given one additional Voigt profile. This means that, in total, this line will be fit with two Voigt profiles. You will notice that the entries here are lists of strings, meaning one can add an arbitrary number of additional profiles to each line. However, there is an upper limit on the number of additional profiles given by `n_acomps.`
 
 **Advanced Usage:**
 
@@ -459,7 +459,7 @@ acomp_fwhm_init = 100.0
 acomp_fwhm_locked = true
 ```
 
-This tells the code that, for the [Ne VI] $\lambda$7.652 line specifically, we want to overwrite the default `voff_plim` values with those specified here, and we want to lock the FWHMs of both the main and additional line components to their starting values, which we have manually set to 100 km/s.
+This tells the code that, for the [Ne VI] λ7.652 line specifically, we want to overwrite the default `voff_plim` values with those specified here, and we want to lock the FWHMs of both the main and additional line components to their starting values, which we have manually set to 100 km/s.
 
 ---
 
@@ -489,9 +489,10 @@ You may notice at the beginning of the fitting procedure that a series of output
 │   │   ├── initial_sum_fit.pdf
 │   │   ├── spaxel_1_1.pdf
 │   │   └── ...
-├── [name]_parameter_errs_low.fits.gz
-├── [name]_parameter_errs_upp.fits.gz
-├── [name]_parameter_maps.fits.gz
+├── [name]_full_model.fits
+├── [name]_parameter_errs_low.fits
+├── [name]_parameter_errs_upp.fits
+├── [name]_parameter_maps.fits
 ├── loki.convergence.log
 ├── loki.main.log
 ├── dust_options.archive.toml
@@ -593,8 +594,8 @@ In the matplotlib-generated plot, the data is in black and the full model is in 
 ![NGC7469_plotly](./figures/NGC7469_initial_fit_plotly.png)
 The plotly-generated plot is similar to the matplotlib-generated one, but not completely the same. The matplotlib-generated plots are intended to be publication quality, whereas the plotly-generated plots are more for data inspection purposes since they are interactive. As such, there are minor differences in what is plotted (other than unimportant differences like color choices or line styles): in the matplotlib plots, the quantity plotted is $I_\nu / \lambda$ (specific intensity per unit frequency / wavelength) as a function of wavelength, whereas the plotly plots simply plot $I_\nu$ (specific intensity per unit frequency) as a function of wavelength. The plotly plots also show each individual Drude profile for the PAH features, whereas the matplotlib plots just show the summed PAH spectrum. The residuals are also omitted from the plotly plots.
 
-#### v. Parameter Maps
-If performing a full fit to each spaxel in a cube, 2D parameter maps for each model parameter will be generated showing the spatial distribution of the parameter over the galaxy. The R.A. and Dec. axes are labeled and a physical scale bar showing the conversion to pc/kpc/Mpc is shown in the bottom-left corner of each plot. A circle the size of the FWHM of the point-spread function (PSF) is also shown in the upper-right corner of each plot. Finally, the color bar is shown in the right of each plot. Some examples for NGC 7469 are shown below.
+### v. Parameter Maps
+If performing a full fit to each spaxel in a cube, 2D parameter maps for each model parameter will be generated in the `param_maps` directory (sorted into sub-directories based on the types of parameters) showing the spatial distribution of the parameter over the galaxy. The R.A. and Dec. axes are labeled and a physical scale bar showing the conversion to pc/kpc/Mpc is shown in the bottom-left corner of each plot. A circle the size of the FWHM of the point-spread function (PSF) is also shown in the upper-right corner of each plot. Finally, the color bar is shown in the right of each plot. Some examples for NGC 7469 are shown below.
 
 \*Note that all parameter maps shown below are purely for demonstrational purposes
 
@@ -634,7 +635,7 @@ When fitting an integrated spectrum within an aperture, plots are generated at t
 ![NGC7469_aperture_plot](./figures/NGC7469_aperture_plot.png)
 
 ### vii. FITS Files
-There are two main categories of output FITS files: parameter maps (2D) and model cubes (3D). AS the names suggest, the parameter maps contain 2D maps of each model parameter for each spaxel, and the model cubes contain the full 3D models decomposed into the individual model components, evaluated at the same points as the data.
+There are two main categories of output FITS files: parameter maps (2D; `_parameter_maps.fits`, `_parameter_errs_low.fits`, `_parameter_errs_upp.fits`) and model cubes (3D; `_full_model.fits`). As the names suggest, the parameter maps contain 2D maps of each model parameter (and the lower/upper uncertainties, if bootstrapping) for each spaxel, and the model cubes contain the full 3D models decomposed into the individual model components, evaluated at the same points as the data.
 
 The parameter maps are organized as follows. Each model parameter has its own Header Data Unit (HDU) named appropriately, with a 2D shape corresponding to the spatial axes of the input data. An example of what this might look like, showing the names, dimensions, and formats of each HDU, is given below:
 ```
@@ -712,7 +713,7 @@ No.  Name               Ver Type         Cards   Dimensions       Format
 They can be loaded in the same manner as the parameter maps, bearing in mind that there are now 3 dimensions to index for each HDU instead of 2. The "WAVELENGTH" HDU is an exception, being a table with one entry ("wave") that gives the 1-dimensional wavelength array that corresponds to the third axis of all the other HDUs. This was necessary because the wavelength arrays fitted by the code may not strictly be linear, especially when fitting multi-channel data, and trying to represent this with a 3D WCS is difficult. This is why the included WCS information in these outputs is strictly 2-dimensional, covering the 2 spatial dimensions of the cubes.
 
 ### viii. Units
-The units of outputs for different quantities are listed here. When relevant, output quantities are all given in the *observed* frame:
+The units of outputs for different quantities are listed here. When relevant, output quantities are all given in the *observed* frame (this applies to both the parameter maps and the full 3D models):
 
 - Stellar continuum amplitude: $\log_{10}$(normalized amp.)
     - Here, the normalized amplitude is a multiplicative factor of the Planck function per unit frequency. The physical units are contained within the Planck function: 
@@ -758,7 +759,7 @@ obs = from_fits(["file_1.fits", "file_2.fits", ...], 0.0)
 ```julia
 correct!(obs)
 ```
-4. Preliminary testing on MIRI data has shown that there is sometimes jumps in the continuum flux levels at the boundaries between channels and subchannels due to small misalignments between the WCS grids of each channel.  Hopefully these problems will be minimized by improvements in the data reduction pipeline in the future, but in the meantime we have attempted to minimize this problem by creating functions to adjust the WCS parameters of each subchannel and reproject them all onto the same grid. This can be done by calling the "reproject_channels!" function on the `Observation` object while specifying which channels/subchannels to reproject and combine.
+4. Preliminary testing on MIRI data has shown that there is sometimes jumps in the continuum flux levels at the boundaries between channels and subchannels due to small misalignments between the WCS grids of each channel.  Hopefully these problems will be minimized by improvements in the data reduction pipeline in the future, but in the meantime we have attempted to minimize this problem by creating functions to adjust the WCS parameters of each subchannel and reproject them all onto the same grid. This tends to work well for subchannels, but sometimes jumps still remain between full channels, so we also include a multiplicative scaling factor between the full channels, which we constrain to be within 50\%. These adjustments can be applied by calling the "reproject_channels!" function on the `Observation` object while specifying which channels/subchannels to reproject and combine. The example below shows an application that combines channels 1, 2, and 3 and saves the full spectrum into a channel ID of 0.
 ```julia
 reproject_channels!(obs, [1,2,3], out_id=0, method=:adaptive)
 ```
@@ -775,7 +776,7 @@ cube_fitter = CubeFitter(obs.channels[0], obs.z, name; parallel=true, plot_spaxe
 ```julia
 fit_cube!(cube_fitter)
 ```
-7. If fitting an integrated spectrum within an aperture, first create the aperture with the "make_aperture" function, then call the "fit_cube!" function with the aperture. Apertures can specified as `:Circular`, `:Rectangular`, or `:Elliptical`. The following two arguments are the R.A. in sexagesimal hours and the Dec. in sexagesimal degrees of the center of the aperture. Then, if the aperture is circular, the next argument is the radius of the aperture in arcseconds. For rectangular apertures, there are 3 arguments for the width and height in arcseconds and rotation angle in degrees. For elliptical apertures, there are 3 arguments for the semimajor and semiminor axes in arcseconds and rotation angle in degrees. The `auto_centroid` option will automatically adjust the centroid of the aperture to the local flux peak. The `scale_psf` argument creates a list of apertures with increasing sizes that scale up at the same rate as the FWHM of the PSF scales up over the input wavelength range.
+7. If fitting an integrated spectrum within an aperture, first create the aperture with the "make_aperture" function, then call the "fit_cube!" function with the aperture. Apertures can be specified as `:Circular`, `:Rectangular`, or `:Elliptical`. The following two arguments are the R.A. in sexagesimal hours and the Dec. in sexagesimal degrees of the center of the aperture. Then, if the aperture is circular, the next argument is the radius of the aperture in arcseconds. For rectangular apertures, there are 3 arguments for the width and height in arcseconds and rotation angle in degrees. For elliptical apertures, there are 3 arguments for the semimajor and semiminor axes in arcseconds and rotation angle in degrees. The `auto_centroid` option will automatically adjust the centroid of the aperture to the local flux peak. The `scale_psf` argument creates a list of apertures with increasing sizes that scale up at the same rate as the FWHM of the PSF scales up over the input wavelength range.
 ```julia
 ap = make_aperture(obs.channels[0], :Circular, "23:03:15.610", "+8:52:26.10", 0.5, auto_centroid=true, scale_psf=false)
 fit_cube!(cube_fitter, ap)
