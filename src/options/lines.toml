@@ -8,13 +8,14 @@ tie_voigt_mixing = true     # tie the Voigt mixing ratios of all lines
 #                    lines you want in each group
 
 # kinematic_group_H2 = [
-#     "H200_S"
+#     "H200_"
+# ]
+
+# kinematic_group_HI = [
+#    "HI_"
 # ]
 
 # kinematic_group_low = [
-#     "HI_Br_",
-#     "HI_Pf_",
-#     "HI_Hu_",
 #     "ArII_",
 #     "ArIII_",
 #     "FeII_",
@@ -144,6 +145,21 @@ SIV_10511    = 10.511
 SIII_18713   = 18.713
 
 # Molecular Hydrogen Lines
+# H200_S23   = 3.372
+# H200_S22   = 3.366
+# H200_S21   = 3.369
+# H200_S20   = 3.380
+# H200_S19   = 3.404
+# H200_S18   = 3.438
+# H200_S17   = 3.485
+# H200_S16   = 3.547
+# H200_S15   = 3.625
+# H200_S14   = 3.724
+# H200_S13   = 3.8464
+# H200_S12   = 3.9947
+# H200_S11   = 4.1810
+# H200_S10   = 4.4096
+# H200_S9    = 4.6947
 H200_S8    = 5.05312
 H200_S7    = 5.51118
 H200_S6    = 6.10857

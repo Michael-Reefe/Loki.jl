@@ -853,10 +853,6 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
         append!(aperture_keys, ["AP_AR_SR"])
         append!(aperture_vals, [cube_data.area_sr[1]])
         append!(aperture_comments, ["Area of aperture in steradians"])
-    else
-        append!(aperture_keys, ["PIX_AR_SR"])
-        append!(aperture_vals, [cube_data.area_sr[1]])
-        append!(aperture_comments, ["Area of pixel in steradians"])
     end
 
     # Header information
@@ -889,7 +885,7 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
 
     if cube_fitter.save_full_model
         # Create the 3D intensity model FITS file
-        FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_full_model.fits.gz"), "w") do f
+        FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_full_model.fits"), "w") do f
 
             @debug "Writing 3D model FITS HDUs"
 
@@ -957,7 +953,7 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
     for (index, param_data) ∈ enumerate([param_maps, param_errs[1], param_errs[2]])
 
         FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_parameter_" * 
-            ("maps", "errs_low", "errs_upp")[index] * ".fits.gz"), "w") do f
+            ("maps", "errs_low", "errs_upp")[index] * ".fits"), "w") do f
 
             @debug "Writing 2D parameter map FITS HDUs"
 
