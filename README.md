@@ -200,7 +200,7 @@ omega_m = 0.27    # matter density parameter
 omega_K = 0.0     # curvature density parameter
 omega_r = 0.0     # radiation density parameter
 ```
-The cosmology options determine the cosmology that the code assumes. Currently this is only used to calculate angular diameter distances for usage in physical scale bars on the 2D maps. $h$ is the standard Hubble constant normalized to $100\,{\rm km}\,{\rm s}^{-1}\,{\rm Mpc}^{-1}$, and $\Omega_m$, $\Omega_K$, and $\Omega_r$ are the standard matter, curvature, and radiation density parameters.
+The cosmology options determine the cosmology that the code assumes. Currently this is only used to calculate angular diameter distances for usage in physical scale bars on the 2D maps. $h$ is the standard Hubble constant normalized to $100\ {\rm km}\ {\rm s}^{-1}\ {\rm Mpc}^{-1}$, and $\Omega_m$, $\Omega_K$, and $\Omega_r$ are the standard matter, curvature, and radiation density parameters.
 
 ### ii. Continuum and PAH Options
 These options are found in `src/options/dust.toml`
@@ -677,9 +677,9 @@ The units of outputs for different quantities are listed here. When relevant, ou
 
 - Stellar continuum amplitude: $\log_{10}$(normalized amp.)
     - Here, the normalized amplitude is a multiplicative factor of the Planck function per unit frequency. The physical units are contained within the Planck function: 
-    $$B_\nu(\lambda,T) = \frac{3.973 \times 10^{13}\,{\rm MJy}\,{\rm sr}^{-1}\,{\rm \mu m}^{3}}{\lambda^3}\frac{1}{\exp(14387.8\,{\rm \mu m}\,{\rm K} /\lambda T)-1}$$
+    $$B_\nu(\lambda,T) = \frac{3.973 \times 10^{13}\ {\rm MJy}\ {\rm sr}^{-1}\ {\rm \mu m}^{3}}{\lambda^3}\frac{1}{\exp(14387.8\ {\rm \mu m}\ {\rm K} /\lambda T)-1}$$
 - Dust continuum amplitudes: $\log_{10}$(normalized amp.)
-    - Same as the stellar continuum amplitude, except the Planck function is scaled by $(9.7\,{\rm \mu m}/\lambda)^2$
+    - Same as the stellar continuum amplitude, except the Planck function is scaled by $(9.7\ {\rm \mu m}/\lambda)^2$
 - Warm silicate emission amplitude: $\log_{10}$(normalized amp.)
     - Here the normalized amplitude is a multiplicative factor of the warm silicate emission model, which is a function of the Planck function, so once again the physical units are contained within the Planck function.
 - Warm silicate emission covering fraction: unitless
@@ -688,12 +688,12 @@ The units of outputs for different quantities are listed here. When relevant, ou
 - All optical depths are unitless
     - If the `extinction_screen` option is true, then the extinction factor at 9.7 μm is $e^{-\tau_{9.7}}$. Otherwise, it is $(1-e^{-\tau_{9.7}})/\tau_{9.7}$.
     - $\tau_{\rm warm}$, $\tau_{\rm cold}$, and $\tau_{\rm CH}$ all satisfy $e^{-\tau}$.
-- Line & PAH amplitudes: $\log_{10}(I/{\rm erg}\,{\rm s}^{-1}\,{\rm cm}^{-2}\,{\rm Hz}^{-1}\,{\rm sr}^{-1})$
-- Line & PAH fluxes: $\log_{10}(F/{\rm erg}\,{\rm s}^{-1}\,{\rm cm}^{-2})$
+- Line & PAH amplitudes: $\log_{10}(I/{\rm erg}\ {\rm s}^{-1}\ {\rm cm}^{-2}\ {\rm Hz}^{-1}\ {\rm sr}^{-1})$
+- Line & PAH fluxes: $\log_{10}(F/{\rm erg}\ {\rm s}^{-1}\ {\rm cm}^{-2})$
 - PAH peak wavelengths: μm
 - PAH FWHMs: μm
-- Line velocity offsets: ${\rm km}\,{\rm s}^{-1}$
-- Line FWHMs: ${\rm km}\,{\rm s}^{-1}$
+- Line velocity offsets: ${\rm km}\ {\rm s}^{-1}$
+- Line FWHMs: ${\rm km}\ {\rm s}^{-1}$
 - Mixing ratios: unitless
 - Signal-to-noise ratios: unitless
 
