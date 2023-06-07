@@ -1,9 +1,9 @@
 # JWST-LOKI: Likelihood Optimization of gas Kinematics in IFUs
 
-#### A Julia package for fitting and plotting MIRI MRS IFU spectra
+### A Julia package for fitting and plotting MIRI MRS IFU spectra
 
 ---
-### Table of Contents
+## Table of Contents
 
 * [Introduction](#i-introduction)
 * [Installation](#ii-installation)
@@ -26,18 +26,18 @@
 
 
 ---
-### I. Introduction
+## I. Introduction
 
-This Julia package provides routines for reading, fitting, and plotting JWST MIRI-MRS IFU data. The fitting routines are based heavily on the widely used IDL tool PAHFIT (http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php) from the Spitzer era, but many areas have been updated to account for the increased spectral resolution of the MIRI instrument, and special attention has been given to fitting emission lines, allowing for much more flexibile and robust fits than were possible with PAHFIT.
+This Julia package provides routines for reading, fitting, and plotting JWST MIRI-MRS IFU data. The fitting routines are based heavily on the widely used IDL tool PAHFIT (http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php) from the Spitzer era, but many areas have been updated to account for the increased spectral resolution of the MIRI instrument, and special attention has been given to fitting emission lines, allowing for much more flexibile and robust fits.
 
 As a brief overview, the mid-infrared spectrum is decomposed into
 - A stellar continuum modeled by a blackbody at a fixed temperature of $T = 5000$ K
-- A dust continuum modeled by a series of modified blackbody functions with emissivities $\propto 1/\lambda^2$ at fixed temperatures of $T \in \{35,40,50,65,90,135,200,300,500\}$
+- A dust continuum modeled by a series of modified blackbody functions with emissivities $\propto 1/\lambda^2$ at fixed temperatures of $T \in \{35,40,50,65,90,135,200,300,500\}$ K
 - Emission from Polycyclic Aromatic Hydrocarbon (PAH) molecules reperesented by Drude (or Pearson type-IV) profiles with constrained central wavelengths and widths
 - Silicate dust extinction using templates from [Kemper, Vriend, & Tielens (2004)](https://ui.adsabs.harvard.edu/abs/2004ApJ...609..826K), [Chiar & Tielens (2006)](https://ui.adsabs.harvard.edu/abs/2006ApJ...637..774C/abstract), [Ossenkopt, Henning, & Mathis (1992)](https://ui.adsabs.harvard.edu/abs/1992A&A...261..567O), or [Donnan et al. (2023)](https://ui.adsabs.harvard.edu/abs/2023MNRAS.519.3691D)
 - Absorption features from water-ice, CH, and other molecules
 - Warm silicate dust emission from an AGN torus using the simplified radiative transfer model of [Gallimore et al. (2010)](https://ui.adsabs.harvard.edu/abs/2010ApJS..187..172G)
-- Emission lines from warm molecular H$_2$, hydrogen recombination, and ionized species, modeled using Gaussian, Lorentzian, Gauss-Hermite, or pseudo-Voigt profiles.
+- Emission lines from warm molecular H<sub>2</sub>, hydrogen recombination, and ionized species, modeled using Gaussian, Lorentzian, Gauss-Hermite, or pseudo-Voigt profiles.
 
 The code uses the [MPFIT](https://pages.physics.wisc.edu/~craigm/idl/cmpfit.html) ([Markwardt 2009](https://ui.adsabs.harvard.edu/abs/2009ASPC..411..251M)) implementation of the Levenberg-Marquardt (LM) least-squares minimization routine, as well as the simulated annealing (SA) global minimization method as implemented by [Optim](https://github.com/JuliaNLSolvers/Optim.jl), and optionally may estimate uncertainties using bootstrapping. The fitting procedure is performed in two steps:
 1. The emission lines are masked and the continuum + PAH features are fit with LM
@@ -48,20 +48,20 @@ For a more detailed description of the PAHFIT decomposition and fitting methods,
 ---
 
 
-### II. Installation
+## II. Installation
 
 Simply clone the git repository: `git clone https://github.com/Michael-Reefe/Loki.jl`. You can then start using the code in a number of ways.
 
-###### From the Julia REPL:
+##### From the Julia REPL:
 1. Type `]` to enter the package mode
 2. Type `activate path`, replacing "path" with the appropriate path to your Loki installation
 3. Type `instantiate` to instantiate the package
 4. Type `precompile` to precompile the package
 5. Return to command mode by hitting backspace, then type `using Loki` to import the Loki package
 
-\*Steps 4 and 5 are only necessary the first time you start Julia, or whenever LOKI is updated.
+\*Steps 3 and 4 are only necessary the first time you start Julia, or whenever LOKI is updated.
 
-###### From a file:
+##### From a file:
 1. Use the following block of code to import the Loki package, again replacing "path" with the appropriate file path to your Loki installation
 ```julia
 using Pkg
@@ -72,11 +72,11 @@ using Loki
 ```
 2. If you plan on utilizing the multiprocessing capabilities of Loki, all lines in the previous code block should be prepended with `@everywhere` (or they can be wrapped within a `begin`/`end` block with `@everywhere`). See some of the test driver codes within the `test/` directory for examples.
 
-#### Julia Requirements
+### Julia Requirements
 
 These should be automatically installed with Julia's package manager upon importing Loki, but they are listed here for the sake of completeness.
 
-- [Julia $\geqslant$ 1.9](https://julialang.org/) (earlier versions have not been tested)
+- [Julia >= 1.9](https://julialang.org/) (earlier versions have not been tested)
 - [AstroAngles](http://juliaastro.org/dev/modules/AstroAngles/)
 - [CMPFit](https://github.com/gcalderone/CMPFit.jl)
 - [CSV](https://csv.juliadata.org/stable/)
@@ -112,7 +112,7 @@ These should be automatically installed with Julia's package manager upon import
 - [Unitful](https://painterqubits.github.io/Unitful.jl/stable/)
 - [UnitfulAstro](http://juliaastro.org/UnitfulAstro.jl/stable/)
 
-#### Python Requirements
+### Python Requirements
 
 Loki utilizes the PyCall package (https://github.com/JuliaPy/PyCall.jl) to run some python routines that do not currently have good Julia alternatives. As such, some additional setup is required to ensure that you have the right python packages installed in the PyCall environment. By default, PyCall creates a new, self-contained python environment to be used with Julia, but it can also be linked to a pre-existing python environment. The required python modules should be installed automatically the first time they are required, but this has not been extensively tested and it may be necessary to install them manually with pip or conda. The required python modules are:
 
@@ -123,59 +123,75 @@ Loki utilizes the PyCall package (https://github.com/JuliaPy/PyCall.jl) to run s
 
 ---
 
-### III. Usage
+## III. Usage
 
-#### i. General Code Options
+### i. General Code Options
 
 These options are found in `src/options/options.toml`:
 
 `parallel = true`
+
 This boolean option enables or disables multiprocessing (not to be confused with multithreading). If this option is true, when fitting individual spaxels, multiple spaxel fits may be performed in parallel across different CPUs.
 
 `plot_spaxels = "pyplot"`
+
 This option determines the plotting backend that is used for plotting the 1D spectral models of individual spaxels or integrated apertures. It may be "pyplot", "plotly", or "both".
 
 `plot_maps = true`
+
 This boolean option enables or disables plotting 2D maps of each model parameter at the end of fitting.
 
 `save_fits = true`
+
 This boolean option enables or disables saving the final model parameters and uncertainties as FITS files at the end of fitting.
 
 `n_bootstrap = 0`
+
 This option sets the number of bootstrap iterations that are performed on each fit. Setting it to 0 (the default) disables bootstrapping. When bootstrapping is disables, the provided uncertainties will be calculated based on the covariance matrix of the LM fit.
 
 `random_seed = 123456789`
+
 This option sets the random seed that is used when resampling the data for bootstrapping iterations. By using the same seed, you are guaranteed to get the same results after repeated runs (assuming all other inputs are the same).
 
 `overwrite = false`
+
 This boolean option determines the behavior of the code when fitting results for a given spaxel or aperture already exist. If `false`, the old results will simply be read in. If `true`, the fits will be redone and the old results will be overwritten by the new results.
 
 `track_memory = false`
+
 This boolean option controls whether an additional log file is generated for each spaxel which specifically tracks the memory usage / allocations during the spaxel fitting. This is useful if memory usage is higher than expected.
 
 `track_convergence = true`
+
 This boolean option controls whether an additional log file is generated which prints convergence information for the simulated annealing emission line fit for each spaxel. Be warned that the way Optim.jl works with the simulated annealing method SAMIN makes it always print "status: failure" even if convergence was reached. The way to tell whether convergence was *actually* reached is if the number of iterations is less than the maximum (which is $10^6$ by default).
 
 `make_movies = false`
+
 This boolean option determines whether or not to generate an mp4 movie of the data and model at the end of fitting. The movie steps through the wavelength dimension over time. N.B. this option is old and has not been tested recently, and its scientific usefulness is minimal.
 
 `save_full_model = true`
+
 This boolean option determines whether or not to save the full 3D model, evaluated at the same grid points as the input data, in a FITS cube format at the end of fitting. N.B. these files tend to be very large (multiple gigabytes) and can take a while to generate.
 
 `extinction_curve = "d+"`
+
 This option determines what dust extinction template to use. The possible values are "kvt" for the [Kemper, Vriend, & Tielens (2004)](https://ui.adsabs.harvard.edu/abs/2004ApJ...609..826K) template, "ct" for the [Chiar & Tielens (2006)](https://ui.adsabs.harvard.edu/abs/2006ApJ...637..774C/abstract) template, "ohm" for the [Ossenkopt, Henning, & Mathis (1992)](https://ui.adsabs.harvard.edu/abs/1992A&A...261..567O) template, or "d+" for the [Donnan et al. (2023)](https://ui.adsabs.harvard.edu/abs/2023MNRAS.519.3691D) template. Note that the template used for the warm silicate *emission* component is always the "ohm" template, regardless of what this option is. Also note that the "kvt" template tends to be computationally slow compared to the other templates.
 
 `extinction_screen = false`
+
 If `true`, dust extinction is modeled as a foreground screen $\propto e^{-\tau(\lambda)}$. If `false`, dust extinction is modeled as mixed $\propto (1-e^{-\tau(\lambda)})/\tau(\lambda)$.
 
 `fit_sil_emission = true`
+
 This boolean option determines whether or not to include the warm silicate dust emission component of [Gallimore et al. (2010)](https://ui.adsabs.harvard.edu/abs/2010ApJS..187..172G).
 
 `fit_all_samin = false`
+
 By default, simulated annealing is only performed for the line fit during the initial fit of the sum of all spaxels. If this option is set to `true`, then simulated annealing will be performed on all of the line fits for the individual spaxels as well.
 
 `user_mask = []`
-This option allows the user to mask out predefined regions of the spectrum that will be ignored during the fitting process. To mask out a region bounded between $\lambda_1 < \lambda < \lambda_2$, add a tuple to the user mask of the format $(\lambda_1, \lambda_2)$. For example, `user_mask = [(5.5, 6.0), (10.2, 10.3)]` will mask out the regions between 5.5-6 $\mu$m and 10.2-10.3 $\mu$m.
+
+This option allows the user to mask out predefined regions of the spectrum that will be ignored during the fitting process. To mask out a region bounded between $\lambda_1 < \lambda < \lambda_2$, add a tuple to the user mask of the format $(\lambda_1, \lambda_2)$. For example, `user_mask = [(5.5, 6.0), (10.2, 10.3)]` will mask out the regions between 5.5-6 μm and 10.2-10.3 μm.
 
 ```toml
 [cosmology]
@@ -184,12 +200,13 @@ omega_m = 0.27    # matter density parameter
 omega_K = 0.0     # curvature density parameter
 omega_r = 0.0     # radiation density parameter
 ```
-The cosmology options determine the cosmology that the code assumes. Currently this is only used to calculate angular diameter distances for usage in physical scale bars on the 2D maps. $h$ is the standard normalized Hubble constant $H_0/100~{\rm km}~{\rm s}^{-1}~{\rm Mpc}^{-1}$, and $\Omega_m$, $\Omega_K$, and $\Omega_r$ are the standard matter, curvature, and radiation density parameters.
+The cosmology options determine the cosmology that the code assumes. Currently this is only used to calculate angular diameter distances for usage in physical scale bars on the 2D maps. $h$ is the standard Hubble constant normalized to $100\,{\rm km}\,{\rm s}^{-1}\,{\rm Mpc}^{-1}$, and $\Omega_m$, $\Omega_K$, and $\Omega_r$ are the standard matter, curvature, and radiation density parameters.
 
-#### ii. Continuum and PAH Options
+### ii. Continuum and PAH Options
 These options are found in `src/options/dust.toml`
 
 **Stellar Continuum:**
+
 There is only one stellar continuum component.
 ```toml
 [stellar_continuum_temp]
@@ -200,6 +217,7 @@ locked = true
 This option allows the user to modify the temperature of the stellar blackbody component of the continuum. `val` gives the starting value (default = 5000 K), `plim` gives the lower and upper limits on the parameter (which are only relevant if the parameter is allowed to vary, which in this case it is not), and `locked` is a boolean that determines whether the parameter is allowed to vary (`false`) or is fixed (`true`) during the fitting. The same format of `val`, `plim`, `locked` is used throughout these options and the line options (see the next section) for any parameter which the user may want to change.
 
 **Dust Continuum:**
+
 The dust continuum components are enumerated in a list signified by the double square brackets. By default there are 9.
 ```toml
 [[dust_continuum_temps]]
@@ -210,6 +228,7 @@ locked = true
 Following the stellar blackbody temperature, the dust blackbody temperatures are given in the same way, and may be modified in the same way. Temperatures may be added or removed, allowed to vary or fixed, if one so desires.
 
 **PAH Features:**
+
 Each PAH feature is labeled by its name, taking the format "PAH_X.XX" where X.XX is the central wavelength of the PAH to a precision of 2 decimal places.
 
 ```toml
@@ -231,6 +250,7 @@ The second option for each PAH feature is the FWHM. `val` and `locked` again wor
 Note: If one wishes to model a PAH feature with a Pearson type-IV profile (currently we model all PAHs with Drude profiles), then additional entries for the power index $m$ (`dust_features."PAH_3.29".index`) and exponential cutoff $\nu$ (`dust_features."PAH_3.29".cutoff`) are required. The `plim` entires for these two values are normal, i.e. they work the same way as the temperatures.
 
 **Absorption Features:**
+
 Entries for absorption features modeled with Drude profiles work the exact same way as PAH features, with the exception that their names should be prefixed by "abs_".
 ```toml
 [absorption_features."abs_HCO+_12.1".wave]
@@ -245,6 +265,7 @@ locked = true
 ```
 
 **Water-Ice/CH Absorption:**
+
 This absorption feature is treated differently since it has a complex shape that is better suited for the usage of templates. It has two primary parameters, $\tau_{\rm CH}$ and $\tau_{\rm ice}$.
 ```toml
 [extinction.tau_ch]
@@ -257,9 +278,10 @@ val = 0.48
 plim = [0.43, 0.53]
 locked = false
 ```
-$\tau_{\rm CH}$ is the peak optical depth of the CH absorption feature. $\tau_{\rm ice}$ is *not* an optical depth, but rather it is a multiplicative factor with $\tau_{\rm CH}$ that determines the optical depth of the ice absorption. That is, if the optical depth of the ice absorption is $\tilde{\tau}_{\rm ice}$, then $\tilde{\tau}_{\rm ice} = \tau_{\rm ice} \times \tau_{\rm CH}$. Here, $\tau_{\rm ice}$ is tightly constrained since this factor is typically close to $\sim 0.5$.
+$\tau_{\rm CH}$ is the peak optical depth of the CH absorption feature. $\tau_{\rm ice}$ is *not* an optical depth, but rather it is a multiplicative factor with $\tau_{\rm CH}$ that determines the optical depth of the ice absorption. That is, if the optical depth of the ice absorption is $\tilde{\tau}_{\rm ice}$, then $$\tilde{\tau}_{\rm ice} = \tau_{\rm ice} \times \tau_{\rm CH}.$$ Here, $\tau_{\rm ice}$ is tightly constrained since this factor is typically close to $\sim 0.5$.
 
 **Dust Extinction:**
+
 Dust extinction has two primary parameters, $\tau_{9.7}$ and $\beta$:
 ```toml
 [extinction.tau_9_7]
@@ -272,9 +294,10 @@ val = 0.1
 plim = [0.0, 1.0]
 locked = true
 ```
-$\tau_{9.7}$ is the optical depth of dust extinction at 9.7 $\mu$m (which is the peak of a large silicate absorption feature), and $\beta$ is a mixing ratio between the extinction profile specified in `options.toml` and a $-1.7$ index power law. $\beta$ is only relevant for the "kvt" and "d+" curves, and is typically locked to a value of 0.1.
+$\tau_{9.7}$ is the optical depth of dust extinction at 9.7 μm (which is the peak of a large silicate absorption feature), and $\beta$ is a mixing ratio between the extinction profile specified in `options.toml` and a $-1.7$ index power law. $\beta$ is only relevant for the "kvt" and "d+" curves, and is typically locked to a value of 0.1.
 
 **Warm Silicate Emission:**
+
 The warm silicate emission component has 5 parameters: temperature $T_{\rm hot}$, covering fraction $C_f$, warm dust optical depth $\tau_{\rm warm}$, cold dust optical depth $\tau_{\rm cold}$, and the peak position of the silicate emission $\lambda_{\rm peak}$:
 ```toml
 [hot_dust.temp]
@@ -304,17 +327,21 @@ locked = true
 ```
 Here, `val`, `plim`, and `locked` all work the same as before. For details on what each parameter means, see equation 1 of [Gallimore et al. (2010)](https://ui.adsabs.harvard.edu/abs/2010ApJS..187..172G).
 
-#### iii. Line Options
+### iii. Line Options
 These options are found in `src/options/lines.toml`.
 
 **Main Component Options:**
+
 `tie_voigt_mixing = true`
+
 This boolean option determines whether or not the mixing ratio of all lines with pseudo-Voigt profiles are tied or not.
 
 `voff_plim = [-500.0, 500.0]`
+
 This tuple gives the (minimum, maximum) allowable velocity offset from the rest-frame wavelength of each line, in km/s.
 
 `fwhm_plim = [0.0, 500.0]`
+
 This tuple gives the (minimum, maximum) allowable velocity FWHM of each line, in km/s. Note that these are limits on the *intrinsic* FWHM, not the *observed* FWHM. The observed FWHM is corrected by subtracting the FWHM of the instrumental line-spread function (LSF) in quadrature.
 
 ```
@@ -324,19 +351,25 @@ h4_plim = [-0.5, 0.5]
 These tuples give the (minimum, maximum) allowable 3rd-order and 4th-order Gauss-Hermite moments (AKA skewness and kurtosis) for each line. These are only relevant for lines that are fit with Gauss-Hermite profiles.
 
 `eta_plim = [0.0, 1.0]`
+
 This tuple gives the (minimum, maximum) allowable mixing ratio for each line. This is only relevant for lines that are fit with pseudo-Voigt profiles, where a mixing ratio of 1 signifies a pure Gaussian profile and 0 signifies a pure Lorentzian profile.
 
 **Additional Component Options:**
+
 `n_acomps = 1`
+
 If one desires to fit more than one profile to a single line, this option allows the user to set the maximum number of *additional* profiles that a line can have. In other words, a value of 0 means that each line should only be fit with one profile, whereas a value of 1 means that each line may have *up to* 2 profiles. This value only sets the *upper limit* on how many profiles each line can have, it does not force every line to have the maximum number of profiles.
 
 `acomp_voff_plim = [[-500.0, 500.0]]`
+
 This is the same as `voff_plim`, but for the additional line profiles given by `n_acomps`. This is a 2D list where the first dimension should have a length of `n_acomps` and the second dimension should be 2 (for the lower and upper limits). The first pair gives the lower/upper limits for the first additional line profile, the second pair gives the limits for the second additional profile, etc. **N.B.** that the velocity offset of the additional line profiles is measured **relative to the main component**, ***not*** **the rest-frame wavelength.**. So, limits of $\pm 500$ km/s here mean that the additional component can be within $\pm 500$ km/s from the main component, even if the main component itself is at a large offset relative to the rest-frame wavelength. This parametrization is useful if one wishes to constrain the relative kinematics of each component. For example, if one wishes to measure an asymmetric blueshift (i.e. from an outflow), the additional voff component could be constrained to `[-500.0, 0.0]` which ensures that it will always be to the left of the main component.
 
 `acomp_fwhm_plim = [[1.0, 5.0]]`
+
 This is the same as `fwhm_plim`, but for the additional line profiles given by `n_acomps`. Like `acomp_voff_plim`, this is a 2D list where the first dimension should have a length of `n_acomps` and the second dimension should be 2. **N.B.** that the FWHM of the additional components here are **multiplicative factors with the main component.** So limits of `[1.0, 5.0]` signify that the additional component may have a FWHM 1-5$\times$ larger than the main FWHM.
 
 **Kinematic Groups:**
+
 ```toml
 kinematic_group_low = [
     "ArII_",
@@ -364,7 +397,9 @@ wavesol_unc = 30
 These options allow some flexibility in the relative velocity offsets of lines that are tied together. By default, lines with tied kinematics must have exactly the same velocity offset, but allowing `flexible_wavesol` to be `true` will allow some small variation in the velocity offsets of lines that are tied together, with the maximum allowed variation in km/s given by `wavesol_unc`. These options are intended for use if one believes the wavelength solution of the spectrum may not be accurate enough to tie certain lines together otherwise.
 
 **Rest Wavelengths:**
+
 The [lines] dictionary gives the master reference for which lines to fit, giving them each unique labels and providing their rest wavelengths. A small subset of this dictionary giving the Hydrogen recombination lines is shown below:
+
 ```toml
 [lines]
 
@@ -381,16 +416,17 @@ HI_Hu_alpha     = 12.370
 HI_Hu_beta      = 7.503
 HI_Hu_gamma     = 5.908
 ```
+
 Lines may be arbitrarily added to or removed from this list based on what the user wishes to fit. It is not strictly necessary to adhere to any naming conventions for the lines, but doing so makes it easier when creating kinematic groups. As such, these are the conventions I have followed in the default line list:
 * For hydrogen recombination lines, names should be formatted as "HI_[SS]_[LLL]" where "SS" is the abbreviated name of the series (i.e. the Brackett, Pfund, and Humphreys series shown above) and [LLL] is the greek letter corresponding to the specific transition in the series, starting from alpha.
-* For molecular hydrogen lines, names should be formatted as "H2[VV]_[RR]" where [VV] are the vibrational quantum numbers of the transition and [RR] are the rotational quantum numbers of the transition, i.e. "H200_S3" for the H$_2$ 0-0 S(3) line.
+* For molecular hydrogen lines, names should be formatted as "H2[VV]_[RR]" where [VV] are the vibrational quantum numbers of the transition and [RR] are the rotational quantum numbers of the transition, i.e. "H200_S3" for the H<sub>2</sub> 0-0 S(3) line.
 * Lines for ionized species should be formatted as "[ION]_[WAVE]" where [ION] is the name of the ion and [WAVE] is the wavelength of the line in microns to three decimals, with the decimal removed. For example, "NeVI_7652" for the [Ne VI] $\lambda$7.652 line.
 
 ---
 
-### IV. Outputs
+## IV. Outputs
 
-#### i. The Output Directory Structure
+### i. The Output Directory Structure
 You may notice at the beginning of the fitting procedure that a series of output directories are created. The parent directory will be named "output_[name]" where [name] is the name of the object being fit, which is retrieved from the FITS headers. Within this folder will be a series of sub-directories for storing various outputs:
 ```
 ├── output_[name]
@@ -423,7 +459,7 @@ You may notice at the beginning of the fitting procedure that a series of output
 ├── general_options.archive.toml
 └── line_options.archive.toml
 ```
-#### ii. Logs
+### ii. Logs
 The `logs` directory contains log files for the fits of each individual spaxel. The logs contain various information about the fit that may be useful for debugging purposes. This includes the results of the continuum and line fits printed in a nicely formatted table:
 ```
 ┌ Debug: 2023-06-06 11:17:04 ######################################################################
@@ -505,10 +541,10 @@ The `logs` directory contains log files for the fits of each individual spaxel. 
 ```
 Information is always printed out with a timestamp so one can track how long different steps of the code are taking. Logs files are meant to be a quick way to check that fits are performing as expected and there are no obvious bugs. They are *not* meant to be used to compile or analyze fit results (that is done with the output FITS files).
 
-#### iii. CSV Files
+### iii. CSV Files
 Located in the `spaxel_binaries` folder are CSV files which contain the best-fit parameters of each spaxel fit in a machine-readable table format. These are saved during the fitting process such that in the event of a crash or other interruption during the fitting process, the code can be restarted and pick up where it left off without losing any progress. Like the logs, these files are not necessarily meant to be used to perform any analysis, as all of the data will be compiled and re-saved in FITS format at the end.
 
-#### iv. Spaxel Plots
+### iv. Spaxel Plots
 Located in the `spaxel_plots` folder are plots of the 1D spectra of each spaxel, including the data, model, each model component, and the residuals, either as PDFs or HTML files depending on the plotting backend. Example plots are shown below for the initial summed spaxel fit of NGC 7469:
 
 ![NGC7469_pyplot](./figures/NGC7469_initial_fit_pyplot.png)
@@ -526,39 +562,39 @@ If performing a full fit to each spaxel in a cube, 2D parameter maps for each mo
 Dust continuum amplitude for the $T = 200$ K component. Notice that the color scale is logarithmic for all amplitudes/fluxes:
 ![NGC7469_dust_cont_3](./figures/NGC7469_dust_cont_3_amp.png)
 
-Optical depth at 9.7 $\mu$m:
+Optical depth at 9.7 μm:
 ![NGC7469_optical_depth](./figures/NGC7469_extinction_tau97.png)
 
-PAH 8.61 $\mu$m amplitude:
+PAH 8.61 μm amplitude:
 ![NGC7469_PAH_amp](./figures/NGC7469_PAH_8.61_amp.png)
 
-PAH 8.61 $\mu$m total flux:
+PAH 8.61 μm total flux:
 ![NGC7469_PAH_flux](./figures/NGC7469_PAH_8.61_flux.png)
 
-PAH 8.61 $\mu$m peak wavelength. Notice here that the plotted wavelengths are measured in the observed frame, so they are a factor of $(1+z)$ larger than the rest-frame 8.61 $\mu$m. The redshift of NGC 7469 is $z = 0.016317$, which puts this PAH at 8.75 $\mu$m:
+PAH 8.61 μm peak wavelength. Notice here that the plotted wavelengths are measured in the observed frame, so they are a factor of $(1+z)$ larger than the rest-frame 8.61 μm. The redshift of NGC 7469 is $z = 0.016317$, which puts this PAH at 8.75 μm:
 ![NGC7469_PAH_mean](./figures/NGC7469_PAH_8.61_mean.png)
 
-PAH 8.61 $\mu$m FWHM. Once again notice that the observed FWHMs will be a factor of $(1+z)$ larger than the rest-frame FWHMs:
+PAH 8.61 μm FWHM. Once again notice that the observed FWHMs will be a factor of $(1+z)$ larger than the rest-frame FWHMs:
 ![NGC7469_PAH_fwhm](./figures/NGC7469_PAH_8.61_fwhm.png)
 
-H$_2$ 0-0 S(3) amplitude:
+H<sub>2</sub> 0-0 S(3) amplitude:
 ![NGC7469_H2_amp](./figures/NGC7469_H200_S3_amp.png)
 
-H$_2$ 0-0 S(3) flux:
+H<sub>2</sub> 0-0 S(3) flux:
 ![NGC7469_H2_flux](./figures/NGC7469_H200_S3_flux.png)
 
-H$_2$ 0-0 S(3) velocity offset:
+H<sub>2</sub> 0-0 S(3) velocity offset:
 ![NGC7469_H2_voff](./figures/NGC7469_H200_S3_voff.png)
 
-H$_2$ 0-0 S(3) FWHM:
+H<sub>2</sub> 0-0 S(3) FWHM:
 ![NGC7469_H2_fwhm](./figures/NGC7469_H200_S3_fwhm.png)
 
-#### vi. Aperture Plots
+### vi. Aperture Plots
 When fitting an integrated spectrum within an aperture, plots are generated at the beginning of the fitting procedure showing the locations/sizes/shapes of the apertures to confirm that they have been placed correctly.  An example is shown below for NGC 7469 where the black circle denotes the aperture:
 
 ![NGC7469_aperture_plot](./figures/NGC7469_aperture_plot.png)
 
-#### vii. FITS Files
+### vii. FITS Files
 There are two main categories of output FITS files: parameter maps (2D) and model cubes (3D). AS the names suggest, the parameter maps contain 2D maps of each model parameter for each spaxel, and the model cubes contain the full 3D models decomposed into the individual model components, evaluated at the same points as the data.
 
 The parameter maps are organized as follows. Each model parameter has its own Header Data Unit (HDU) named appropriately, with a 2D shape corresponding to the spatial axes of the input data. An example of what this might look like, showing the names, dimensions, and formats of each HDU, is given below:
@@ -636,34 +672,34 @@ No.  Name               Ver Type         Cards   Dimensions       Format
 ```
 They can be loaded in the same manner as the parameter maps, bearing in mind that there are now 3 dimensions to index for each HDU instead of 2. The "WAVELENGTH" HDU is an exception, being a table with one entry ("wave") that gives the 1-dimensional wavelength array that corresponds to the third axis of all the other HDUs. This was necessary because the wavelength arrays fitted by the code may not strictly be linear, especially when fitting multi-channel data, and trying to represent this with a 3D WCS is difficult. This is why the included WCS information in these outputs is strictly 2-dimensional, covering the 2 spatial dimensions of the cubes.
 
-#### viii. Units
+### viii. Units
 The units of outputs for different quantities are listed here. When relevant, output quantities are all given in the *observed* frame:
 
 - Stellar continuum amplitude: $\log_{10}$(normalized amp.)
     - Here, the normalized amplitude is a multiplicative factor of the Planck function per unit frequency. The physical units are contained within the Planck function: 
-    $B_\nu(\lambda,T) = \frac{3.973 \times 10^{13}~{\rm MJy}~{\rm sr}^{-1}~{\rm \mu m}^{3}}{\lambda^3}\frac{1}{\exp(14387.8~{\rm \mu m}~{\rm K} /\lambda T)-1}$
+    $$B_\nu(\lambda,T) = \frac{3.973 \times 10^{13}\,{\rm MJy}\,{\rm sr}^{-1}\,{\rm \mu m}^{3}}{\lambda^3}\frac{1}{\exp(14387.8\,{\rm \mu m}\,{\rm K} /\lambda T)-1}$$
 - Dust continuum amplitudes: $\log_{10}$(normalized amp.)
-    - Same as the stellar continuum amplitude, except the Planck function is scaled by $(9.7~{\rm \mu m}/\lambda)^2$
+    - Same as the stellar continuum amplitude, except the Planck function is scaled by $(9.7\,{\rm \mu m}/\lambda)^2$
 - Warm silicate emission amplitude: $\log_{10}$(normalized amp.)
     - Here the normalized amplitude is a multiplicative factor of the warm silicate emission model, which is a function of the Planck function, so once again the physical units are contained within the Planck function.
 - Warm silicate emission covering fraction: unitless
-- Warm silicate emission peak wavelength: $\mu$m
+- Warm silicate emission peak wavelength: μm
 - All temperatures are measured in Kelvins
 - All optical depths are unitless
-    - If the `extinction_screen` option is true, then the extinction factor at 9.7 $\mu$m is $e^{-\tau_{9.7}}$. Otherwise, it is $(1-e^{-\tau_{9.7}})/\tau_{9.7}$.
+    - If the `extinction_screen` option is true, then the extinction factor at 9.7 μm is $e^{-\tau_{9.7}}$. Otherwise, it is $(1-e^{-\tau_{9.7}})/\tau_{9.7}$.
     - $\tau_{\rm warm}$, $\tau_{\rm cold}$, and $\tau_{\rm CH}$ all satisfy $e^{-\tau}$.
-- Line & PAH amplitudes: $\log_{10}(I/{\rm erg}~{\rm s}^{-1}~{\rm cm}^{-2}~{\rm Hz}^{-1}~{\rm sr}^{-1})$
-- Line & PAH fluxes: $\log_{10}(F/{\rm erg}~{\rm s}^{-1}~{\rm cm}^{-2})$
-- PAH peak wavelengths: $\mu$m
-- PAH FWHMs: $\mu$m
-- Line velocity offsets: ${\rm km}~{\rm s}^{-1}$
-- Line FWHMs: ${\rm km}~{\rm s}^{-1}$
+- Line & PAH amplitudes: $\log_{10}(I/{\rm erg}\,{\rm s}^{-1}\,{\rm cm}^{-2}\,{\rm Hz}^{-1}\,{\rm sr}^{-1})$
+- Line & PAH fluxes: $\log_{10}(F/{\rm erg}\,{\rm s}^{-1}\,{\rm cm}^{-2})$
+- PAH peak wavelengths: μm
+- PAH FWHMs: μm
+- Line velocity offsets: ${\rm km}\,{\rm s}^{-1}$
+- Line FWHMs: ${\rm km}\,{\rm s}^{-1}$
 - Mixing ratios: unitless
 - Signal-to-noise ratios: unitless
 
 ---
 
-### V. Examples
+## V. Examples
 The main steps one must follow to fit a cube using LOKI are as follows:
 1. Load in the LOKI module following the instructions in [Installation](#ii-installation). Typically, this means including a block of code at the top of your file that looks something like this:
 ```julia
