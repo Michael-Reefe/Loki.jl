@@ -147,7 +147,7 @@ This boolean option enables or disables saving the final model parameters and un
 
 `n_bootstrap = 0`
 
-This option sets the number of bootstrap iterations that are performed on each fit. Setting it to 0 (the default) disables bootstrapping. When bootstrapping is disables, the provided uncertainties will be calculated based on the covariance matrix of the LM fit.
+This option sets the number of bootstrap iterations that are performed on each fit. Setting it to 0 (the default) disables bootstrapping. When bootstrapping is disabled, the provided uncertainties will be calculated based on the covariance matrix of the LM fit.
 
 `random_seed = 123456789`
 
@@ -427,6 +427,39 @@ Lines may be arbitrarily added to or removed from this list based on what the us
 * For hydrogen recombination lines, names should be formatted as "HI_[SS]_[LLL]" where "SS" is the abbreviated name of the series (i.e. the Brackett, Pfund, and Humphreys series shown above) and [LLL] is the greek letter corresponding to the specific transition in the series, starting from alpha.
 * For molecular hydrogen lines, names should be formatted as "H2[VV]_[RR]" where [VV] are the vibrational quantum numbers of the transition and [RR] are the rotational quantum numbers of the transition, i.e. "H200_S3" for the H<sub>2</sub> 0-0 S(3) line.
 * Lines for ionized species should be formatted as "[ION]_[WAVE]" where [ION] is the name of the ion and [WAVE] is the wavelength of the line in microns to three decimals, with the decimal removed. For example, "NeVI_7652" for the [Ne VI] $\lambda$7.652 line.
+
+**Profiles:**
+
+```toml
+[profiles]
+default = "Voigt"
+```
+
+The [profiles] dictionary gives the master reference for while profiles to use for each line in the fit. The "default" keyword provides the default profile used for all lines. The available profiles are "Gaussian", "Lorentzian", "Voigt", or "GaussHermite". Individual lines may have unique provides that override the default profile by adding additional keys that have the same name as the keys in the [lines] dictionary.
+
+```toml
+[acomps]
+NeVI_7652 = ["Voigt"]
+```
+
+The [acomps] dictionary acts similarly to the [profiles] dictionary, but for the additional line components specified by `n_acomps.` In other words, this is the location where you actually specify which lines, if any, should have additional profiles, and what types of profiles they should be. In the example above, the [Ne VI] $\lambda$7.652 line is given one additional Voigt profile. This means that, in total, this line will be fit with two Voigt profiles. You will notice that the entries here are lists of strings, meaning one can add an arbitrary number of additional profiles to each line. However, there is an upper limit on the number of additional profiles given by `n_acomps.`
+
+**Advanced Usage:**
+
+One may get more in-depth about individual fitted parameters for lines by making use of the [parameters] dictionary. An example usage might look something like:
+
+```toml
+[parameters]
+
+[NeVI_7652]
+voff_plim = [-1000.0, 1000.0]
+fwhm_init = 100.0
+fwhm_locked = true
+acomp_fwhm_init = 100.0
+acomp_fwhm_locked = true
+```
+
+This tells the code that, for the [Ne VI] $\lambda$7.652 line specifically, we want to overwrite the default `voff_plim` values with those specified here, and we want to lock the FWHMs of both the main and additional line components to their starting values, which we have manually set to 100 km/s.
 
 ---
 
