@@ -166,7 +166,7 @@ function parse_dust()
         end
         if haskey(dust, "absorption_features")
             for abs_key ∈ keys(dust["absorption_features"])
-                for abs_key2 ∈ keylist2
+                for abs_key2 ∈ ["tau"; keylist2]
                     @assert haskey(dust["absorption_features"][abs_key], abs_key2) "Missing option $abs_key2 in absorption feature $abs_key options!"
                     @assert haskey(dust["absorption_features"][abs_key][abs_key2], key) "Missing option $key in absorption features $abs_key, $abs_key2 options!"
                 end
@@ -250,12 +250,15 @@ function parse_dust()
     if haskey(dust, "absorption_features")
         cent_vals = zeros(length(dust["absorption_features"]))
         name = Vector{String}(undef, length(dust["absorption_features"]))
+        depth = Vector{Parameter}(undef, length(dust["absorption_features"]))
         mean = Vector{Parameter}(undef, length(dust["absorption_features"]))
         fwhm = Vector{Parameter}(undef, length(dust["absorption_features"]))
 
         msg = "Absorption features:"
         for (i, ab) ∈ enumerate(keys(dust["absorption_features"]))
             name[i] = ab
+            depth[i] = from_dict(dust["absorption_features"][ab]["tau"])
+            msg *= "\nTau $(depth[i])"
             mean[i] = from_dict_wave(dust["absorption_features"][ab]["wave"])
             msg *= "\nWave $(mean[i])"
             fwhm[i] = from_dict_fwhm(dust["absorption_features"][ab]["fwhm"])
@@ -269,9 +272,11 @@ function parse_dust()
         abs_features = DustFeatures(name[ss], [:Drude for _ in 1:length(name)], mean[ss], fwhm[ss],
             Union{Parameter,Nothing}[nothing for _ in 1:length(name)], 
             Union{Parameter,Nothing}[nothing for _ in 1:length(name)]) 
+        abs_taus = depth[ss]
     else
         abs_features = DustFeatures(String[], Symbol[], Parameter[], Parameter[], Vector{Union{Parameter,Nothing}}(),
             Vector{Union{Parameter,Nothing}}())
+        abs_taus = Vector{Parameter}()
     end
 
     # Extinction parameters, optical depth and mixing ratio
@@ -308,7 +313,7 @@ function parse_dust()
     # Create continuum object
     continuum = Continuum(T_s, T_dc, α, τ_97, τ_ice, τ_ch, β, T_hot, Cf, τ_warm, τ_cold, sil_peak)
 
-    continuum, dust_features, abs_features
+    continuum, dust_features, abs_features, abs_taus
 end
 
 

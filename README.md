@@ -253,6 +253,11 @@ Note: If one wishes to model a PAH feature with a Pearson type-IV profile (curre
 
 Entries for absorption features modeled with Drude profiles work the exact same way as PAH features, with the exception that their names should be prefixed by "abs_".
 ```toml
+[absorption_features."abs_HCO+_12.1".tau]
+val = 0.1
+plim = [0.0, 0.2]
+locked = false
+
 [absorption_features."abs_HCO+_12.1".wave]
 val = 12.05
 plim = [-0.1, 0.1]
@@ -263,6 +268,7 @@ val = 0.125
 plim = [0.4, 1.4]
 locked = true
 ```
+There is also an additional entry for "tau" which determines the peak optical depth of the absorption feature, modeled as a screen ($\propto e^{-\tau}$).
 
 **Water-Ice/CH Absorption:**
 

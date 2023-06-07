@@ -376,6 +376,7 @@ struct CubeFitter{T<:Real,S<:Integer}
     n_abs_feat::S
     dust_features::DustFeatures
     abs_features::DustFeatures
+    abs_taus::Vector{Parameter}
 
     # Line parameters
     n_lines::S
@@ -471,7 +472,7 @@ struct CubeFitter{T<:Real,S<:Integer}
         # Alias
         λ = cube.λ
 
-        continuum, dust_features, abs_features = parse_dust()
+        continuum, dust_features, abs_features, abs_taus = parse_dust()
         lines, tied_kinematics, flexible_wavesol, tie_voigt_mixing, voigt_mix_tied = parse_lines()
 
         @debug "### Model will include 1 stellar continuum component ###" *
@@ -525,6 +526,7 @@ struct CubeFitter{T<:Real,S<:Integer}
                                     abs_features.fwhm[ab_filt],
                                     abs_features.index[ab_filt],
                                     abs_features.cutoff[ab_filt])
+        abs_taus = abs_taus[ab_filt]
         n_abs_features = length(abs_features.names)
         msg = "### Model will include $n_abs_features absorption feature components ###"
         for ab_mn ∈ abs_features.mean
@@ -641,7 +643,7 @@ struct CubeFitter{T<:Real,S<:Integer}
         new{typeof(z), typeof(n_lines)}(cube, z, name, out[:user_mask], out[:plot_spaxels], out[:plot_maps], out[:plot_range], out[:parallel], 
             out[:save_fits], out[:save_full_model], out[:overwrite], out[:track_memory], out[:track_convergence], out[:make_movies], 
             out[:extinction_curve], out[:extinction_screen], out[:fit_sil_emission], out[:fit_all_samin], continuum, n_dust_cont, 
-            n_power_law, n_dust_features, n_abs_features, dust_features, abs_features, n_lines, n_acomps, n_comps, lines, tied_kinematics, tie_voigt_mixing, 
+            n_power_law, n_dust_features, n_abs_features, dust_features, abs_features, abs_taus, n_lines, n_acomps, n_comps, lines, tied_kinematics, tie_voigt_mixing, 
             voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, out[:cosmology], flexible_wavesol, out[:n_bootstrap], out[:random_seed], 
             p_init_cont, p_init_line)
     end
@@ -698,11 +700,11 @@ function get_continuum_plimits(cube_fitter::CubeFitter)
 
     dust_features = cube_fitter.dust_features
     abs_features = cube_fitter.abs_features
+    abs_taus = cube_fitter.abs_taus
     continuum = cube_fitter.continuum
 
     amp_dc_plim = (0., Inf)
     amp_df_plim = (0., clamp(1 / exp(-continuum.τ_97.limits[2]), 1., Inf))
-    amp_ab_plim = (0., 1000.)
 
     stellar_plim = [amp_dc_plim, continuum.T_s.limits]
     stellar_lock = [false, continuum.T_s.locked]
@@ -722,8 +724,8 @@ function get_continuum_plimits(cube_fitter::CubeFitter)
         end
     end
 
-    ab_plim = vcat([[amp_ab_plim, mi.limits, fi.limits] for (mi, fi) ∈ zip(abs_features.mean, abs_features.fwhm)]...)
-    ab_lock = vcat([[false, mi.locked, fi.locked] for (mi, fi) ∈ zip(abs_features.mean, abs_features.fwhm)]...)
+    ab_plim = vcat([[tau.limits, mi.limits, fi.limits] for (tau, mi, fi) ∈ zip(abs_taus, abs_features.mean, abs_features.fwhm)]...)
+    ab_lock = vcat([[tau.locked, mi.locked, fi.locked] for (tau, mi, fi) ∈ zip(abs_taus, abs_features.mean, abs_features.fwhm)]...)
     ext_plim = [continuum.τ_97.limits, continuum.τ_ice.limits, continuum.τ_ch.limits, continuum.β.limits]
     ext_lock = [continuum.τ_97.locked, continuum.τ_ice.locked, continuum.τ_ch.locked, continuum.β.locked]
     hd_plim = cube_fitter.fit_sil_emission ? [amp_dc_plim, continuum.T_hot.limits, continuum.Cf_hot.limits, 
@@ -820,7 +822,7 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
         A_df = repeat([clamp(nanmedian(I)/2, 0., Inf)], cube_fitter.n_dust_feat)
 
         # Absorption feature amplitudes
-        A_ab = repeat([0.1], cube_fitter.n_abs_feat)
+        A_ab = [tau.value for tau ∈ cube_fitter.abs_taus]
 
         # Dust continuum amplitudes
         λ_dc = clamp.([Wein(Ti.value) for Ti ∈ continuum.T_dc], minimum(λ), maximum(λ))
