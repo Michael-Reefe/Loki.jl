@@ -593,20 +593,20 @@ locked = false
 # Caution: it's seems to be better to estimate and lock these parameters rather than fitting for them
 # since this HCO+ feature is right on top of some PAH features that tend to want to cancel each other out.
 # https://iopscience.iop.org/article/10.1088/0067-0049/182/2/628/pdf
-[absorption_features."abs_HCO+_12.1".tau]
-val = 0.1
-plim = [0.0, 0.2]
-locked = false
+# [absorption_features."abs_HCO+_12.1".tau]
+# val = 0.1
+# plim = [0.0, 0.2]
+# locked = false
 
-[absorption_features."abs_HCO+_12.1".wave]
-val = 12.05
-plim = [-0.1, 0.1]
-locked = true
+# [absorption_features."abs_HCO+_12.1".wave]
+# val = 12.05
+# plim = [-0.1, 0.1]
+# locked = true
 
-[absorption_features."abs_HCO+_12.1".fwhm]
-val = 0.125
-plim = [0.4, 1.4]
-locked = true
+# [absorption_features."abs_HCO+_12.1".fwhm]
+# val = 0.125
+# plim = [0.4, 1.4]
+# locked = true
 
 # [absorption_features."abs_C2H2_13.7".wave]
 # val = 13.69
@@ -640,7 +640,7 @@ locked = false
 # at ~6.9 microns (the peak).
 [extinction.tau_ch]
 val = 0.1
-plim = [0.0, 10.0]
+plim = [0.0, 1.0]
 locked = false
 
 # extinction.beta: the mixing ratio for the extinction profile,

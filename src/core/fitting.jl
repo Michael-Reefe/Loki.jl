@@ -382,7 +382,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     parinfo, config = get_line_parinfo(n_free, lbfree_tied, ubfree_tied)
 
     # Wrapper function for fitting only the free, tied parameters
-    function fit_step3(x, pfree_tied, func)
+    function fit_step3(x, pfree_tied, func; n=0)
         ptot = zeros(Float64, length(p_tied))
         ptot[.~param_lock_tied] .= pfree_tied
         ptot[param_lock_tied] .= pfix_tied
@@ -393,7 +393,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
         for tie in tied_pairs
             ptot[tie[2]] = ptot[tie[1]] * tie[3]
         end
-        func(x, ptot)
+        func(x, ptot, n)
     end
 
     if (init || use_ap || cube_fitter.fit_all_samin) && !bootstrap_iter
@@ -403,13 +403,13 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
         # Parameter and function tolerance levels for convergence with SAMIN,
         # these are a bit loose since we're mainly just looking to get into the right global minimum region with SAMIN
         # before refining the fit later with a LevMar local minimum routine
-        fit_func = (x, p) -> -ln_likelihood(
+        fit_func = (x, p, n) -> -ln_likelihood(
                                 Inorm, 
                                 model_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
                                     cube_fitter.flexible_wavesol, ext_curve_norm, lsf_interp_func), 
                                 σnorm)
         x_tol = 1e-5
-        f_tol = abs(fit_func(λnorm, p₀) - fit_func(λnorm, clamp.(p₀ .- x_tol, lower_bounds, upper_bounds)))
+        f_tol = abs(fit_func(λnorm, p₀, 0) - fit_func(λnorm, clamp.(p₀ .- x_tol, lower_bounds, upper_bounds), 0))
 
         # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
         res = Optim.optimize(p -> fit_step3(λnorm, p, fit_func), lbfree_tied, ubfree_tied, pfree_tied, 
@@ -446,14 +446,14 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
 
     ############################################# FIT WITH LEVMAR ###################################################
 
-    fit_func_2 = (x, p) -> model_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
-        cube_fitter.flexible_wavesol, ext_curve_norm, lsf_interp_func)
+    fit_func_2 = (x, p, n) -> model_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
+        cube_fitter.flexible_wavesol, ext_curve_norm[1+n:end-n], lsf_interp_func)
     
     res = cmpfit(λnorm, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func_2), p₁, parinfo=parinfo, config=config)
     n = 1
     while res.niter < 5
         @warn "LM Solver is stuck on the initial state for the line fit of spaxel $spaxel. Retrying..."
-        res = cmpfit(λnorm[1+n:end-n], Inorm[1+n:end-n], σnorm[1+n:end-n], (x, p) -> fit_step3(x, p, fit_func_2), 
+        res = cmpfit(λnorm[1+n:end-n], Inorm[1+n:end-n], σnorm[1+n:end-n], (x, p) -> fit_step3(x, p, fit_func_2, n=n), 
             p₁, parinfo=parinfo, config=config)
         n += 1
     end 
