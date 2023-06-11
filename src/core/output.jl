@@ -499,7 +499,8 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     end
     if occursin("chi2", String(name_i))
         vmin = 0
-        vmax = 30
+        # Hard upper limit on the reduced chi^2 map to show the structure
+        vmax = min(nanmaximum(filtered), 30)
     end
     # default cmap is magma for FWHMs and equivalent widths
     if (occursin("fwhm", String(name_i)) || occursin("eqw", String(name_i))) && cmap == :cubehelix
