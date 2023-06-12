@@ -365,6 +365,8 @@ struct CubeFitter{T<:Real,S<:Integer}
     extinction_screen::Bool
     fit_sil_emission::Bool
     fit_all_samin::Bool
+    use_pah_templates::Bool
+    pah_template_map::BitMatrix
 
     # Continuum parameters
     continuum::Continuum
@@ -404,6 +406,7 @@ struct CubeFitter{T<:Real,S<:Integer}
 
     p_init_cont::Vector{T}
     p_init_line::Vector{T}
+    p_init_pahtemp::Vector{T}
 
     #= Constructor function --> the default inputs are all taken from the configuration files, but may be overwritten
     by the kwargs object using the same syntax as any keyword argument. The rest of the fields are generated in the function 
@@ -632,20 +635,32 @@ struct CubeFitter{T<:Real,S<:Integer}
         @debug "Preparing initial best fit parameter vectors with $(n_params_cont) and $(n_params_lines) parameters"
         p_init_cont = zeros(n_params_cont)
         p_init_line = zeros(n_params_lines)
+        p_init_pahtemp = zeros(2)
+
+        if !(out[:use_pah_templates])
+            pah_template_map = falses(size(cube.Iν)[1:2])
+        else
+            if haskey(kwargs, :pah_template_map)
+                pah_template_map = kwargs[:pah_template_map]
+            else
+                pah_template_map = trues(size(cube.Iν)[1:2])
+            end
+        end
 
         # If a fit has been run previously, read in the file containing the rolling best fit parameters
         # to pick up where the fitter left off seamlessly
         if isfile(joinpath("output_$name", "spaxel_binaries", "init_fit_cont.csv")) && isfile(joinpath("output_$name", "spaxel_binaries", "init_fit_line.csv"))
             p_init_cont = readdlm(joinpath("output_$name", "spaxel_binaries", "init_fit_cont.csv"), ',', Float64, '\n')[:, 1]
             p_init_line = readdlm(joinpath("output_$name", "spaxel_binaries", "init_fit_line.csv"), ',', Float64, '\n')[:, 1]
+            p_init_pahtemp = readdlm(joinpath("output_$name", "spaxel_binaries", "init_fit_pahtemp.csv"), ',', Float64, '\n')[:, 1]
         end
 
         new{typeof(z), typeof(n_lines)}(cube, z, name, out[:user_mask], out[:plot_spaxels], out[:plot_maps], out[:plot_range], out[:parallel], 
             out[:save_fits], out[:save_full_model], out[:overwrite], out[:track_memory], out[:track_convergence], out[:make_movies], 
-            out[:extinction_curve], out[:extinction_screen], out[:fit_sil_emission], out[:fit_all_samin], continuum, n_dust_cont, 
-            n_power_law, n_dust_features, n_abs_features, dust_features, abs_features, abs_taus, n_lines, n_acomps, n_comps, lines, tied_kinematics, tie_voigt_mixing, 
-            voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, out[:cosmology], flexible_wavesol, out[:n_bootstrap], out[:random_seed], 
-            p_init_cont, p_init_line)
+            out[:extinction_curve], out[:extinction_screen], out[:fit_sil_emission], out[:fit_all_samin], out[:use_pah_templates], pah_template_map, 
+            continuum, n_dust_cont, n_power_law, n_dust_features, n_abs_features, dust_features, abs_features, abs_taus, n_lines, n_acomps, n_comps, 
+            lines, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, out[:cosmology], flexible_wavesol, 
+            out[:n_bootstrap], out[:random_seed], p_init_cont, p_init_line, p_init_pahtemp)
     end
 
 end
@@ -696,7 +711,7 @@ end
 Get the continuum limits vector for a given CubeFitter object, split up by the 2 continuum fitting steps.
 Also returns a boolean vector for which parameters are allowed to vary.
 """
-function get_continuum_plimits(cube_fitter::CubeFitter)
+function get_continuum_plimits(cube_fitter::CubeFitter; split::Bool=false)
 
     dust_features = cube_fitter.dust_features
     abs_features = cube_fitter.abs_features
@@ -733,11 +748,18 @@ function get_continuum_plimits(cube_fitter::CubeFitter)
     hd_lock = cube_fitter.fit_sil_emission ? [false, continuum.T_hot.locked, continuum.Cf_hot.locked,
         continuum.τ_warm.locked, continuum.τ_cold.locked, continuum.sil_peak.locked] : []
 
-    # Split up for the two different stages of continuum fitting -- with templates and then with the PAHs
-    plims = Vector{Tuple}(vcat(stellar_plim, dc_plim, pl_plim, ext_plim, ab_plim, hd_plim, df_plim))
-    lock = BitVector(vcat(stellar_lock, dc_lock, pl_lock, ext_lock, ab_lock, hd_lock, df_lock))
-
-    plims, lock
+    if !split
+        plims = Vector{Tuple}(vcat(stellar_plim, dc_plim, pl_plim, ext_plim, ab_plim, hd_plim, df_plim))
+        lock = BitVector(vcat(stellar_lock, dc_lock, pl_lock, ext_lock, ab_lock, hd_lock, df_lock))
+        plims, lock
+    else
+        # Split up for the two different stages of continuum fitting -- with templates and then with the PAHs
+        plims_1 = Vector{Tuple}(vcat(stellar_plim, dc_plim, pl_plim, ext_plim, ab_plim, hd_plim, [amp_df_plim, amp_df_plim]))
+        lock_1 = BitVector(vcat(stellar_lock, dc_lock, pl_lock, ext_lock, ab_lock, hd_lock, [false, false]))
+        plims_2 = Vector{Tuple}(df_plim)
+        lock_2 = BitVector(df_lock)
+        plims_1, plims_2, lock_1, lock_2
+    end
 end
 
 
@@ -747,7 +769,7 @@ end
 Get the vector of starting values for the continuum fit for a given CubeFitter object. Again, the
 vector is split up by the 2 continuum fitting steps.
 """
-function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, init::Bool)
+function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, init::Bool; split::Bool=false)
 
     # Check if the cube fitter has initial fit parameters 
     if !init
@@ -756,6 +778,7 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
 
         # Set the parameters to the best parameters
         p₀ = copy(cube_fitter.p_init_cont)
+        pah_frac = copy(cube_fitter.p_init_pahtemp)
 
         # pull out optical depth that was pre-fit
         # τ_97_0 = cube_fitter.τ_guess[parse(Int, cube_fitter.cube.channel)][spaxel]
@@ -765,6 +788,9 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
         # (should be close to 1 since the sum is already normalized by the number of spaxels included anyways)
         scale = max(nanmedian(I), 1e-10) * N / nanmedian(sumdim(cube_fitter.cube.Iν, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2)))
         max_amp = 1 / exp(-max_τ)
+
+        # Rescale PAH templates
+        pah_frac .*= scale
 
         # Stellar amplitude
         p₀[1] *= scale
@@ -820,6 +846,8 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
 
         # Dust feature amplitudes
         A_df = repeat([clamp(nanmedian(I)/2, 0., Inf)], cube_fitter.n_dust_feat)
+        # PAH templates
+        pah_frac = repeat([clamp(nanmedian(I)/2, 0., Inf)], 2)
 
         # Absorption feature amplitudes
         A_ab = [tau.value for tau ∈ cube_fitter.abs_taus]
@@ -875,12 +903,21 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
         
     @debug "Continuum Starting Values: \n $p₀"
 
-    p₀
+    if !split
+        p₀
+    else
+        # Step 1: Stellar + Dust blackbodies, 2 new amplitudes for the PAH templates, and the extinction parameters
+        pars_1 = vcat(p₀[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0))], pah_frac)
+        # Step 2: The PAH profile amplitudes, centers, and FWHMs
+        pars_2 = p₀[(3+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0)):end]
+
+        pars_1, pars_2
+    end
 end
 
 
 """
-    get_continuum_parinfo(n_free_1, n_free_2, lb_1, ub_1, lb_2, ub_2)
+    get_continuum_parinfo(n_free, lb, ub)
 
 Get the CMPFit parinfo and config objects for a given CubeFitter object, given the vector of initial valuels,
 limits, and boolean locked values.
@@ -900,6 +937,33 @@ function get_continuum_parinfo(n_free::S, lb::Vector{T}, ub::Vector{T}) where {S
     config.maxiter = 500
 
     parinfo, config
+
+end
+
+
+# Version for the split fitting if use_pah_templates is enabled
+function get_continuum_parinfo(n_free_1::S, n_free_2::S, lb_1::Vector{T}, ub_1::Vector{T}, 
+    lb_2::Vector{T}, ub_2::Vector{T}) where {S<:Integer,T<:Real}
+
+    parinfo_1 = CMPFit.Parinfo(n_free_1)
+    parinfo_2 = CMPFit.Parinfo(n_free_2)
+
+    for pᵢ ∈ 1:n_free_1
+        parinfo_1[pᵢ].fixed = 0
+        parinfo_1[pᵢ].limited = (1,1)
+        parinfo_1[pᵢ].limits = (lb_1[pᵢ], ub_1[pᵢ])
+    end
+
+    for pᵢ ∈ 1:n_free_2
+        parinfo_2[pᵢ].fixed = 0
+        parinfo_2[pᵢ].limited = (1,1)
+        parinfo_2[pᵢ].limits = (lb_2[pᵢ], ub_2[pᵢ])
+    end
+
+    # Create a `config` structure
+    config = CMPFit.Config()
+
+    parinfo_1, parinfo_2, config
 
 end
 

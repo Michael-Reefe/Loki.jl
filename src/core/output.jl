@@ -138,7 +138,7 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             # End of continuum parameters: recreate the continuum model
             I_cont, comps_c = model_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], N, cube_fitter.n_dust_cont, cube_fitter.n_power_law,
                 cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, 
-                cube_fitter.fit_sil_emission, true)
+                cube_fitter.fit_sil_emission, false, true)
         end
 
         # Save marker of the point where the continuum parameters end and the line parameters begin

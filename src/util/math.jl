@@ -65,9 +65,9 @@ const OHM_prof = silicate_ohm()
 const OHM_interp = Spline1D(OHM_prof[1], OHM_prof[2]; k=3)
 
 # Save the Smith+2006 PAH templates as constants
-# const SmithTemps = read_smith_temps()
-# const Smith3_interp = Spline1D(SmithTemps[1], SmithTemps[2]; k=3)
-# const Smith4_interp = Spline1D(SmithTemps[3], SmithTemps[4]; k=3)
+const SmithTemps = read_smith_temps()
+const Smith3_interp = Spline1D(SmithTemps[1], SmithTemps[2]; k=3)
+const Smith4_interp = Spline1D(SmithTemps[3], SmithTemps[4]; k=3)
 
 # Save the Ice+CH optical depth template as a constant
 const IceCHTemp = read_ice_ch_temps()
@@ -820,7 +820,8 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
     addition to the overall fit
 """
 function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
-    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, return_components::Bool) where {T<:Real}
+    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, use_pah_templates::Bool, 
+    return_components::Bool) where {T<:Real}
 
     # Prepare outputs
     comps = Dict{String, Vector{Float64}}()
@@ -885,15 +886,22 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
         pᵢ += 6
     end
 
-    for (j, prof) ∈ enumerate(dust_prof)
-        if prof == :Drude
-            comps["dust_feat_$j"] = Drude.(λ, params[pᵢ:pᵢ+2]...)
-            pᵢ += 3
-        elseif prof == :PearsonIV
-            comps["dust_feat_$j"] = PearsonIV.(λ, params[pᵢ:pᵢ+4]...)
-            pᵢ += 5
+    if use_pah_templates
+        pah3 = Smith3_interp.(λ)
+        contin .+= params[pᵢ] .* pah3 ./ maximum(pah3) .* comps["extinction"]
+        pah4 = Smith4_interp.(λ)
+        contin .+= params[pᵢ+1] .* pah4 ./ maximum(pah4) .* comps["extinction"]
+    else
+        for (j, prof) ∈ enumerate(dust_prof)
+            if prof == :Drude
+                comps["dust_feat_$j"] = Drude.(λ, params[pᵢ:pᵢ+2]...)
+                pᵢ += 3
+            elseif prof == :PearsonIV
+                comps["dust_feat_$j"] = PearsonIV.(λ, params[pᵢ:pᵢ+4]...)
+                pᵢ += 5
+            end
+            contin .+= comps["dust_feat_$j"] .* comps["extinction"] 
         end
-        contin .+= comps["dust_feat_$j"] .* comps["extinction"] 
     end
 
     # Return components if necessary
@@ -907,7 +915,7 @@ end
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
 function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
-    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool) where {T<:Real}
+    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, use_pah_templates::Bool) where {T<:Real}
 
     # Prepare outputs
     contin = zeros(Float64, length(λ))
@@ -966,9 +974,92 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
         pᵢ += 6
     end
 
+    if use_pah_templates
+        pah3 = Smith3_interp.(λ)
+        contin .+= params[pᵢ] .* pah3 ./ maximum(pah3) .* ext
+        pah4 = Smith4_interp.(λ)
+        contin .+= params[pᵢ+1] .* pah4 ./ maximum(pah4) .* ext
+    else
+        if all(dust_prof .== :Drude)
+            for j ∈ 1:length(dust_prof) 
+                contin .+= Drude.(λ, params[pᵢ:pᵢ+2]...) .* ext
+                pᵢ += 3
+            end
+        else
+            for (j, prof) ∈ enumerate(dust_prof)
+                if prof == :Drude
+                    df = Drude.(λ, params[pᵢ:pᵢ+2]...)
+                    pᵢ += 3
+                elseif prof == :PearsonIV
+                    df = PearsonIV.(λ, params[pᵢ:pᵢ+4]...)
+                    pᵢ += 5
+                end
+                contin .+= df .* ext
+            end
+        end
+    end
+
+    contin
+
+end
+
+
+"""
+    model_pah_residuals(λ, params, n_dust_feat, return_components)
+Create a model of the PAH features at the given wavelengths `λ`, given the parameter vector `params`.
+Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
+(with modifications)
+# Arguments
+- `λ::Vector{<:AbstractFloat}`: Wavelength vector of the spectrum to be fit
+- `params::Vector{<:AbstractFloat}`: Parameter vector. Parameters should be ordered as: `(amp, center, fwhm) for each PAH profile`
+- `n_dust_feat::Integer`: The number of PAH features that are being fit
+- `ext_curve::Vector{<:AbstractFloat}`: The extinction curve that was fit using model_continuum
+- `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in
+    addition to the overall fit
+"""
+function model_pah_residuals(λ::Vector{T}, params::Vector{T}, dust_prof::Vector{Symbol}, ext_curve::Vector{T}, 
+    return_components::Bool) where {T<:Real}
+
+    # Prepare outputs
+    comps = Dict{String, Vector{Float64}}()
+    contin = zeros(Float64, length(λ))
+
+    # Add dust features with drude profiles
+    pᵢ = 1
+    for (j, prof) ∈ enumerate(dust_prof)
+        if prof == :Drude
+            df = Drude.(λ, params[pᵢ:pᵢ+2]...)
+            pᵢ += 3
+        elseif prof == :PearsonIV
+            df = PearsonIV.(λ, params[pᵢ:pᵢ+4]...)
+            pᵢ += 5
+        end
+        contin .+= df
+    end
+
+    # Apply extinction
+    contin .*= ext_curve
+
+    # Return components, if necessary
+    if return_components
+        return contin, comps
+    end
+    contin
+
+end
+
+
+# Multiple dispatch for more efficiency
+function model_pah_residuals(λ::Vector{T}, params::Vector{T}, dust_prof::Vector{Symbol}, ext_curve::Vector{T}) where {T<:Real}
+
+    # Prepare outputs
+    contin = zeros(Float64, length(λ))
+
+    # Add dust features with drude profiles
+    pᵢ = 1
     if all(dust_prof .== :Drude)
         for j ∈ 1:length(dust_prof) 
-            contin .+= Drude.(λ, params[pᵢ:pᵢ+2]...) .* ext
+            contin .+= Drude.(λ, params[pᵢ:pᵢ+2]...)
             pᵢ += 3
         end
     else
@@ -980,9 +1071,12 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
                 df = PearsonIV.(λ, params[pᵢ:pᵢ+4]...)
                 pᵢ += 5
             end
-            contin .+= df .* ext
+            contin .+= df
         end
     end
+
+    # Apply extinction
+    contin .*= ext_curve
 
     contin
 

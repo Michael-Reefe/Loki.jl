@@ -185,6 +185,10 @@ If `true`, dust extinction is modeled as a foreground screen $\propto e^{-\tau(\
 
 This boolean option determines whether or not to include the warm silicate dust emission component of [Gallimore et al. (2010)](https://ui.adsabs.harvard.edu/abs/2010ApJS..187..172G).
 
+`use_pah_templates = false`
+
+This boolean option determines how the PAH features are fit. If `false`, they will be fit using Drude profiles simultaneously with the rest of the continuum, the exact same way that PAHFIT does.  However, if `true`, the continuum fitting is split up into two steps.  In the first step, the continuum is fit while the PAH features are included using two templates from [Smith et al. (2007)](https://ui.adsabs.harvard.edu/abs/2007ApJ...656..770S).  Then in the second step, the continuum from the previous step is subtracted, and PAH features are fit to the residual spectrum using Drude profiles, using the same Drude model as PAHFIT.  In general, it is best to leave this option `false` unless you are dealing with spectra with extremely weak PAH emission and a complicated underlying continuum that causes the fitted PAHs to become unphysical.
+
 `fit_all_samin = false`
 
 By default, simulated annealing is only performed for the line fit during the initial fit of the sum of all spaxels. If this option is set to `true`, then simulated annealing will be performed on all of the line fits for the individual spaxels as well.

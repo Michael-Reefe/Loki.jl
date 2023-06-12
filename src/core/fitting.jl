@@ -169,8 +169,8 @@ http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
     the initial parameter vector for individual spaxel fits
 """
 function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
-    σ::Vector{<:Real}, mask_lines::BitVector, mask_bad::BitVector, N::Real; init::Bool=false, use_ap::Bool=false, bootstrap_iter::Bool=false, 
-    p1_boots::Union{Vector{<:Real},Nothing}=nothing) 
+    σ::Vector{<:Real}, mask_lines::BitVector, mask_bad::BitVector, N::Real; init::Bool=false, use_ap::Bool=false, 
+    bootstrap_iter::Bool=false, p1_boots::Union{Vector{<:Real},Nothing}=nothing) 
 
     @debug """\n
     #########################################################
@@ -243,7 +243,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         ptot[.~lock] .= pfree
         ptot[lock] .= pfix
         model_continuum(x, ptot, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
-            cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission)
+            cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission,
+            false)
     end
     res = cmpfit(λ_spax, I_spax, σ_spax, fit_cont, pfree, parinfo=parinfo, config=config)
     n = 1
@@ -275,21 +276,246 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
 
     # Create the full model, again only if not bootstrapping
     I_model, comps = model_continuum(λ, popt, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
-        cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, true)
+        cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, false, true)
+    
+    # Estimate PAH template amplitude
+    pahtemp = zeros(length(λ))
+    for i in 1:cube_fitter.n_dust_feat
+        pahtemp .+= comps["dust_feat_$i"]
+    end
+    pah_amp = maximum(pahtemp)/2
 
     if init
         cube_fitter.p_init_cont[:] .= popt
+        cube_fitter.p_init_pahtemp[:] .= pah_amp
         # Save the results to a file 
         # save running best fit parameters in case the fitting is interrupted
         open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_cont.csv"), "w") do f
             writedlm(f, cube_fitter.p_init_cont, ',')
+        end
+        open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_pahtemp.csv"), "w") do f
+            writedlm(f, cube_fitter.p_init_pahtemp, ',')
         end
     end
 
     # Print the results (to the logger)
     pretty_print_continuum_results(cube_fitter, popt, perr, I_spax)
 
-    popt, I_model, comps, n_free, perr
+    popt, I_model, comps, n_free, perr, zeros(2)
+end
+
+
+function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
+    σ::Vector{<:Real}, mask_lines::BitVector, mask_bad::BitVector, N::Real, split_flag::Bool; init::Bool=false, use_ap::Bool=false, 
+    bootstrap_iter::Bool=false, p1_boots::Union{Vector{<:Real},Nothing}=nothing) 
+
+    if !split_flag
+        return continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, mask_bad, N; init=init, use_ap=use_ap,
+            bootstrap_iter=bootstrap_iter, p1_boots=p1_boots)
+    end
+
+    @debug """\n
+    #########################################################
+    ###   Beginning continuum fit for spaxel $spaxel...   ###
+    #########################################################
+    """
+    # Normalize
+    λ_spax = copy(λ)
+    I_spax = I ./ N
+    σ_spax = σ ./ N
+
+    scale = 7
+    # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
+    λknots = λ[.~mask_lines][(1+scale):scale:(length(λ[.~mask_lines])-scale)]
+    # Replace the masked lines with a linear interpolation
+    I_spax[mask_lines] .= Spline1D(λ_spax[.~mask_lines], I_spax[.~mask_lines], λknots, k=1, bc="extrapolate").(λ[mask_lines]) 
+    σ_spax[mask_lines] .= Spline1D(λ_spax[.~mask_lines], σ_spax[.~mask_lines], λknots, k=1, bc="extrapolate").(λ[mask_lines])
+
+    # Masked spectrum
+    λ_spax = λ_spax[.~mask_bad]
+    I_spax = I_spax[.~mask_bad]
+    σ_spax = σ_spax[.~mask_bad]
+
+    if !isnothing(cube_fitter.user_mask)
+        # Mask out additional regions
+        for pair in cube_fitter.user_mask
+            region = pair[1] .< λ_spax .< pair[2]
+            λ_spax = λ_spax[.~region]
+            I_spax = I_spax[.~region]
+            σ_spax = σ_spax[.~region]
+        end
+    end
+
+    # Get the priors and "locked" booleans for each parameter, split up by the 2 steps for the continuum fit
+    plims_1, plims_2, lock_1, lock_2 = get_continuum_plimits(cube_fitter, split=true)
+
+    # Split up the initial parameter vector into the components that we need for each fitting step
+    if !bootstrap_iter
+        pars_1, pars_2 = get_continuum_initial_values(cube_fitter, λ_spax, I_spax, N, init || use_ap, split=true)
+    else
+        pars_1 = vcat(p1_boots[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+3*cube_fitter.n_abs_feat+
+            (cube_fitter.fit_sil_emission ? 6 : 0))], p1_boots[end-1:end])
+        pars_2 = p1_boots[(3+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+3*cube_fitter.n_abs_feat+
+            (cube_fitter.fit_sil_emission ? 6 : 0)):end-2]
+    end
+
+    # Sort parameters by those that are locked and those that are unlocked
+    p1fix = pars_1[lock_1]
+    p1free = pars_1[.~lock_1]
+    p2fix = pars_2[lock_2]
+    p2free = pars_2[.~lock_2]
+
+    # Count free parameters
+    n_free_1 = sum(.~lock_1)
+    n_free_2 = sum(.~lock_2)
+
+    # Lower/upper bounds
+    lb_1 = [pl[1] for pl in plims_1[.~lock_1]]
+    ub_1 = [pl[2] for pl in plims_1[.~lock_1]]
+    lb_2 = [pl[1] for pl in plims_2[.~lock_2]]
+    ub_2 = [pl[2] for pl in plims_2[.~lock_2]]
+
+    # Convert parameter limits into CMPFit object
+    parinfo_1, parinfo_2, config = get_continuum_parinfo(n_free_1, n_free_2, lb_1, ub_1, lb_2, ub_2)
+
+    @debug """\n
+    ##########################################################################################################
+    ########################## STEP 1 - FIT THE BLACKBODY CONTINUUM WITH PAH TEMPLATES #######################
+    ##########################################################################################################
+    """
+    @debug "Continuum Step 1 Parameters: \n $pars_1"
+    @debug "Continuum Parameters locked? \n $lock_1"
+    @debug "Continuum Lower limits: \n $([pl[1] for pl in plims_1])"
+    @debug "Continuum Upper limits: \n $([pl[2] for pl in plims_1])"
+
+    @debug "Beginning continuum fitting with Levenberg-Marquardt least squares (CMPFit):"
+
+    function fit_step1(x, pfree, return_comps=false)
+        ptot = zeros(Float64, length(pars_1))
+        ptot[.~lock_1] .= pfree
+        ptot[lock_1] .= p1fix
+        if !return_comps
+            model_continuum(x, ptot, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
+                cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, true)
+        else
+            model_continuum(x, ptot, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
+                cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, true, true)
+        end
+    end
+    res_1 = cmpfit(λ_spax, I_spax, σ_spax, fit_step1, p1free, parinfo=parinfo_1, config=config)
+    n = 1
+    while res_1.niter < 5
+        @warn "LM Solver is stuck on the initial state for the continuum (step 1) fit of spaxel $spaxel. Retrying..."
+        # For some reason, masking out a pixel or two seems to fix the problem. This loop shouldn't ever need more than 1 iteration.
+        res_1 = cmpfit(λ_spax[1+n:end-n], I_spax[1+n:end-n], σ_spax[1+n:end-n], fit_step1, p1free, parinfo=parinfo_1, config=config)
+        n += 1
+        if n > 10
+            @warn "LM solver has exceeded 10 tries on the continuum fit of spaxel $spaxel. Aborting."
+            break
+        end
+    end 
+
+    @debug "Continuum CMPFit Status: $(res_1.status)"
+
+    # Create continuum without the PAH features
+    _, ccomps = fit_step1(λ_spax, res_1.param, true)
+
+    I_cont = ccomps["stellar"]
+    for i ∈ 1:cube_fitter.n_dust_cont
+        I_cont .+= ccomps["dust_cont_$i"]
+    end
+    for j ∈ 1:cube_fitter.n_power_law
+        I_cont .+= ccomps["power_law_$j"]
+    end
+    I_cont .*= ccomps["extinction"]
+    if cube_fitter.fit_sil_emission
+        I_cont .+= ccomps["hot_dust"]
+    end
+    I_cont .*= ccomps["abs_ice"] .* ccomps["abs_ch"]
+    for k ∈ 1:cube_fitter.n_abs_feat
+        I_cont .*= ccomps["abs_feat_$k"]
+    end
+
+    @debug """\n
+    ##########################################################################################################
+    ################################# STEP 2 - FIT THE PAHs AS DRUDE PROFILES ################################
+    ##########################################################################################################
+    """
+    @debug "Continuum Step 2 Parameters: \n $pars_2"
+    @debug "Continuum Parameters locked? \n $lock_2"
+    @debug "Continuum Lower limits: \n $([pl[1] for pl in plims_2])"
+    @debug "Continuum Upper limits: \n $([pl[2] for pl in plims_2])"
+
+    @debug "Beginning continuum fitting with Levenberg-Marquardt least squares (CMPFit):"
+
+    # Wrapper function
+    function fit_step2(x, pfree, return_comps=false)
+        ptot = zeros(Float64, length(pars_2))
+        ptot[.~lock_2] .= pfree
+        ptot[lock_2] .= p2fix
+        if !return_comps
+            model_pah_residuals(x, ptot, cube_fitter.dust_features.profiles, ccomps["extinction"])
+        else
+            model_pah_residuals(x, ptot, cube_fitter.dust_features.profiles, ccomps["extinction"], true)
+        end
+    end
+    res_2 = cmpfit(λ_spax, I_spax.-I_cont, σ_spax, fit_step2, p2free, parinfo=parinfo_2, config=config)
+    n = 1
+    while res_2.niter < 5
+        @warn "LM Solver is stuck on the initial state for the continuum (step 2) fit of spaxel $spaxel. Retrying..."
+        # For some reason, masking out a pixel or two seems to fix the problem. This loop shouldn't ever need more than 1 iteration.
+        res_2 = cmpfit(λ_spax[1+n:end-n], (I_spax.-I_cont)[1+n:end-n], σ_spax[1+n:end-n], fit_step2, p2free, parinfo=parinfo_2, config=config)
+        n += 1
+        if n > 10
+            @warn "LM solver has exceeded 10 tries on the continuum fit of spaxel $spaxel. Aborting."
+            break
+        end
+    end 
+
+    @debug "Continuum CMPFit Step 2 status: $(res_2.status)"
+
+    # Get combined best fit results
+    lock = vcat(lock_1[1:end-2], lock_2)
+
+    # Combined Best fit parameters
+    popt = zeros(length(pars_1)+length(pars_2)-2)
+    popt[.~lock] .= vcat(res_1.param[1:end-2], res_2.param)
+    popt[lock] .= vcat(p1fix, p2fix)
+
+    # Only bother with the uncertainties if not bootstrapping
+    perr = zeros(length(popt))
+    if !bootstrap_iter
+        # Combined 1-sigma uncertainties
+        perr[.~lock] .= vcat(res_1.perror[1:end-2], res_2.perror)
+    end
+
+    n_free = n_free_1 + n_free_2 - 2
+
+    @debug "Best fit continuum parameters: \n $popt"
+    @debug "Continuum parameter errors: \n $perr"
+    # @debug "Continuum covariance matrix: \n $covar"
+
+    # Create the full model, again only if not bootstrapping
+    I_model, comps = model_continuum(λ, popt, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
+        cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, false, true)
+
+    if init
+        cube_fitter.p_init_cont[:] .= popt
+        cube_fitter.p_init_pahtemp[:] .= res_1.param[end-1:end]
+        # Save the results to a file 
+        # save running best fit parameters in case the fitting is interrupted
+        open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_cont.csv"), "w") do f
+            writedlm(f, cube_fitter.p_init_cont, ',')
+        end
+        open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_pahtemp.csv"), "w") do f
+            writedlm(f, cube_fitter.p_init_pahtemp, ',')
+        end
+    end
+
+    # Print the results (to the logger)
+    pretty_print_continuum_results(cube_fitter, popt, perr, I_spax)
+
+    popt, I_model, comps, n_free, perr, res_1.param[end-1:end]
 end
 
 
@@ -779,7 +1005,7 @@ end
 function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
     σ::Vector{<:Real}, norm::Real, area_sr::Vector{<:Real}, mask_lines::BitVector, mask_bad::BitVector, I_spline::Vector{<:Real}; 
     bootstrap_iter::Bool=false, p1_boots_c::Union{Vector{<:Real},Nothing}=nothing, p1_boots_l::Union{Vector{<:Real},Nothing}=nothing, 
-    use_ap::Bool=false, init::Bool=false)
+    p1_boots_pah::Union{Vector{<:Real},Nothing}=nothing, use_ap::Bool=false, init::Bool=false)
 
     # Interpolate the LSF
     lsf_interp = Spline1D(λ, cube_fitter.cube.lsf, k=1)
@@ -787,9 +1013,19 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     lsf_interp = Spline1D(λ, cube_fitter.cube.lsf, k=1)
     lsf_interp_func = x -> lsf_interp(x)
 
+    if use_ap || init
+        pah_template_spaxel = true
+    else
+        pah_template_spaxel = cube_fitter.pah_template_map[spaxel]
+    end
+    p1_boots_cont = p1_boots_c
+    if cube_fitter.use_pah_templates && pah_template_spaxel && bootstrap_iter
+        p1_boots_cont = [p1_boots_cont; p1_boots_pah]
+    end
+
     # Fit the spaxel
-    popt_c, I_cont, comps_cont, n_free_c, perr_c = continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, mask_bad, norm, 
-        use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_c)
+    popt_c, I_cont, comps_cont, n_free_c, perr_c, pahtemp = continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, mask_bad, norm, 
+        cube_fitter.use_pah_templates && pah_template_spaxel, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_cont)
     popt_l, I_line, comps_line, n_free_l, perr_l = line_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_bad, I_cont, comps_cont["extinction"], 
         lsf_interp_func, norm, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_l)
 
@@ -834,7 +1070,7 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         p_out = [popt_c; popt_l; p_dust; p_lines; χ2; dof]
         p_err = [perr_c; perr_l; p_dust_err; p_lines_err; 0.; 0.]
         
-        return p_out, p_err, popt_c, popt_l, perr_c, perr_l, I_model, comps, χ2, dof
+        return p_out, p_err, popt_c, popt_l, perr_c, perr_l, I_model, comps, χ2, dof, pahtemp
     end
     return I_model, comps, χ2, dof
 end
@@ -906,7 +1142,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
             norm = norm ≠ 0. ? norm : 1.
 
             # Perform the regular fit
-            p_out, p_err, popt_c, popt_l, perr_c, perr_l, I_model, comps, χ2, dof = _fit_spaxel_iterfunc(
+            p_out, p_err, popt_c, popt_l, perr_c, perr_l, I_model, comps, χ2, dof, pahtemp = _fit_spaxel_iterfunc(
                 cube_fitter, spaxel, λ, I, σ, norm, area_sr, mask_lines, mask_bad, I_spline; bootstrap_iter=false, use_ap=use_ap)
             # Convert p_err into 2 columns for the lower/upper errorbars
             p_err = [p_err p_err]
@@ -942,9 +1178,9 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                     # we would have to divide out the sqrt(2) because we now have 2 "measurements")
 
                     # Re-perform the fitting on the resampled data
-                    pb_i, _, _, _, _, _, Ib_i, _, _, _ = with_logger(NullLogger()) do
+                    pb_i, _, _, _, _, _, Ib_i, _, _, _, _ = with_logger(NullLogger()) do
                         _fit_spaxel_iterfunc(cube_fitter, spaxel, λ, I_boot, σ, norm, area_sr, mask_lines_boot, mask_bad, I_spline_boot; 
-                            bootstrap_iter=true, p1_boots_c=popt_c, p1_boots_l=popt_l, use_ap=use_ap)
+                            bootstrap_iter=true, p1_boots_c=popt_c, p1_boots_l=popt_l, p1_boots_pah=pahtemp, use_ap=use_ap)
                     end
                     p_boot[:, nboot] .= pb_i
                     I_model_boot[:, nboot] .= Ib_i
@@ -967,8 +1203,8 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
 
                 # Replace the best-fit model with the 50th percentile model to be consistent with p_out
                 I_boot_cont, comps_boot_cont = model_continuum(λ, p_out[1:split1], norm, cube_fitter.n_dust_cont, cube_fitter.n_power_law, 
-                    cube_fitter.n_dust_feat, cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, 
-                    cube_fitter.fit_sil_emission, true)
+                    cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, 
+                    cube_fitter.fit_sil_emission, false, true)
                 I_boot_line, comps_boot_line = model_line_residuals(λ, p_out[split1+1:split2], cube_fitter.n_lines, cube_fitter.n_comps,
                     cube_fitter.lines, cube_fitter.flexible_wavesol, comps_boot_cont["extinction"], lsf_interp_func, true)
 
