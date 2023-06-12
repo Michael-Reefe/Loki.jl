@@ -8,19 +8,19 @@ end
 @everywhere using Loki
 
 # Load in data
-obs = from_fits(["data/Level3_ch1-long_s3d.fits",
-                 "data/Level3_ch1-medium_s3d.fits",
-                 "data/Level3_ch1-short_s3d.fits",
-                 "data/Level3_ch2-long_s3d.fits",
-                 "data/Level3_ch2-medium_s3d.fits",
-                 "data/Level3_ch2-short_s3d.fits",
-                 "data/Level3_ch3-long_s3d.fits",
-                 "data/Level3_ch3-medium_s3d.fits",
-                 "data/Level3_ch3-short_s3d.fits",
-                 "data/Level3_ch4-long_s3d.fits",
-                 "data/Level3_ch4-medium_s3d.fits",
-                 "data/Level3_ch4-short_s3d.fits"],
-                 0.016317)
+# obs = from_fits(["data/Level3_ch1-long_s3d.fits",
+#                  "data/Level3_ch1-medium_s3d.fits",
+#                  "data/Level3_ch1-short_s3d.fits",
+#                  "data/Level3_ch2-long_s3d.fits",
+#                  "data/Level3_ch2-medium_s3d.fits",
+#                  "data/Level3_ch2-short_s3d.fits",
+#                  "data/Level3_ch3-long_s3d.fits",
+#                  "data/Level3_ch3-medium_s3d.fits",
+#                  "data/Level3_ch3-short_s3d.fits",
+#                  "data/Level3_ch4-long_s3d.fits",
+#                  "data/Level3_ch4-medium_s3d.fits",
+#                  "data/Level3_ch4-short_s3d.fits"],
+#                  0.016317)
 
 # obs = from_fits(["data/VV_114E_ch1-long_s3d.fits",
 #                  "data/VV_114E_ch1-medium_s3d.fits",
@@ -49,6 +49,20 @@ obs = from_fits(["data/Level3_ch1-long_s3d.fits",
 #                  "data/NGC_6552_ch4-medium_s3d.fits",
 #                  "data/NGC_6552_ch4-short_s3d.fits"],
 #                  0.0266)
+
+obs = from_fits(["data/NGC_7319_ch1-long_s3d.fits",
+                 "data/NGC_7319_ch1-medium_s3d.fits",
+                 "data/NGC_7319_ch1-short_s3d.fits",
+                 "data/NGC_7319_ch2-long_s3d.fits",
+                 "data/NGC_7319_ch2-medium_s3d.fits",
+                 "data/NGC_7319_ch2-short_s3d.fits",
+                 "data/NGC_7319_ch3-long_s3d.fits",
+                 "data/NGC_7319_ch3-medium_s3d.fits",
+                 "data/NGC_7319_ch3-short_s3d.fits",
+                 "data/NGC_7319_ch4-long_s3d.fits",
+                 "data/NGC_7319_ch4-medium_s3d.fits",
+                 "data/NGC_7319_ch4-short_s3d.fits"],
+                 0.022)
 
 # obs = from_fits(["data/F2M1106_ch1-long_s3d.fits",
 #                  "data/F2M1106_ch1-medium_s3d.fits",
@@ -107,8 +121,8 @@ else
 end
 
 # Make aperture
-ap = make_aperture(obs.channels[channel], :Circular, "23:03:15.610", "+8:52:26.10", 0.5, auto_centroid=true,
-    scale_psf=false)
+# ap = make_aperture(obs.channels[channel], :Circular, "23:03:15.610", "+8:52:26.10", 0.5, auto_centroid=true,
+#     scale_psf=false)
 # ap = make_aperture(obs.channels[channel], :Circular, "23:03:15.575", "+8:52:24.80", 0.5, auto_centroid=false,
 #     scale_psf=false)
 # ap = make_aperture(obs.channels[channel], :Rectangular, "23:03:15.692", "+8:52:26.622", 0.13, 0.13, 0.,
@@ -121,6 +135,9 @@ ap = make_aperture(obs.channels[channel], :Circular, "23:03:15.610", "+8:52:26.1
 
 # ap = make_aperture(obs.channels[channel], :Circular, "01:07:47.525", "-17:30:25.25", 0.5, auto_centroid=true,
 #     scale_psf=false)
+
+ap = make_aperture(obs.channels[channel], :Circular, "22:36:03.5939", "+33:58:33.145", 0.5, auto_centroid=true,
+    scale_psf=false)
 
 # Create the cube fitting object
 cube_fitter = CubeFitter(obs.channels[channel], obs.z, name; parallel=true, plot_spaxels=:both, 

@@ -54,7 +54,7 @@ plim = [34.9, 35.1]
 locked = true
 
 # [[power_law_indices]]
-# val = 0.0
+# val = 1.55
 # plim = [-3.0, 3.0]
 # locked = false
 

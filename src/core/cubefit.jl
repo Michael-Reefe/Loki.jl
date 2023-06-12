@@ -830,9 +830,7 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
             zip(λ_dc, continuum.T_dc)] .* (λ_dc ./ 9.7).^2 ./ 5., 0., Inf)
         
         # Power law amplitudes
-        A_pl = [αi.value > 0 ? clamp(I[end]/2, 0., Inf) : 
-                αi.value < 0 ? clamp(I[1]/2, 0., Inf) : 
-                clamp(nanmedian(I)/2, 0., Inf) for αi ∈ continuum.α]
+        A_pl = [clamp(nanmedian(I), 0., Inf)/exp(-continuum.τ_97.value)/cube_fitter.n_power_law for αi ∈ continuum.α]
         
         # Hot dust amplitude
         λ_hd = clamp(Wein(continuum.T_hot.value), minimum(λ), maximum(λ))

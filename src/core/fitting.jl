@@ -252,6 +252,10 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         # For some reason, masking out a pixel or two seems to fix the problem. This loop shouldn't ever need more than 1 iteration.
         res = cmpfit(λ_spax[1+n:end-n], I_spax[1+n:end-n], σ_spax[1+n:end-n], fit_cont, pfree, parinfo=parinfo, config=config)
         n += 1
+        if n > 10
+            @warn "LM solver has exceeded 10 tries on the continuum fit of spaxel $spaxel. Aborting."
+            break
+        end
     end 
 
     @debug "Continuum CMPFit Status: $(res.status)"
@@ -456,6 +460,10 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
         res = cmpfit(λnorm[1+n:end-n], Inorm[1+n:end-n], σnorm[1+n:end-n], (x, p) -> fit_step3(x, p, fit_func_2, n=n), 
             p₁, parinfo=parinfo, config=config)
         n += 1
+        if n > 10
+            @warn "LM solver has exceeded 10 tries on the line fit of spaxel $spaxel. Aborting."
+            break
+        end
     end 
 
     @debug "Line CMPFit status: $(res.status)"
@@ -668,6 +676,9 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
         ax1.plot(λ, comps["stellar"] .* ext_full ./ norm ./ λ, "m--", alpha=0.5, label="Stellar continuum")
         for i in 1:n_dust_cont
             ax1.plot(λ, comps["dust_cont_$i"] .* ext_full ./ norm ./ λ, "k-", alpha=0.5, label="Dust continuum")
+        end
+        for i in 1:n_power_law
+            ax1.plot(λ, comps["power_law_$i"] .* ext_full ./ norm ./ λ, "k-", alpha=0.5, label="Power Law")
         end
         # full PAH profile
         ax1.plot(λ, sum([comps["dust_feat_$i"] for i ∈ 1:n_dust_features], dims=1)[1] .* comps["extinction"] ./ norm ./ λ, "-", 
