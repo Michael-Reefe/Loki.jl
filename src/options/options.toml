@@ -53,15 +53,14 @@ save_full_model = true
 # extinction profile, "ct" for the Chiar & Tielens (2005) extinction profile,
 # "ohm" for the Ossenkopf, Henning, & Mathis (1992) extinction profile, or "d+" for the 
 # Donnan et al. (2022) extinction profile.
-extinction_curve = "d+"
-# WARNING: Current implementation of KVT profile is computationally slow, use with caution
+extinction_curve = "kvt"
 
 # extinction_screen: Controls whether extinction is modeled as e^-tau (true) or
 # (1 - e^-tau) / tau (false), following PAHFIT.
 extinction_screen = true
 
 # whether or not to fit silicate emission
-fit_sil_emission = true
+fit_sil_emission = false
 
 # whether or not to constrain the PAH emission using templates from Smith et al. (2007)
 use_pah_templates = false

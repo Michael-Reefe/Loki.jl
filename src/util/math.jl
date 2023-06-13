@@ -60,6 +60,10 @@ const DP_interp = Spline1D(DP_prof[1], DP_prof[2]; k=3)
 const CT_prof = silicate_ct()
 const CT_interp = Spline1D(CT_prof[1], CT_prof[2]; k=3)
 
+# Save the KVT profile as a constant
+const KVT_interp = Spline1D(kvt_prof[:, 1], kvt_prof[:, 2], k=1, bc="nearest")
+const KVT_interp_end = Spline1D([kvt_prof[end, 1], kvt_prof[end, 1]+2], [kvt_prof[end, 2], 0.], k=1, bc="nearest")
+
 # Save the OHM 1992 profile as a constant
 const OHM_prof = silicate_ohm()
 const OHM_interp = Spline1D(OHM_prof[1], OHM_prof[2]; k=3)
@@ -549,10 +553,9 @@ function τ_kvt(λ::Real, β::Real)
         ext = kvt_prof[mn, 2] * exp(2.03 * (λ - λ_mn))
     elseif λ_mn < λ < λ_mx
         # ext = linear_interpolation(kvt_prof[:, 1], kvt_prof[:, 2])(λ)
-        ext = Spline1D(kvt_prof[:, 1], kvt_prof[:, 2], k=1, bc="nearest")(λ)
+        ext = KVT_interp(λ)
     elseif λ_mx < λ < λ_mx + 2
-        # ext = cubic_spline_interpolation(8.0:0.2:12.6, [kvt_prof[1:9, 2]; kvt_prof[12:26, 2]], extrapolation_bc=Line())(λ)
-        ext = Spline1D(kvt_prof[:, 1], kvt_prof[:, 2], k=3, bc="extrapolate")(λ)
+        ext = KVT_interp_end(λ)
     else
         ext = 0.
     end
