@@ -219,6 +219,7 @@ function parse_dust()
     fwhm = Vector{Parameter}(undef, length(dust["dust_features"]))
     index = Vector{Union{Parameter,Nothing}}(nothing, length(dust["dust_features"]))
     cutoff = Vector{Union{Parameter,Nothing}}(nothing, length(dust["dust_features"]))
+    _local = falses(length(dust["dust_features"]))
     profiles = [:Drude for _ in 1:length(name)]
 
     msg = "Dust features:"
@@ -244,7 +245,7 @@ function parse_dust()
 
     # Sort by cent_vals
     ss = sortperm(cent_vals)
-    dust_features = DustFeatures(name[ss], profiles[ss], mean[ss], fwhm[ss], index[ss], cutoff[ss])
+    dust_features = DustFeatures(name[ss], profiles[ss], mean[ss], fwhm[ss], index[ss], cutoff[ss], _local[ss])
 
     # Repeat for absorption features
     if haskey(dust, "absorption_features")
@@ -253,6 +254,7 @@ function parse_dust()
         depth = Vector{Parameter}(undef, length(dust["absorption_features"]))
         mean = Vector{Parameter}(undef, length(dust["absorption_features"]))
         fwhm = Vector{Parameter}(undef, length(dust["absorption_features"]))
+        _local = falses(length(dust["absorption_features"]))
 
         msg = "Absorption features:"
         for (i, ab) ∈ enumerate(keys(dust["absorption_features"]))
@@ -264,6 +266,10 @@ function parse_dust()
             fwhm[i] = from_dict_fwhm(dust["absorption_features"][ab]["fwhm"])
             msg *= "\nFWHM $(fwhm[i])"
             cent_vals[i] = mean[i].value
+
+            if haskey(dust["absorption_features"][ab], "local")
+                _local[i] = dust["absorption_features"][ab]["local"]
+            end
         end
         @debug msg
 
@@ -271,7 +277,8 @@ function parse_dust()
         ss = sortperm(cent_vals)
         abs_features = DustFeatures(name[ss], [:Drude for _ in 1:length(name)], mean[ss], fwhm[ss],
             Union{Parameter,Nothing}[nothing for _ in 1:length(name)], 
-            Union{Parameter,Nothing}[nothing for _ in 1:length(name)]) 
+            Union{Parameter,Nothing}[nothing for _ in 1:length(name)],
+            _local[ss])
         abs_taus = depth[ss]
     else
         abs_features = DustFeatures(String[], Symbol[], Parameter[], Parameter[], Vector{Union{Parameter,Nothing}}(),

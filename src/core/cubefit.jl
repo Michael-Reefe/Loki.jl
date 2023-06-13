@@ -478,6 +478,18 @@ struct CubeFitter{T<:Real,S<:Integer}
         continuum, dust_features, abs_features, abs_taus = parse_dust()
         lines, tied_kinematics, flexible_wavesol, tie_voigt_mixing, voigt_mix_tied = parse_lines()
 
+        # Adjust wavelengths/FWHMs for any local absorption features
+        for i in 1:length(abs_features.names)
+            if abs_features._local[i]
+                abs_features.mean[i].value /= (1 + z)
+                abs_features.mean[i].limits = (abs_features.mean[i].limits[1] / (1 + z),
+                                               abs_features.mean[i].limits[2] / (1 + z))
+                abs_features.fwhm[i].value /= (1 + z)
+                abs_features.fwhm[i].limits = (abs_features.fwhm[i].limits[1] / (1 + z),
+                                               abs_features.fwhm[i].limits[2] / (1 + z))
+            end
+        end
+
         @debug "### Model will include 1 stellar continuum component ###" *
              "\n### at T = $(continuum.T_s.value) K ###"
 
@@ -508,7 +520,8 @@ struct CubeFitter{T<:Real,S<:Integer}
                                      dust_features.mean[df_filt],
                                      dust_features.fwhm[df_filt],
                                      dust_features.index[df_filt],
-                                     dust_features.cutoff[df_filt])
+                                     dust_features.cutoff[df_filt],
+                                     dust_features._local[df_filt])
         n_dust_features = length(dust_features.names)
         msg = "### Model will include $n_dust_features dust feature (PAH) components ###"
         for df_mn ∈ dust_features.mean
@@ -528,7 +541,8 @@ struct CubeFitter{T<:Real,S<:Integer}
                                     abs_features.mean[ab_filt],
                                     abs_features.fwhm[ab_filt],
                                     abs_features.index[ab_filt],
-                                    abs_features.cutoff[ab_filt])
+                                    abs_features.cutoff[ab_filt],
+                                    abs_features._local[ab_filt])
         abs_taus = abs_taus[ab_filt]
         n_abs_features = length(abs_features.names)
         msg = "### Model will include $n_abs_features absorption feature components ###"
@@ -1018,7 +1032,7 @@ function pretty_print_continuum_results(cube_fitter::CubeFitter, popt::Vector{<:
     msg *= "\n#> ABSORPTION FEATURES <#\n"
     for (j, ab) ∈ enumerate(cube_fitter.abs_features.names)
         msg *= "$(ab)_τ:\t\t\t $(@sprintf "%.5f" popt[pᵢ]) +/- $(@sprintf "%.5f" perr[pᵢ]) [x norm] \t Limits: " *
-            "(0, 1000)\n"
+            "($(@sprintf "%.3f" cube_fitter.abs_taus[j].limits[1]), $(@sprintf "%.3f" cube_fitter.abs_taus[j].limits[2]))\n"
         msg *= "$(ab)_mean:  \t\t $(@sprintf "%.3f" popt[pᵢ+1]) +/- $(@sprintf "%.3f" perr[pᵢ+1]) μm \t Limits: " *
             "($(@sprintf "%.3f" cube_fitter.abs_features.mean[j].limits[1]), $(@sprintf "%.3f" cube_fitter.abs_features.mean[j].limits[2]))" * 
             (cube_fitter.abs_features.mean[j].locked ? " (fixed)" : "") * "\n"
