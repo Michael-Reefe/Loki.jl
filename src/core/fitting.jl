@@ -449,14 +449,14 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     @debug "Beginning continuum fitting with Levenberg-Marquardt least squares (CMPFit):"
 
     # Wrapper function
-    function fit_step2(x, pfree, return_comps=false)
+    function fit_step2(x, pfree, return_comps=false; n=0)
         ptot = zeros(Float64, length(pars_2))
         ptot[.~lock_2] .= pfree
         ptot[lock_2] .= p2fix
         if !return_comps
-            model_pah_residuals(x, ptot, cube_fitter.dust_features.profiles, ccomps["extinction"])
+            model_pah_residuals(x, ptot, cube_fitter.dust_features.profiles, ccomps["extinction"][1+n:end-n])
         else
-            model_pah_residuals(x, ptot, cube_fitter.dust_features.profiles, ccomps["extinction"], true)
+            model_pah_residuals(x, ptot, cube_fitter.dust_features.profiles, ccomps["extinction"][1+n:end-n], true)
         end
     end
     res_2 = cmpfit(λ_spax, I_spax.-I_cont, σ_spax, fit_step2, p2free, parinfo=parinfo_2, config=config)
@@ -464,7 +464,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     while res_2.niter < 5
         @warn "LM Solver is stuck on the initial state for the continuum (step 2) fit of spaxel $spaxel. Retrying..."
         # For some reason, masking out a pixel or two seems to fix the problem. This loop shouldn't ever need more than 1 iteration.
-        res_2 = cmpfit(λ_spax[1+n:end-n], (I_spax.-I_cont)[1+n:end-n], σ_spax[1+n:end-n], fit_step2, p2free, parinfo=parinfo_2, config=config)
+        res_2 = cmpfit(λ_spax[1+n:end-n], (I_spax.-I_cont)[1+n:end-n], σ_spax[1+n:end-n], (x, p) -> fit_step2(x, p, false, n=n), 
+            p2free, parinfo=parinfo_2, config=config)
         n += 1
         if n > 10
             @warn "LM solver has exceeded 10 tries on the continuum fit of spaxel $spaxel. Aborting."
