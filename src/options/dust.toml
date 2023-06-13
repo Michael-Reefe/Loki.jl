@@ -594,20 +594,21 @@ locked = false
 # since this HCO+ feature is right on top of some PAH features that tend to want to cancel each other out.
 # https://iopscience.iop.org/article/10.1088/0067-0049/182/2/628/pdf
 
-[absorption_features."abs_12.22"]
+# Spectral leak artifact of the JWST pipeline at ~12.22 microns
+[absorption_features."abs_leak_12.22"]
 local = true
 
-[absorption_features."abs_12.22".tau]
+[absorption_features."abs_leak_12.22".tau]
 val = 0.1
 plim = [0.0, 0.2]
 locked = false
 
-[absorption_features."abs_12.22".wave]
+[absorption_features."abs_leak_12.22".wave]
 val = 12.22
 plim = [-0.1, 0.1]
 locked = true
 
-[absorption_features."abs_12.22".fwhm]
+[absorption_features."abs_leak_12.22".fwhm]
 val = 0.133
 plim = [0.4, 1.4]
 locked = true

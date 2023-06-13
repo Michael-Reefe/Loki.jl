@@ -255,23 +255,23 @@ Note: If one wishes to model a PAH feature with a Pearson type-IV profile (curre
 
 **Absorption Features:**
 
-Entries for absorption features modeled with Drude profiles work the exact same way as PAH features, with the exception that their names should be prefixed by "abs_".  One may set the "local" keyword to true if the feature in question is local (either from the Milky Way, or an instrumental effect), which will redshift the feature by the same amount as the source to keep it at the same observed wavelength.
+Entries for absorption features modeled with Drude profiles work the exact same way as PAH features, with the exception that their names should be prefixed by "abs_".  One may set the "local" keyword to true if the feature in question is local (either from the Milky Way, or an instrumental effect), which will redshift the feature by the same amount as the source to keep it at the same observed wavelength. The example below shows a feature that models the spectral leak artifact at ~12.2 μm that is present in early versions of the JWST reduction pipeline.
 ```toml
-[absorption_features."abs_12.25"]
+[absorption_features."abs_leak_12.22"]
 local = true
 
-[absorption_features."abs_12.25".tau]
+[absorption_features."abs_leak_12.22".tau]
 val = 0.1
 plim = [0.0, 0.2]
 locked = false
 
-[absorption_features."abs_12.25".wave]
-val = 12.25
+[absorption_features."abs_leak_12.22".wave]
+val = 12.22
 plim = [-0.1, 0.1]
 locked = true
 
-[absorption_features."abs_12.25".fwhm]
-val = 0.125
+[absorption_features."abs_leak_12.22".fwhm]
+val = 0.133
 plim = [0.4, 1.4]
 locked = true
 ```
