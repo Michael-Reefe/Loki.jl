@@ -417,18 +417,26 @@ The [lines] dictionary gives the master reference for which lines to fit, giving
 [lines]
 
 # Brackett Series (Hydrogen, n -> 4) Lines
-HI_Br_alpha     = 4.051
+HI_Br_alpha     = 4.05225
+HI_Br_beta      = 2.6259
+HI_Br_gamma     = 2.1661
 
 # Pfund Series (Hydrogen, n -> 5) Lines
-HI_Pf_alpha     = 7.460
-HI_Pf_beta      = 4.654
-HI_Pf_gamma     = 3.741
+HI_Pf_alpha     = 7.4599
+HI_Pf_beta      = 4.6538
+HI_Pf_gamma     = 3.7405
+HI_Pf_delta     = 3.2970
+HI_Pf_epsilon   = 3.0392
 
 # Humphreys Series (Hydrogen, n -> 6) Lines
-HI_Hu_alpha     = 12.370
+HI_Hu_alpha     = 12.372
 HI_Hu_beta      = 7.503
 HI_Hu_gamma     = 5.908
+HI_Hu_delta     = 5.129
+HI_Hu_epsilon   = 4.673
 ```
+
+Importantly, all lines are currently given in their *vacuum* wavelengths.  So when adding new lines, to ensure they are consistent, make sure you are also using vacuum wavelengths and not air wavelengths (otherwise, when tying lines together, their velocity offsets may be inconsistent).
 
 Lines may be arbitrarily added to or removed from this list based on what the user wishes to fit. It is not strictly necessary to adhere to any naming conventions for the lines, but doing so makes it easier when creating kinematic groups. As such, these are the conventions I have followed in the default line list:
 * For hydrogen recombination lines, names should be formatted as "HI_[SS]_[LLL]" where "SS" is the abbreviated name of the series (i.e. the Brackett, Pfund, and Humphreys series shown above) and [LLL] is the greek letter corresponding to the specific transition in the series, starting from alpha.

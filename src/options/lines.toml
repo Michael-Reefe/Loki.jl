@@ -71,80 +71,98 @@ wavesol_unc = 30                         # wavelength solution uncertainties in 
 # 4 = [17.71, 28.1]
 
 # Central wavelengths of each line that should be included in the model, in microns
+# Line wavelengths should be *vacuum* wavelengths, not air wavelengths
 [lines]
 
+# Sources:
+#   Good infrared line lists for HI, H2 and common ions: https://www.mpe.mpg.de/ir/ISO/linelists/
+#   Good infrared line lists for HI and H2: https://www.not.iac.es/instruments/notcam/ReferenceInfo/
+#   NIST: https://physics.nist.gov/PhysRefData/ASD/lines_form.html 
+
 # Brackett Series (Hydrogen, n -> 4) Lines
-HI_Br_alpha     = 4.051
+HI_Br_alpha     = 4.05225
+HI_Br_beta      = 2.6259
+HI_Br_gamma     = 2.1661
 
 # Pfund Series (Hydrogen, n -> 5) Lines
-HI_Pf_alpha     = 7.460
-HI_Pf_beta      = 4.654
-HI_Pf_gamma     = 3.741
-# Disabled since these are uncommon and save fitting time:
-# HI_Pf_delta     = 3.297
-# HI_Pf_epsilon   = 3.039
+HI_Pf_alpha     = 7.4599
+HI_Pf_beta      = 4.6538
+HI_Pf_gamma     = 3.7405
+HI_Pf_delta     = 3.2970
+HI_Pf_epsilon   = 3.0392
 
 # Humphreys Series (Hydrogen, n -> 6) Lines
-HI_Hu_alpha     = 12.370
+HI_Hu_alpha     = 12.372
 HI_Hu_beta      = 7.503
 HI_Hu_gamma     = 5.908
-# Disabled since these are uncommon and save fitting time:
-# HI_Hu_delta     = 5.129
-# HI_Hu_epsilon   = 4.673
+HI_Hu_delta     = 5.129
+HI_Hu_epsilon   = 4.673
 
 # Argon Lines
-ArII_6985    = 6.985
-ArV_7901     = 7.901
-ArIII_8991   = 8.991
-ArV_13102    = 13.102
+ArII_6985    = 6.985274
+ArV_7901     = 7.901600
+ArIII_8991   = 8.991380
+ArV_13102    = 13.102200
 
 # Chlorine Lines
-ClII_14368   = 14.368
+ClII_14368   = 14.367800
 
 # Iron Lines
-FeII_4889    = 4.889
-FeII_5062    = 5.062
-FeII_5340    = 5.340
-FeVIII_5447  = 5.447
-FeII_6721    = 6.721
-FeVII_7814   = 7.814
-FeVII_9527   = 9.527
-FeII_17936   = 17.936
-FeIII_22925  = 22.925
-FeII_25988   = 25.988
+FeII_4889    = 4.889137
+FeII_5062    = 5.062350
+FeII_5340    = 5.340169
+FeII_6721    = 6.721283
+FeVII_7814   = 7.814500
+FeVII_9527   = 9.526700
+FeII_17936   = 17.935950
+FeIII_22925  = 22.925000
+FeII_25988   = 25.988290
 
 # Helium Lines
-HeII_5228    = 5.228
+HeII_5228    = 5.2279972
+HeII_5449    = 5.4495276
 
 # Magnesium Lines
-MgVII_5503   = 5.503
-MgV_5609     = 5.609
-MgV_13537    = 13.537
+MgVII_5503   = 5.503200
+MgV_5609     = 5.609850
+MgV_13521    = 13.521300
 
 # Sodium Lines
-NaIII_7318   = 7.318
+NaIII_7318   = 7.317700
 
 # Neon Lines
-NeVI_7652    = 7.652
-NeII_12813   = 12.813
-NeV_14322    = 14.322
-NeIII_15555  = 15.555
-NeV_24318    = 24.318
+NeVI_7652    = 7.652400
+NeII_12813   = 12.813550
+NeV_14322    = 14.321700
+NeIII_15555  = 15.555100
+NeV_24318    = 24.317500
 
 # Nickel Lines
-NiII_6636    = 6.636
+NiII_6636    = 6.636000
 
 # Oxygen Lines
-OIV_25890    = 25.890
+OIV_25890    = 25.890300
 
 # Phosphorus Lines
-PIII_17885   = 17.885
+PIII_17885   = 17.885000
 
 # Sulfur Lines
-SIV_10511    = 10.511
-SIII_18713   = 18.713
+SIV_10511    = 10.510500
+SIII_18713   = 18.713000
 
 # Molecular Hydrogen Lines
+H200_S8    = 5.05312
+H200_S7    = 5.51118
+H200_S6    = 6.10857
+H200_S5    = 6.90952
+H200_S4    = 8.02505
+H200_S3    = 9.66492
+H200_S2    = 12.27861
+H200_S1    = 17.03484
+H200_S0    = 28.21883
+
+# Other molecular Hydrogen lines (disabled):
+
 # H200_S23   = 3.372
 # H200_S22   = 3.366
 # H200_S21   = 3.369
@@ -160,15 +178,6 @@ SIII_18713   = 18.713
 # H200_S11   = 4.1810
 # H200_S10   = 4.4096
 # H200_S9    = 4.6947
-H200_S8    = 5.05312
-H200_S7    = 5.51118
-H200_S6    = 6.10857
-H200_S5    = 6.90952
-H200_S4    = 8.02505
-H200_S3    = 9.66492
-H200_S2    = 12.27861
-H200_S1    = 17.03484
-H200_S0    = 28.21883
 
 # H298_Q9    = 5.00015
 # H254_O7    = 5.00439
