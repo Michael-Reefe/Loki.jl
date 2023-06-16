@@ -189,6 +189,11 @@ wave = 5.340169
 latex = "[Fe II]"
 annotate = true
 
+[lines.FeVIII_5447]
+wave = 5.4466
+latex = "[Fe VIII]"
+annotate = false
+
 [lines.FeII_6721]
 wave = 6.721283
 latex = "[Fe II]"
@@ -222,11 +227,6 @@ annotate = false
 # Helium Lines
 [lines.HeII_5228]
 wave = 5.2279972
-latex = "He II"
-annotate = false
-
-[lines.HeII_5449]
-wave = 5.4495276
 latex = "He II"
 annotate = false
 

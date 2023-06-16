@@ -1,5 +1,4 @@
 test/**
-!test/test_driver*.jl
 src/idl_data*
 *.swp
 *.vim

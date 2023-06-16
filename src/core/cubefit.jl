@@ -619,7 +619,7 @@ struct CubeFitter{T<:Real,S<:Integer}
         end
 
         # Total number of parameters for the continuum and line fits
-        n_params_cont = (2+4) + 2n_dust_cont + 2n_power_law + 3n_abs_features + (options[:fit_sil_emission] ? 6 : 0)
+        n_params_cont = (2+4) + 2n_dust_cont + 2n_power_law + 3n_abs_features + (out[:fit_sil_emission] ? 6 : 0)
         n_params_cont += 3 * sum(dust_features.profiles .== :Drude) + 5 * sum(dust_features.profiles .== :PearsonIV)
         n_params_lines = 0
         for i ∈ 1:n_lines

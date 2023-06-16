@@ -70,7 +70,7 @@ Pkg.instantiate()
 Pkg.precompile()
 using Loki
 ```
-2. If you plan on utilizing the multiprocessing capabilities of Loki, all lines in the previous code block should be prepended with `@everywhere` (or they can be wrapped within a `begin`/`end` block with `@everywhere`). See some of the test driver codes within the `test/` directory for examples.
+2. If you plan on utilizing the multiprocessing capabilities of Loki, all lines in the previous code block should be prepended with `@everywhere` (or they can be wrapped within a `begin`/`end` block with `@everywhere`). See the example notebook in the `examples/` directory for an idea of how this is used in practice.
 
 ### Julia Requirements
 
@@ -757,6 +757,8 @@ The units of outputs for different quantities are listed here. When relevant, ou
 ---
 
 ## V. Examples
+Please see `examples/example.ipynb` for a full example notebook.
+
 The main steps one must follow to fit a cube using LOKI are as follows:
 1. Load in the LOKI module following the instructions in [Installation](#ii-installation). Typically, this means including a block of code at the top of your file that looks something like this:
 ```julia
@@ -798,10 +800,6 @@ fit_cube!(cube_fitter)
 ap = make_aperture(obs.channels[0], :Circular, "23:03:15.610", "+8:52:26.10", 0.5, auto_centroid=true, scale_psf=false)
 fit_cube!(cube_fitter, ap)
 ```
-
-`test/test_driver_full.jl` gives an example of how to run the code to perform a full fit of each spaxel in a cube. 
-
-`test/test_driver_aperture.jl` gives an example of how to run the code to perform a fit of an integrated spectrum within an aperture.
 
 ---
 

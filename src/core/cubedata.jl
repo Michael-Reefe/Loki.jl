@@ -139,7 +139,11 @@ function from_fits(filename::String)::DataCube
     wcs = py_wcs.WCS(read_header(hdu["SCI"], String), naxis=2)
 
     # Wavelength vector
-    λ = hdr["CRVAL3"] .+ hdr["CDELT3"] .* (collect(0:hdr["NAXIS3"]-1) .+ hdr["CRPIX3"] .- 1)
+    λ = try
+        read(hdu["AUX"], "wave")
+    catch
+        hdr["CRVAL3"] .+ hdr["CDELT3"] .* (collect(0:hdr["NAXIS3"]-1) .+ hdr["CRPIX3"] .- 1)
+    end
     # Alternative method using the WCS directly:
     # λ = pix_to_world(wcs, Matrix(hcat(ones(nz), ones(nz), collect(1:nz))'))[3,:] ./ 1e-6
 
@@ -155,7 +159,7 @@ function from_fits(filename::String)::DataCube
     name = hdr0["TARGNAME"]    # name of the target
     ra = hdr0["TARG_RA"]       # right ascension in deg
     dec = hdr0["TARG_DEC"]     # declination in deg
-    channel = hdr0["CHANNEL"]  # MIRI channel (1-4)
+    channel = string(hdr0["CHANNEL"])  # MIRI channel (1-4)
     band = hdr0["BAND"]        # MIRI band (long,med,short,multiple)
 
     @debug """\n
@@ -172,22 +176,39 @@ function from_fits(filename::String)::DataCube
 
     # Make sure intensity units are MegaJansky per steradian and wavelength 
     # units are microns (this is assumed in the fitting code)
-    if hdr["BUNIT"] ≠ "MJy/sr"
-        error("Unrecognized flux unit: $(hdr["BUNIT"])")
-    end
-    if hdr["CUNIT3"] ≠ "um"
-        error("Unrecognized wavelength unit: $(hdr["CUNIT3"])")
-    end
+    # if hdr["BUNIT"] ≠ "MJy/sr"
+    #     error("Unrecognized flux unit: $(hdr["BUNIT"])")
+    # end
+    # if hdr["CUNIT3"] ≠ "um"
+    #     error("Unrecognized wavelength unit: $(hdr["CUNIT3"])")
+    # end
 
     # Get the PSF FWHM in arcseconds assuming diffraction-limited optics (theta = lambda/D)
     # Using the OBSERVED-FRAME wavelength
     # psf_fwhm = @. (λ * 1e-6 / mirror_size) * 180/π * 3600
-    psf = @. 0.033 * λ + 0.016
-    lsf = parse_resolving(channel).(λ)
+    psf = try
+        read(hdu["AUX"], "psf")
+    catch
+        @. 0.033 * λ + 0.016
+    end
+    lsf = try
+        read(hdu["AUX"], "lsf")
+    catch
+        parse_resolving(channel).(λ)
+    end
 
-    @debug "Intensity units: $(hdr["BUNIT"]), Wavelength units: $(hdr["CUNIT3"])"
+    # @debug "Intensity units: $(hdr["BUNIT"]), Wavelength units: $(hdr["CUNIT3"])"
 
-    DataCube(λ, Iν, σI, mask, Ω, ra, dec, psf, lsf, wcs, channel, band, false, false)
+    rest_frame = false
+    if haskey(hdr0, "RESTFRAM")
+        rest_frame = hdr0["RESTFRAM"]
+    end
+    masked = false
+    if haskey(hdr0, "MASKED")
+        masked = hdr0["MASKED"]
+    end
+
+    DataCube(λ, Iν, σI, mask, Ω, ra, dec, psf, lsf, wcs, channel, band, rest_frame, masked)
 end
 
 
@@ -684,16 +705,67 @@ mutable struct Observation
 end
 
 
-function save!(path::String, obs::Observation)
-    if !(path |> dirname |> isdir)
-        path |> dirname |> mkpath
+"""
+    save_fits(path, obs[, channels])
+
+Save a pre-processed Observation object as a FITS file in a format that can be read by the "from_fits" function.
+This saves time upon re-running the code assuming one wishes to keep the same pre-processing.
+"""
+save_fits(path::String, obs::Observation) = save_fits(path, obs, collect(keys(obs.channels)))
+save_fits(path::String, obs::Observation, channels::Integer) = save_fits(path, obs, [channels])
+
+function save_fits(path::String, obs::Observation, channels::Vector)
+    for channel in channels
+
+        ch_out = string(channel)
+        if ch_out == "0"
+            ch_out = "MULTIPLE"
+        end
+        # Header information
+        hdr = FITSHeader(
+            Vector{String}(["TARGNAME", "REDSHIFT", "CHANNEL", "BAND", "PIXAR_SR", "TARG_RA", "TARG_DEC", "INSTRUME", "DETECTOR", 
+                "RESTFRAM", "MASKED", "DATAMODL", "NAXIS1", "NAXIS2", "NAXIS3", "WCSAXES", "CDELT1", "CDELT2", "CTYPE1", "CTYPE2", 
+                "CRPIX1", "CRPIX2", "CRVAL1", "CRVAL2", "CUNIT1", "CUNIT2", "PC1_1", "PC1_2", "PC2_1", "PC2_2"]),
+
+            [obs.name, obs.z, ch_out, obs.channels[channel].band, obs.channels[channel].Ω, 
+                obs.α, obs.δ, obs.instrument, obs.detector, obs.rest_frame, obs.masked, "IFUCubeModel", 
+                obs.channels[channel].nx, obs.channels[channel].ny, obs.channels[channel].nz, obs.channels[channel].wcs.wcs.naxis, 
+                obs.channels[channel].wcs.wcs.cdelt[1], obs.channels[channel].wcs.wcs.cdelt[2], 
+                obs.channels[channel].wcs.wcs.ctype[1], obs.channels[channel].wcs.wcs.ctype[2], 
+                obs.channels[channel].wcs.wcs.crpix[1], obs.channels[channel].wcs.wcs.crpix[2], 
+                obs.channels[channel].wcs.wcs.crval[1], obs.channels[channel].wcs.wcs.crval[2], 
+                obs.channels[channel].wcs.wcs.cunit[1].name, obs.channels[channel].wcs.wcs.cunit[2].name, 
+                obs.channels[channel].wcs.wcs.pc[1,1], obs.channels[channel].wcs.wcs.pc[1,2], 
+                obs.channels[channel].wcs.wcs.pc[2,1], obs.channels[channel].wcs.wcs.pc[2,2]],
+
+            Vector{String}(["Target name", "Target redshift", "MIRI channel", "MIRI band",
+                "Solid angle per pixel (rad.)", "Right ascension of target (deg.)", "Declination of target (deg.)",
+                "Instrument name", "Detector name", "data in rest frame", "data masked", "data model",
+                "length of the first axis", "length of the second axis", "length of the third axis",
+                "number of World Coordinate System axes", 
+                "first axis increment per pixel", "second axis increment per pixel",
+                "first axis coordinate type", "second axis coordinate type",
+                "axis 1 coordinate of the reference pixel", "axis 2 coordinate of the reference pixel",
+                "first axis value at the reference pixel", "second axis value at the reference pixel",
+                "first axis units", "second axis units",
+                "linear transformation matrix element", "linear transformation matrix element",
+                "linear transformation matrix element", "linear transformation matrix element"])
+        )
+        FITS(joinpath(path, "$(replace(obs.name, " " => "_")).channel$(channel)$(obs.rest_frame ? ".rest_frame" : "").fits"), "w") do f
+            @info "Writing FITS file from Observation object"
+
+            write(f, Vector{Int}(); header=hdr)                          # Primary HDU (empty)
+            write(f, obs.channels[channel].Iν; name="SCI", header=hdr)   # Data HDU
+            write(f, obs.channels[channel].σI; name="ERR", header=hdr)   # Error HDU
+            write(f, UInt8.(obs.channels[channel].mask); name="DQ", header=hdr)  # Mask HDU
+            write(f, ["wave", "psf", "lsf"],                                     # Auxiliary HDU
+                     [obs.channels[channel].λ, obs.channels[channel].psf, obs.channels[channel].lsf], 
+                     hdutype=TableHDU, name="AUX", units=Dict(:wave => "um", :psf => "arcsec", :lsf => "km/s"))
+            
+            write_key(f["SCI"], "BUNIT", "MJy/sr")
+            write_key(f["ERR"], "BUNIT", "MJy/sr")
+        end
     end
-    serialize(path, obs)
-end
-
-
-function load!(path::String)
-    deserialize(path)
 end
 
 
@@ -736,7 +808,16 @@ function from_fits(filenames::Vector{String}, z::Real)::Observation
         channels[Symbol(bands[cube.band] * cube.channel)] = cube
     end
 
-    Observation(channels, name, z, ra, dec, inst, detector, false, false)
+    rest_frame = false
+    if haskey(hdr, "RESTFRAM")
+        rest_frame = hdr["RESTFRAM"]
+    end
+    masked = false
+    if haskey(hdr, "MASKED")
+        masked = hdr["MASKED"]
+    end
+
+    Observation(channels, name, z, ra, dec, inst, detector, rest_frame, masked)
 end
 
 

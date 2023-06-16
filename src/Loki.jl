@@ -157,8 +157,7 @@ export DataCube,   # DataCube struct
        Observation, 
 
        # Observation functions
-       save!,
-       load!,
+       save_fits,
        adjust_wcs_alignment!, 
        reproject_channels!, 
        cube_rebin!, 
