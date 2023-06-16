@@ -717,17 +717,13 @@ save_fits(path::String, obs::Observation, channels::Integer) = save_fits(path, o
 function save_fits(path::String, obs::Observation, channels::Vector)
     for channel in channels
 
-        ch_out = string(channel)
-        if ch_out == "0"
-            ch_out = "MULTIPLE"
-        end
         # Header information
         hdr = FITSHeader(
             Vector{String}(["TARGNAME", "REDSHIFT", "CHANNEL", "BAND", "PIXAR_SR", "TARG_RA", "TARG_DEC", "INSTRUME", "DETECTOR", 
                 "RESTFRAM", "MASKED", "DATAMODL", "NAXIS1", "NAXIS2", "NAXIS3", "WCSAXES", "CDELT1", "CDELT2", "CTYPE1", "CTYPE2", 
                 "CRPIX1", "CRPIX2", "CRVAL1", "CRVAL2", "CUNIT1", "CUNIT2", "PC1_1", "PC1_2", "PC2_1", "PC2_2"]),
 
-            [obs.name, obs.z, ch_out, obs.channels[channel].band, obs.channels[channel].Ω, 
+            [obs.name, obs.z, string(channel), obs.channels[channel].band, obs.channels[channel].Ω, 
                 obs.α, obs.δ, obs.instrument, obs.detector, obs.rest_frame, obs.masked, "IFUCubeModel", 
                 obs.channels[channel].nx, obs.channels[channel].ny, obs.channels[channel].nz, obs.channels[channel].wcs.wcs.naxis, 
                 obs.channels[channel].wcs.wcs.cdelt[1], obs.channels[channel].wcs.wcs.cdelt[2], 

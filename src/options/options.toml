@@ -57,7 +57,7 @@ extinction_curve = "kvt"
 
 # extinction_screen: Controls whether extinction is modeled as e^-tau (true) or
 # (1 - e^-tau) / tau (false), following PAHFIT.
-extinction_screen = true
+extinction_screen = false
 
 # whether or not to fit silicate emission
 fit_sil_emission = true
