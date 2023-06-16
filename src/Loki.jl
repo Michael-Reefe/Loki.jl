@@ -67,6 +67,7 @@ const py_units::PyObject = PyNULL()
 const py_photutils::PyObject = PyNULL()
 const py_reproject::PyObject = PyNULL()
 const py_mosaicking::PyObject = PyNULL()
+const py_lineidplot::PyObject = PyNULL()
 
 # Some constants for setting matplotlib font sizes
 const SMALL::UInt8 = 12
@@ -94,6 +95,8 @@ function __init__()
     copy!(py_ticker, pyimport_conda("matplotlib.ticker", "matplotlib"))
     # animation --> used for making mp4 movie files (optional)
     copy!(py_animation, pyimport_conda("matplotlib.animation", "matplotlib"))
+    # python package for adjusting matplotlib text so it doesn't overlap
+    copy!(py_lineidplot, pyimport_conda("lineid_plot", "lineid_plot"))
 
     # Import the WCS, photutils, and reproject packages from astropy
     copy!(py_wcs, pyimport_conda("astropy.wcs", "astropy"))

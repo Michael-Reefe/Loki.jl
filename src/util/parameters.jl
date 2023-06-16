@@ -150,6 +150,8 @@ struct TransitionLines
 
     # 1st axis: labels each transition line
     names::Vector{Symbol}
+    latex::Vector{String}
+    annotate::BitVector
     λ₀::Vector{AbstractFloat}
     
     # 1st axis: labels each transition line

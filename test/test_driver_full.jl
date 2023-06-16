@@ -109,7 +109,7 @@ obs = from_fits(["data/NGC_7319_ch1-long_s3d.fits",
 
 channel = 0
 nm = replace(obs.name, " " => "_") 
-name = nm * "_ch$(channel)_full_06-01-23_temp"
+name = nm * "_ch$(channel)_full_06-01-23_temp_labels"
 
 if isfile("processed-data-$nm.loki")
     obs = load!("processed-data-$nm.loki")

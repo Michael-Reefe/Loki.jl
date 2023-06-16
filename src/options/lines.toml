@@ -72,7 +72,6 @@ wavesol_unc = 30                         # wavelength solution uncertainties in 
 
 # Central wavelengths of each line that should be included in the model, in microns
 # Line wavelengths should be *vacuum* wavelengths, not air wavelengths
-[lines]
 
 # Sources:
 #   Good infrared line lists for HI, H2 and common ions: https://www.mpe.mpg.de/ir/ISO/linelists/
@@ -80,86 +79,279 @@ wavesol_unc = 30                         # wavelength solution uncertainties in 
 #   NIST: https://physics.nist.gov/PhysRefData/ASD/lines_form.html 
 
 # Brackett Series (Hydrogen, n -> 4) Lines
-HI_Br_alpha     = 4.05225
-HI_Br_beta      = 2.6259
-HI_Br_gamma     = 2.1661
+[lines.HI_Br_alpha]
+wave = 4.05225
+latex = "Br$\\alpha$"
+annotate = false
+
+[lines.HI_Br_beta]
+wave = 2.6259
+latex = "Br$\\beta$"
+annotate = false
+
+[lines.HI_Br_gamma]
+wave = 2.1661
+latex = "Br$\\gamma$"
+annotate = false
 
 # Pfund Series (Hydrogen, n -> 5) Lines
-HI_Pf_alpha     = 7.4599
-HI_Pf_beta      = 4.6538
-HI_Pf_gamma     = 3.7405
-HI_Pf_delta     = 3.2970
-HI_Pf_epsilon   = 3.0392
+[lines.HI_Pf_alpha]
+wave = 7.4599
+latex = "Pf$\\alpha$"
+annotate = false
+
+[lines.HI_Pf_beta]
+wave = 4.6538
+latex = "Pf$\\beta$"
+annotate = false
+
+[lines.HI_Pf_gamma]
+wave = 3.7405
+latex = "Pf$\\gamma$"
+annotate = false
+
+[lines.HI_Pf_delta]
+wave = 3.2970
+latex = "Pf$\\delta$"
+annotate = false
+
+[lines.HI_Pf_epsilon]
+wave = 3.0392
+latex = "Pf$\\varepsilon$"
+annotate = false
 
 # Humphreys Series (Hydrogen, n -> 6) Lines
-HI_Hu_alpha     = 12.372
-HI_Hu_beta      = 7.503
-HI_Hu_gamma     = 5.908
-HI_Hu_delta     = 5.129
-HI_Hu_epsilon   = 4.673
+[lines.HI_Hu_alpha]
+wave = 12.372
+latex = "Hu$\\alpha$"
+annotate = false
+
+[lines.HI_Hu_beta]
+wave = 7.503
+latex = "Hu$\\beta$"
+annotate = false
+
+[lines.HI_Hu_gamma]
+wave = 5.908
+latex = "Hu$\\gamma$"
+annotate = false
+
+[lines.HI_Hu_delta]
+wave = 5.129
+latex = "Hu$\\delta$"
+annotate = false
+
+[lines.HI_Hu_epsilon]
+wave = 4.673
+latex = "Hu$\\varepsilon$"
+annotate = false
 
 # Argon Lines
-ArII_6985    = 6.985274
-ArV_7901     = 7.901600
-ArIII_8991   = 8.991380
-ArV_13102    = 13.102200
+[lines.ArII_6985]
+wave = 6.985274
+latex = "[Ar II]"
+annotate = true
+
+[lines.ArV_7901]
+wave = 7.901600
+latex = "[Ar V]"
+annotate = false
+
+[lines.ArIII_8991]
+wave = 8.991380
+latex = "[Ar III]"
+annotate = true
+
+[lines.ArV_13102]
+wave = 13.102200
+latex = "[Ar V]"
+annotate = true
 
 # Chlorine Lines
-ClII_14368   = 14.367800
+[lines.ClII_14368]
+wave = 14.367800
+latex = "[Cl II]"
+annotate = false
 
 # Iron Lines
-FeII_4889    = 4.889137
-FeII_5062    = 5.062350
-FeII_5340    = 5.340169
-FeII_6721    = 6.721283
-FeVII_7814   = 7.814500
-FeVII_9527   = 9.526700
-FeII_17936   = 17.935950
-FeIII_22925  = 22.925000
-FeII_25988   = 25.988290
+[lines.FeII_4889]
+wave = 4.889137
+latex = "[Fe II]"
+annotate = false
+
+[lines.FeII_5062]
+wave = 5.062350
+latex = "[Fe II]"
+annotate = false
+
+[lines.FeII_5340]
+wave = 5.340169
+latex = "[Fe II]"
+annotate = true
+
+[lines.FeII_6721]
+wave = 6.721283
+latex = "[Fe II]"
+annotate = false
+
+[lines.FeVII_7814]
+wave = 7.814500
+latex = "[Fe VII]"
+annotate = false
+
+[lines.FeVII_9527]
+wave = 9.526700
+latex = "[Fe VII]"
+annotate = false
+
+[lines.FeII_17936]
+wave = 17.935950
+latex = "[Fe II]"
+annotate = false
+
+[lines.FeIII_22925]
+wave = 22.925000
+latex = "[Fe III]"
+annotate = false
+
+[lines.FeII_25988]
+wave = 25.988290
+latex = "[Fe II]"
+annotate = false
 
 # Helium Lines
-HeII_5228    = 5.2279972
-HeII_5449    = 5.4495276
+[lines.HeII_5228]
+wave = 5.2279972
+latex = "He II"
+annotate = false
+
+[lines.HeII_5449]
+wave = 5.4495276
+latex = "He II"
+annotate = false
 
 # Magnesium Lines
-MgVII_5503   = 5.503200
-MgV_5609     = 5.609850
-MgV_13521    = 13.521300
+[lines.MgVII_5503]
+wave = 5.503200
+latex = "[Mg VII]"
+annotate = false
+
+[lines.MgV_5609]
+wave = 5.609850
+latex = "[Mg V]"
+annotate = true
+
+[lines.MgV_13521]
+wave = 13.521300
+latex = "[Mg V]"
+annotate = false
 
 # Sodium Lines
-NaIII_7318   = 7.317700
+[lines.NaIII_7318]
+wave = 7.317700
+latex = "[Na III]"
+annotate = false
 
 # Neon Lines
-NeVI_7652    = 7.652400
-NeII_12813   = 12.813550
-NeV_14322    = 14.321700
-NeIII_15555  = 15.555100
-NeV_24318    = 24.317500
+[lines.NeVI_7652]
+wave = 7.652400
+latex = "[Ne VI]"
+annotate = true
+
+[lines.NeII_12813]
+wave = 12.813550
+latex = "[Ne II]"
+annotate = true
+
+[lines.NeV_14322]
+wave = 14.321700
+latex = "[Ne V]"
+annotate = true
+
+[lines.NeIII_15555]
+wave = 15.555100
+latex = "[Ne III]"
+annotate = true
+
+[lines.NeV_24318]
+wave = 24.317500
+latex = "[Ne V]"
+annotate = true
 
 # Nickel Lines
-NiII_6636    = 6.636000
+[lines.NiII_6636]
+wave = 6.636000
+latex = "[Ni II]"
+annotate = false
 
 # Oxygen Lines
-OIV_25890    = 25.890300
+[lines.OIV_25890]
+wave = 25.890300
+latex = "[O IV]"
+annotate = true
 
 # Phosphorus Lines
-PIII_17885   = 17.885000
+[lines.PIII_17885]
+wave = 17.885000
+latex = "[P III]"
+annotate = false
 
 # Sulfur Lines
-SIV_10511    = 10.510500
-SIII_18713   = 18.713000
+[lines.SIV_10511]
+wave = 10.510500
+latex = "[S IV]"
+annotate = true
+
+[lines.SIII_18713]
+wave = 18.713000
+latex = "[S III]"
+annotate = true
 
 # Molecular Hydrogen Lines
-H200_S8    = 5.05312
-H200_S7    = 5.51118
-H200_S6    = 6.10857
-H200_S5    = 6.90952
-H200_S4    = 8.02505
-H200_S3    = 9.66492
-H200_S2    = 12.27861
-H200_S1    = 17.03484
-H200_S0    = 28.21883
+[lines.H200_S8]
+wave = 5.05312
+latex = "H$_2$ 0-0 $S(8)$"
+annotate = true
+
+[lines.H200_S7]
+wave = 5.51118
+latex = "H$_2$ 0-0 $S(7)$"
+annotate = true
+
+[lines.H200_S6]
+wave = 6.10857
+latex = "H$_2$ 0-0 $S(6)$"
+annotate = true
+
+[lines.H200_S5]
+wave = 6.90952
+latex = "H$_2$ 0-0 $S(5)$"
+annotate = true
+
+[lines.H200_S4]
+wave = 8.02505
+latex = "H$_2$ 0-0 $S(4)$"
+annotate = true
+
+[lines.H200_S3]
+wave = 9.66492
+latex = "H$_2$ 0-0 $S(3)$"
+annotate = true
+
+[lines.H200_S2]
+wave = 12.27861
+latex = "H$_2$ 0-0 $S(2)$"
+annotate = true
+
+[lines.H200_S1]
+wave = 17.03484
+latex = "H$_2$ 0-0 $S(1)$"
+annotate = true
+
+[lines.H200_S0]
+wave = 28.21883
+latex = "H$_2$ 0-0 $S(0)$"
+annotate = true
 
 # Other molecular Hydrogen lines (disabled):
 

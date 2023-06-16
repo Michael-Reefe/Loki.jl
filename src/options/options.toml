@@ -47,7 +47,7 @@ make_movies = false
 # format. If false, the model parameters will still be saved (the model can be
 # easily reconstructed by simply rerunning the code with this option enabled, as the
 # fitting data for each spaxel will already be saved)
-save_full_model = true
+save_full_model = false
 
 # extinction_curve: May be "kvt" for the Kemper, Vriend, & Tielens (2004) 
 # extinction profile, "ct" for the Chiar & Tielens (2005) extinction profile,

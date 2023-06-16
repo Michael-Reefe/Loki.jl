@@ -390,7 +390,7 @@ Plotting function for 2D parameter maps which are output by `fit_cube!`
 """
 function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::String, Ω::Float64, z::Float64, psf_fwhm::Float64,
     cosmo::Cosmology.AbstractCosmology, python_wcs::PyObject; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, 
-    snr_thresh::Float64=3., cmap::Symbol=:cubehelix)
+    snr_thresh::Float64=3., cmap::Symbol=:cubehelix, line_latex::Union{String,Nothing}=nothing)
 
     # I know this is ugly but I couldn't figure out a better way to do it lmao
     if occursin("amp", String(name_i))
@@ -555,9 +555,14 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     ax.add_artist(scalebar)
 
     # Add circle for the PSF FWHM
-    psf = plt.Circle(size(data) .* 0.9, psf_fwhm / pix_as / 2, color="k")
+    psf = plt.Circle(size(data) .* (0.9, 0.1), psf_fwhm / pix_as / 2, color="k")
     ax.add_patch(psf)
-    ax.annotate("PSF", size(data) .* 0.9 .- (0., psf_fwhm / pix_as / 2 * 1.5 + 1.75), ha=:center, va=:center)
+    ax.annotate("PSF", size(data) .* (0.9, 0.1) .+ (0., psf_fwhm / pix_as / 2 * 1.5 + 1.75), ha=:center, va=:center)
+
+    # Add line label, if applicable
+    if !isnothing(line_latex)
+        ax.annotate(line_latex, size(data) .* 0.95, ha=:right, va=:top, fontsize=16)
+    end
 
     fig.colorbar(cdata, ax=ax, label=bunit)
 
@@ -675,6 +680,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
         # Find the wavelength/index at which to get the PSF FWHM for the circle in the plot
         line_i = findfirst(cube_fitter.lines.names .== line_key)
         wave_i = cube_fitter.lines.λ₀[line_i]
+        latex_i = cube_fitter.lines.latex[line_i]
 
         for parameter ∈ keys(param_maps.lines[line])
             data = param_maps.lines[line][parameter]
@@ -685,7 +691,8 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
             end
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(line_key)", "$(name_i).pdf")
             plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i), 
-                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh)
+                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
+                line_latex=latex_i)
         end
     end
 
@@ -702,7 +709,8 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
             name_i = join([name, "total_flux"], "_")
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(name)", "$(name_i).pdf")
             plot_parameter_map(total_flux, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
-                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh)
+                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
+                line_latex=cube_fitter.lines.latex[k])
 
             # Total equivalent width
             # total_eqw = sum([param_maps.lines[comp][:eqw] for comp in component_keys])

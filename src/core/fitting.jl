@@ -756,7 +756,7 @@ backend (`:pyplot` or `:plotly`).
 `T<:Real,S<:Integer`
 - `λ::Vector{<:Real}`: The wavelength vector of the spaxel to be plotted
 - `I::Vector{<:Real}`: The intensity data vector of the spaxel to be plotted
-- `I_cont::Vector{<:Real}`: The intensity model vector of the spaxel to be plotted
+- `I_model::Vector{<:Real}`: The intensity model vector of the spaxel to be plotted
 - `σ::Vector{<:Real}`: The uncertainty vector of the spaxel to be plotted
 - `comps::Dict{String, Vector{T}}`: The dictionary of individual components of the model intensity
 - `n_dust_cont::Integer`: The number of dust continuum components in the fit
@@ -770,12 +770,12 @@ backend (`:pyplot` or `:plotly`).
 - `label::String`: A label for the individual spaxel being plotted, to be put in the file name
 - `backend::Symbol`: The backend to use to plot, either `:pyplot` or `:plotly`
 """
-function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<:Real}, σ::Vector{<:Real}, mask_bad::BitVector, 
-    comps::Dict{String, Vector{T}}, n_dust_cont::Integer, n_power_law::Integer, n_dust_features::Integer, n_abs_features::Integer, 
-    n_comps::Integer, line_wave::Vector{<:Real}, line_names::Vector{Symbol}, screen::Bool, z::Real, χ2red::Real, name::String, 
-    label::String; backend::Symbol=:pyplot, I_boot_min::Union{Vector{<:Real},Nothing}=nothing, 
-    I_boot_max::Union{Vector{<:Real},Nothing}=nothing, range::Union{Tuple,Nothing}=nothing, 
-    spline::Union{Vector{<:Real},Nothing}=nothing) where {T<:Real}
+function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_model::Vector{<:Real}, σ::Vector{<:Real}, mask_bad::BitVector, 
+    mask_lines::BitVector, comps::Dict{String, Vector{T}}, n_dust_cont::Integer, n_power_law::Integer, n_dust_features::Integer, 
+    n_abs_features::Integer, n_comps::Integer, line_wave::Vector{<:Real}, line_names::Vector{Symbol}, line_annotate::BitVector, 
+    line_latex::Vector{String}, screen::Bool, z::Real, χ2red::Real, name::String, label::String; backend::Symbol=:pyplot, 
+    I_boot_min::Union{Vector{<:Real},Nothing}=nothing, I_boot_max::Union{Vector{<:Real},Nothing}=nothing, 
+    range::Union{Tuple,Nothing}=nothing, spline::Union{Vector{<:Real},Nothing}=nothing) where {T<:Real}
 
     fit_sil_emission = haskey(comps, "hot_dust")
     abs_feat = n_abs_features ≥ 1 ? reduce(.*, [comps["abs_feat_$i"] for i ∈ 1:n_abs_features]) : ones(length(λ))
@@ -786,12 +786,12 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
     if (backend == :plotly || backend == :both) && isnothing(range)
         # Plot the overall data / model
         trace1 = PlotlyJS.scatter(x=λ, y=I, mode="lines", line=Dict(:color => "black", :width => 1), name="Data", showlegend=true)
-        trace2 = PlotlyJS.scatter(x=λ, y=I_cont, mode="lines", line=Dict(:color => "red", :width => 1), name="Continuum Fit", showlegend=true)
+        trace2 = PlotlyJS.scatter(x=λ, y=I_model, mode="lines", line=Dict(:color => "red", :width => 1), name="Model", showlegend=true)
         traces = [trace1, trace2]
         # Loop over and plot individual model components
         for comp ∈ keys(comps)
             if comp == "extinction"
-                append!(traces, [PlotlyJS.scatter(x=λ, y=ext_full .* maximum(I_cont) .* 1.1, mode="lines", 
+                append!(traces, [PlotlyJS.scatter(x=λ, y=ext_full .* maximum(I_model) .* 1.1, mode="lines", 
                     line=Dict(:color => "black", :width => 1, :dash => "dash"), name="Extinction")])
             elseif occursin("hot_dust", comp)
                 append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* abs_full, mode="lines", line=Dict(:color => "yellow", :width => 1),
@@ -875,24 +875,24 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
             ax1.plot(λ, spline ./ norm ./ λ, color="#2ca02c", linestyle="--", label="Cubic Spline")
         end
 
-        ax1.plot(λ, I_cont ./ norm ./ λ, "-", color="#ff5d00", label="Model")
+        ax1.plot(λ, I_model ./ norm ./ λ, "-", color="#ff5d00", label="Model")
         if !isnothing(I_boot_min) && !isnothing(I_boot_max)
             ax1.fill_between(λ, I_boot_min ./ norm ./ λ, I_boot_max ./ norm ./ λ, color="#ff5d00", alpha=0.5, zorder=10)
         end
 
-        ax2.plot(λ, (I.-I_cont) ./ norm ./ λ, "k-")
+        ax2.plot(λ, (I.-I_model) ./ norm ./ λ, "k-")
 
         χ2_str = @sprintf "%.3f" χ2red
         ax2.plot(λ, zeros(length(λ)), "-", color="#ff5d00", label=L"$\tilde{\chi}^2 = %$χ2_str$")
         if !isnothing(I_boot_min) && !isnothing(I_boot_max)
-            ax2.fill_between(λ, (I_boot_min .- I_cont) ./ norm ./ λ, (I_boot_max .- I_cont) ./ norm ./ λ, color="#ff5d00", alpha=0.5,
+            ax2.fill_between(λ, (I_boot_min .- I_model) ./ norm ./ λ, (I_boot_max .- I_model) ./ norm ./ λ, color="#ff5d00", alpha=0.5,
                 zorder=10)
         end
         # ax2.fill_between(λ, (I.-I_cont.+σ)./norm./λ, (I.-I_cont.-σ)./norm./λ, color="k", alpha=0.5)
 
         # twin axes with different labels --> extinction for ax3 and observed wavelength for ax4
         ax3 = ax1.twinx()
-        ax4 = ax1.twiny()
+        # ax4 = ax1.twiny()
 
         # full continuum
         ax1.plot(λ, (abs_full .* (fit_sil_emission ? comps["hot_dust"] : zeros(length(λ))) .+ ext_full .* (
@@ -921,11 +921,47 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
             ax1.plot(λ, comps["hot_dust"] .* abs_full ./ norm ./ λ, "-", color="#8ac800", alpha=0.6, label="Hot Dust")
         end
 
+        min_inten = -0.01
+        max_inten = isnothing(range) ? 
+                    1.3nanmaximum(I[.~mask_lines .& .~mask_bad] ./ norm ./ λ[.~mask_lines .& .~mask_bad]) : 
+                    1.1nanmaximum((I ./ norm ./ λ)[range[1] .< λ .< range[2]])
+
         # plot vertical dashed lines for emission line wavelengths
         for (lw, ln) ∈ zip(line_wave, line_names)
             ax1.axvline(lw, linestyle="--", color="k", lw=0.5, alpha=0.5)
             ax2.axvline(lw, linestyle="--", color="k", lw=0.5, alpha=0.5)
         end
+
+        # annotations = []
+        # for (k, ltx) ∈ zip(1:length(line_names), line_latex)
+        #     if ltx == ""
+        #         continue
+        #     end
+        #     # Get the line profile from the comps dictionary
+        #     line_prof = zeros(length(λ))
+        #     for j in 1:n_comps
+        #         if !isnothing(line_profiles[k, j])
+        #             line_prof .+= comps["line_$(k)_$(j)"]
+        #         end
+        #     end
+        #     # Find the peak wavelength and get the flux at the line's peak
+        #     cent_ind = argmax(line_prof)
+        #     amp = maximum([I[max(1,cent_ind-10):min(length(I),cent_ind+10)] ./ norm ./ λ[max(1,cent_ind-10):min(length(I),cent_ind+10)];
+        #                    I_model[max(1,cent_ind-10):min(length(I),cent_ind+10)] ./ norm ./ λ[max(1,cent_ind-10):min(length(I),cent_ind+10)]])
+        #     if amp > max_inten
+        #         # If the line is above the plot, put the annotation on the right side
+        #         right_ind = findfirst((I_model[cent_ind:end] ./ norm ./ λ[cent_ind:end]) .< max_inten)
+        #         if !isnothing(right_ind)
+        #             right_ind += 20
+        #             ann = ax1.text(λ[cent_ind+right_ind], 0.98max_inten, ltx, ha="left", va="top", rotation="vertical", fontsize=8)
+        #         end
+        #     else
+        #         # Otherwise, put the annotation on top of the line
+        #         small = (max_inten - min_inten) / 30
+        #         ann = ax1.text(λ[cent_ind], amp+small, ltx, ha="center", va="bottom", rotation="vertical", fontsize=8)
+        #     end
+        #     push!(annotations, ann)
+        # end
 
         # Shade in masked regions
         l_edges = findall(diff(mask_bad) .== 1) .+ 1
@@ -942,26 +978,20 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
             ax2.axvspan(λ[le], λ[re], alpha=0.5, color="k")
         end
 
-        line_mask = falses(length(λ))
-        for ln ∈ line_wave
-            window_size = 3000. / C_KMS * ln
-            window = (ln - window_size) .< λ .< (ln + window_size)
-            line_mask .|= window
-        end
         # set axes limits and labels
         if isnothing(range)
             λmin, λmax = minimum(λ), maximum(λ)
             ax1.set_xlim(λmin, λmax)
             ax2.set_xlim(λmin, λmax)
-            ax4.set_xlim(λmin * (1 + z), λmax * (1 + z))
-            ax1.set_ylim(-0.01, 1.3nanmaximum(I[.!line_mask] ./ norm ./ λ[.!line_mask]))
+            # ax4.set_xlim(λmin * (1 + z), λmax * (1 + z))
+            ax1.set_ylim(min_inten, max_inten)
         else
             ax1.set_xlim(range[1], range[2])
             ax2.set_xlim(range[1], range[2])
-            ax4.set_xlim(range[1] * (1 + z), range[2] * (1 + z))
-            ax1.set_ylim(-0.01, 1.1nanmaximum((I ./ norm ./ λ)[range[1] .< λ .< range[2]]))
+            # ax4.set_xlim(range[1] * (1 + z), range[2] * (1 + z))
+            ax1.set_ylim(min_inten, max_inten)
         end
-        ax2.set_ylim(-1.1maximum(((I.-I_cont) ./ norm ./ λ)[.!line_mask]), 1.1maximum(((I.-I_cont) ./ norm ./ λ)[.!line_mask]))
+        ax2.set_ylim(-1.1maximum(((I.-I_model) ./ norm ./ λ)[.~mask_lines .& .~mask_bad]), 1.1maximum(((I.-I_model) ./ norm ./ λ)[.~mask_lines .& .~mask_bad]))
         ax3.set_yscale("log") # logarithmic extinction axis
         ax3.set_ylim(1e-3, 1.)
         if screen
@@ -976,7 +1006,7 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
         end
         ax2.set_ylabel(L"$O-C$")  # ---> residuals, (O)bserved - (C)alculated
         ax2.set_xlabel(L"$\lambda_{\rm rest}$ ($\mu$m)")
-        ax4.set_xlabel(L"$\lambda_{\rm obs}$ ($\mu$m)")
+        # ax4.set_xlabel(L"$\lambda_{\rm obs}$ ($\mu$m)")
         ax2.legend(loc="upper left")
 
         # Set minor ticks as multiples of 0.1 μm for x axis and automatic for y axis
@@ -984,16 +1014,28 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<
         ax1.yaxis.set_minor_locator(py_ticker.AutoMinorLocator())
         ax2.xaxis.set_minor_locator(py_ticker.AutoMinorLocator())
         ax2.yaxis.set_minor_locator(py_ticker.AutoMinorLocator())
-        ax4.xaxis.set_minor_locator(py_ticker.AutoMinorLocator())
+        # ax4.xaxis.set_minor_locator(py_ticker.AutoMinorLocator())
 
         # Set major ticks and formats
         ax1.set_xticklabels([]) # ---> will be covered up by the residuals plot
-        ax2.set_yticks([-round(maximum(((I.-I_cont) ./ norm ./ λ)[.!line_mask]) / 2, sigdigits=1), 0.0, round(maximum(((I.-I_cont) ./ norm ./ λ)[.!line_mask]) / 2, sigdigits=1)])
-        ax1.tick_params(which="both", axis="both", direction="in")
+        ax2.set_yticks([-round(maximum(((I.-I_model) ./ norm ./ λ)[.~mask_lines .& .~mask_bad]) / 2, sigdigits=1), 0.0, 
+                        round(maximum(((I.-I_model) ./ norm ./ λ)[.~mask_lines .& .~mask_bad]) / 2, sigdigits=1)])
+        # ax1.tick_params(which="both", axis="both", direction="in")
+        ax1.tick_params(which="both", axis="both", direction="in", top=true)
         ax2.tick_params(which="both", axis="both", direction="in", labelright=true, right=true, top=true)
         ax3.tick_params(which="both", axis="both", direction="in")
-        ax4.tick_params(which="both", axis="both", direction="in")
-        
+        # ax4.tick_params(which="both", axis="both", direction="in")
+
+        # Annotate emission lines 
+        ak = py_lineidplot.initial_annotate_kwargs()
+        ak["verticalalignment"] = "bottom"
+        ak["horizontalalignment"] = "center"
+        pk = py_lineidplot.initial_plot_kwargs()
+        pk["lw"] = 0.5
+        pk["alpha"] = 0.5
+        fig, ax1 = py_lineidplot.plot_line_ids(copy(λ), copy(I ./ norm ./ λ), line_wave[line_annotate], line_latex[line_annotate], ax=ax1,
+            extend=false, label1_size=12, plot_kwargs=pk, annotate_kwargs=ak)
+
         # Save figure as PDF, yay for vector graphics!
         plt.savefig(isnothing(label) ? joinpath("output_$name", "spaxel_plots", "levmar_fit_spaxel.pdf") : 
             joinpath("output_$name", isnothing(range) ? "spaxel_plots" : "zoomed_plots", "$label.pdf"), dpi=300, bbox_inches="tight")
@@ -1231,17 +1273,18 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
             # Plot the fit
             if cube_fitter.plot_spaxels != :none
                 @debug "Plotting spaxel $spaxel best fit" 
-                plot_spaxel_fit(λ, I, I_model, σ, mask_bad, comps, 
-                cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_abs_feat, cube_fitter.n_comps, 
-                cube_fitter.lines.λ₀, cube_fitter.lines.names, cube_fitter.extinction_screen, cube_fitter.z, χ2/dof, cube_fitter.name, 
-                "spaxel_$(spaxel[1])_$(spaxel[2])", backend=cube_fitter.plot_spaxels, I_boot_min=I_boot_min, I_boot_max=I_boot_max)
+                plot_spaxel_fit(λ, I, I_model, σ, mask_bad, mask_lines, comps, 
+                    cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_abs_feat, cube_fitter.n_comps, 
+                    cube_fitter.lines.λ₀, cube_fitter.lines.names, cube_fitter.lines.annotate, cube_fitter.lines.latex, cube_fitter.extinction_screen, 
+                    cube_fitter.z, χ2/dof, cube_fitter.name, "spaxel_$(spaxel[1])_$(spaxel[2])", backend=cube_fitter.plot_spaxels, I_boot_min=I_boot_min, 
+                    I_boot_max=I_boot_max)
                 if !isnothing(cube_fitter.plot_range)
                     for (i, plot_range) ∈ enumerate(cube_fitter.plot_range)
-                        plot_spaxel_fit(λ, I, I_model, σ, mask_bad, comps,
+                        plot_spaxel_fit(λ, I, I_model, σ, mask_bad, mask_lines, comps,
                         cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_abs_feat, cube_fitter.n_comps, 
-                        cube_fitter.lines.λ₀, cube_fitter.lines.names, cube_fitter.extinction_screen, cube_fitter.z, χ2/dof, cube_fitter.name, 
-                        "lines_$(spaxel[1])_$(spaxel[2])_$i", backend=cube_fitter.plot_spaxels, I_boot_min=I_boot_min, I_boot_max=I_boot_max, 
-                        range=plot_range)
+                        cube_fitter.lines.λ₀, cube_fitter.lines.names, cube_fitter.lines.annotate, cube_fitter.lines.latex, cube_fitter.extinction_screen, 
+                        cube_fitter.z, χ2/dof, cube_fitter.name, "lines_$(spaxel[1])_$(spaxel[2])_$i", backend=cube_fitter.plot_spaxels, I_boot_min=I_boot_min, 
+                        I_boot_max=I_boot_max, range=plot_range)
                     end
                 end
             end
@@ -1355,16 +1398,16 @@ function fit_stack!(cube_fitter::CubeFitter)
     # Plot the fit
     if cube_fitter.plot_spaxels != :none
         @debug "Plotting spaxel sum initial fit"
-        plot_spaxel_fit(λ_init, I_sum_init, I_model_init, σ_sum_init, mask_bad_init, comps_init,
+        plot_spaxel_fit(λ_init, I_sum_init, I_model_init, σ_sum_init, mask_bad_init, mask_lines_init, comps_init,
             cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_abs_feat, cube_fitter.n_comps, 
-            cube_fitter.lines.λ₀, cube_fitter.lines.names, cube_fitter.extinction_screen, cube_fitter.z, χ2red_init, cube_fitter.name, 
-            "initial_sum_fit", backend=:both)
+            cube_fitter.lines.λ₀, cube_fitter.lines.names, cube_fitter.lines.annotate, cube_fitter.lines.latex, cube_fitter.extinction_screen,
+            cube_fitter.z, χ2red_init, cube_fitter.name, "initial_sum_fit", backend=:both)
         if !isnothing(cube_fitter.plot_range)
             for (i, plot_range) ∈ enumerate(cube_fitter.plot_range)
-                plot_spaxel_fit(λ_init, I_sum_init, I_model_init, σ_sum_init, mask_bad_init, comps_init,
+                plot_spaxel_fit(λ_init, I_sum_init, I_model_init, σ_sum_init, mask_bad_init, mask_lines_init, comps_init,
                     cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_abs_feat, cube_fitter.n_comps, 
-                    cube_fitter.lines.λ₀, cube_fitter.lines.names, cube_fitter.extinction_screen, cube_fitter.z, χ2red_init, cube_fitter.name, 
-                    "initial_sum_line_$i", backend=:both; range=plot_range)
+                    cube_fitter.lines.λ₀, cube_fitter.lines.names, cube_fitter.lines.annotate, cube_fitter.lines.latex, cube_fitter.extinction_screen, 
+                    cube_fitter.z, χ2red_init, cube_fitter.name, "initial_sum_line_$i", backend=:both; range=plot_range)
             end
         end
             

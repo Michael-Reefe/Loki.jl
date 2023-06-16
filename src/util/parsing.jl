@@ -282,7 +282,7 @@ function parse_dust()
         abs_taus = depth[ss]
     else
         abs_features = DustFeatures(String[], Symbol[], Parameter[], Parameter[], Vector{Union{Parameter,Nothing}}(),
-            Vector{Union{Parameter,Nothing}}())
+            Vector{Union{Parameter,Nothing}}(), BitVector[])
         abs_taus = Vector{Parameter}()
     end
 
@@ -343,10 +343,16 @@ function parse_lines()
 
     keylist1 = ["tie_voigt_mixing", "voff_plim", "fwhm_plim", "h3_plim", "h4_plim", "acomp_voff_plim", 
         "acomp_fwhm_plim", "flexible_wavesol", "wavesol_unc", "lines", "profiles", "acomps", "n_acomps"]
+    keylist2 = ["wave", "latex", "annotate"]
 
     # Loop through all the required keys that should be in the file and confirm that they are there
     for key ∈ keylist1
         @assert haskey(lines, key) "$key not found in line options!"
+    end
+    for key ∈ keys(lines["lines"])
+        for key2 in keylist2
+            @assert haskey(lines["lines"][key], key2) "$key2 not found in $key line options!"
+        end
     end
     @assert haskey(lines["profiles"], "default") "default not found in line profile options!"
     profiles = Dict(ln => lines["profiles"]["default"] for ln ∈ keys(lines["lines"]))
@@ -392,6 +398,8 @@ function parse_lines()
 
     # Initialize undefined vectors for each TransitionLine attribute that will be filled in
     names = Vector{Symbol}(undef, length(lines["lines"]))
+    latex = Vector{String}(undef, length(lines["lines"]))
+    annotate = BitVector(undef, length(lines["lines"]))
     cent_vals = zeros(length(lines["lines"]))
     voffs = Vector{Parameter}(undef, length(lines["lines"]))
     fwhms = Vector{Parameter}(undef, length(lines["lines"]))
@@ -423,7 +431,9 @@ function parse_lines()
         η_init = haskey(lines, "eta_init") ? lines["eta_init"] : 0.5       # Voigts start half gaussian, half lorentzian
 
         names[i] = Symbol(line)
-        cent_vals[i] = lines["lines"][line]
+        latex[i] = lines["lines"][line]["latex"]
+        cent_vals[i] = lines["lines"][line]["wave"]
+        annotate[i] = lines["lines"][line]["annotate"]
         prof_out[i] = isnothing(profiles[line]) ? nothing : Symbol(profiles[line])
 
         mask = isnothing.(acomp_profiles[line])
@@ -432,7 +442,7 @@ function parse_lines()
 
         @debug """\n
         ################# $line #######################
-        # Rest wavelength: $(lines["lines"][line]) um #
+        # Rest wavelength: $(lines["lines"][line]["wave"]) um #
         """
 
         # Set the parameter limits for FWHM, voff, h3, h4, and eta based on the values in the options file
@@ -684,7 +694,7 @@ function parse_lines()
     ss = sortperm(cent_vals)
 
     # create vectorized object for all the line data
-    lines_out = TransitionLines(names[ss], cent_vals[ss], hcat(prof_out[ss], acomp_prof_out[ss, :]), 
+    lines_out = TransitionLines(names[ss], latex[ss], annotate[ss], cent_vals[ss], hcat(prof_out[ss], acomp_prof_out[ss, :]), 
         hcat(tied_voff[ss], acomp_tied_voff[ss, :]), hcat(tied_fwhm[ss], acomp_tied_fwhm[ss, :]), 
         hcat(voffs[ss], acomp_voffs[ss, :]), hcat(fwhms[ss], acomp_fwhms[ss, :]), hcat(h3s[ss], acomp_h3s[ss, :]), 
         hcat(h4s[ss], acomp_h4s[ss, :]), hcat(ηs[ss], acomp_ηs[ss, :]))

@@ -120,6 +120,7 @@ Loki utilizes the PyCall package (https://github.com/JuliaPy/PyCall.jl) to run s
 - [astropy](https://www.astropy.org/)
 - [reproject](https://reproject.readthedocs.io/en/stable/)
 - [photutils](https://photutils.readthedocs.io/en/stable/)
+- [lineid_plot](https://github.com/phn/lineid_plot)
 
 ---
 
@@ -411,29 +412,28 @@ These options allow some flexibility in the relative velocity offsets of lines t
 
 **Rest Wavelengths:**
 
-The [lines] dictionary gives the master reference for which lines to fit, giving them each unique labels and providing their rest wavelengths. A small subset of this dictionary giving the Hydrogen recombination lines is shown below:
+The [lines] dictionary gives the main reference for which lines to fit, giving them each unique identifiers and providing their rest wavelengths (`wave`), $\LaTeX$-formatted labels (`latex`), and whether or not to explicitly annotate them on 1D spectra (`annotate`). A small subset of this dictionary is shown below:
 
 ```toml
 [lines]
 
 # Brackett Series (Hydrogen, n -> 4) Lines
-HI_Br_alpha     = 4.05225
-HI_Br_beta      = 2.6259
-HI_Br_gamma     = 2.1661
+[lines.HI_Br_alpha]
+wave = 4.05225
+latex = "Br$\\alpha$"
+annotate = false
 
-# Pfund Series (Hydrogen, n -> 5) Lines
-HI_Pf_alpha     = 7.4599
-HI_Pf_beta      = 4.6538
-HI_Pf_gamma     = 3.7405
-HI_Pf_delta     = 3.2970
-HI_Pf_epsilon   = 3.0392
+# Argon Lines
+[lines.ArII_6985]
+wave = 6.985274
+latex = "[Ar II]"
+annotate = true
 
-# Humphreys Series (Hydrogen, n -> 6) Lines
-HI_Hu_alpha     = 12.372
-HI_Hu_beta      = 7.503
-HI_Hu_gamma     = 5.908
-HI_Hu_delta     = 5.129
-HI_Hu_epsilon   = 4.673
+# Molecular Hydrogen Lines
+[lines.H200_S8]
+wave = 5.05312
+latex = "H$_2$ 0-0 $S(8)$"
+annotate = true
 ```
 
 Importantly, all lines are currently given in their *vacuum* wavelengths.  So when adding new lines, to ensure they are consistent, make sure you are also using vacuum wavelengths and not air wavelengths (otherwise, when tying lines together, their velocity offsets may be inconsistent).
@@ -442,6 +442,8 @@ Lines may be arbitrarily added to or removed from this list based on what the us
 * For hydrogen recombination lines, names should be formatted as "HI_[SS]_[LLL]" where "SS" is the abbreviated name of the series (i.e. the Brackett, Pfund, and Humphreys series shown above) and [LLL] is the greek letter corresponding to the specific transition in the series, starting from alpha.
 * For molecular hydrogen lines, names should be formatted as "H2[VV]_[RR]" where [VV] are the vibrational quantum numbers of the transition and [RR] are the rotational quantum numbers of the transition, i.e. "H200_S3" for the H<sub>2</sub> 0-0 S(3) line.
 * Lines for ionized species should be formatted as "[ION]_[WAVE]" where [ION] is the name of the ion and [WAVE] is the wavelength of the line in microns to three decimals, with the decimal removed. For example, "NeVI_7652" for the [Ne VI] λ7.652 line.
+
+The `latex` entry is used for plotting purposes, and will be displayed on 1D spectra if the `annotate` option is enabled.  Otherwise, all lines will get a vertical dashed line denoting their position regardless of if the `annotate` option is enabled. These line annotations can get overcrowded very quickly if one tries annotating every single line that is fit, especially in the region from 4-6 μm which has a lot of closely-packed lines, so it is not recommended to have `annotate` enabled for every single line.  The default list provided only gives annotations for the lines likely to be the brightest in a typical galaxy.  The $\LaTeX$ labels are still necessary even for lines that are not annotated, since they are also used to label 2D parameter maps.
 
 **Profiles:**
 

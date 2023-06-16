@@ -559,9 +559,10 @@ struct CubeFitter{T<:Real,S<:Integer}
             end
         end
         # Convert to a vectorized "TransitionLines" object
-        lines = TransitionLines(lines.names[ln_filt], lines.λ₀[ln_filt], lines.profiles[ln_filt, :],
-                                lines.tied_voff[ln_filt, :], lines.tied_fwhm[ln_filt, :], lines.voff[ln_filt, :], 
-                                lines.fwhm[ln_filt, :], lines.h3[ln_filt, :], lines.h4[ln_filt, :], lines.η[ln_filt, :])
+        lines = TransitionLines(lines.names[ln_filt], lines.latex[ln_filt], lines.annotate[ln_filt], lines.λ₀[ln_filt], 
+                                lines.profiles[ln_filt, :], lines.tied_voff[ln_filt, :], lines.tied_fwhm[ln_filt, :], 
+                                lines.voff[ln_filt, :], lines.fwhm[ln_filt, :], lines.h3[ln_filt, :], lines.h4[ln_filt, :], 
+                                lines.η[ln_filt, :])
         n_lines = length(lines.names)
         n_comps = size(lines.profiles, 2)
         n_acomps = sum(.!isnothing.(lines.profiles[:, 2:end]))
