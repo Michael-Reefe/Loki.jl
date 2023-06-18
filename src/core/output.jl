@@ -145,39 +145,22 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
         vᵢ = pᵢ
 
         for k ∈ 1:cube_fitter.n_lines
-            amp_1 = amp_1_err = voff_1 = voff_1_err = fwhm_1 = fwhm_1_err = nothing
             for j ∈ 1:cube_fitter.n_comps
                 if !isnothing(cube_fitter.lines.profiles[k, j])
 
                     ln = Symbol(cube_fitter.lines.names[k], "_$(j)")
                     amp = out_params[index, pᵢ]
                     amp_err = out_errs[index, pᵢ, :]
-                    if isone(j)
-                        param_maps.lines[ln][:amp][index] = amp
-                        param_errs[1].lines[ln][:amp][index] = amp_err[1]
-                        param_errs[2].lines[ln][:amp][index] = amp_err[2]
-                        amp_1 = amp
-                        amp_1_err = amp_err
-                    else
-                        param_maps.lines[ln][:amp][index] = amp * amp_1
-                        param_errs[1].lines[ln][:amp][index] = √((amp_1_err[1] * amp)^2 + (amp_err[1] * amp_1)^2)
-                        param_errs[2].lines[ln][:amp][index] = √((amp_1_err[2] * amp)^2 + (amp_err[2] * amp_1)^2)
-                    end
-                    
+                    param_maps.lines[ln][:amp][index] = amp
+                    param_errs[1].lines[ln][:amp][index] = amp_err[1]
+                    param_errs[2].lines[ln][:amp][index] = amp_err[2]
+
                     # Voff parameter
                     voff = out_params[index, pᵢ+1]
                     voff_err = out_errs[index, pᵢ+1, :]
-                    if isone(j)
-                        param_maps.lines[ln][:voff][index] = voff
-                        param_errs[1].lines[ln][:voff][index] = voff_err[1]
-                        param_errs[2].lines[ln][:voff][index] = voff_err[2]
-                        voff_1 = voff
-                        voff_1_err = voff_err
-                    else
-                        param_maps.lines[ln][:voff][index] = voff + voff_1
-                        param_errs[1].lines[ln][:voff][index] = √(voff_err[1]^2 + voff_1_err[1]^2)
-                        param_errs[2].lines[ln][:voff][index] = √(voff_err[2]^2 + voff_1_err[2]^2)
-                    end
+                    param_maps.lines[ln][:voff][index] = voff
+                    param_errs[1].lines[ln][:voff][index] = voff_err[1]
+                    param_errs[2].lines[ln][:voff][index] = voff_err[2]
 
                     # Individual voff parameter
                     if !isnothing(cube_fitter.lines.tied_voff[k, j]) && cube_fitter.flexible_wavesol && isone(j)
@@ -196,17 +179,9 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
                     end
 
                     # FWHM parameter
-                    if isone(j)
-                        param_maps.lines[ln][:fwhm][index] = fwhm
-                        param_errs[1].lines[ln][:fwhm][index] = fwhm_err[1]
-                        param_errs[2].lines[ln][:fwhm][index] = fwhm_err[2]
-                        fwhm_1 = fwhm
-                        fwhm_1_err = fwhm_err
-                    else
-                        param_maps.lines[ln][:fwhm][index] = fwhm * fwhm_1
-                        param_errs[1].lines[ln][:fwhm][index] = √((fwhm_1_err[1] * fwhm)^2 + (fwhm_err[1] * fwhm_1)^2)
-                        param_errs[2].lines[ln][:fwhm][index] = √((fwhm_1_err[2] * fwhm)^2 + (fwhm_err[2] * fwhm_1)^2)
-                    end
+                    param_maps.lines[ln][:fwhm][index] = fwhm
+                    param_errs[1].lines[ln][:fwhm][index] = fwhm_err[1]
+                    param_errs[2].lines[ln][:fwhm][index] = fwhm_err[2]
 
                     # Get Gauss-Hermite 3rd and 4th order moments
                     if cube_fitter.lines.profiles[k, j] == :GaussHermite
@@ -283,6 +258,136 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
                     param_errs[1].lines[ln][:SNR][index] = out_errs[index, pᵢ+1, 1]
                     param_errs[2].lines[ln][:SNR][index] = out_errs[index, pᵢ+1, 2]
                     pᵢ += 2
+                end
+            end
+        end
+
+        # Reorder line parameters sorted by amplitude
+        if cube_fitter.sort_line_components
+            for k ∈ 1:cube_fitter.n_lines
+                n_prof = sum([!isnothing(cube_fitter.lines.profiles[k, j]) for j ∈ 1:cube_fitter.n_comps])
+                if n_prof > 1
+
+                    ln = cube_fitter.lines.names[k]
+                    # Collect parameters for each line component
+                    amps = zeros(n_prof)
+                    amp_errs_lo = zeros(n_prof)
+                    amp_errs_hi = zeros(n_prof)
+                    voffs = zeros(n_prof)
+                    voff_errs_lo = zeros(n_prof)
+                    voff_errs_hi = zeros(n_prof)
+                    voff_indivs = zeros(n_prof)
+                    voff_indiv_errs_lo = zeros(n_prof)
+                    voff_indiv_errs_hi = zeros(n_prof)
+                    fwhms = zeros(n_prof)
+                    fwhm_errs_lo = zeros(n_prof)
+                    fwhm_errs_hi = zeros(n_prof)
+                    h3s = zeros(n_prof)
+                    h3_errs_lo = zeros(n_prof)
+                    h3_errs_hi = zeros(n_prof)
+                    h4s = zeros(n_prof)
+                    h4_errs_lo = zeros(n_prof)
+                    h4_errs_hi = zeros(n_prof)
+                    etas = zeros(n_prof)
+                    eta_errs_lo = zeros(n_prof)
+                    eta_errs_hi = zeros(n_prof)
+                    fluxes = zeros(n_prof)
+                    flux_errs_lo = zeros(n_prof)
+                    flux_errs_hi = zeros(n_prof)
+                    snrs = zeros(n_prof)
+
+                    for j ∈ 1:n_prof
+                        lnj = Symbol(ln, "_$j")
+
+                        amps[j] = param_maps.lines[lnj][:amp][index]
+                        amp_errs_lo[j] = param_errs[1].lines[lnj][:amp][index]
+                        amp_errs_hi[j] = param_errs[2].lines[lnj][:amp][index]
+                        voffs[j] = param_maps.lines[lnj][:voff][index]
+                        voff_errs_lo[j] = param_errs[1].lines[lnj][:voff][index]
+                        voff_errs_hi[j] = param_errs[2].lines[lnj][:voff][index]
+                        fwhms[j] = param_maps.lines[lnj][:fwhm][index]
+                        fwhm_errs_lo[j] = param_errs[1].lines[lnj][:fwhm][index]
+                        fwhm_errs_hi[j] = param_errs[2].lines[lnj][:fwhm][index]
+                        if !isnothing(cube_fitter.lines.tied_voff[k, j]) && cube_fitter.flexible_wavesol && isone(j)
+                            voff_indivs[j] = param_maps.lines[lnj][:voff_indiv][index]
+                            voff_indiv_errs_lo[j] = param_errs[1].lines[lnj][:voff_indiv][index]
+                            voff_indiv_errs_hi[j] = param_errs[2].lines[lnj][:voff_indiv][index]
+                        end
+                        if cube_fitter.lines.profiles[k, j] == :GaussHermite
+                            h3s[j] = param_maps.lines[lnj][:h3][index]
+                            h3_errs_lo[j] = param_errs[1].lines[lnj][:h3][index]
+                            h3_errs_hi[j] = param_errs[2].lines[lnj][:h3][index]
+                            h4s[j] = param_maps.lines[lnj][:h4][index]
+                            h4_errs_lo[j] = param_errs[1].lines[lnj][:h4][index]
+                            h4_errs_hi[j] = param_errs[2].lines[lnj][:h4][index]
+                        end
+                        if cube_fitter.lines.profiles[k, j] == :Voigt
+                            etas[j] = param_maps.lines[lnj][:mixing][index]
+                            eta_errs_lo[j] = param_errs[1].lines[lnj][:mixing][index]
+                            eta_errs_hi[j] = param_errs[2].lines[lnj][:mixing][index]
+                        end
+                        fluxes[j] = param_maps.lines[lnj][:flux][index]
+                        flux_errs_lo[j] = param_errs[1].lines[lnj][:flux][index]
+                        flux_errs_hi[j] = param_errs[2].lines[lnj][:flux][index]
+                        snrs[j] = param_maps.lines[lnj][:SNR][index]
+                    end     
+
+                    # Sort amplitudes in decreasing order
+                    ss = reverse(sortperm(amps))
+
+                    # Reassign the parameters in this order
+                    for i ∈ eachindex(ss)
+                        lni = Symbol(ln, "_$i")
+                        nan_arr = ones(size(cube_data.I)[1:2]) .* NaN
+
+                        # We need to add keys if the components have diferent types of profiles (not recommended)
+                        if !isnothing(cube_fitter.lines.tied_voff[k, 1]) && cube_fitter.flexible_wavesol && !haskey(param_maps.lines[lni], :voff_indiv)
+                            param_maps.lines[lni][:voff_indiv] = copy(nan_arr)
+                            param_errs[1].lines[lni][:voff_indiv] = copy(nan_arr)
+                            param_errs[2].lines[lni][:voff_indiv] = copy(nan_arr)
+                        end
+                        if cube_fitter.lines.profiles[k, i] == :GaussHermite && !haskey(param_maps.lines[lni], :h3)
+                            param_maps.lines[lni][:h3] = copy(nan_arr)
+                            param_errs[1].lines[lni][:h3] = copy(nan_arr)
+                            param_errs[2].lines[lni][:h3] = copy(nan_arr)
+                            param_maps.lines[lni][:h4] = copy(nan_arr)
+                            param_errs[1].lines[lni][:h4] = copy(nan_arr)
+                            param_errs[2].lines[lni][:h4] = copy(nan_arr)
+                        end
+                        if cube_fitter.lines.profiles[k, i] == :Voigt && !haskey(param_maps.lines[lni], :mixing)
+                            param_maps.lines[lni][:mixing] = copy(nan_arr)
+                            param_errs[1].lines[lni][:mixing] = copy(nan_arr)
+                            param_errs[2].lines[lni][:mixing] = copy(nan_arr)
+                        end
+
+                        param_maps.lines[lni][:amp][index] = amps[ss[i]]
+                        param_errs[1].lines[lni][:amp][index] = amp_errs_lo[ss[i]]
+                        param_errs[2].lines[lni][:amp][index] = amp_errs_hi[ss[i]]
+                        param_maps.lines[lni][:voff][index] = voffs[ss[i]]
+                        param_errs[1].lines[lni][:voff][index] = voff_errs_lo[ss[i]]
+                        param_errs[2].lines[lni][:voff][index] = voff_errs_hi[ss[i]]
+                        param_maps.lines[lni][:fwhm][index] = fwhms[ss[i]]
+                        param_errs[1].lines[lni][:fwhm][index] = fwhm_errs_lo[ss[i]]
+                        param_errs[2].lines[lni][:fwhm][index] = fwhm_errs_hi[ss[i]]
+                        if !isnothing(cube_fitter.lines.tied_voff[k, 1]) && cube_fitter.flexible_wavesol
+                            param_maps.lines[lni][:voff_indiv][index] = voff_indivs[ss[i]]
+                            param_errs[1].lines[lni][:voff_indiv][index] = voff_indiv_errs_lo[ss[i]]
+                            param_errs[2].lines[lni][:voff_indiv][index] = voff_indiv_errs_hi[ss[i]]
+                        end
+                        if cube_fitter.lines.profiles[k, i] == :GaussHermite
+                            param_maps.lines[lni][:h3][index] = h3s[ss[i]]
+                            param_errs[1].lines[lni][:h3][index] = h3_errs_lo[ss[i]]
+                            param_errs[2].lines[lni][:h3][index] = h3_errs_hi[ss[i]]
+                            param_maps.lines[lni][:h4][index] = h4s[ss[i]]
+                            param_errs[1].lines[lni][:h4][index] = h4_errs_lo[ss[i]]
+                            param_errs[2].lines[lni][:h4][index] = h4_errs_hi[ss[i]]
+                        end
+                        if cube_fitter.lines.profiles[k, i] == :Voigt
+                            param_maps.lines[lni][:mixing][index] = etas[ss[i]]
+                            param_errs[1].lines[lni][:mixing][index] = eta_errs_lo[ss[i]]
+                            param_errs[2].lines[lni][:mixing][index] = eta_errs_hi[ss[i]]
+                        end
+                    end
                 end
             end
         end
@@ -457,7 +562,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         bunit = L"$\nu$"
     end
 
-    @debug "Plotting 2D map of $name_i with units $bunit"
+    @info "Plotting 2D map of $name_i"
 
     filtered = copy(data)
     # Convert Infs into NaNs

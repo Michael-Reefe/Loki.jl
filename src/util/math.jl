@@ -1120,7 +1120,6 @@ function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_co
     pᵢ = 1
     # Add emission lines
     for k ∈ 1:n_lines
-        amp_1 = voff_1 = fwhm_1 = nothing
         for j ∈ 1:n_comps
             if !isnothing(lines.profiles[k, j])
                 # Unpack the components of the line
@@ -1145,19 +1144,6 @@ function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_co
                     # individual position
                     η = params[pᵢ]
                     pᵢ += 1
-                end
-
-                # Save the j = 1 parameters for reference 
-                if isone(j)
-                    amp_1 = amp
-                    voff_1 = voff
-                    fwhm_1 = fwhm
-                # For the additional components, we parametrize them this way to essentially give them soft constraints
-                # relative to the primary component
-                else
-                    amp *= amp_1
-                    voff += voff_1
-                    fwhm *= fwhm_1
                 end
 
                 # Broaden the FWHM by the instrumental FWHM at the location of the line
@@ -1210,7 +1196,6 @@ function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_co
     pᵢ = 1
     # Add emission lines
     for k ∈ 1:n_lines
-        amp_1 = voff_1 = fwhm_1 = nothing
         for j ∈ 1:n_comps
             if !isnothing(lines.profiles[k, j])
                 # Unpack the components of the line
@@ -1235,19 +1220,6 @@ function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_co
                     # individual position
                     η = params[pᵢ]
                     pᵢ += 1
-                end
-
-                # Save the j = 1 parameters for reference 
-                if isone(j)
-                    amp_1 = amp
-                    voff_1 = voff
-                    fwhm_1 = fwhm
-                # For the additional components, we parametrize them this way to essentially give them soft constraints
-                # relative to the primary component
-                else
-                    amp *= amp_1
-                    voff += voff_1
-                    fwhm *= fwhm_1
                 end
 
                 # Broaden the FWHM by the instrumental FWHM at the location of the line
@@ -1372,7 +1344,6 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     p_lines_err = zeros(2n_lines+2n_acomps)
     pₒ = pᵢ = 1
     for (k, λ0) ∈ enumerate(lines.λ₀)
-        amp_1 = amp_1_err = voff_1 = voff_1_err = fwhm_1 = fwhm_1_err = nothing
         for j ∈ 1:n_comps
             if !isnothing(lines.profiles[k, j])
 
@@ -1409,27 +1380,6 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                     η = popt_l[pᵢ]
                     η_err = propagate_err ? perr_l[pᵢ] : 0.
                     pᵢ += 1
-                end
-
-                # Save the j = 1 parameters for reference 
-                if isone(j)
-                    amp_1 = amp
-                    amp_1_err = amp_err
-                    voff_1 = voff
-                    voff_1_err = voff_err
-                    fwhm_1 = fwhm
-                    fwhm_1_err = fwhm_err
-                # For the additional components, we parametrize them this way to essentially give them soft constraints
-                # relative to the primary component
-                else
-                    amp_err = propagate_err ? hypot(amp_1_err*amp, amp_err*amp_1) : 0.
-                    amp *= amp_1
-                    
-                    voff_err = propagate_err ? hypot(voff_err, voff_1_err) : 0.
-                    voff += voff_1
-
-                    fwhm_err = propagate_err ? hypot(fwhm_1_err*fwhm, fwhm_err*fwhm_1) : 0.
-                    fwhm *= fwhm_1
                 end
 
                 # Broaden the FWHM by the instrumental FWHM at the location of the line

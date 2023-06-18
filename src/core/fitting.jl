@@ -911,9 +911,18 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_model::Vector{
         ax1.plot(λ, sum([comps["dust_feat_$i"] for i ∈ 1:n_dust_features], dims=1)[1] .* comps["extinction"] ./ norm ./ λ, "-", 
             color="#0065ff", label="PAHs")
         # full line profile
-        ax1.plot(λ, sum([haskey(comps, "line_$(i)_$(j)") ? comps["line_$(i)_$(j)"] : zeros(length(λ)) 
-            for i ∈ 1:length(line_wave), j ∈ 1:n_comps], dims=(1,2))[1] .* comps["extinction"] ./ norm ./ λ, "-", 
-            color="rebeccapurple", alpha=0.6, label="Lines")
+        if isnothing(range)
+            ax1.plot(λ, sum([haskey(comps, "line_$(i)_$(j)") ? comps["line_$(i)_$(j)"] : zeros(length(λ)) 
+                for i ∈ 1:length(line_wave), j ∈ 1:n_comps], dims=(1,2))[1] .* comps["extinction"] ./ norm ./ λ, "-", 
+                color="rebeccapurple", alpha=0.6, label="Lines")
+        else
+            for i ∈ 1:length(line_wave), j ∈ 1:n_comps
+                if haskey(comps, "line_$(i)_$(j)")
+                    ax1.plot(λ, comps["line_$(i)_$(j)"] .* comps["extinction"] ./ norm ./ λ, "-", color="rebeccapurple",
+                        alpha=0.6, label="Lines")
+                end
+            end
+        end
         # plot extinction
         ax3.plot(λ, ext_full, "k:", alpha=0.5, label="Extinction")
         # plot hot dust
@@ -1033,12 +1042,22 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_model::Vector{
         pk = py_lineidplot.initial_plot_kwargs()
         pk["lw"] = 0.5
         pk["alpha"] = 0.5
-        fig, ax1 = py_lineidplot.plot_line_ids(copy(λ), copy(I ./ norm ./ λ), line_wave[line_annotate], line_latex[line_annotate], ax=ax1,
-            extend=false, label1_size=12, plot_kwargs=pk, annotate_kwargs=ak)
+        if isnothing(range)
+            fig, ax1 = py_lineidplot.plot_line_ids(copy(λ), copy(I ./ norm ./ λ), line_wave[line_annotate], line_latex[line_annotate], ax=ax1,
+                extend=false, label1_size=12, plot_kwargs=pk, annotate_kwargs=ak)
+        else
+            # Use all labels for the zoomed in plots since they are less likely to be overcrowded
+            fig, ax1 = py_lineidplot.plot_line_ids(copy(λ), copy(I ./ norm ./ λ), line_wave, line_latex, ax=ax1,
+                extend=false, label1_size=12, plot_kwargs=pk, annotate_kwargs=ak)
+        end
 
+        # Output file path creation
+        out_folder = joinpath("output_$name", isnothing(range) ? "spaxel_plots" : joinpath("zoomed_plots", split(label, "_")[end]))
+        if !isdir(out_folder)
+            mkdir(out_folder)
+        end
         # Save figure as PDF, yay for vector graphics!
-        plt.savefig(isnothing(label) ? joinpath("output_$name", "spaxel_plots", "levmar_fit_spaxel.pdf") : 
-            joinpath("output_$name", isnothing(range) ? "spaxel_plots" : "zoomed_plots", "$label.pdf"), dpi=300, bbox_inches="tight")
+        plt.savefig(joinpath(out_folder, isnothing(label) ? "levmar_fit_spaxel.pdf" : "$label.pdf"), dpi=300, bbox_inches="tight")
         plt.close()
     end
 end

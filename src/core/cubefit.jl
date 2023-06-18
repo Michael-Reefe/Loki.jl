@@ -365,6 +365,7 @@ struct CubeFitter{T<:Real,S<:Integer}
     extinction_screen::Bool
     fit_sil_emission::Bool
     fit_all_samin::Bool
+    sort_line_components::Bool
     use_pah_templates::Bool
     pah_template_map::BitMatrix
 
@@ -577,6 +578,16 @@ struct CubeFitter{T<:Real,S<:Integer}
         end
         @debug msg
 
+        for i in 1:n_lines
+            nn = .~isnothing.(lines.profiles[i, :])
+            if !all(lines.profiles[i, :][nn] .== lines.profiles[i, 1])
+                @warn "$(lines.names[i]) is currently being fit with multiple different profiles: " * 
+                    "($(lines.profiles[i, :])). \n" *
+                    "This is not recommended unless there is a clear constraint that can distinguish the \n" *
+                    "line components from each other during the fitting process."
+            end
+        end
+
         # Remove unnecessary rows/keys from the tied_kinematics object after the lines have been filtered
         @debug "TiedKinematics before filtering: $tied_kinematics"
         for j ∈ 1:n_comps
@@ -672,10 +683,11 @@ struct CubeFitter{T<:Real,S<:Integer}
 
         new{typeof(z), typeof(n_lines)}(cube, z, name, out[:user_mask], out[:plot_spaxels], out[:plot_maps], out[:plot_range], out[:parallel], 
             out[:save_fits], out[:save_full_model], out[:overwrite], out[:track_memory], out[:track_convergence], out[:make_movies], 
-            out[:extinction_curve], out[:extinction_screen], out[:fit_sil_emission], out[:fit_all_samin], out[:use_pah_templates], pah_template_map, 
-            continuum, n_dust_cont, n_power_law, n_dust_features, n_abs_features, dust_features, abs_features, abs_taus, n_lines, n_acomps, n_comps, 
-            lines, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, out[:cosmology], flexible_wavesol, 
-            out[:n_bootstrap], out[:random_seed], p_init_cont, p_init_line, p_init_pahtemp)
+            out[:extinction_curve], out[:extinction_screen], out[:fit_sil_emission], out[:fit_all_samin], out[:sort_line_components], 
+            out[:use_pah_templates], pah_template_map, continuum, n_dust_cont, n_power_law, n_dust_features, n_abs_features, dust_features, 
+            abs_features, abs_taus, n_lines, n_acomps, n_comps, lines, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, 
+            n_params_lines, n_params_extra, out[:cosmology], flexible_wavesol, out[:n_bootstrap], out[:random_seed], p_init_cont, 
+            p_init_line, p_init_pahtemp)
     end
 
 end
@@ -1103,7 +1115,7 @@ function get_line_plimits(cube_fitter::CubeFitter, ext_curve::Vector{<:Real}, in
 
     # Set up the limits vector
     amp_plim = (0., clamp(maximum(1 ./ ext_curve), 1., Inf))
-    amp_acomp_plim = (0., 1.)
+    amp_acomp_plim = (0., clamp(maximum(1 ./ ext_curve), 1., Inf))
     ln_plims = Vector{Tuple}()
     ln_lock = BitVector()
     ln_names = Vector{String}()
@@ -1252,7 +1264,7 @@ function get_line_initial_values(cube_fitter::CubeFitter, init::Bool)
         
         # Start the ampltiudes at 1/2 and 1/4 (in normalized units)
         A_ln = ones(cube_fitter.n_lines) .* 0.5
-        A_fl = ones(cube_fitter.n_lines) .* 0.25     # (acomp amp is multiplied with main amp)
+        A_fl = ones(cube_fitter.n_lines) .* 0.25
 
         # Initial parameter vector
         ln_pars = Float64[]

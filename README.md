@@ -194,6 +194,10 @@ This boolean option determines how the PAH features are fit. If `false`, they wi
 
 By default, simulated annealing is only performed for the line fit during the initial fit of the sum of all spaxels. If this option is set to `true`, then simulated annealing will be performed on all of the line fits for the individual spaxels as well.
 
+`sort_line_components = true`
+
+This boolean option determines whether to sort line components for lines that are fit with more than one profile. If this option is `false`, the components are not sorted, which may lead to 2D parameter maps looking "noisy" because the line profiles end up fitting different components of the line in different spaxels. To avoid this, if this option is `true` (which it is by default), after all fitting has been performed, the line components are sorted in decreasing order of their amplitude. So the brightest component will always be component 1, and the faintest component will always be the last one.
+
 `user_mask = []`
 
 This option allows the user to mask out predefined regions of the spectrum that will be ignored during the fitting process. To mask out a region bounded between $\lambda_1 < \lambda < \lambda_2$, add a tuple to the user mask of the format $(\lambda_1, \lambda_2)$. For example, `user_mask = [(5.5, 6.0), (10.2, 10.3)]` will mask out the regions between 5.5-6 μm and 10.2-10.3 μm.
@@ -350,11 +354,11 @@ These options are found in `src/options/lines.toml`.
 
 This boolean option determines whether or not the mixing ratio of all lines with pseudo-Voigt profiles are tied or not.
 
-`voff_plim = [-500.0, 500.0]`
+`voff_plim = [-600.0, 600.0]`
 
 This tuple gives the (minimum, maximum) allowable velocity offset from the rest-frame wavelength of each line, in km/s.
 
-`fwhm_plim = [0.0, 500.0]`
+`fwhm_plim = [0.0, 1200.0]`
 
 This tuple gives the (minimum, maximum) allowable velocity FWHM of each line, in km/s. Note that these are limits on the *intrinsic* FWHM, not the *observed* FWHM. The observed FWHM is corrected by subtracting the FWHM of the instrumental line-spread function (LSF) in quadrature.
 
@@ -374,13 +378,13 @@ This tuple gives the (minimum, maximum) allowable mixing ratio for each line. Th
 
 If one desires to fit more than one profile to a single line, this option allows the user to set the maximum number of *additional* profiles that a line can have. In other words, a value of 0 means that each line should only be fit with one profile, whereas a value of 1 means that each line may have *up to* 2 profiles. This value only sets the *upper limit* on how many profiles each line can have, it does not force every line to have the maximum number of profiles.
 
-`acomp_voff_plim = [[-500.0, 500.0]]`
+`acomp_voff_plim = [[-600.0, 600.0]]`
 
-This is the same as `voff_plim`, but for the additional line profiles given by `n_acomps`. This is a 2D list where the first dimension should have a length of `n_acomps` and the second dimension should be 2 (for the lower and upper limits). The first pair gives the lower/upper limits for the first additional line profile, the second pair gives the limits for the second additional profile, etc. **N.B.** that the velocity offset of the additional line profiles is measured **relative to the main component**, ***not*** **the rest-frame wavelength.**. So, limits of $\pm 500$ km/s here mean that the additional component can be within $\pm 500$ km/s from the main component, even if the main component itself is at a large offset relative to the rest-frame wavelength. This parametrization is useful if one wishes to constrain the relative kinematics of each component. For example, if one wishes to measure an asymmetric blueshift (i.e. from an outflow), the additional voff component could be constrained to `[-500.0, 0.0]` which ensures that it will always be to the left of the main component.
+This is the same as `voff_plim`, but for the additional line profiles given by `n_acomps`. This is a 2D list where the first dimension should have a length of `n_acomps` and the second dimension should be 2 (for the lower and upper limits). The first pair gives the lower/upper limits for the first additional line profile, the second pair gives the limits for the second additional profile, etc.
 
-`acomp_fwhm_plim = [[1.0, 5.0]]`
+`acomp_fwhm_plim = [[0.0, 1200.0]]`
 
-This is the same as `fwhm_plim`, but for the additional line profiles given by `n_acomps`. Like `acomp_voff_plim`, this is a 2D list where the first dimension should have a length of `n_acomps` and the second dimension should be 2. **N.B.** that the FWHM of the additional components here are **multiplicative factors with the main component.** So limits of `[1.0, 5.0]` signify that the additional component may have a FWHM 1-5x larger than the main FWHM.
+This is the same as `fwhm_plim`, but for the additional line profiles given by `n_acomps`. Like `acomp_voff_plim`, this is a 2D list where the first dimension should have a length of `n_acomps` and the second dimension should be 2.
 
 **Kinematic Groups:**
 
