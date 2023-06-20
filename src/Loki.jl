@@ -12,6 +12,7 @@ using Random
 using Statistics
 using NaNStatistics
 using QuadGK
+using NumericalIntegration
 using Dierckx
 using LinearAlgebra
 using EllipsisNotation

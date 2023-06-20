@@ -161,6 +161,7 @@ struct TransitionLines
     tied_fwhm::Matrix{Union{Symbol,Nothing}}
 
     # Model Parameters
+    acomp_amp::Matrix{Union{Parameter,Nothing}}
     voff::Matrix{Union{Parameter,Nothing}}
     fwhm::Matrix{Union{Parameter,Nothing}}
     h3::Matrix{Union{Parameter,Nothing}}

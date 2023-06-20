@@ -911,9 +911,18 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_model::Vector{
         ax1.plot(λ, sum([comps["dust_feat_$i"] for i ∈ 1:n_dust_features], dims=1)[1] .* comps["extinction"] ./ norm ./ λ, "-", 
             color="#0065ff", label="PAHs")
         # full line profile
-        ax1.plot(λ, sum([haskey(comps, "line_$(i)_$(j)") ? comps["line_$(i)_$(j)"] : zeros(length(λ)) 
-            for i ∈ 1:length(line_wave), j ∈ 1:n_comps], dims=(1,2))[1] .* comps["extinction"] ./ norm ./ λ, "-", 
-            color="rebeccapurple", alpha=0.6, label="Lines")
+        if isnothing(range)
+            ax1.plot(λ, sum([haskey(comps, "line_$(i)_$(j)") ? comps["line_$(i)_$(j)"] : zeros(length(λ)) 
+                for i ∈ 1:length(line_wave), j ∈ 1:n_comps], dims=(1,2))[1] .* comps["extinction"] ./ norm ./ λ, "-", 
+                color="rebeccapurple", alpha=0.6, label="Lines")
+        else
+            for i ∈ 1:length(line_wave), j ∈ 1:n_comps
+                if haskey(comps, "line_$(i)_$(j)")
+                    ax1.plot(λ, comps["line_$(i)_$(j)"] .* comps["extinction"] ./ norm ./ λ, "-", color="rebeccapurple",
+                        alpha=0.6, label="Lines")
+                end
+            end
+        end
         # plot extinction
         ax3.plot(λ, ext_full, "k:", alpha=0.5, label="Extinction")
         # plot hot dust
@@ -931,37 +940,6 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_model::Vector{
             ax1.axvline(lw, linestyle="--", color="k", lw=0.5, alpha=0.5)
             ax2.axvline(lw, linestyle="--", color="k", lw=0.5, alpha=0.5)
         end
-
-        # annotations = []
-        # for (k, ltx) ∈ zip(1:length(line_names), line_latex)
-        #     if ltx == ""
-        #         continue
-        #     end
-        #     # Get the line profile from the comps dictionary
-        #     line_prof = zeros(length(λ))
-        #     for j in 1:n_comps
-        #         if !isnothing(line_profiles[k, j])
-        #             line_prof .+= comps["line_$(k)_$(j)"]
-        #         end
-        #     end
-        #     # Find the peak wavelength and get the flux at the line's peak
-        #     cent_ind = argmax(line_prof)
-        #     amp = maximum([I[max(1,cent_ind-10):min(length(I),cent_ind+10)] ./ norm ./ λ[max(1,cent_ind-10):min(length(I),cent_ind+10)];
-        #                    I_model[max(1,cent_ind-10):min(length(I),cent_ind+10)] ./ norm ./ λ[max(1,cent_ind-10):min(length(I),cent_ind+10)]])
-        #     if amp > max_inten
-        #         # If the line is above the plot, put the annotation on the right side
-        #         right_ind = findfirst((I_model[cent_ind:end] ./ norm ./ λ[cent_ind:end]) .< max_inten)
-        #         if !isnothing(right_ind)
-        #             right_ind += 20
-        #             ann = ax1.text(λ[cent_ind+right_ind], 0.98max_inten, ltx, ha="left", va="top", rotation="vertical", fontsize=8)
-        #         end
-        #     else
-        #         # Otherwise, put the annotation on top of the line
-        #         small = (max_inten - min_inten) / 30
-        #         ann = ax1.text(λ[cent_ind], amp+small, ltx, ha="center", va="bottom", rotation="vertical", fontsize=8)
-        #     end
-        #     push!(annotations, ann)
-        # end
 
         # Shade in masked regions
         l_edges = findall(diff(mask_bad) .== 1) .+ 1
@@ -1033,12 +1011,22 @@ function plot_spaxel_fit(λ::Vector{<:Real}, I::Vector{<:Real}, I_model::Vector{
         pk = py_lineidplot.initial_plot_kwargs()
         pk["lw"] = 0.5
         pk["alpha"] = 0.5
-        fig, ax1 = py_lineidplot.plot_line_ids(copy(λ), copy(I ./ norm ./ λ), line_wave[line_annotate], line_latex[line_annotate], ax=ax1,
-            extend=false, label1_size=12, plot_kwargs=pk, annotate_kwargs=ak)
+        if isnothing(range)
+            fig, ax1 = py_lineidplot.plot_line_ids(copy(λ), copy(I ./ norm ./ λ), line_wave[line_annotate], line_latex[line_annotate], ax=ax1,
+                extend=false, label1_size=12, plot_kwargs=pk, annotate_kwargs=ak)
+        else
+            # Use all labels for the zoomed in plots since they are less likely to be overcrowded
+            fig, ax1 = py_lineidplot.plot_line_ids(copy(λ), copy(I ./ norm ./ λ), line_wave, line_latex, ax=ax1,
+                extend=false, label1_size=12, plot_kwargs=pk, annotate_kwargs=ak)
+        end
 
+        # Output file path creation
+        out_folder = joinpath("output_$name", isnothing(range) ? "spaxel_plots" : joinpath("zoomed_plots", split(label, "_")[end]))
+        if !isdir(out_folder)
+            mkdir(out_folder)
+        end
         # Save figure as PDF, yay for vector graphics!
-        plt.savefig(isnothing(label) ? joinpath("output_$name", "spaxel_plots", "levmar_fit_spaxel.pdf") : 
-            joinpath("output_$name", isnothing(range) ? "spaxel_plots" : "zoomed_plots", "$label.pdf"), dpi=300, bbox_inches="tight")
+        plt.savefig(joinpath(out_folder, isnothing(label) ? "levmar_fit_spaxel.pdf" : "$label.pdf"), dpi=300, bbox_inches="tight")
         plt.close()
     end
 end
@@ -1053,8 +1041,6 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # Interpolate the LSF
     lsf_interp = Spline1D(λ, cube_fitter.cube.lsf, k=1)
     lsf_interp_func = x -> lsf_interp(x)    # Interpolate the LSF
-    lsf_interp = Spline1D(λ, cube_fitter.cube.lsf, k=1)
-    lsf_interp_func = x -> lsf_interp(x)
 
     if use_ap || init
         pah_template_spaxel = true
@@ -1105,11 +1091,11 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
 
     # Add dust feature and line parameters (intensity and SNR)
     if !init
-        p_dust, p_lines, p_dust_err, p_lines_err = calculate_extra_parameters(λ, I, norm, cube_fitter.n_dust_cont,
-                cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, 
-                cube_fitter.fit_sil_emission, cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, cube_fitter.lines, 
-                cube_fitter.flexible_wavesol, lsf_interp_func, popt_c, popt_l, perr_c, perr_l, comps["extinction"], mask_lines, 
-                I_spline, area_sr, !bootstrap_iter)
+        p_dust, p_lines, p_dust_err, p_lines_err = calculate_extra_parameters(λ, I, norm, comps, cube_fitter.n_dust_cont,
+            cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, 
+            cube_fitter.fit_sil_emission, cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, cube_fitter.lines, 
+            cube_fitter.flexible_wavesol, lsf_interp_func, popt_c, popt_l, perr_c, perr_l, comps["extinction"], mask_lines, 
+            I_spline, area_sr, !bootstrap_iter)
         p_out = [popt_c; popt_l; p_dust; p_lines; χ2; dof]
         p_err = [perr_c; perr_l; p_dust_err; p_lines_err; 0.; 0.]
         

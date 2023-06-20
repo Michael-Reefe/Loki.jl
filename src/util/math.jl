@@ -1291,7 +1291,7 @@ end
 Calculate extra parameters that are not fit, but are nevertheless important to know, for a given spaxel.
 Currently this includes the integrated intensity and signal to noise ratios of dust features and emission lines.
 """
-function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, n_dust_cont::Integer,
+function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, comps::Dict, n_dust_cont::Integer,
     n_power_law::Integer, n_dust_feat::Integer, dust_profiles::Vector{Symbol}, n_abs_feat::Integer, fit_sil_emission::Bool, 
     n_lines::Integer, n_acomps::Integer, n_comps::Integer, lines::TransitionLines, flexible_wavesol::Bool, 
     lsf::Function, popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}, 
@@ -1304,8 +1304,8 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     @debug "Normalization: $N"
 
     # Loop through dust features
-    p_dust = zeros(2n_dust_feat)
-    p_dust_err = zeros(2n_dust_feat)
+    p_dust = zeros(3n_dust_feat)
+    p_dust_err = zeros(3n_dust_feat)
     pₒ = 1
     # Initial parameter vector index where dust profiles start
     pᵢ = 3 + 2n_dust_cont + 2n_power_law + 4 + 3n_abs_feat + (fit_sil_emission ? 6 : 0)
@@ -1344,9 +1344,15 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
         # Calculate the flux using the utility function
         flux, f_err = calculate_flux(prof, A_cgs, A_cgs_err, μ, μ_err, fwhm, fwhm_err, 
             m=m, m_err=m_err, ν=ν, ν_err=ν_err, propagate_err=propagate_err)
+        
+        # Calculate the equivalent width using the utility function
+        eqw, e_err = calculate_eqw(λ, prof, comps, false, n_dust_cont, n_power_law, n_abs_feat, n_dust_feat, fit_sil_emission,
+            A*N, A_err*N, μ, μ_err, fwhm, fwhm_err, m=m, m_err=m_err, ν=ν, ν_err=ν_err, propagate_err=propagate_err)
+        
+        snr = A*N*ext / std(I[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)] .- continuum[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)])
 
         @debug "PAH feature ($prof) with ($A_cgs, $μ, $fwhm, $m, $ν) and errors ($A_cgs_err, $μ_err, $fwhm_err, $m_err, $ν_err)"
-        @debug "I=$flux, err=$f_err"
+        @debug "Flux=$flux +/- $f_err, EQW=$eqw +/- $e_err, SNR=$snr"
 
         # increment the parameter index
         pᵢ += 3
@@ -1358,18 +1364,20 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
         p_dust[pₒ] = flux
         p_dust_err[pₒ] = f_err
 
+        # eqw units: μm
+        p_dust[pₒ+1] = eqw
+        p_dust_err[pₒ+1] = e_err
+
         # SNR, calculated as (peak amplitude) / (RMS intensity of the surrounding spectrum)
         # include the extinction factor when calculating the SNR
-        p_dust[pₒ+1] = A*N*ext / std(I[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)] .- continuum[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)])
-        @debug "integrated flux $(p_dust[pₒ]) +/- $(p_dust_err[pₒ]) " *
-            "(erg s^-1 cm^-2 sr^-1) and SNR $(p_dust[pₒ+1])"
+        p_dust[pₒ+2] = snr
 
-        pₒ += 2
+        pₒ += 3
     end
 
     # Loop through lines
-    p_lines = zeros(2n_lines+2n_acomps)
-    p_lines_err = zeros(2n_lines+2n_acomps)
+    p_lines = zeros(3n_lines+3n_acomps)
+    p_lines_err = zeros(3n_lines+3n_acomps)
     pₒ = pᵢ = 1
     for (k, λ0) ∈ enumerate(lines.λ₀)
         amp_1 = amp_1_err = voff_1 = voff_1_err = fwhm_1 = fwhm_1_err = nothing
@@ -1466,20 +1474,23 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                 # Get the extinction factor at the line center
                 ext = extinction[cent_ind]
 
-                @debug "Line with ($amp_cgs, $mean_μm, $fwhm_μm) and errors ($amp_cgs_err, $mean_μm_err, $fwhm_μm_err)"
-
                 # Calculate line flux using the helper function
                 p_lines[pₒ], p_lines_err[pₒ] = calculate_flux(lines.profiles[k, j], amp_cgs, amp_cgs_err, mean_μm, mean_μm_err,
                     fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err, propagate_err=propagate_err)
+                
+                # Calculate equivalent width using the helper function
+                p_lines[pₒ+1], p_lines_err[pₒ+1] = calculate_eqw(λ, lines.profiles[k, j], comps, true, n_dust_cont, n_power_law, n_abs_feat,
+                    n_dust_feat, fit_sil_emission, amp*N, amp_err*N, mean_μm, mean_μm_err, fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, 
+                    h4=h4, h4_err=h4_err, η=η, η_err=η_err, propagate_err=propagate_err)
 
                 # SNR
-                p_lines[pₒ+1] = amp*N*ext / std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)])
-
-                @debug "integrated flux $(p_lines[pₒ]) +/- $(p_lines_err[pₒ]) " *
-                    "(erg s^-1 cm^-2 sr^-1) and SNR $(p_lines[pₒ+1])"
+                p_lines[pₒ+2] = amp*N*ext / std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)])
+                
+                @debug "Line with ($amp_cgs, $mean_μm, $fwhm_μm) and errors ($amp_cgs_err, $mean_μm_err, $fwhm_μm_err)"
+                @debug "Flux=$(p_lines[pₒ]) +/- $(p_lines_err[pₒ]), EQW=$(p_lines[pₒ+1]) +/- $(p_lines_err[pₒ+1]), SNR=$(p_lines[pₒ+2])"
 
                 # Advance the output vector index by 3
-                pₒ += 2
+                pₒ += 3
             end
         end
     end
@@ -1541,6 +1552,104 @@ function calculate_flux(profile::Symbol, amp::T, amp_err::T, peak::T, peak_err::
         error("Unrecognized line profile $profile")
     end
 
-    @debug "I=$flux, err=$f_err"
     flux, f_err
+end
+
+
+"""
+    calculate_eqw(λ, profile, comps, line, n_dust_cont, n_power_law, n_abs_feat, n_dust_feat,
+        fit_sil_emission)
+
+Calculate the equivalent width (in microns) of a spectral feature, i.e. a PAH or emission line. Calculates the
+integral of the ratio of the feature profile to the underlying continuum.
+"""
+function calculate_eqw(λ::Vector{T}, profile::Symbol, comps::Dict, line::Bool,
+    n_dust_cont::Integer, n_power_law::Integer, n_abs_feat::Integer, n_dust_feat::Integer, 
+    fit_sil_emission::Bool, amp::T, amp_err::T, peak::T, peak_err::T, fwhm::T, fwhm_err::T; 
+    h3::Union{T,Nothing}=nothing, h3_err::Union{T,Nothing}=nothing, 
+    h4::Union{T,Nothing}=nothing, h4_err::Union{T,Nothing}=nothing, 
+    η::Union{T,Nothing}=nothing, η_err::Union{T,Nothing}=nothing, 
+    m::Union{T,Nothing}=nothing, m_err::Union{T,Nothing}=nothing,
+    ν::Union{T,Nothing}=nothing, ν_err::Union{T,Nothing}=nothing,
+    propagate_err::Bool=true) where {T<:Real}
+
+    # Build the continuum from the comps dictionary
+    contin = zeros(length(λ))
+    contin .+= comps["stellar"]
+    for i ∈ 1:n_dust_cont
+        contin .+= comps["dust_cont_$i"]
+    end
+    for j ∈ 1:n_power_law
+        contin .+= comps["power_law_$j"]
+    end
+    contin .*= comps["extinction"]
+    if fit_sil_emission
+        contin .+= comps["hot_dust"]
+    end
+    contin .*= comps["abs_ice"] .* comps["abs_ch"]
+    for k ∈ 1:n_abs_feat
+        contin .*= comps["abs_feat_$k"]
+    end
+    # For line EQWs, we consider PAHs as part of the "continuum"
+    if line
+        for l ∈ 1:n_dust_feat
+            contin .+= comps["dust_feat_$l"] .* comps["extinction"]
+        end
+    end
+
+    # Integrate the flux ratio to get equivalent width
+    if profile == :Drude
+        feature = Drude.(λ, amp, peak, fwhm)
+        if propagate_err
+            feature_err = hcat(Drude.(λ, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps())),
+                           Drude.(λ, amp+amp_err, peak, fwhm+fwhm_err))
+        end
+    elseif profile == :PearsonIV
+        feature = PearsonIV.(λ, amp, peak, fwhm, m, ν)
+        if propagate_err
+            feature_err = hcat(PearsonIV.(λ, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), m-m_err, ν-ν_err),
+                            PearsonIV.(λ, amp+amp_err, peak, fwhm+fwhm_err, m+m_err, ν+ν_err))
+        end
+    elseif profile == :Gaussian
+        feature = Gaussian.(λ, amp, peak, fwhm)
+        if propagate_err
+            feature_err = hcat(Gaussian.(λ, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps())),
+                           Gaussian.(λ, amp+amp_err, peak, fwhm+fwhm_err))
+        end
+    elseif profile == :Lorentzian
+        feature = Gaussian.(λ, amp, peak, fwhm)
+        if propagate_err
+            feature_err = hcat(Lorentzian.(λ, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps())),
+                           Lorentzian.(λ, amp+amp_err, peak, fwhm+fwhm_err))
+        end
+    elseif profile == :GaussHermite
+        feature = GaussHermite.(λ, amp, peak, fwhm, h3, h4)
+        if propagate_err
+            feature_err = hcat(Gaussian.(λ, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), h3-h3_err, h4-h4_err),
+                           Gaussian.(λ, amp+amp_err, peak, fwhm+fwhm_err, h3+h3_err, h4+h4_err))
+        end
+
+    elseif profile == :Voigt
+        feature = Gaussian.(λ, amp, peak, fwhm)
+        if propagate_err
+            feature_err = hcat(Voigt.(λ, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), max(η-η_err, 0.)),
+                           Voigt.(λ, amp+amp_err, peak, fwhm+fwhm_err, min(η+η_err, 1.)))
+        end
+    else
+        error("Unrecognized line profile $profile")
+    end
+    # Continuum is extincted, so make sure the feature is too
+    feature .*= comps["extinction"]
+
+    # May blow up for spaxels where the continuum is close to 0
+    eqw = NumericalIntegration.integrate(λ, feature ./ contin, Trapezoidal())
+    err = 0.
+    if propagate_err
+        err_lo = eqw - NumericalIntegration.integrate(λ, feature_err[:,1] ./ contin, Trapezoidal())
+        err_up = NumericalIntegration.integrate(λ, feature_err[:,2] ./ contin, Trapezoidal()) - eqw
+        err = (err_up + err_lo) / 2
+    end
+
+    eqw, err
+
 end

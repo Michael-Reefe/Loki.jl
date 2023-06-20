@@ -411,6 +411,7 @@ function parse_lines()
     prof_out = Vector{Union{Symbol,Nothing}}(nothing, length(lines["lines"]))
 
     # Additional components
+    acomp_amps = Matrix{Union{Parameter,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
     acomp_voffs = Matrix{Union{Parameter,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
     acomp_fwhms = Matrix{Union{Parameter,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
     acomp_h3s = Matrix{Union{Parameter,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
@@ -462,6 +463,7 @@ function parse_lines()
         end
 
         # Determine the initial values for the additional components
+        acomp_amp_init = haskey(lines, "acomp_amp_init") ? lines["acomp_amp_init"] : repeat([0.25], lines["n_acomps"])
         acomp_fwhm_init = haskey(lines, "acomp_fwhm_init") ? lines["acomp_fwhm_init"] : repeat([fwhm_init], lines["n_acomps"])
         acomp_voff_init = haskey(lines, "acomp_voff_init") ? lines["acomp_voff_init"] : repeat([voff_init], lines["n_acomps"])
         acomp_h3_init = haskey(lines, "acomp_h3_init") ? lines["acomp_h3_init"] : repeat([h3_init], lines["n_acomps"])
@@ -469,6 +471,8 @@ function parse_lines()
         acomp_η_init = haskey(lines, "acomp_eta_init") ? lines["acomp_eta_init"] : repeat([η_init], lines["n_acomps"])
 
         # Set the parameter limits for additional component FWHM, voff, h3, h4, and eta based on the values in the options file
+        acomp_amp_plims = Vector{Union{Tuple,Nothing}}(nothing, lines["n_acomps"])
+        acomp_amp_locked = falses(lines["n_acomps"])
         acomp_voff_plims = Vector{Union{Tuple,Nothing}}(nothing, lines["n_acomps"])
         acomp_voff_locked = falses(lines["n_acomps"])
         acomp_fwhm_plims = Vector{Union{Tuple,Nothing}}(nothing, lines["n_acomps"])
@@ -481,6 +485,7 @@ function parse_lines()
         acomp_η_locked = falses(lines["n_acomps"])
         for j ∈ 1:lines["n_acomps"]
             if !isnothing(acomp_profiles[line][j])
+                acomp_amp_plims[j] = (lines["acomp_amp_plim"][j]...,)
                 acomp_voff_plims[j] = (lines["acomp_voff_plim"][j]...,)
                 acomp_fwhm_plims[j] = (lines["acomp_fwhm_plim"][j]...,)
                 if acomp_profiles[line][j] == "GaussHermite"
@@ -518,12 +523,13 @@ function parse_lines()
                     end
                 end
                 # Repeat for acomp parameters
-                acomp_paramvars = Dict("acomp_voff" => [acomp_voff_plims, acomp_voff_locked, acomp_voff_init],
+                acomp_paramvars = Dict("acomp_amp" => [acomp_amp_plims, acomp_amp_locked, acomp_amp_init],
+                                       "acomp_voff" => [acomp_voff_plims, acomp_voff_locked, acomp_voff_init],
                                        "acomp_fwhm" => [acomp_fwhm_plims, acomp_fwhm_locked, acomp_fwhm_init],
                                        "acomp_h3" => [acomp_h3_plims, acomp_h3_locked, acomp_h3_init],
                                        "acomp_h4" => [acomp_h4_plims, acomp_h4_locked, acomp_h4_init],
                                        "acomp_eta" => [acomp_η_plims, acomp_η_locked, acomp_η_init])
-                for param_str ∈ ["acomp_voff", "acomp_fwhm", "acomp_h3", "acomp_h4", "acomp_eta"]
+                for param_str ∈ ["acomp_amp", "acomp_voff", "acomp_fwhm", "acomp_h3", "acomp_h4", "acomp_eta"]
                     if haskey(lines["parameters"][line], "$(param_str)_plim")
                         @debug "Overriding $param_str limits for $line"
                         for j ∈ 1:lines["n_acomps"]
@@ -662,6 +668,7 @@ function parse_lines()
         for j ∈ 1:lines["n_acomps"]
             if !isnothing(acomp_profiles[line][j])
                 @debug "acomp profile: $(acomp_profiles[line][j])"
+                acomp_amps[i,j] = Parameter(acomp_amp_init[j], acomp_amp_locked[j], acomp_amp_plims[j])
                 if !(acomp_voff_plims[j][1] ≤ acomp_voff_init[j] ≤ acomp_voff_plims[j][2])
                     if abs(acomp_voff_plims[j][1]) < abs(acomp_voff_plims[j][2])
                         acomp_voff_init[j] = acomp_voff_plims[j][1]
@@ -695,7 +702,7 @@ function parse_lines()
 
     # create vectorized object for all the line data
     lines_out = TransitionLines(names[ss], latex[ss], annotate[ss], cent_vals[ss], hcat(prof_out[ss], acomp_prof_out[ss, :]), 
-        hcat(tied_voff[ss], acomp_tied_voff[ss, :]), hcat(tied_fwhm[ss], acomp_tied_fwhm[ss, :]), 
+        hcat(tied_voff[ss], acomp_tied_voff[ss, :]), hcat(tied_fwhm[ss], acomp_tied_fwhm[ss, :]), acomp_amps[ss, :],
         hcat(voffs[ss], acomp_voffs[ss, :]), hcat(fwhms[ss], acomp_fwhms[ss, :]), hcat(h3s[ss], acomp_h3s[ss, :]), 
         hcat(h4s[ss], acomp_h4s[ss, :]), hcat(ηs[ss], acomp_ηs[ss, :]))
 

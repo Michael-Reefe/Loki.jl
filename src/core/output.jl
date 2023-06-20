@@ -256,10 +256,13 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
             param_maps.dust_features[df][:flux][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
             param_errs[1].dust_features[df][:flux][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
             param_errs[2].dust_features[df][:flux][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
-            param_maps.dust_features[df][:SNR][index] = out_params[index, pᵢ+1]
-            param_errs[1].dust_features[df][:SNR][index] = out_errs[index, pᵢ+1, 1]
-            param_errs[2].dust_features[df][:SNR][index] = out_errs[index, pᵢ+1, 2]
-            pᵢ += 2
+            param_maps.dust_features[df][:eqw][index] = out_params[index, pᵢ+1] * (1+z)
+            param_errs[1].dust_features[df][:eqw][index] = out_errs[index, pᵢ+1, 1] * (1+z)
+            param_errs[2].dust_features[df][:eqw][index] = out_errs[index, pᵢ+1, 2] * (1+z)
+            param_maps.dust_features[df][:SNR][index] = out_params[index, pᵢ+2]
+            param_errs[1].dust_features[df][:SNR][index] = out_errs[index, pᵢ+2, 1]
+            param_errs[2].dust_features[df][:SNR][index] = out_errs[index, pᵢ+2, 2]
+            pᵢ += 3
         end
 
         for k ∈ 1:cube_fitter.n_lines
@@ -279,10 +282,13 @@ function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<
                     param_maps.lines[ln][:flux][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
                     param_errs[1].lines[ln][:flux][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
                     param_errs[2].lines[ln][:flux][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
-                    param_maps.lines[ln][:SNR][index] = out_params[index, pᵢ+1]
-                    param_errs[1].lines[ln][:SNR][index] = out_errs[index, pᵢ+1, 1]
-                    param_errs[2].lines[ln][:SNR][index] = out_errs[index, pᵢ+1, 2]
-                    pᵢ += 2
+                    param_maps.lines[ln][:eqw][index] = out_params[index, pᵢ+1] * (1+z)
+                    param_errs[1].lines[ln][:eqw][index] = out_errs[index, pᵢ+1, 1] * (1+z)
+                    param_errs[2].lines[ln][:eqw][index] = out_errs[index, pᵢ+1, 2] * (1+z)
+                    param_maps.lines[ln][:SNR][index] = out_params[index, pᵢ+2]
+                    param_errs[1].lines[ln][:SNR][index] = out_errs[index, pᵢ+2, 1]
+                    param_errs[2].lines[ln][:SNR][index] = out_errs[index, pᵢ+2, 2]
+                    pᵢ += 3
                 end
             end
         end

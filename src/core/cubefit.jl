@@ -99,6 +99,7 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, n_power_law:
             dust_features[n][:cutoff] = copy(nan_arr)
         end
         dust_features[n][:flux] = copy(nan_arr)
+        dust_features[n][:eqw] = copy(nan_arr)
         dust_features[n][:SNR] = copy(nan_arr)
         @debug "dust feature $n maps with keys $(keys(dust_features[n]))"
     end
@@ -152,7 +153,7 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, n_power_law:
                     pnames = [pnames; :mixing]
                 end
                 # Append parameters for flux, equivalent width, and signal-to-noise ratio, which are NOT fitting parameters, but are of interest
-                pnames = [pnames; :flux; :SNR]
+                pnames = [pnames; :flux; :eqw; :SNR]
                 for pname ∈ pnames
                     lines[line][pname] = copy(nan_arr)
                 end
@@ -561,8 +562,8 @@ struct CubeFitter{T<:Real,S<:Integer}
         # Convert to a vectorized "TransitionLines" object
         lines = TransitionLines(lines.names[ln_filt], lines.latex[ln_filt], lines.annotate[ln_filt], lines.λ₀[ln_filt], 
                                 lines.profiles[ln_filt, :], lines.tied_voff[ln_filt, :], lines.tied_fwhm[ln_filt, :], 
-                                lines.voff[ln_filt, :], lines.fwhm[ln_filt, :], lines.h3[ln_filt, :], lines.h4[ln_filt, :], 
-                                lines.η[ln_filt, :])
+                                lines.acomp_amp[ln_filt, :], lines.voff[ln_filt, :], lines.fwhm[ln_filt, :], lines.h3[ln_filt, :], 
+                                lines.h4[ln_filt, :], lines.η[ln_filt, :])
         n_lines = length(lines.names)
         n_comps = size(lines.profiles, 2)
         n_acomps = sum(.!isnothing.(lines.profiles[:, 2:end]))
@@ -641,7 +642,7 @@ struct CubeFitter{T<:Real,S<:Integer}
                 end
             end
         end
-        n_params_extra = 2 * (n_dust_features + n_lines + n_acomps)
+        n_params_extra = 3 * (n_dust_features + n_lines + n_acomps)
         @debug "### There is a total of $(n_params_cont) continuum parameters ###"
         @debug "### There is a total of $(n_params_lines) emission line parameters ###"
         @debug "### There is a total of $(n_params_extra) extra parameters ###"
@@ -1103,7 +1104,6 @@ function get_line_plimits(cube_fitter::CubeFitter, ext_curve::Vector{<:Real}, in
 
     # Set up the limits vector
     amp_plim = (0., clamp(maximum(1 ./ ext_curve), 1., Inf))
-    amp_acomp_plim = (0., 1.)
     ln_plims = Vector{Tuple}()
     ln_lock = BitVector()
     ln_names = Vector{String}()
@@ -1120,10 +1120,9 @@ function get_line_plimits(cube_fitter::CubeFitter, ext_curve::Vector{<:Real}, in
     ind = 1
     for i ∈ 1:cube_fitter.n_lines
         for j ∈ 1:cube_fitter.n_comps
-            
-            amp_ln_plim = isone(j) ? amp_plim : amp_acomp_plim
             if !isnothing(cube_fitter.lines.profiles[i, j])
 
+                amp_ln_plim = isone(j) ? amp_plim : cube_fitter.lines.acomp_amp[i, j-1].limits
                 # name
                 ln_name = string(cube_fitter.lines.names[i]) * "_$(j)"
 
@@ -1252,7 +1251,6 @@ function get_line_initial_values(cube_fitter::CubeFitter, init::Bool)
         
         # Start the ampltiudes at 1/2 and 1/4 (in normalized units)
         A_ln = ones(cube_fitter.n_lines) .* 0.5
-        A_fl = ones(cube_fitter.n_lines) .* 0.25     # (acomp amp is multiplied with main amp)
 
         # Initial parameter vector
         ln_pars = Float64[]
@@ -1260,7 +1258,7 @@ function get_line_initial_values(cube_fitter::CubeFitter, init::Bool)
             for j ∈ 1:cube_fitter.n_comps
                 if !isnothing(cube_fitter.lines.profiles[i, j])
 
-                    amp_ln = isone(j) ? A_ln[i] : A_fl[i]
+                    amp_ln = isone(j) ? A_ln[i] : cube_fitter.lines.acomp_amp[i, j-1].value
                     if isnothing(cube_fitter.lines.tied_voff[i, j])
                         voff_ln = cube_fitter.lines.voff[i, j].value
                     else
