@@ -96,6 +96,7 @@ These should be automatically installed with Julia's package manager upon import
 - [Logging](https://docs.julialang.org/en/v1/stdlib/Logging/)
 - [LoggingExtras](https://github.com/JuliaLogging/LoggingExtras.jl)
 - [NaNStatistics](https://brenhinkeller.github.io/NaNStatistics.jl/dev/)
+- [NumericalIntegration](https://github.com/dextorious/NumericalIntegration.jl)
 - [Optim](https://julianlsolvers.github.io/Optim.jl/stable/)
 - [PlotlyJS](http://juliaplots.org/PlotlyJS.jl/stable/)
 - [Printf](https://docs.julialang.org/en/v1/stdlib/Printf/)

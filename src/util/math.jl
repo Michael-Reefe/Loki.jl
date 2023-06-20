@@ -1573,7 +1573,6 @@ function calculate_eqw(λ::Vector{T}, profile::Symbol, comps::Dict, line::Bool,
     ν::Union{T,Nothing}=nothing, ν_err::Union{T,Nothing}=nothing,
     propagate_err::Bool=true) where {T<:Real}
 
-    # Build the continuum from the comps dictionary
     contin = zeros(length(λ))
     contin .+= comps["stellar"]
     for i ∈ 1:n_dust_cont
@@ -1628,7 +1627,6 @@ function calculate_eqw(λ::Vector{T}, profile::Symbol, comps::Dict, line::Bool,
             feature_err = hcat(Gaussian.(λ, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), h3-h3_err, h4-h4_err),
                            Gaussian.(λ, amp+amp_err, peak, fwhm+fwhm_err, h3+h3_err, h4+h4_err))
         end
-
     elseif profile == :Voigt
         feature = Gaussian.(λ, amp, peak, fwhm)
         if propagate_err
