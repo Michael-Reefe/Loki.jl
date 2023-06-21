@@ -75,7 +75,7 @@ user_mask = []
 
 # a threshold value on the chi^2 ratio to determine how significant additional line components must be 
 # in order to include them in a fit
-line_test_threshold = 0.25
+line_test_threshold = 0.0
 
 # whether or not to plot the results of line testing
 plot_line_test = true
