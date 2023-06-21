@@ -199,6 +199,14 @@ By default, simulated annealing is only performed for the line fit during the in
 
 This option allows the user to mask out predefined regions of the spectrum that will be ignored during the fitting process. To mask out a region bounded between $\lambda_1 < \lambda < \lambda_2$, add a tuple to the user mask of the format $(\lambda_1, \lambda_2)$. For example, `user_mask = [(5.5, 6.0), (10.2, 10.3)]` will mask out the regions between 5.5-6 μm and 10.2-10.3 μm.
 
+`line_test_threshold = 0.25`
+
+This sets a threshold value on the chi-squared ratio, defined as $1 - \tilde{\chi}^2_B/\tilde{\chi}^2_A$, which must be met in order to consider additional line components as "significant."  Lines with multiple components will be tested by fitting iteratively, first with 1 component, and then adding additional components one at a time until reaching the value set in the line options files, or until this threshold fails to be achieved. Only components that pass this threshold will be fit in a given spaxel. This line testing can be disabled entirely by setting this threshold to 0.
+
+`plot_line_test = true`
+
+Whether or not to plot the line test results showing models with different numbers of components and their chi-squared ratios.
+
 ```toml
 [cosmology]
 h = 1.0           # Hubble constant (in km s^-1 Mpc^-1) / 100

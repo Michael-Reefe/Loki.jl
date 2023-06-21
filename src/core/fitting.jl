@@ -520,6 +520,155 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
 end
 
 
+"""
+    perform_line_component_test!(cube_fitter, spaxel, p₀, param_lock, lower_bounds, upper_bounds,
+        λnorm, Inorm, σnorm, lsf_interp_func)
+
+Calculates the significance of additional line components and determines whether or not to include them in the fit.
+Modifies the p₀ and param_lock vectors in-place to reflect these changes (by locking the amplitudes and other parameters
+for non-necessary line components to 0).
+"""
+function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::CartesianIndex, p₀::Vector{<:Real}, 
+    param_lock::BitVector, lower_bounds::Vector{<:Real}, upper_bounds::Vector{<:Real}, λnorm::Vector{<:Real},
+    Inorm::Vector{<:Real}, σnorm::Vector{<:Real}, ext_curve_norm::Vector{<:Real}, lsf_interp_func::Function)
+    @debug "Performing line component testing..."
+
+    # Perform a test to see if each line with > 1 component really needs multiple components to be fit
+    pᵢ = 1
+    for i in 1:cube_fitter.n_lines
+        n_prof = 0
+        pstart = pᵢ
+        pcomps = Int[]
+        for j in 1:cube_fitter.n_comps
+            if !isnothing(cube_fitter.lines.profiles[i, j])
+                n_prof += 1
+                # Check if using a flexible_wavesol tied voff -> if so there is an extra voff parameter
+                if !isnothing(cube_fitter.lines.tied_voff[i, j]) && cube_fitter.flexible_wavesol && isone(j)
+                    pc = 4
+                else
+                    pc = 3
+                end
+                if cube_fitter.lines.profiles[i, j] == :GaussHermite
+                    pc += 2
+                elseif cube_fitter.lines.profiles[i, j] == :Voigt
+                    pc += 1
+                end
+                push!(pcomps, pc)
+                pᵢ += pc
+            end
+        end
+        # Skip lines with only 1 profile
+        if n_prof == 1
+            continue
+        end
+        # Constrain the fitting region
+        voff_max = max(abs(lower_bounds[pstart+1]), abs(upper_bounds[pstart+1]))
+        wbounds = cube_fitter.lines.λ₀[i] .* (1-2voff_max/C_KMS, 1+2voff_max/C_KMS)
+        region = wbounds[1] .< λnorm .< wbounds[2]
+
+        line_object = TransitionLines(
+            [cube_fitter.lines.names[i]], 
+            [cube_fitter.lines.latex[i]], 
+            [cube_fitter.lines.annotate[i]],
+            [cube_fitter.lines.λ₀[i]], 
+            reshape(cube_fitter.lines.profiles[i, :], (1, cube_fitter.n_comps)), 
+            reshape(cube_fitter.lines.tied_voff[i, :], (1, cube_fitter.n_comps)),
+            reshape(cube_fitter.lines.tied_fwhm[i, :], (1, cube_fitter.n_comps)), 
+            reshape(cube_fitter.lines.acomp_amp[i, :], (1, cube_fitter.n_comps-1)), 
+            reshape(cube_fitter.lines.voff[i, :], (1, cube_fitter.n_comps)), 
+            reshape(cube_fitter.lines.fwhm[i, :], (1, cube_fitter.n_comps)), 
+            reshape(cube_fitter.lines.h3[i, :], (1, cube_fitter.n_comps)),
+            reshape(cube_fitter.lines.h4[i, :], (1, cube_fitter.n_comps)), 
+            reshape(cube_fitter.lines.η[i, :], (1, cube_fitter.n_comps))
+        )
+        
+        if cube_fitter.plot_line_test
+            fig, ax = plt.subplots()
+            ax.plot(λnorm[region], Inorm[region], "k-", label="Data")
+        end
+
+        # Perform fits for all possible numbers of components
+        last_chi2 = 0.
+        test_stat = 0.
+        profiles_to_fit = 0
+        for np in 1:n_prof
+            @debug "Testing $(cube_fitter.lines.names[i]) with $np components:"
+
+            fit_func_test = (x, p) -> model_line_residuals(x, p, 1, np, line_object, cube_fitter.flexible_wavesol,
+                ext_curve_norm[region], lsf_interp_func, false)
+
+            # Stop index
+            pstop = pstart + sum(pcomps[1:np])
+
+            # Parameter info
+            parinfo_test = CMPFit.Parinfo(pstop-pstart+1)
+            for i in 1:(pstop-pstart+1)
+                parinfo_test[i].fixed = 0
+                parinfo_test[i].limited = (1,1)
+                parinfo_test[i].limits = (lower_bounds[pstart+i-1], upper_bounds[pstart+i-1])
+            end
+            config_test = CMPFit.Config()
+            res_test = cmpfit(λnorm[region], Inorm[region], σnorm[region], fit_func_test, p₀[pstart:pstop], 
+                                parinfo=parinfo_test, config=config_test)
+            # Save the reduced chi2 values
+            test_chi2 = res_test.bestnorm
+            test_stat = 1.0 - test_chi2/last_chi2
+            @debug "Chi^2 ratio = $test_stat | Threshold = $(cube_fitter.line_test_threshold)"
+
+            test_model = fit_func_test(λnorm[region], res_test.param)
+            if cube_fitter.plot_line_test
+                ax.plot(λnorm[region], test_model, linestyle="-", label="$np-component model")
+            end
+
+            if (test_stat < cube_fitter.line_test_threshold) && (np > 1)
+                break
+            end
+            last_chi2 = test_chi2
+            profiles_to_fit += 1
+        end
+        test_stat_final = round(test_stat, sigdigits=3)
+        @debug "$(cube_fitter.lines.names[i]) will have $profiles_to_fit components"
+
+        # Lock the amplitudes to 0 for any profiles that will not be fit
+        for np in 1:n_prof
+            if profiles_to_fit < np
+                amp_ind = pstart + sum(pcomps[1:np-1])
+                # Amplitude
+                p₀[amp_ind] = 0.
+                param_lock[amp_ind] = 1
+                # Voff (flexible_wavesol only applies to the first component which is always fit, So
+                # here we can safely assume voff is always the 2nd and fwhm is always the 3rd comp)
+                param_lock[amp_ind+1] = 1
+                # FWHM (lock at a small nonzero value to prevent infinities)
+                param_lock[amp_ind+2] = 1
+                if cube_fitter.lines.profiles[i, np] == :GaussHermite
+                    param_lock[amp_ind+3:amp_ind+4] .= 1
+                end
+                if cube_fitter.lines.profiles[i, np] == :Voigt
+                    param_lock[amp_ind+3] = 1
+                end
+            end
+        end
+
+        if cube_fitter.plot_line_test
+            ax.set_xlabel(L"$\lambda_{\rm rest}$ ($\mu$m)")
+            ax.set_ylabel("Normalized Intensity")
+            ax.set_title(cube_fitter.lines.latex[i])
+            ax.legend(loc="upper right")
+            ax.set_xlim(wbounds[1], wbounds[2])
+            ax.annotate("Result: $profiles_to_fit profile(s)\n" * L"$1-\chi^2_B/\chi^2_A = %$test_stat_final$", (0.05, 0.95), 
+                xycoords="axes fraction", ha="left", va="top")
+            ax.axvline(cube_fitter.lines.λ₀[i], linestyle="--", alpha=0.5, color="k", lw=0.5)
+            folder = joinpath("output_$(cube_fitter.name)", "line_tests", "$(cube_fitter.lines.names[i])")
+            if !isdir(folder)
+                mkdir(folder)
+            end
+            plt.savefig(joinpath(folder, "spaxel_$(spaxel[1])_$(spaxel[2]).pdf"), dpi=300, bbox_inches="tight")
+            plt.close()
+        end
+    end
+end
+
 
 """
     line_fit_spaxel(cube_fitter, spaxel, λ, I, σ, continuum, ext_curve, mask_lines, lsf_interp_func; init=init, use_ap=use_ap)
@@ -577,6 +726,14 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
 
     plimits, param_lock, param_names, tied_pairs, tied_indices = get_line_plimits(cube_fitter, ext_curve_norm, init || use_ap)
     p₀ = get_line_initial_values(cube_fitter, init || use_ap)
+    lower_bounds = [pl[1] for pl in plimits]
+    upper_bounds = [pl[2] for pl in plimits]
+
+    # Perform line component tests to determine which line components are actually necessary to include in the fit
+    if (cube_fitter.line_test_threshold > 0) && !init && !use_ap && !bootstrap_iter
+        perform_line_component_test!(cube_fitter, spaxel, p₀, param_lock, lower_bounds, upper_bounds, λnorm, Inorm, σnorm,
+            ext_curve_norm, lsf_interp_func)
+    end
 
     # Combine all of the tied parameters
     p_tied = copy(p₀)
@@ -596,8 +753,6 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     n_free = sum(.~param_lock_tied)
 
     # Lower and upper limits on each parameter
-    lower_bounds = [pl[1] for pl in plimits]
-    upper_bounds = [pl[2] for pl in plimits]
     lower_bounds_tied = [pl[1] for pl in plims_tied]
     upper_bounds_tied = [pl[2] for pl in plims_tied]
     lbfree_tied = lower_bounds_tied[.~param_lock_tied]

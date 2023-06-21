@@ -73,6 +73,13 @@ fit_all_samin = false
 # user_mask = [[11.80, 12.25]]
 user_mask = []
 
+# a threshold value on the chi^2 ratio to determine how significant additional line components must be 
+# in order to include them in a fit
+line_test_threshold = 0.25
+
+# whether or not to plot the results of line testing
+plot_line_test = true
+
 # cosmology options: Controls the cosmology used for distance / luminosity calculations.
 # If h is set to 1, the distances in plot scale bars will be shown with h^-1 units.
 [cosmology]
