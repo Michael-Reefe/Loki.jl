@@ -115,7 +115,19 @@ These should be automatically installed with Julia's package manager upon import
 
 ### Python Requirements
 
-Loki utilizes the PyCall package (https://github.com/JuliaPy/PyCall.jl) to run some python routines that do not currently have good Julia alternatives. As such, some additional setup is required to ensure that you have the right python packages installed in the PyCall environment. By default, PyCall creates a new, self-contained python environment to be used with Julia, but it can also be linked to a pre-existing python environment. The required python modules should be installed automatically the first time they are required, but this has not been extensively tested and it may be necessary to install them manually with pip or conda. The required python modules are:
+Loki utilizes the PyCall package (https://github.com/JuliaPy/PyCall.jl) to run some python routines that do not currently have good Julia alternatives. As such, some additional setup is required to ensure that you have the right python packages installed in the PyCall environment. To set up PyCall, open a julia REPL and input the following commands:
+
+1. `]` to enter package mode
+2. `activate path` to activate your LOKI environment
+3. exit package mode
+4. `using PyCall` to import the PyCall module
+5. to link PyCall to a pre-existing python environment, enter `ENV["PYTHON"] = "path"`, filling in the path to the python binary.
+6. otherwise, to link PyCall to a new, self-contained conda environment, enter `ENV["PYTHON"] = ""`, from personal experience I have
+found this option to be troublesome, so I would recommend linking to a pre-existing environment
+7. `]` to re-enter package mode
+8. `build PyCall` to build the PyCall module with the specified python environment
+
+And that's it! Now, the first time you run LOKI, if the necessary pakages aren't already in your python environment, they will be installed automatically. However, if for some reason you find this still isn't working, you can always install them manually with pip, or from within julia using PyCall's `pyimport_conda` function.  The required python packages are listed below:
 
 - [matplotlib](https://matplotlib.org/)
 - [astropy](https://www.astropy.org/)
