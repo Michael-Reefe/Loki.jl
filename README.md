@@ -118,8 +118,8 @@ These should be automatically installed with Julia's package manager upon import
 Loki utilizes the PyCall package (https://github.com/JuliaPy/PyCall.jl) to run some python routines that do not currently have good Julia alternatives. As such, some additional setup is required to ensure that you have the right python packages installed in the PyCall environment. To set up PyCall, open a julia REPL and input the following commands:
 
 1. `]` to enter package mode
-2. `activate path` to activate your LOKI environment
-3. exit package mode
+2. `activate path` to activate your LOKI environment, replacing path with the path to this repository
+3. backspace to exit package mode
 4. `using PyCall` to import the PyCall module
 5. to link PyCall to a pre-existing python environment, enter `ENV["PYTHON"] = "path"`, filling in the path to the python binary.
 6. otherwise, to link PyCall to a new, self-contained conda environment, enter `ENV["PYTHON"] = ""`, from personal experience I have
@@ -127,7 +127,7 @@ found this option to be troublesome, so I would recommend linking to a pre-exist
 7. `]` to re-enter package mode
 8. `build PyCall` to build the PyCall module with the specified python environment
 
-And that's it! Now, the first time you run LOKI, if the necessary pakages aren't already in your python environment, they will be installed automatically. However, if for some reason you find this still isn't working, you can always install them manually with pip, or from within julia using PyCall's `pyimport_conda` function.  The required python packages are listed below:
+And that's it! If you chose the option to link to a new, self-contained conda environment, then the necessary packages should be installed automatically upon the first time you run the code. Otherwise, if linking to an external environment, make sure all of the following packages are installed via pip or conda:
 
 - [matplotlib](https://matplotlib.org/)
 - [astropy](https://www.astropy.org/)
