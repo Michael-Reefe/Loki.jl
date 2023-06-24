@@ -1643,6 +1643,8 @@ function calculate_eqw(λ::Vector{T}, profile::Symbol, comps::Dict, line::Bool,
     eqw = NumericalIntegration.integrate(λ, feature ./ contin, Trapezoidal())
     err = 0.
     if propagate_err
+        feature_err[:,1] .*= comps["extinction"]
+        feature_err[:,2] .*= comps["extinction"]
         err_lo = eqw - NumericalIntegration.integrate(λ, feature_err[:,1] ./ contin, Trapezoidal())
         err_up = NumericalIntegration.integrate(λ, feature_err[:,2] ./ contin, Trapezoidal()) - eqw
         err = (err_up + err_lo) / 2
