@@ -1340,9 +1340,9 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                 # Resample the data using normal distributions with the statistical uncertainties
                 I_boots = [rand.(Normal.(cube_data.I[spaxel, :], σ)) for _ in 1:cube_fitter.n_bootstrap]
                 # Initialize 2D parameter array
-                p_boot = SharedArray(zeros(length(p_out), cube_fitter.n_bootstrap))
+                p_boot = zeros(length(p_out), cube_fitter.n_bootstrap)
                 # Initialize bootstrap model array
-                I_model_boot = SharedArray(zeros(length(I_model), cube_fitter.n_bootstrap))
+                I_model_boot = zeros(length(I_model), cube_fitter.n_bootstrap)
 
                 # Do bootstrapping multi-threaded to save time
                 @debug "Performing multi-threaded bootstrapping iterations for spaxel $spaxel..."
@@ -1763,16 +1763,16 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Vector{PyObject})
     ##############################################################################################
 
     # Get the indices of all spaxels
-    spaxel = CartesianIndex(1,1)
+    spaxels = CartesianIndices((1,1))
 
     # Wrapper function 
     fit_spax_i(index::CartesianIndex) = fit_spaxel(cube_fitter, cube_data, index; use_ap=true)
 
     @info "===> Beginninng integrated spectrum fitting... <==="
-    p_out, p_err = fit_spax_i(spaxel)
+    p_out, p_err = fit_spax_i(spaxels[1])
     if !isnothing(p_out)
-        out_params[spaxel, :] .= p_out
-        out_errs[spaxel, :, :] .= p_err
+        out_params[spaxels[1], :] .= p_out
+        out_errs[spaxels[1], :, :] .= p_err
     end
 
     @info "===> Generating parameter maps and model cubes... <==="
