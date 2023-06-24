@@ -1616,7 +1616,7 @@ function calculate_eqw(λ::Vector{T}, profile::Symbol, comps::Dict, line::Bool,
                            Gaussian.(λ, amp+amp_err, peak, fwhm+fwhm_err))
         end
     elseif profile == :Lorentzian
-        feature = Gaussian.(λ, amp, peak, fwhm)
+        feature = Lorentzian.(λ, amp, peak, fwhm)
         if propagate_err
             feature_err = hcat(Lorentzian.(λ, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps())),
                            Lorentzian.(λ, amp+amp_err, peak, fwhm+fwhm_err))
@@ -1624,11 +1624,11 @@ function calculate_eqw(λ::Vector{T}, profile::Symbol, comps::Dict, line::Bool,
     elseif profile == :GaussHermite
         feature = GaussHermite.(λ, amp, peak, fwhm, h3, h4)
         if propagate_err
-            feature_err = hcat(Gaussian.(λ, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), h3-h3_err, h4-h4_err),
-                           Gaussian.(λ, amp+amp_err, peak, fwhm+fwhm_err, h3+h3_err, h4+h4_err))
+            feature_err = hcat(GaussHermite.(λ, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), h3-h3_err, h4-h4_err),
+                           GaussHermite.(λ, amp+amp_err, peak, fwhm+fwhm_err, h3+h3_err, h4+h4_err))
         end
     elseif profile == :Voigt
-        feature = Gaussian.(λ, amp, peak, fwhm)
+        feature = Voigt.(λ, amp, peak, fwhm, η)
         if propagate_err
             feature_err = hcat(Voigt.(λ, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), max(η-η_err, 0.)),
                            Voigt.(λ, amp+amp_err, peak, fwhm+fwhm_err, min(η+η_err, 1.)))
