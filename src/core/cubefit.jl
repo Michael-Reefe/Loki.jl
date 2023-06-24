@@ -329,10 +329,10 @@ Read from the options files:
     row will be set
 - `flexible_wavesol::Bool`: Whether or not to allow small variations in the velocity offsets even when tied, to account
     for a bad wavelength solution
-- `p_best_cont::SharedArray{T}`: A rolling collection of best fit continuum parameters for the best fitting spaxels
+- `p_best_cont::Array{T}`: A rolling collection of best fit continuum parameters for the best fitting spaxels
     along each row, for fits with a reduced χ² below χ²_thresh, which are used for the starting parameters in the following
     fits for the given row
-- `p_best_line::SharedArray{T}`: Same as `p_best_cont`, but for the line parameters
+- `p_best_line::Array{T}`: Same as `p_best_cont`, but for the line parameters
 - `χ²_best::SharedVector{T}`: The reduced χ² values associated with the `p_best_cont` and `p_best_line` values
     in each row
 - `best_spaxel::SharedVector{Tuple{S,S}}`: The locations of the spaxels associated with the `p_best_cont` and `p_best_line`

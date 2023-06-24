@@ -8,7 +8,7 @@ Create ParamMaps objects for the parameter values and errors, and a CubeModel ob
 fill them with the maximum likelihood values and errors given by out_params and out_errs over each spaxel in
 spaxels.
 """
-function assign_outputs(out_params::SharedArray{<:Real}, out_errs::SharedArray{<:Real}, cube_fitter::CubeFitter,
+function assign_outputs(out_params::Array{<:Real}, out_errs::Array{<:Real}, cube_fitter::CubeFitter,
     cube_data::NamedTuple, spaxels::CartesianIndices, z::Real, aperture::Bool=false)
 
     # Create the CubeModel and ParamMaps structs to be filled in
