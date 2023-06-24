@@ -1587,10 +1587,10 @@ function fit_cube!(cube_fitter::CubeFitter)
 
     # Prepare output array
     @info "===> Preparing output data structures... <==="
-    out_params = SharedArray(ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
-        cube_fitter.n_params_extra + 2) .* NaN)
-    out_errs = SharedArray(ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
-        cube_fitter.n_params_extra + 2, 2) .* NaN)
+    out_params = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
+        cube_fitter.n_params_extra + 2) .* NaN
+    out_errs = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
+        cube_fitter.n_params_extra + 2, 2) .* NaN
     # "cube_data" object holds the primary wavelength, intensity, and errors
     # this is just a convenience object since these may be different when fitting an integrated spectrum
     # within an aperture
@@ -1619,29 +1619,31 @@ function fit_cube!(cube_fitter::CubeFitter)
     spaxels = CartesianIndices(selectdim(cube_fitter.cube.Iν, 3, 1))
 
     # Wrapper function 
-    function fit_spax_i(index::CartesianIndex)
-
-        p_out, p_err = fit_spaxel(cube_fitter, cube_data, index)
-        if !isnothing(p_out)
-            out_params[index, :] .= p_out
-            out_errs[index, :, :] .= p_err
-        end
-
-        return
-    end
+    fit_spax_i(index::CartesianIndex) = fit_spaxel(cube_fitter, cube_data, index)
 
     # Use multiprocessing (not threading) to iterate over multiple spaxels at once using multiple CPUs
     if cube_fitter.parallel
         @info "===> Beginning individual spaxel fitting... <==="
         prog = Progress(length(spaxels); showspeed=true)
-        progress_pmap(spaxels, progress=prog) do index
+        result = progress_pmap(spaxels, progress=prog) do index
             fit_spax_i(index)
+        end
+        # Populate results into the output arrays
+        for index ∈ spaxels
+            if !isnothing(result[index][1])
+                out_params[index, :] .= result[index][1]
+                out_errs[index, :, :] .= result[index][2]
+            end
         end
     else
         @info "===> Beginning individual spaxel fitting... <==="
         prog = Progress(length(spaxels); showspeed=true)
         for index ∈ spaxels
-            fit_spax_i(index)
+            p_out, p_err = fit_spax_i(index)
+            if !isnothing(p_out)
+                out_params[index, :] .= p_out
+                out_errs[index, :, :] .= p_err
+            end
             next!(prog)
         end
     end
@@ -1713,10 +1715,10 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Vector{PyObject})
 
     # Prepare output array
     @info "===> Preparing output data structures... <==="
-    out_params = SharedArray(ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
-        cube_fitter.n_params_extra + 2) .* NaN)
-    out_errs = SharedArray(ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
-        cube_fitter.n_params_extra + 2, 2) .* NaN)
+    out_params = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
+        cube_fitter.n_params_extra + 2) .* NaN
+    out_errs = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
+        cube_fitter.n_params_extra + 2, 2) .* NaN
 
     # If using an aperture, overwrite the cube_data object with the quantities within
     # the aperture, which are calculated here.
@@ -1761,22 +1763,17 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Vector{PyObject})
     ##############################################################################################
 
     # Get the indices of all spaxels
-    spaxels = CartesianIndices((1,1))
+    spaxel = CartesianIndex(1,1)
 
     # Wrapper function 
-    function fit_spax_i(index::CartesianIndex)
-
-        p_out, p_err = fit_spaxel(cube_fitter, cube_data, index; use_ap=true)
-        if !isnothing(p_out)
-            out_params[index, :] .= p_out
-            out_errs[index, :, :] .= p_err
-        end
-
-        return
-    end
+    fit_spax_i(index::CartesianIndex) = fit_spaxel(cube_fitter, cube_data, index; use_ap=true)
 
     @info "===> Beginninng integrated spectrum fitting... <==="
-    fit_spax_i(spaxels[1])
+    p_out, p_err = fit_spax_i(spaxel)
+    if !isnothing(p_out)
+        out_params[spaxel, :] .= p_out
+        out_errs[spaxel, :, :] .= p_err
+    end
 
     @info "===> Generating parameter maps and model cubes... <==="
 
