@@ -90,6 +90,7 @@ These should be automatically installed with Julia's package manager upon import
 - [Distributions](https://juliastats.org/Distributions.jl/stable/starting/)
 - [EllipsisNotation](https://github.com/SciML/EllipsisNotation.jl)
 - [FITSIO](http://juliaastro.org/dev/modules/FITSIO/)
+- [IJulia](https://github.com/JuliaLang/IJulia.jl) (optional---Julia kernel for Jupyter notebooks)
 - [InteractiveUtils](https://docs.julialang.org/en/v1/stdlib/InteractiveUtils/)
 - [LaTeXStrings](https://github.com/JuliaStrings/LaTeXStrings.jl)
 - [LinearAlgebra](https://docs.julialang.org/en/v1/stdlib/LinearAlgebra/)
@@ -105,7 +106,6 @@ These should be automatically installed with Julia's package manager upon import
 - [QuadGK](https://juliamath.github.io/QuadGK.jl/stable/)
 - [Random](https://docs.julialang.org/en/v1/stdlib/Random/)
 - [Serialization](https://docs.julialang.org/en/v1/stdlib/Serialization/)
-- [SharedArrays](https://docs.julialang.org/en/v1/stdlib/SharedArrays/)
 - [SpecialFunctions](https://specialfunctions.juliamath.org/stable/)
 - [Statistics](https://docs.julialang.org/en/v1/stdlib/Statistics/)
 - [StatsBase](https://juliastats.org/StatsBase.jl/stable/)
@@ -274,6 +274,30 @@ locked = false
 The second option for each PAH feature is the FWHM. `val` and `locked` again work the same as always, but here `plim` is *multiplicative* with `val`. In other words, a `plim` of `[0.4, 1.4]` means that this value is allowed to vary from `0.060*0.4 = 0.024` to `0.060*1.4 = 0.084`.
 
 Note: If one wishes to model a PAH feature with a Pearson type-IV profile (currently we model all PAHs with Drude profiles), then additional entries for the power index $m$ (`dust_features."PAH_3.29".index`) and exponential cutoff $\nu$ (`dust_features."PAH_3.29".cutoff`) are required. The `plim` entires for these two values are normal, i.e. they work the same way as the temperatures.
+
+Finally, PAHs can be combined into complexes with multiple Drude profiles using the "complex" keyword:
+
+```toml
+[dust_features."PAH_7.42"]
+complex = "7.7"
+
+[dust_features."PAH_7.52"]
+complex = "7.7"
+
+[dust_features."PAH_7.60"]
+complex = "7.7"
+
+[dust_features."PAH_7.75"]
+complex = "7.7"
+
+[dust_features."PAH_7.85"]
+complex = "7.7"
+
+[dust_features."PAH_7.96"]
+complex = "7.7"
+```
+
+The `complex` entry should be a uniquely identifying string for that complex that is parsable into a floating-point number that identifies the rough rest-frame wavelength at which the complex is located. The only purpose for combining features into complexes like this is to plot the combined flux of the complex in the final plotting step. The fitting itself is not affected.
 
 **Absorption Features:**
 

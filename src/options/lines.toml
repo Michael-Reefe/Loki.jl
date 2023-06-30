@@ -666,3 +666,9 @@ SIV_10511 = ["Voigt"]
 
 # [parameters.NeII_12813]
 # acomp_amp_plim = [[0.0, 0.5]]
+# acomp_fwhm_plim = [[1.5, 5.0]]
+
+# [parameters.ArIII_8991]
+# acomp_amp_plim = [[0.0, 0.5]]
+# acomp_fwhm_plim = [[1.5, 5.0]]
+# acomp_voff_plim = [[-500.0, -100.0]]

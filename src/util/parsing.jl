@@ -103,7 +103,7 @@ function parse_options()
     options = TOML.parsefile(joinpath(@__DIR__, "..", "options", "options.toml"))
     keylist1 = ["n_bootstrap", "extinction_curve", "extinction_screen", "fit_sil_emission", "fit_all_samin", "use_pah_templates", 
                 "parallel", "plot_spaxels", "plot_maps", "save_fits", "overwrite", "track_memory", "track_convergence", 
-                "save_full_model", "line_test_threshold", "plot_line_test", "make_movies", "cosmology"]
+                "save_full_model", "line_test_lines", "line_test_threshold", "plot_line_test", "make_movies", "cosmology"]
     keylist2 = ["h", "omega_m", "omega_K", "omega_r"]
 
     # Loop through the keys that should be in the file and confirm that they are there
@@ -219,6 +219,7 @@ function parse_dust()
     fwhm = Vector{Parameter}(undef, length(dust["dust_features"]))
     index = Vector{Union{Parameter,Nothing}}(nothing, length(dust["dust_features"]))
     cutoff = Vector{Union{Parameter,Nothing}}(nothing, length(dust["dust_features"]))
+    complexes = Vector{Union{String,Nothing}}(nothing, length(dust["dust_features"]))
     _local = falses(length(dust["dust_features"]))
     profiles = [:Drude for _ in 1:length(name)]
 
@@ -239,13 +240,16 @@ function parse_dust()
             profiles[i] = :PearsonIV
             msg *= "\nCutoff $(cutoff[i])"
         end
+        if haskey(dust["dust_features"][df], "complex")
+            complexes[i] = dust["dust_features"][df]["complex"]
+        end
         cent_vals[i] = mean[i].value
     end
     @debug msg
 
     # Sort by cent_vals
     ss = sortperm(cent_vals)
-    dust_features = DustFeatures(name[ss], profiles[ss], mean[ss], fwhm[ss], index[ss], cutoff[ss], _local[ss])
+    dust_features = DustFeatures(name[ss], profiles[ss], mean[ss], fwhm[ss], index[ss], cutoff[ss], complexes[ss], _local[ss])
 
     # Repeat for absorption features
     if haskey(dust, "absorption_features")
@@ -254,6 +258,7 @@ function parse_dust()
         depth = Vector{Parameter}(undef, length(dust["absorption_features"]))
         mean = Vector{Parameter}(undef, length(dust["absorption_features"]))
         fwhm = Vector{Parameter}(undef, length(dust["absorption_features"]))
+        complexes = Vector{Union{String,Nothing}}(nothing, length(dust["absorption_features"]))
         _local = falses(length(dust["absorption_features"]))
 
         msg = "Absorption features:"
@@ -278,11 +283,11 @@ function parse_dust()
         abs_features = DustFeatures(name[ss], [:Drude for _ in 1:length(name)], mean[ss], fwhm[ss],
             Union{Parameter,Nothing}[nothing for _ in 1:length(name)], 
             Union{Parameter,Nothing}[nothing for _ in 1:length(name)],
-            _local[ss])
+            complexes[ss], _local[ss])
         abs_taus = depth[ss]
     else
         abs_features = DustFeatures(String[], Symbol[], Parameter[], Parameter[], Vector{Union{Parameter,Nothing}}(),
-            Vector{Union{Parameter,Nothing}}(), BitVector[])
+            Vector{Union{Parameter,Nothing}}(), Vector{Union{String,Nothing}}(), BitVector[])
         abs_taus = Vector{Parameter}()
     end
 

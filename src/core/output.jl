@@ -1,5 +1,7 @@
 ############################## OUTPUT / SAVING FUNCTIONS ####################################
 
+const ascii_lowercase = "abcdefghijklmnopqrstuvwxyz"
+
 
 """
     assign_outputs(out_params, out_errs, cube_fitter, cube_data, spaxels, z)
@@ -637,14 +639,47 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
         snr = param_maps.dust_features[df][:SNR]
         # Find the wavelength/index at which to get the PSF FWHM for the circle in the plot
         wave_i = nanmedian(param_maps.dust_features[df][:mean]) / (1 + cube_fitter.z)
+        
+        # Create the name to annotate on the plot
+        ind = findfirst(cube_fitter.dust_features.names .== df)
+        comp = cube_fitter.dust_features.complexes[ind]
+        latex_i = replace(df, "_" => " ") * L" $\mu$m"
+        if !isnothing(comp)
+            comp_name = L"PAH %$comp $\mu$m"
+            indiv_inds = findall(cube_fitter.dust_features.complexes .== comp)
+            if length(indiv_inds) > 1
+                # Will already be sorted
+                indivs = [cube_fitter.dust_features.names[i] for i ∈ indiv_inds]
+                out_ind = findfirst(indivs .== df)
+                latex_i = comp_name * " " * ascii_lowercase[out_ind]
+            end
+        end
 
         for parameter ∈ keys(param_maps.dust_features[df])
             data = param_maps.dust_features[df][parameter]
             name_i = join([df, parameter], "_")
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "dust_features", "$(name_i).pdf")
             plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
-                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=parameter !== :SNR ? snr : nothing, snr_thresh=snr_thresh)
+                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=parameter !== :SNR ? snr : nothing, snr_thresh=snr_thresh,
+                line_latex=latex_i)
         end
+    end
+
+    # Total parameters for PAH complexes
+    dust_complexes = unique(cube_fitter.dust_features.complexes[.!isnothing.(cube_fitter.dust_features.complexes)])
+    for dust_complex in dust_complexes
+        # Get the components that make up the complex
+        indiv_inds = findall(cube_fitter.dust_features.complexes .== dust_complex)
+        indivs = [cube_fitter.dust_features.names[i] for i ∈ indiv_inds]
+        # Sum up individual component fluxes
+        total_flux = log10.(sum([exp10.(param_maps.dust_features[df][:flux]) for df ∈ indivs]))
+        # Wavelength and name
+        wave_i = parse(Float64, dust_complex)
+        name_i = "complex_$(dust_complex)_total_flux"
+        comp_name = "PAH $dust_complex " * L"$\mu$m"
+        save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "dust_features", "$(name_i).pdf")
+        plot_parameter_map(total_flux, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
+            cube_fitter.cosmology, cube_fitter.cube.wcs, line_latex=comp_name)
     end
 
     # Absorption feature parameters

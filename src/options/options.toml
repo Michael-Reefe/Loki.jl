@@ -73,9 +73,12 @@ fit_all_samin = false
 # user_mask = [[11.80, 12.25]]
 user_mask = []
 
-# a threshold value on the chi^2 ratio to determine how significant additional line components must be 
-# in order to include them in a fit
-line_test_threshold = 0.0
+# which lines should be tested for additional components
+line_test_lines = []
+
+# a threshold value on the chi^2 ratio (1 - chi^2_line/chi^2_noline) to determine how significant additional line 
+# components must be in order to include them in a fit
+line_test_threshold = 0.20
 
 # whether or not to plot the results of line testing
 plot_line_test = true

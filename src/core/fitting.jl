@@ -561,6 +561,10 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
         if n_prof == 1
             continue
         end
+        # Only test the lines that are specified to be tested
+        if !(cube_fitter.lines.names[i] ∈ cube_fitter.line_test_lines)
+            continue
+        end
         # Constrain the fitting region
         voff_max = max(abs(lower_bounds[pstart+1]), abs(upper_bounds[pstart+1]))
         wbounds = cube_fitter.lines.λ₀[i] .* (1-2voff_max/C_KMS, 1+2voff_max/C_KMS)
@@ -730,7 +734,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     upper_bounds = [pl[2] for pl in plimits]
 
     # Perform line component tests to determine which line components are actually necessary to include in the fit
-    if (cube_fitter.line_test_threshold > 0) && !init && !use_ap && !bootstrap_iter
+    if (length(cube_fitter.line_test_lines) > 0) && !init && !use_ap && !bootstrap_iter
         perform_line_component_test!(cube_fitter, spaxel, p₀, param_lock, lower_bounds, upper_bounds, λnorm, Inorm, σnorm,
             ext_curve_norm, lsf_interp_func)
     end

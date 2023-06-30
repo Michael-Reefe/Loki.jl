@@ -136,6 +136,7 @@ struct DustFeatures
     fwhm::Vector{Parameter}
     index::Vector{Union{Parameter,Nothing}}
     cutoff::Vector{Union{Parameter,Nothing}}
+    complexes::Vector{Union{String,Nothing}}
     _local::BitVector
 
 end

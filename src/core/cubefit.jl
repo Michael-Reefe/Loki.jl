@@ -404,6 +404,7 @@ struct CubeFitter{T<:Real,S<:Integer}
     flexible_wavesol::Bool
     n_bootstrap::S
     random_seed::S
+    line_test_lines::Vector{Symbol}
     line_test_threshold::T
     plot_line_test::Bool
 
@@ -423,6 +424,7 @@ struct CubeFitter{T<:Real,S<:Integer}
         for key in keys(kwargs)
             out[key] = kwargs[key]
         end
+        out[:line_test_lines] = [Symbol(ln) for ln in out[:line_test_lines]]
         out[:plot_spaxels] = Symbol(out[:plot_spaxels])
         if !haskey(out, :plot_range)
             out[:plot_range] = nothing
@@ -456,7 +458,7 @@ struct CubeFitter{T<:Real,S<:Integer}
         if !isdir(joinpath("output_$name", "zoomed_plots")) && !isnothing(out[:plot_range])
             mkdir(joinpath("output_$name", "zoomed_plots"))
         end
-        if !isdir(joinpath("output_$name", "line_tests")) && out[:plot_line_test]
+        if !isdir(joinpath("output_$name", "line_tests")) && (length(out[:line_test_lines]) > 0) && out[:plot_line_test]
             mkdir(joinpath("output_$name", "line_tests"))
         end
         # Sub-folder for data files saving the results of individual spaxel fits
@@ -527,6 +529,7 @@ struct CubeFitter{T<:Real,S<:Integer}
                                      dust_features.fwhm[df_filt],
                                      dust_features.index[df_filt],
                                      dust_features.cutoff[df_filt],
+                                     dust_features.complexes[df_filt],
                                      dust_features._local[df_filt])
         n_dust_features = length(dust_features.names)
         msg = "### Model will include $n_dust_features dust feature (PAH) components ###"
@@ -548,6 +551,7 @@ struct CubeFitter{T<:Real,S<:Integer}
                                     abs_features.fwhm[ab_filt],
                                     abs_features.index[ab_filt],
                                     abs_features.cutoff[ab_filt],
+                                    abs_features.complexes[ab_filt],
                                     abs_features._local[ab_filt])
         abs_taus = abs_taus[ab_filt]
         n_abs_features = length(abs_features.names)
@@ -681,7 +685,8 @@ struct CubeFitter{T<:Real,S<:Integer}
             out[:extinction_curve], out[:extinction_screen], out[:fit_sil_emission], out[:fit_all_samin], out[:use_pah_templates], pah_template_map, 
             continuum, n_dust_cont, n_power_law, n_dust_features, n_abs_features, dust_features, abs_features, abs_taus, n_lines, n_acomps, n_comps, 
             lines, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, out[:cosmology], flexible_wavesol, 
-            out[:n_bootstrap], out[:random_seed], out[:line_test_threshold], out[:plot_line_test], p_init_cont, p_init_line, p_init_pahtemp)
+            out[:n_bootstrap], out[:random_seed], out[:line_test_lines], out[:line_test_threshold], out[:plot_line_test], p_init_cont, 
+            p_init_line, p_init_pahtemp)
     end
 
 end
