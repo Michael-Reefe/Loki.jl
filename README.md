@@ -90,7 +90,7 @@ These should be automatically installed with Julia's package manager upon import
 - [Distributions](https://juliastats.org/Distributions.jl/stable/starting/)
 - [EllipsisNotation](https://github.com/SciML/EllipsisNotation.jl)
 - [FITSIO](http://juliaastro.org/dev/modules/FITSIO/)
-- [IJulia](https://github.com/JuliaLang/IJulia.jl) (optional---Julia kernel for Jupyter notebooks)
+- [IJulia](https://github.com/JuliaLang/IJulia.jl) (optional: Julia kernel for Jupyter notebooks)
 - [InteractiveUtils](https://docs.julialang.org/en/v1/stdlib/InteractiveUtils/)
 - [LaTeXStrings](https://github.com/JuliaStrings/LaTeXStrings.jl)
 - [LinearAlgebra](https://docs.julialang.org/en/v1/stdlib/LinearAlgebra/)
@@ -211,7 +211,11 @@ By default, simulated annealing is only performed for the line fit during the in
 
 This option allows the user to mask out predefined regions of the spectrum that will be ignored during the fitting process. To mask out a region bounded between $\lambda_1 < \lambda < \lambda_2$, add a tuple to the user mask of the format $(\lambda_1, \lambda_2)$. For example, `user_mask = [(5.5, 6.0), (10.2, 10.3)]` will mask out the regions between 5.5-6 μm and 10.2-10.3 μm.
 
-`line_test_threshold = 0.25`
+`line_test_lines = []`
+
+List of which lines should be tested for additional components. The lines in this list must have multiple components to begin with (specified in the `lines.toml` file), otherwise they won't be tested. Each entry should be a string matching the name of the line in the `lines.toml` file.
+
+`line_test_threshold = 0.20`
 
 This sets a threshold value on the chi-squared ratio, defined as $1 - \tilde{\chi}^2_B/\tilde{\chi}^2_A$, which must be met in order to consider additional line components as "significant."  Lines with multiple components will be tested by fitting iteratively, first with 1 component, and then adding additional components one at a time until reaching the value set in the line options files, or until this threshold fails to be achieved. Only components that pass this threshold will be fit in a given spaxel. This line testing can be disabled entirely by setting this threshold to 0.
 
