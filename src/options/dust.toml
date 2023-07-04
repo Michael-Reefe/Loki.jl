@@ -201,6 +201,19 @@ val = 0.935
 plim = [0.4, 1.1]
 locked = false
 
+[dust_features."PAH_7.43"]
+complex = "7.7"
+
+[dust_features."PAH_7.43".wave]
+val = 7.43
+plim = [-0.05, 0.05]
+locked = false
+
+[dust_features."PAH_7.43".fwhm]
+val = 0.126
+plim = [0.4, 1.4]
+locked = false
+
 [dust_features."PAH_7.52"]
 complex = "7.7"
 
@@ -210,7 +223,7 @@ plim = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_7.52".fwhm]
-val = 0.226
+val = 0.126
 plim = [0.4, 1.4]
 locked = false
 

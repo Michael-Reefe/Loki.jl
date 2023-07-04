@@ -1,7 +1,7 @@
 name = "Loki"
 uuid = "6dc8f741-0729-4eeb-ae09-58704f061668"
 authors = ["Michael-Reefe <michael.reefe8@gmail.com>"]
-version = "1.0.2"
+version = "1.0.3"
 
 [deps]
 AstroAngles = "5c4adb95-c1fc-4c53-b4ea-2a94080c53d2"
