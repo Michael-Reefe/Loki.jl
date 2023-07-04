@@ -31,18 +31,14 @@ See also [`continuum_cubic_spline`](@ref)
 """
 function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}; Δ::Integer=3, thresh::Real=3., n_inc_thresh::Integer=3)
 
+    # Wavelength difference vector
     diffs = diff(λ)
-    # Numerical derivative width in microns
-    h = Δ * median(diffs)
+    diffs = [diffs; diffs[end]]
 
-    # Calculate the numerical first and second derivative
-    df = zeros(length(λ))
-    @simd for i ∈ 1:length(λ)
-        df[i] = (I[min(length(λ), i+fld(Δ, 2))] - I[max(1, i-fld(Δ, 2))]) / h
-    end
+    # Calculate the numerical second derivative
     d2f = zeros(length(λ))
     @simd for i ∈ 1:length(λ)
-        d2f[i] = (I[min(length(λ), i+Δ)] - 2I[i] + I[max(1, i-Δ)]) / h^2
+        d2f[i] = (I[min(length(λ), i+Δ)] - 2I[i] + I[max(1, i-Δ)]) / (Δ * diffs[i])^2
     end
     mask = falses(length(λ))
     W = (30, 1000)
@@ -1340,7 +1336,11 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
 
     l_mask = sum(.~mask)
     # Statistical uncertainties based on the local RMS of the residuals with a cubic spline fit
-    σ_stat = [std(I[.~mask][max(i-30,1):min(i+30,l_mask)] .- I_spline[.~mask][max(i-30,1):min(i+30,l_mask)]) for i ∈ 1:l_mask]
+    σ_stat = zeros(l_mask)
+    for i in 1:l_mask
+        indices = sortperm(abs.((1:l_mask) .- i))[1:60]
+        σ_stat[i] = std(I[.~mask][indices] .- I_spline[.~mask][indices])
+    end
     # We insert at the locations of the lines since the cubic spline does not include them
     l_all = length(λ)
     line_inds = (1:l_all)[mask]
@@ -1561,8 +1561,11 @@ function fit_stack!(cube_fitter::CubeFitter)
     l_mask = sum(.~mask_init)
 
     # Statistical uncertainties based on the local RMS of the residuals with a cubic spline fit
-    σ_stat_init = [std(I_sum_init[.~mask_init][max(i-30,1):min(i+30,l_mask)] .- 
-        I_spline_init[.~mask_init][max(i-30,1):min(i+30,l_mask)]) for i ∈ 1:l_mask]
+    σ_stat_init = zeros(l_mask)
+    for i in 1:l_mask
+        indices = sortperm(abs.((1:l_mask) .- i))[1:60]
+        σ_stat_init[i] = std(I_sum_init[.~mask_init][indices] .- I_spline_init[.~mask_init][indices])
+    end
     # We insert at the locations of the lines since the cubic spline does not include them
     l_all = length(λ_init)
     line_inds = (1:l_all)[mask_init]

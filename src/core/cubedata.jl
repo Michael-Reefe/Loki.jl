@@ -1102,14 +1102,14 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
     # Need an additional correction (fudge) factor for overall channels
     jumps = findall(diff(λ_out) .< 0.)
     if concat_type == :full
+
         λ_con = zeros(eltype(λ_out), 0)
         I_con = zeros(eltype(I_out), size(I_out)[1:2]..., 0)
         σ_con = zeros(eltype(σ_out), size(σ_out)[1:2]..., 0)
         mask_con = falses(size(mask_out)[1:2]..., 0)
-        prev_i2 = 0
-    end
-    # rescale channels so the flux level is continuous
-    if concat_type == :full
+        prev_i2 = 1
+        # rescale channels so the flux level is continuous
+
         for (i, jump) ∈ enumerate(jumps)
             # find the full scale of the overlapping region
             wave_left, wave_right = λ_out[jump+1], λ_out[jump]
@@ -1134,24 +1134,24 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
             if concat_type == :full
                 # resample fluxes in the overlapping regions
                 λ_res = median([diff(λ_out[i1:jump])[1], diff(λ_out[jump+1:i2])[1]])
-                λ_resamp = λ_out[i1]:λ_res:λ_out[i2]
+                λ_resamp = λ_out[i1]:λ_res:(λ_out[i2]-eps())
                 ss = sortperm(λ_out[i1:i2])
                 I_resamp, σ_resamp, mask_resamp = resample_conserving_flux(λ_resamp, 
                     λ_out[i1:i2][ss], I_out[:, :, (i1:i2)[ss]], σ_out[:, :, (i1:i2)[ss]], mask_out[:, :, (i1:i2)[ss]])
                 # replace overlapping regions in outputs
-                λ_con = [λ_con; λ_out[prev_i2+1:i1-1]; λ_resamp]
-                I_con = cat(I_con, I_out[:, :, prev_i2+1:i1-1], I_resamp, dims=3)
-                σ_con = cat(σ_con, σ_out[:, :, prev_i2+1:i1-1], σ_resamp, dims=3)
-                mask_con =cat(mask_con, mask_out[:, :, prev_i2+1:i1-1], mask_resamp, dims=3)
+                λ_con = [λ_con; λ_out[prev_i2:i1-1]; λ_resamp]
+                I_con = cat(I_con, I_out[:, :, prev_i2:i1-1], I_resamp, dims=3)
+                σ_con = cat(σ_con, σ_out[:, :, prev_i2:i1-1], σ_resamp, dims=3)
+                mask_con =cat(mask_con, mask_out[:, :, prev_i2:i1-1], mask_resamp, dims=3)
                 prev_i2 = i2
             end
         end
-    end
-    if concat_type == :full
-        λ_out = [λ_con; λ_out[prev_i2+1:end]]
-        I_out = cat(I_con, I_out[:, :, prev_i2+1:end], dims=3)
-        σ_out = cat(σ_con, σ_out[:, :, prev_i2+1:end], dims=3)
-        mask_out = cat(mask_con, mask_out[:, :, prev_i2+1:end], dims=3)
+
+        λ_out = [λ_con; λ_out[prev_i2:end]]
+        I_out = cat(I_con, I_out[:, :, prev_i2:end], dims=3)
+        σ_out = cat(σ_con, σ_out[:, :, prev_i2:end], dims=3)
+        mask_out = cat(mask_con, mask_out[:, :, prev_i2:end], dims=3)
+        
     end
 
     # deal with overlapping wavelength data -> sort wavelength vector to be monotonically increasing
