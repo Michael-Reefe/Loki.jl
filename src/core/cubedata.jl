@@ -977,10 +977,13 @@ Perform a 3D interpolation of the given channels such that all spaxels lie on th
 - `obs::Observation`: The Observation object to rebin
 - `channels=nothing`: The list of channels to be rebinned. If nothing, rebin all channels.
 - `out_id=0`: The dictionary key corresponding to the newly rebinned cube, defaults to 0.
-- `scrub_output=true`: Whether or not to delete the individual channels that were interpolated after assigning the new interpolated channel.
+- `scrub_output::Bool=true`: Whether or not to delete the individual channels that were interpolated after assigning the new interpolated channel.
+- `rescale_subchannels::Bool=false`: Whether or not to rescale the flux of subchannels so that they match at the overlapping regions.
+    The procedure is the same as for full channels, but this is off by default since *theoretically* the WCS adjustment should take care
+    of most of the differences between subchannel flux levels.
 """
 function reproject_channels!(obs::Observation, channels=nothing, concat_type=:full; out_id=0, scrub_output::Bool=false,
-    method=:adaptive)
+    method=:adaptive, rescale_subchannels::Bool=false)
 
     # Default to all 4 channels
     if isnothing(channels)
@@ -1102,14 +1105,14 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
     # Need an additional correction (fudge) factor for overall channels
     jumps = findall(diff(λ_out) .< 0.)
     if concat_type == :full
-
         λ_con = zeros(eltype(λ_out), 0)
         I_con = zeros(eltype(I_out), size(I_out)[1:2]..., 0)
         σ_con = zeros(eltype(σ_out), size(σ_out)[1:2]..., 0)
         mask_con = falses(size(mask_out)[1:2]..., 0)
         prev_i2 = 1
+    end
+    if (concat_type == :full) || rescale_subchannels
         # rescale channels so the flux level is continuous
-
         for (i, jump) ∈ enumerate(jumps)
             # find the full scale of the overlapping region
             wave_left, wave_right = λ_out[jump+1], λ_out[jump]
@@ -1119,8 +1122,8 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
             # get the median fluxes from both channels over the full region
             med_left = dropdims(nanmedian(I_out[:, :, i1:jump], dims=3), dims=3)
             med_right = dropdims(nanmedian(I_out[:, :, jump+1:i2], dims=3), dims=3)
-            # rescale the flux to match between the channels, using the channel at 10 um (2B) as the reference point
-            if wave_left < 9.8 / (1 + obs.z)
+            # rescale the flux to match between the channels, using the channel at 8 um (2A) as the reference point
+            if wave_left < 8.0 / (1 + obs.z)
                 scale = clamp.(med_right ./ med_left, 0.5, 1.5)
                 I_out[:, :, 1:jump] .*= scale
                 σ_out[:, :, 1:jump] .*= scale
@@ -1146,12 +1149,12 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
                 prev_i2 = i2
             end
         end
-
+    end
+    if concat_type == :full
         λ_out = [λ_con; λ_out[prev_i2:end]]
         I_out = cat(I_con, I_out[:, :, prev_i2:end], dims=3)
         σ_out = cat(σ_con, σ_out[:, :, prev_i2:end], dims=3)
         mask_out = cat(mask_con, mask_out[:, :, prev_i2:end], dims=3)
-        
     end
 
     # deal with overlapping wavelength data -> sort wavelength vector to be monotonically increasing
