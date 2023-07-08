@@ -1,5 +1,5 @@
 # dust.toml: This file contains options pertaining to fitting the 
-# continuum model of spectra, including stellar & dust components.
+# MIR continuum model of spectra, including stellar & dust components.
 
 # Each value has a "val" key which specifies the starting value,
 # "plim" specifies the lower and upper limits on the parameter, and

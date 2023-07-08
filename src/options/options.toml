@@ -70,8 +70,14 @@ use_pah_templates = false
 # which is typically sufficient as long as the lines one wishes to fit are prominent in the sum of all spaxels)
 fit_all_samin = false
 
-# user_mask = [[11.80, 12.25]]
-user_mask = []
+# whether or not to fit the UV bump for the optical attenuation curve
+fit_uv_bump = false
+
+# whether or not to fit a dust covering fraction for the optical attenuation curve
+fit_covering_frac = false
+
+# user_mask = []
+user_mask = [[0.42992, 0.43091], [0.47545, 0.47995]]
 
 # which lines should be tested for additional components
 line_test_lines = []

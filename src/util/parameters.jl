@@ -98,14 +98,16 @@ function from_dict_fwhm(dict::Dict)::Parameter
 end
 
 
-"""
-    Continuum(T_s, T_dc, τ_97, τ_ice, τ_ch, β, T_hot, Cf_hot, τ_warm, τ_cold)
+abstract type Continuum end
 
-A container for various continuum modeling parameters.
 """
-struct Continuum
+    MIRContinuum(T_s, T_dc, τ_97, τ_ice, τ_ch, β, T_hot, Cf_hot, τ_warm, τ_cold)
 
-    # Continuum parameters
+A container for various MIR continuum modeling parameters.
+"""
+struct MIRContinuum <: Continuum
+
+    # MIR Continuum parameters
     T_s::Parameter
     T_dc::Vector{Parameter}
     α::Vector{Parameter}
@@ -118,6 +120,29 @@ struct Continuum
     τ_warm::Parameter
     τ_cold::Parameter
     sil_peak::Parameter
+
+end
+
+
+"""
+    OpticalContinuum(ssp_ages, ssp_metallicities, stellar_vel, stellar_vdisp)
+
+A container for various optical continuum modeling parameters.
+"""
+struct OpticalContinuum <: Continuum
+
+    # Simple Stellar Population parameters
+    ssp_ages::Vector{Parameter}
+    ssp_metallicities::Vector{Parameter}
+
+    # Stellar kinematics
+    stel_vel::Parameter
+    stel_vdisp::Parameter
+    
+    # Dust attenuation
+    E_BV::Parameter
+    δ_uv::Parameter
+    frac::Parameter
 
 end
 

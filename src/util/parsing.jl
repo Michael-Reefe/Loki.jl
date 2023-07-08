@@ -102,8 +102,9 @@ function parse_options()
     # Read in the options file
     options = TOML.parsefile(joinpath(@__DIR__, "..", "options", "options.toml"))
     keylist1 = ["n_bootstrap", "extinction_curve", "extinction_screen", "fit_sil_emission", "fit_all_samin", "use_pah_templates", 
-                "parallel", "plot_spaxels", "plot_maps", "save_fits", "overwrite", "track_memory", "track_convergence", 
-                "save_full_model", "line_test_lines", "line_test_threshold", "plot_line_test", "make_movies", "cosmology"]
+                "fit_uv_bump", "fit_covering_frac", "parallel", "plot_spaxels", "plot_maps", "save_fits", "overwrite", "track_memory", 
+                "track_convergence", "save_full_model", "line_test_lines", "line_test_threshold", "plot_line_test", "make_movies", 
+                "cosmology"]
     keylist2 = ["h", "omega_m", "omega_K", "omega_r"]
 
     # Loop through the keys that should be in the file and confirm that they are there
@@ -323,9 +324,89 @@ function parse_dust()
     @debug msg
 
     # Create continuum object
-    continuum = Continuum(T_s, T_dc, α, τ_97, τ_ice, τ_ch, β, T_hot, Cf, τ_warm, τ_cold, sil_peak)
+    continuum = MIRContinuum(T_s, T_dc, α, τ_97, τ_ice, τ_ch, β, T_hot, Cf, τ_warm, τ_cold, sil_peak)
 
     continuum, dust_features, abs_features, abs_taus
+end
+
+
+"""
+    parse_optical()
+
+Read in the optical.toml configuration file, checking that it is formatted correctly,
+and convert it into a julia dictionary with Parameter objects for optical fitting parameters.
+This deals with the optical continuum options.
+"""
+function parse_optical()
+
+    @debug """\n
+    Parsing optical file
+    #######################################################
+    """
+
+    # Read in the dust file
+    optical = TOML.parsefile(joinpath(@__DIR__, "..", "options", "optical.toml"))
+    keylist1 = ["attenuation", "stellar_population_ages", "stellar_population_metallicities", "stellar_kinematics"]
+    keylist2 = ["E_BV", "uv_slope", "frac"]
+    keylist3 = ["vel", "vdisp"]
+    keylist4 = ["val", "plim", "locked"]
+
+    for key ∈ keylist1
+        @assert haskey(optical, key) "Missing option $key in optical file!"
+    end
+    for key ∈ keylist2
+        @assert haskey(optical["attenuation"], key) "Missing option $key in attenuation options!"
+    end
+    for key ∈ keylist3
+        @assert haskey(optical["stellar_kinematics"], key) "Missing option $key in stellar_kinematics options!"
+    end
+    for key4 ∈ keylist4
+        for key1 ∈ keylist1
+            for i in eachindex(optical[key1])
+                @assert haskey(optical[key1][i], key4) "Missing option $key4 in $key1 options!"
+            end
+        end
+        for key2 ∈ keylist2
+            @assert haskey(optical["attenuation"][key2], key4) "Missing option $key4 in $key2 options!"
+        end
+        for key3 ∈ keylist3
+            @assert haskey(optical["stellar_kinematics"][key3], key4) "Missing option $key4 in $key3 options!"
+        end
+    end
+
+    msg = "Stellar populations:"
+    ssp_ages = Parameter[]
+    ssp_metallicities = Parameter[]
+    for (age, metal) ∈ zip(optical["stellar_population_ages"], optical["stellar_population_metallicities"])
+        a = from_dict(age)
+        push!(ssp_ages, a)
+        msg *= "\nAge $a"
+        z = from_dict(metal)
+        msg *= "\nMetallicity $z"
+        push!(ssp_metallicities, z)
+    end
+    @debug msg
+
+    msg = "Stellar kinematics:"
+    stel_vel = from_dict(optical["stellar_kinematics"]["vel"])
+    msg *= "\nVelocity $stel_vel"
+    stel_vdisp = from_dict(optical["stellar_kinematics"]["vdisp"])
+    msg *= "\nVdisp $stel_vdisp"
+    @debug msg
+
+    # attenuation parameters
+    msg = "Attenuation:"
+    E_BV = from_dict(optical["attenuation"]["E_BV"])
+    msg *= "\nE(B-V) $E_BV"
+    δ_uv = from_dict(optical["attenuation"]["uv_slope"])
+    msg *= "\nδ_uv $δ_uv"
+    frac = from_dict(optical["attenuation"]["frac"])
+    msg *= "\nfrac $frac"
+    @debug msg
+
+    continuum = OpticalContinuum(ssp_ages, ssp_metallicities, stel_vel, stel_vdisp, E_BV, δ_uv, frac)
+
+    continuum
 end
 
 
@@ -927,3 +1008,103 @@ function silicate_ohm()
     data[!, "ext"] ./= 0.4
     data[!, "wave"], data[!, "ext"]
 end
+
+
+"""
+    prepare_ssps(λ, lsf, z, Ω, cosmo)
+
+Prepare a 3D grid of Simple Stellar Population (SSP) templates over age, metallicity, and wavelength.
+Each template will be cropped around the region of interest given by `λ` (in microns), and degraded 
+to a spectral resolution given by `lsf` (in km/s). The redshift `z` and cosmology `cosmo` are used to
+calculate a luminosity distance so that the templates can be normalized into units of erg/s/cm^2/ang/Msun.
+
+The templates are generated using the Python version of Charlie Conroy's Flexible Stellar Population Synthesis (FSPS)
+package, converted to Python by Dan Foreman-Mackey.
+
+Returns 1D arrays for the wavelengths, ages, and metals that the templates are evaluated at, as well as the
+3D array of templates. Note that some of the templates may be filled with 0s if the grid space is not fully
+occupied.
+"""
+function generate_stellar_populations(λ::Vector{<:Real}, lsf::Vector{<:Real}, z::Real, cosmo::Cosmology.AbstractCosmology,
+    name::String)
+
+    # Make sure λ is logarithmically binned
+    @assert (λ[2]/λ[1]) ≈ (λ[end]/λ[end-1]) "Input spectrum must be logarithmically binned to fit optical data!"
+
+    # Test to see if templates have already been generated
+    if isfile(joinpath("output_$name", "stellar_templates.loki"))
+        @info "Loading pre-generated stellar templates from binary file"
+        out = deserialize(joinpath("output_$name", "stellar_templates.loki"))
+        return out.λ, out.age, out.logz, out.templates
+    end
+
+    # Cut off the templates a little bit before/after the input spectrum
+    λleft, λright = minimum(λ)*0.98, maximum(λ)*1.02
+    # Dummy population
+    ssp0 = py_fsps.StellarPopulation()
+    # Get the wavelength grid that FSPS uses
+    ssp_λ = ssp0.wavelengths
+    # Convert from angstroms to microns
+    ssp_λ ./= 1e4
+    @assert (λleft ≥ minimum(ssp_λ)) && (λright ≤ maximum(ssp_λ)) "The extended input spectrum range of ($λleft, $λright) um " * 
+        "is outside the template range of ($(minimum(ssp_λ)), $(maximum(ssp_λ))) um. Please adjust the input spectrum accordingly."
+    # Mask to a range around the input spectrum
+    mask = λleft .< ssp_λ .< λright
+    ssp_λ = ssp_λ[mask]
+    # Resample onto a linear wavelength grid
+    Δλ = (λright - λleft) / length(ssp_λ)
+    ssp_λlin = collect(λleft:Δλ:λright)
+    
+    # LSF FWHM of the input spectrum in microns, interpolated at the locations of the SSP templates
+    inp_fwhm = Spline1D(λ, lsf ./ C_KMS .* λ, k=1)(ssp_λlin)
+    # FWHM resolution of the FSPS templates in um
+    ssp_lsf = Spline1D(ssp_λ, abs.(ssp0.resolutions[mask]), k=1, bc="nearest")(ssp_λlin)
+    ssp_fwhm = ssp_lsf ./ C_KMS .* ssp_λlin .* 2√(2log(2))
+    # Difference in resolutions between the input spectrum and SSP templates, in pixels
+    σ_diff = sqrt.(clamp.(inp_fwhm.^2 .- ssp_fwhm.^2, 0., Inf)) ./ (2√(2log(2))) ./ Δλ 
+
+    # Logarithmically rebinned wavelengths
+    logscale = log(λ[2]/λ[1])
+    ssp_lnλ = get_logarithmic_λ([minimum(ssp_λlin), maximum(ssp_λlin)], length(ssp_λlin), logscale=logscale)
+
+    # Calculate luminosity distance in cm in preparation to convert luminosity to flux
+    dL = luminosity_dist(u"cm", cosmo, z).val
+
+    # Generate templates over a range of ages and metallicities
+    ages = exp.(range(log(0.001), log(13.7), 50))        # logarithmically spaced from 1 Myr to 15 Gyr
+    logzs = range(-2.3, 0.4, 10)                         # linearly spaced from log(Z/Zsun) = [M/H] = -2.3 to 0.4
+    ssp_templates = zeros(length(ages), length(logzs), length(ssp_lnλ))
+    n_temp = size(ssp_templates, 1) * size(ssp_templates, 2)
+
+    @info "Generating $n_temp simple stellar population templates with FSPS with " * 
+        "ages ∈ ($(minimum(ages)), $(maximum(ages))) Gyr, [M/H] ∈ ($(minimum(logzs)), $(maximum(logzs)))"
+
+    prog = Progress(n_temp; showspeed=true)
+    for (z_ind, logz) in enumerate(logzs)
+        # Create a simple stellar population (delta function SFH) with a Salpeter IMF and no attenuation
+        ssp = py_fsps.StellarPopulation(zcontinuous=1, logzsol=logz, imf_type=0, sfh=0)
+        for (age_ind, age) in enumerate(ages)
+            # Evaluate the stellar population at the given age
+            _, ssp_LperA = ssp.get_spectrum(tage=age, peraa=true)
+            # Convert Lsun/Msun/Ang to erg/s/cm^2/Ang/Msun
+            ssp_flux = ssp_LperA[mask] .* 3.846e33 ./ (4π .* dL.^2)
+            # Resample onto the linear wavelength grid
+            ssp_flux = Spline1D(ssp_λ, ssp_flux, k=1, bc="nearest")(ssp_λlin)
+            # ssp_flux = resample_conserving_flux(ssp_λlin, ssp_λ, ssp_flux; fill=0.)
+            # Convolve with gaussian kernels to degrade the spectrum to match the input spectrum's resolution
+            ssp_flux, _ = convolveGaussian1D(ssp_flux, σ_diff)
+            # Resample again, this time onto the logarithmic wavelength grid
+            ssp_flux = Spline1D(ssp_λlin, ssp_flux, k=1, bc="nearest")(ssp_lnλ)
+            # ssp_flux = resample_conserving_flux(ssp_lnλ, ssp_λlin, ssp_flux; fill=0.)
+            # Add to the templates array
+            ssp_templates[age_ind, z_ind, :] .= ssp_flux
+            next!(prog)
+        end
+    end
+
+    # save for later
+    serialize(joinpath("output_$name", "stellar_templates.loki"), (λ=ssp_lnλ, age=ages, logz=logzs, templates=ssp_templates))
+
+    ssp_lnλ, ages, logzs, ssp_templates
+end
+

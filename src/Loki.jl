@@ -16,6 +16,7 @@ using Dierckx
 using LinearAlgebra
 using EllipsisNotation
 using SpecialFunctions
+using FFTW
 
 # Optimization packages
 using Optim
@@ -69,6 +70,9 @@ const py_reproject::PyObject = PyNULL()
 const py_mosaicking::PyObject = PyNULL()
 const py_lineidplot::PyObject = PyNULL()
 
+# FSPS Library
+const py_fsps::PyObject = PyNULL()
+
 # Some constants for setting matplotlib font sizes
 const SMALL::UInt8 = 12
 const MED::UInt8 = 14
@@ -109,6 +113,12 @@ function __init__()
     # Warnings
     copy!(py_warnings, pyimport_conda("warnings", "warnings"))
 
+    try
+        copy!(py_fsps, pyimport_conda("fsps", "fsps"))
+    catch
+        @warn "Could not find the Python FSPS Library! Optical spectra modeling will not be possible."
+    end
+
     # Matplotlib settings to make plots look pretty :)
     plt.switch_backend("Agg")                  # agg backend just saves to file, no GUI display
     plt.rc("font", size=MED)                   # controls default text sizes
@@ -147,6 +157,8 @@ export DataCube,   # DataCube struct
        from_fits, 
        to_rest_frame!, 
        apply_mask!, 
+       to_vacuum_wavelength!,
+       log_rebin!,
        correct!, 
        interpolate_nans!, 
        plot_2d, 
@@ -160,7 +172,7 @@ export DataCube,   # DataCube struct
        save_fits,
        adjust_wcs_alignment!, 
        reproject_channels!, 
-       cube_rebin!, 
+       cube_rebin!,
        psf_kernel, 
        convolve_psf!,
 
@@ -197,7 +209,15 @@ export DataCube,   # DataCube struct
        fit_cube!,
        plot_parameter_maps,
        make_movie,
-       write_fits
+       write_fits,
+
+       # Utility functions
+       resample_conserving_flux,
+       air_to_vacuum,
+       Doppler_shift_v,
+       Doppler_shift_λ,
+       Doppler_width_v,
+       Doppler_width_λ
 
 # Include all of the files that we need to create the module
 

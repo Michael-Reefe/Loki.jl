@@ -1,0 +1,62 @@
+# optical.toml: this file contains options pertaining to fitting the
+# optical continuum of spectra, including SSPs, attenuation, and power laws
+
+########## Simple Stellar Populations (SSPs) ##########
+
+# Ages in Gyr
+
+# Use one old population and one young population
+[[stellar_population_ages]]
+val = 10.0
+plim = [7.5, 13.7]
+locked = false
+[[stellar_population_ages]]
+val = 0.01
+plim = [0.001, 0.03]
+locked = false
+
+# Metallicities in [M/H]
+
+# The old population should have a lower metallicity and vice versa
+[[stellar_population_metallicities]]
+val = -0.35
+plim = [-2.3, 0.0]
+locked = false
+[[stellar_population_metallicities]]
+val = 0.06
+plim = [0.0, 0.40]
+locked = false
+
+################# Stellar Kinematics #################
+
+# Stellar offset velocity (relative to the rest frame given by z)
+[stellar_kinematics.vel]
+val = 0.0
+plim = [-500.0, 500.0]
+locked = false
+
+# Stellar velocity dispersion
+[stellar_kinematics.vdisp]
+val = 100.0
+plim = [0.01, 1000.0]
+locked = false
+
+########## Calzetti attenuation options ###############
+
+# E(B-V) Reddening factor
+[attenuation.E_BV]
+val = 0.10
+plim = [0.0, 4.0]
+locked = false
+
+# UV bump slope (delta), not fit unless fit_uv_bump is true
+[attenuation.uv_slope]
+val = 0.0
+plim = [-0.8, 0.2]
+locked = false
+
+# Dust covering fraction, not fit unless fit_covering_frac is true
+[attenuation.frac]
+val = 0.5
+plim = [0.0, 1.0]
+locked = false

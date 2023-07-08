@@ -20,7 +20,7 @@ const Bν_1::Float64 = 2h_ERGS/(C_KMS*1e5)^2 * 1e23 / 1e6 * (C_KMS*1e9)^3
 const Bν_2::Float64 = h_ERGS*(C_KMS*1e5) / kB_ERGK * 1e4
 
 # Wein's law constant of proportionality in μm*K
-const b_Wein::Float64 = 2897.771955        
+const b_Wein::Float64 = 2897.771955   
 
 # Saved Kemper, Vriend, & Tielens (2004) extinction profile
 const kvt_prof::Matrix{Float64} =  [8.0  0.06;
@@ -198,6 +198,60 @@ julia> Doppler_width_λ(0, 10)
 ```
 """
 @inline Doppler_width_λ(Δv, λ₀) = Δv / C_KMS * λ₀
+
+
+"""
+    air_to_vacuum(λair)
+
+Convert an air wavelength to a vacuum wavelength, correcting for the index of refraction of air.
+Only converts wavelengths > 2000 angstroms.
+
+Reference: FIREFLY code, Kyle B. Westfall, https://www.icg.port.ac.uk/firefly/
+"""
+function air_to_vacuum(λair::Real)
+    # Do not modify < 2000 angstroms
+    if λair < 0.2
+        return λair
+    end
+    λvac = λair
+    for _ in 1:3
+        # wavenumber squared
+        s² = (1/λvac)^2
+        n = 1.0 + 5.792105e-2/(238.0185 - s²) + 1.67917e-3/(57.362 - s²)
+        λvac = λair * n
+    end
+    λvac
+end
+
+
+"""
+    convolveGaussian1D(flux, σ)
+
+Convolve a spectrum by a Gaussian with different sigma for every pixel.
+Extension of scipy.ndimage.gaussian_filter1d originally written by Michele Cappellari for pPXF.
+"""
+function convolveGaussian1D(flux::Vector{<:Real}, σ::Vector{<:Real})
+    # Impose a minimum width of 0.01 pixels
+    σ_conv = clamp.(σ, 0.01, Inf)
+
+    # Kernel size
+    p = ceil(Int, maximum(3σ_conv))
+    m = 2p+1
+    x2 = range(-p, p, length=m).^2
+    # Fill in the kernel with shifted copies of the data
+    n = length(flux)
+    kernel = zeros(m, n)
+    for j in 1:m
+        kernel[j, 1+p:end-p] = flux[j:n-m+j]
+    end
+    # Normalized gaussian component
+    gauss = exp.(.-x2 ./ (2 .* repeat(reshape(σ_conv, (1,length(σ_conv))), outer=(length(x2),1)).^2))
+    gauss ./= sum(gauss, dims=1)
+
+    conv_flux = sumdim(kernel .* gauss, 1)
+
+    conv_flux, p
+end
 
 
 """
@@ -445,6 +499,121 @@ function PearsonIV(x::Real, A::Real, μ::Real, a::Real, m::Real, ν::Real)
     A/n * (1 + ((x - μ)/a)^2)^-m * exp(-ν * atan((x - μ)/a))
 end
 
+########################################## STELLAR POP FUNCTIONS #########################################
+
+
+"""
+    convolve_losvd(ssp_templates, vsyst, v, σ, npix)
+
+Convolve a set of stellar population templates with a line-of-sight velocity distribution (LOSVD)
+to produce templates according to the fitted stellar kinematics. Uses the Fourier Transforms of 
+the templates and the LOSVD to quickly calculate the convolution.
+
+Adapted and simplified from the pPXF and BADASS python codes.
+Cappellari (2017) http://adsabs.harvard.edu/abs/2017MNRAS.466..798C
+"""
+function convolve_losvd(ssps::Array{T, 2}, vsyst::Real, v::Real, σ::Real, velscale::Real, npix::Integer) where {T<:Real}
+
+    # Normalize velocities to pixel units
+    vsysts = vsyst / velscale
+    vs = v / velscale
+    σs = σ / velscale
+
+    # Pad with 0s up to a factor of small primes to increase efficiency 
+    s = size(ssps)
+    npad = nextprod([2,3,5], s[1])
+    ssp_temps = zeros(npad, s[2])
+    for j in axes(ssps, 2)
+        ssp_temps[1:s[1], j] = ssps[:, j]
+    end
+
+    # Calculate the Fourier transform of the templates
+    ssp_rfft = rfft(ssp_temps, 1)
+    # Calculate the Fourier transform of the LOSVD
+    nl = size(ssp_rfft, 1)
+    lvd_rfft = losvd_rfft(vsysts, vs, σs, nl, σ_diff=0., factor=1.)
+
+    # Calculate the inverse Fourier transform of the resultant distribution
+    conv_temp = irfft(ssp_rfft .* lvd_rfft, npad, 1)
+
+    # Take only enough pixels to match the length of the input spectrum
+    conv_temp[1:npix, :]
+
+end
+
+
+"""
+    losvd_rfft(vsyst, v, σ, nl, σ_diff=0., factor=1.)
+
+Analytic Fourier Transform (of real input) of the Gauss-Hermite LOSVD.
+Equation (38) of Cappellari M., 2017, MNRAS, 466, 798
+http://adsabs.harvard.edu/abs/2017MNRAS.466..798C
+
+Adapted and simplified from the pPXF and BADASS python codes.
+Only supports 2 moments (v and σ) and 1-sided fitting.
+"""
+function losvd_rfft(vsyst::Real, v::Real, σ::Real, nl::Integer; σ_diff::Real=0., factor::Real=1.)
+
+    # Prepare quantities
+    a = (vsyst + v)/σ
+    b = σ_diff/σ
+    ω = range(0., π*σ*factor, nl)
+    # Calculate Fourier transform
+    lvd_rfft = @. exp(1im*a*ω - 0.5*(1-b^2)*ω^2)
+    # Take complex conjugate
+    conj(lvd_rfft)
+
+end
+
+
+"""
+    attenuation(λ_ang, Av, δ=nothing, f_nodust=nothing, uv_bump=nothing)
+
+Adapted from pPXF (Cappellari 2017), original docstring below:
+
+Combines the attenuation curves from    
+`Kriek & Conroy (2013) <https://ui.adsabs.harvard.edu/abs/2013ApJ...775L..16K>`_
+hereafter KC13, 
+`Calzetti et al. (2000) <http://ui.adsabs.harvard.edu/abs/2000ApJ...533..682C>`_
+hereafter C+00,
+`Noll et al. (2009) <https://ui.adsabs.harvard.edu/abs/2009A%26A...499...69N>`_,
+and `Lower et al. (2022) <https://ui.adsabs.harvard.edu/abs/2022ApJ...931...14L>`_.
+
+When ``delta = uv_bump = f_nodust = None`` this function returns the C+00 
+reddening curve. When ``uv_bump = f_nodust = None`` this function uses the 
+``delta - uv_bump`` relation by KC13. The parametrization of the UV bump 
+comes from Noll+09. The modelling of the attenuated fraction follows Lower+22.
+
+"""
+function attenuation(λ::Vector{<:Real}, E_BV::Real; δ::Union{Real,Nothing}=nothing,
+    f_nodust::Union{Real,Nothing}=nothing, uv_bump::Union{Real,Nothing}=nothing)
+
+    Rv = 4.05         # C+00 eqn (5)
+
+    # C+00 equations (3)-(4) but extrapolate for lam < 0.12 or lam > 2.2
+    k₁ = @. Rv + ifelse(λ > 0.63, 2.76536/λ - 4.93776, ((0.029249/λ - 0.526482)/λ + 4.01243)/λ - 5.7328)
+    
+    if isnothing(δ) && isnothing(uv_bump)
+        aλ = E_BV .* k₁
+    else
+        if isnothing(uv_bump)
+            uv_bump = 0.85 - 1.9*δ  # eq.(3) KC13
+        end
+        λ0 = 0.2175                  # Peak wavelength of UV bump in micron
+        δλ = 0.035                   # Width of UV bump in micron
+        dλ = @. uv_bump*(λ*δλ)^2 / ((λ^2 - λ0^2)^2 + (λ*δλ)^2)    # eq.(2) KC13
+        λv = 0.55                    # Effective V-band wavelength in micron
+        aλ = @. E_BV*(k₁ + dλ)*(λ/λv)^δ      
+    end
+    
+    frac = @. 10^(-0.4 * clamp(aλ, 0., Inf))
+    if !isnothing(f_nodust)
+        frac = @. f_nodust + (1 - f_nodust)*frac
+    end
+
+    frac
+end
+
 
 ############################################## LINE PROFILES #############################################
 
@@ -676,6 +845,65 @@ function make_bins(array::AbstractArray)
 end
 
 
+
+"""
+    get_logarithmic_λ(λlim, n, logscale=nothing, oversample=1)
+
+Calculate a logarithmically spaced wavelength grid with limits of (λlim[1], λlim[2]) with a number of samples
+either given by a scaling factor `logscale` between points, or an `oversample` factor based on the input number of points `n`.
+"""
+function get_logarithmic_λ(λlim::Vector{<:Real}, n::Integer; logscale::Union{Real,Nothing}=nothing, oversample::Integer=1)
+    @assert length(λlim) == 2 "λlim must have exactly 2 elements"
+    @assert λlim[2] > λlim[1] "λlim must satisfty λlim[2] > λlim[1]"
+    m = n * oversample
+
+    dλ = diff(λlim)[1] / (n - 1)              # assume constant dlam
+    lnlim = log.(λlim ./ dλ .+ [-0.5, 0.5])   # all in units of dlam
+
+    if isnothing(logscale)
+        logscale = diff(lnlim)/m
+    else
+        m = floor(Int, diff(lnlim)[1]/logscale)
+        lnlim[2] = lnlim[1] + m*logscale
+    end
+    new_borders = exp.(range(lnlim..., length=m+1))
+    lnλ = .√(new_borders[2:end] .* new_borders[1:end-1]) .* dλ  # geometric mean
+
+    # return logarithmically spaced wavelength vector according to either logscale or oversample
+    lnλ
+end
+
+
+# function log_rebin(λ::Vector{<:Real}, flux::Vector{<:Real}; logscale::Union{Real,Nothing}=nothing, oversample::Integer=1)
+#     @assert length(λ) == length(flux) "Wavelength and flux must be the same length!"
+#     λlim = [minimum(λ), maximum(λ)]
+#     n = length(flux)
+#     m = n * oversample
+
+#     dλ = diff(λlim)[1] / (n - 1)              # assume constant dlam
+#     lim = λlim ./ dλ .+ [-0.5, 0.5]
+#     borders = range(lim..., n+1)
+#     lnlim = log.(lim)                         # all in units of dlam
+
+#     if isnothing(logscale)
+#         logscale = diff(lnlim)[1]/m
+#     else
+#         m = floor(Int, diff(lnlim)[1]/logscale)
+#         lnlim[2] = lnlim[1] + m*logscale
+#     end
+#     new_borders = exp.(range(lnlim..., length=m+1))
+#     k = floor.(Int, clamp.(new_borders .- lim[1], 0., n-1)) .+ 1
+#     # integrate the flux over the windows given by k
+#     newflux = [k[i] < k[i+1] ? reduce(+, flux[k[i]:k[i+1]-1]) : 0. for i in eachindex(k[1:end-1])]
+#     newflux .+= diff((new_borders .- borders[k]) .* flux[k])
+#     newflux ./= diff(new_borders)
+    
+#     newλ = .√(new_borders[2:end] .* new_borders[1:end-1]) .* dλ  # geometric mean
+
+#     newλ, newflux
+# end
+
+
 """
     resample_conserving_flux(new_wave, old_wave, flux, err=nothing, mask=nothing; fill=NaN)
 
@@ -724,7 +952,7 @@ function resample_conserving_flux(new_wave::AbstractVector, old_wave::AbstractVe
                 new_mask[.., j] .= 1
             end
             if (j == 1 || j == size(new_wave, 1)) && !warned
-                @warn "\nSpectres: new_wave contains values outside the range " *
+                @debug "\nSpectres: new_wave contains values outside the range " *
                       "in old_wave, new_fluxes and new_errs will be filled " *
                       "with the value set in the 'fill' keyword argument. \n"
                 warned = true
@@ -1001,6 +1229,102 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
             end
         end
     end
+
+    contin
+
+end
+
+# Optical fitting version of the function
+function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, velscale::Real, vsyst::Real, n_ssps::Integer, 
+    ssp_λ::Vector{T}, ssp_templates::Vector{Spline2D}, fit_uv_bump::Bool, fit_covering_frac::Bool, Ω::Vector{<:Real},
+    return_components::Bool) where {T<:Real}    
+
+    # Prepare outputs
+    comps = Dict{String, Vector{Float64}}()
+    contin = zeros(Float64, length(λ))
+    pᵢ = 1
+
+    ssps = zeros(Float64, length(ssp_λ), n_ssps)
+    # Interpolate the SSPs to the right ages/metallicities (this is slow)
+    for i in 1:n_ssps
+        ssps[:, i] = params[pᵢ] .* [ssp_templates[j](params[pᵢ+1], params[pᵢ+2]) for j in eachindex(ssp_λ)] ./ N
+        pᵢ += 3
+    end
+
+    # Convolve with a line-of-sight velocity distribution (LOSVD) according to the stellar velocity and dispersion
+    conv_ssps = convolve_losvd(ssps, vsyst, params[pᵢ], params[pᵢ+1], velscale, length(λ))
+    pᵢ += 2
+
+    # Combine the convolved stellar templates together with the weights
+    for i in 1:n_ssps
+        comps["SSP_$i"] = conv_ssps[:, i] ./ Ω
+        contin .+= comps["SSP_$i"]
+    end
+
+    # Apply attenuation law
+    E_BV = params[pᵢ]
+    δ = f_nodust = nothing
+    if fit_uv_bump && fit_covering_frac
+        δ = params[pᵢ+1]
+        f_nodust = params[pᵢ+2]
+        pᵢ += 2
+    elseif fit_uv_bump
+        δ = params[pᵢ+1]
+        pᵢ += 1
+    elseif fit_covering_frac
+        f_nodust = params[pᵢ+1]
+        pᵢ += 1
+    end
+    pᵢ += 1
+    comps["extinction"] = attenuation(λ, E_BV, δ=δ, f_nodust=f_nodust)
+    contin .*= comps["extinction"]
+
+    if return_components
+        return contin, comps
+    end
+    contin
+
+end
+
+
+function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, velscale::Real, vsyst::Real, n_ssps::Integer, 
+    ssp_λ::Vector{T}, ssp_templates::Vector{Spline2D}, fit_uv_bump::Bool, fit_covering_frac::Bool, Ω::Vector{<:Real}) where {T<:Real}    
+
+    # Prepare outputs
+    contin = zeros(Float64, length(λ))
+    pᵢ = 1
+
+    ssps = zeros(Float64, length(ssp_λ), n_ssps)
+    # Interpolate the SSPs to the right ages/metallicities (this is slow)
+    for i in 1:n_ssps
+        ssps[:, i] = params[pᵢ] .* [ssp_templates[j](params[pᵢ+1], params[pᵢ+2]) for j in eachindex(ssp_λ)] ./ N
+        pᵢ += 3
+    end
+
+    # Convolve with a line-of-sight velocity distribution (LOSVD) according to the stellar velocity and dispersion
+    conv_ssps = convolve_losvd(ssps, vsyst, params[pᵢ], params[pᵢ+1], velscale, length(λ))
+    pᵢ += 2
+
+    # Combine the convolved stellar templates together with the weights
+    contin .+= sumdim(conv_ssps, 2) ./ Ω
+
+    # Apply attenuation law
+    E_BV = params[pᵢ]
+    δ = f_nodust = nothing
+    if fit_uv_bump && fit_covering_frac
+        δ = params[pᵢ+1]
+        f_nodust = params[pᵢ+2]
+        pᵢ += 2
+    elseif fit_uv_bump
+        δ = params[pᵢ+1]
+        pᵢ += 1
+    elseif fit_covering_frac
+        f_nodust = params[pᵢ+1]
+        pᵢ += 1
+    end
+    pᵢ += 1
+    att = attenuation(λ, E_BV, δ=δ, f_nodust=f_nodust)
+    contin .*= att
 
     contin
 
@@ -1499,6 +1823,139 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
 end
 
 
+function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, comps::Dict, n_ssps::Integer,
+    n_lines::Integer, n_acomps::Integer, n_comps::Integer, lines::TransitionLines, flexible_wavesol::Bool, 
+    lsf::Function, popt_l::Vector{T}, perr_l::Vector{T}, extinction::Vector{T}, mask_lines::BitVector, 
+    continuum::Vector{T}, area_sr::Vector{T}, propagate_err::Bool=true) where {T<:Real}
+
+    @debug "Calculating extra parameters"
+
+    # Normalization
+    @debug "Normalization: $N"
+
+    # Loop through lines
+    p_lines = zeros(3n_lines+3n_acomps)
+    p_lines_err = zeros(3n_lines+3n_acomps)
+    pₒ = pᵢ = 1
+    for (k, λ0) ∈ enumerate(lines.λ₀)
+        amp_1 = amp_1_err = voff_1 = voff_1_err = fwhm_1 = fwhm_1_err = nothing
+        for j ∈ 1:n_comps
+            if !isnothing(lines.profiles[k, j])
+
+                # (\/ pretty much the same as the model_line_residuals function, but calculating the integrated intensities)
+                amp = popt_l[pᵢ]
+                amp_err = propagate_err ? perr_l[pᵢ] : 0.
+                voff = popt_l[pᵢ+1]
+                voff_err = propagate_err ? perr_l[pᵢ+1] : 0.
+                # fill values with nothings for profiles that may / may not have them
+                h3 = h3_err = h4 = h4_err = η = η_err = nothing
+
+                if !isnothing(lines.tied_voff[k, j]) && flexible_wavesol && isone(j)
+                    voff += popt_l[pᵢ+2]
+                    voff_err = propagate_err ? hypot(voff_err, perr_l[pᵢ+2]) : 0.
+                    fwhm = popt_l[pᵢ+3]
+                    fwhm_err = propagate_err ? perr_l[pᵢ+3] : 0.
+                    pᵢ += 4
+                else
+                    fwhm = popt_l[pᵢ+2]
+                    fwhm_err = propagate_err ? perr_l[pᵢ+2] : 0.
+                    pᵢ += 3
+                end
+
+                if lines.profiles[k, j] == :GaussHermite
+                    # Get additional h3, h4 components
+                    h3 = popt_l[pᵢ]
+                    h3_err = propagate_err ? perr_l[pᵢ] : 0.
+                    h4 = popt_l[pᵢ+1]
+                    h4_err = propagate_err ? perr_l[pᵢ+1] : 0.
+                    pᵢ += 2
+                elseif lines.profiles[k, j] == :Voigt
+                    # Get additional mixing component, either from the tied position or the 
+                    # individual position
+                    η = popt_l[pᵢ]
+                    η_err = propagate_err ? perr_l[pᵢ] : 0.
+                    pᵢ += 1
+                end
+
+                # Save the j = 1 parameters for reference 
+                if isone(j)
+                    amp_1 = amp
+                    amp_1_err = amp_err
+                    voff_1 = voff
+                    voff_1_err = voff_err
+                    fwhm_1 = fwhm
+                    fwhm_1_err = fwhm_err
+                # For the additional components, we parametrize them this way to essentially give them soft constraints
+                # relative to the primary component
+                else
+                    amp_err = propagate_err ? hypot(amp_1_err*amp, amp_err*amp_1) : 0.
+                    amp *= amp_1
+                    
+                    voff_err = propagate_err ? hypot(voff_err, voff_1_err) : 0.
+                    voff += voff_1
+
+                    fwhm_err = propagate_err ? hypot(fwhm_1_err*fwhm, fwhm_err*fwhm_1) : 0.
+                    fwhm *= fwhm_1
+                end
+
+                # Broaden the FWHM by the instrumental FWHM at the location of the line
+                fwhm_inst = lsf(λ0)
+                fwhm_err = propagate_err ? fwhm / hypot(fwhm, fwhm_inst) * fwhm_err : 0.
+                fwhm = hypot(fwhm, fwhm_inst)
+
+                # Convert voff in km/s to mean wavelength in μm
+                mean_μm = Doppler_shift_λ(λ0, voff)
+                mean_μm_err = propagate_err ? λ0 / C_KMS * voff_err : 0.
+                # WARNING:
+                # Probably should set to 0 if using flexible tied voffs since they are highly degenerate and result in massive errors
+                # if !isnothing(cube_fitter.line_tied[k]) && cube_fitter.flexible_wavesol
+                #     mean_μm_err = 0.
+                # end
+
+                # Convert FWHM from km/s to μm
+                fwhm_μm = Doppler_shift_λ(λ0, fwhm/2) - Doppler_shift_λ(λ0, -fwhm/2)
+                fwhm_μm_err = propagate_err ? λ0 / C_KMS * fwhm_err : 0.
+
+                # Convert from erg s^-1 cm^-2 Ang^-1 sr^-1 to erg s^-1 cm^-2 μm^-1 sr^-1, putting back in the normalization
+                amp_cgs = amp * N * 1e4
+                amp_cgs_err = propagate_err ? amp_err * N * 1e4 : 0.
+
+                # Get the index of the central wavelength
+                cent_ind = argmin(abs.(λ .- mean_μm))
+
+                # Integrate over the solid angle
+                amp_cgs *= area_sr[cent_ind]
+                if propagate_err
+                    amp_cgs_err *= area_sr[cent_ind]
+                end
+
+                # Get the extinction factor at the line center
+                ext = extinction[cent_ind]
+
+                # Calculate line flux using the helper function
+                p_lines[pₒ], p_lines_err[pₒ] = calculate_flux(lines.profiles[k, j], amp_cgs, amp_cgs_err, mean_μm, mean_μm_err,
+                    fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err, propagate_err=propagate_err)
+                
+                # Calculate equivalent width using the helper function
+                p_lines[pₒ+1], p_lines_err[pₒ+1] = calculate_eqw(λ, lines.profiles[k, j], comps, n_ssps, amp*N, amp_err*N, mean_μm, 
+                    mean_μm_err, fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err, propagate_err=propagate_err)
+
+                # SNR
+                p_lines[pₒ+2] = amp*N*ext / std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)])
+                
+                @debug "Line with ($amp_cgs, $mean_μm, $fwhm_μm) and errors ($amp_cgs_err, $mean_μm_err, $fwhm_μm_err)"
+                @debug "Flux=$(p_lines[pₒ]) +/- $(p_lines_err[pₒ]), EQW=$(p_lines[pₒ+1]) +/- $(p_lines_err[pₒ+1]), SNR=$(p_lines[pₒ+2])"
+
+                # Advance the output vector index by 3
+                pₒ += 3
+            end
+        end
+    end
+
+    p_lines, p_lines_err
+end
+
+
 """
     calculate_flux(profile, amp, amp_err, peak, peak_err, fwhm, fwhm_err; <keyword_args>)
 
@@ -1610,6 +2067,66 @@ function calculate_eqw(λ::Vector{T}, profile::Symbol, comps::Dict, line::Bool,
                             PearsonIV.(λ, amp+amp_err, peak, fwhm+fwhm_err, m+m_err, ν+ν_err))
         end
     elseif profile == :Gaussian
+        feature = Gaussian.(λ, amp, peak, fwhm)
+        if propagate_err
+            feature_err = hcat(Gaussian.(λ, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps())),
+                           Gaussian.(λ, amp+amp_err, peak, fwhm+fwhm_err))
+        end
+    elseif profile == :Lorentzian
+        feature = Lorentzian.(λ, amp, peak, fwhm)
+        if propagate_err
+            feature_err = hcat(Lorentzian.(λ, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps())),
+                           Lorentzian.(λ, amp+amp_err, peak, fwhm+fwhm_err))
+        end
+    elseif profile == :GaussHermite
+        feature = GaussHermite.(λ, amp, peak, fwhm, h3, h4)
+        if propagate_err
+            feature_err = hcat(GaussHermite.(λ, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), h3-h3_err, h4-h4_err),
+                           GaussHermite.(λ, amp+amp_err, peak, fwhm+fwhm_err, h3+h3_err, h4+h4_err))
+        end
+    elseif profile == :Voigt
+        feature = Voigt.(λ, amp, peak, fwhm, η)
+        if propagate_err
+            feature_err = hcat(Voigt.(λ, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), max(η-η_err, 0.)),
+                           Voigt.(λ, amp+amp_err, peak, fwhm+fwhm_err, min(η+η_err, 1.)))
+        end
+    else
+        error("Unrecognized line profile $profile")
+    end
+    # Continuum is extincted, so make sure the feature is too
+    feature .*= comps["extinction"]
+
+    # May blow up for spaxels where the continuum is close to 0
+    eqw = NumericalIntegration.integrate(λ, feature ./ contin, Trapezoidal())
+    err = 0.
+    if propagate_err
+        feature_err[:,1] .*= comps["extinction"]
+        feature_err[:,2] .*= comps["extinction"]
+        err_lo = eqw - NumericalIntegration.integrate(λ, feature_err[:,1] ./ contin, Trapezoidal())
+        err_up = NumericalIntegration.integrate(λ, feature_err[:,2] ./ contin, Trapezoidal()) - eqw
+        err = (err_up + err_lo) / 2
+    end
+
+    eqw, err
+
+end
+
+
+function calculate_eqw(λ::Vector{T}, profile::Symbol, comps::Dict, n_ssps::Integer, 
+    amp::T, amp_err::T, peak::T, peak_err::T, fwhm::T, fwhm_err::T; 
+    h3::Union{T,Nothing}=nothing, h3_err::Union{T,Nothing}=nothing, 
+    h4::Union{T,Nothing}=nothing, h4_err::Union{T,Nothing}=nothing, 
+    η::Union{T,Nothing}=nothing, η_err::Union{T,Nothing}=nothing, 
+    propagate_err::Bool=true) where {T<:Real}
+
+    contin = zeros(length(λ))
+    for i ∈ 1:n_ssps
+        contin .+= comps["SSP_$i"]
+    end
+    contin .*= comps["extinction"]
+
+    # Integrate the flux ratio to get equivalent width
+    if profile == :Gaussian
         feature = Gaussian.(λ, amp, peak, fwhm)
         if propagate_err
             feature_err = hcat(Gaussian.(λ, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps())),
