@@ -414,9 +414,9 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             param_maps.stellar_populations[i][:age][index] = out_params[index, pᵢ+1]
             param_errs[1].stellar_populations[i][:age][index] = out_errs[index, pᵢ+1, 1] 
             param_errs[2].stellar_populations[i][:age][index] = out_errs[index, pᵢ+1, 2] 
-            param_maps.stellar_populations[i][:metallicity][index] = out_params[index, pᵢ+1]
-            param_errs[1].stellar_populations[i][:metallicity][index] = out_errs[index, pᵢ+1, 1] 
-            param_errs[2].stellar_populations[i][:metallicity][index] = out_errs[index, pᵢ+1, 2] 
+            param_maps.stellar_populations[i][:metallicity][index] = out_params[index, pᵢ+2]
+            param_errs[1].stellar_populations[i][:metallicity][index] = out_errs[index, pᵢ+2, 1] 
+            param_errs[2].stellar_populations[i][:metallicity][index] = out_errs[index, pᵢ+2, 2] 
             pᵢ += 3
         end
 
@@ -680,7 +680,7 @@ Plotting function for 2D parameter maps which are output by `fit_cube!`
 - `cmap::Symbol=:cubehelix`: The colormap used in the plot, defaults to the cubehelix map
 """
 function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::String, Ω::Float64, z::Float64, psf_fwhm::Float64,
-    cosmo::Cosmology.AbstractCosmology, python_wcs::PyObject; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, 
+    cosmo::Cosmology.AbstractCosmology, python_wcs::Union{PyObject,Nothing}; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, 
     snr_thresh::Float64=3., cmap::Symbol=:cubehelix, line_latex::Union{String,Nothing}=nothing)
 
     # I know this is ugly but I couldn't figure out a better way to do it lmao
@@ -751,7 +751,11 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     elseif occursin("age", String(name_i))
         bunit = L"$t$ (Gyr)"
     elseif occursin("metallicity", String(name_i))
-        bunit = L"[$M/H$]"
+        bunit = L"[M$/$H]"
+    elseif occursin("vel", String(name_i))
+        bunit = L"$v_*$ (km s$^{-1}$)"
+    elseif occursin("vdisp", String(name_i))
+        bunit = L"$\sigma_*$ (km s$^{-1}$)"
     elseif occursin("E_BV", String(name_i))
         bunit = L"$E(B-V)$"
     elseif occursin("delta_UV", String(name_i))
@@ -780,7 +784,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     end
 
     fig = plt.figure()
-    ax = fig.add_subplot(111, projection=python_wcs)  # slice the WCS to remove the wavelength axis
+    ax = fig.add_subplot(111, projection=python_wcs) 
     # Need to filter out any NaNs in order to use quantile
     vmin = nanminimum(filtered)
     vmax = nanmaximum(filtered)
@@ -817,8 +821,8 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     cdata = ax.imshow(filtered', origin=:lower, cmap=cmap, vmin=vmin, vmax=vmax+small)
     # ax.axis(:off)
     ax.tick_params(which="both", axis="both", direction="in")
-    ax.set_xlabel("R.A.")
-    ax.set_ylabel("Dec.")
+    ax.set_xlabel(isnothing(python_wcs) ? L"$x$ (spaxels)" : "R.A.")
+    ax.set_ylabel(isnothing(python_wcs) ? L"$y$ (spaxels)" : "Dec.")
 
     # Angular and physical scalebars
     pix_as = sqrt(Ω) * 180/π * 3600
@@ -1602,32 +1606,45 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
     end
 
     # Header information
-    hdr = FITSHeader(
-        Vector{String}(cat(["TARGNAME", "REDSHIFT", "CHANNEL", "BAND", "PIXAR_SR", "RA", "DEC", "WCSAXES",
-            "CDELT1", "CDELT2", "CTYPE1", "CTYPE2", "CRPIX1", "CRPIX2", "CRVAL1", "CRVAL2", "CUNIT1", "CUNIT2", 
-            "PC1_1", "PC1_2", "PC2_1", "PC2_2"], aperture_keys, dims=1)),
+    if !isnothing(cube_fitter.cube.wcs)
+        hdr = FITSHeader(
+            Vector{String}(cat(["TARGNAME", "REDSHIFT", "CHANNEL", "BAND", "PIXAR_SR", "RA", "DEC", "WCSAXES",
+                "CDELT1", "CDELT2", "CTYPE1", "CTYPE2", "CRPIX1", "CRPIX2", "CRVAL1", "CRVAL2", "CUNIT1", "CUNIT2", 
+                "PC1_1", "PC1_2", "PC2_1", "PC2_2"], aperture_keys, dims=1)),
 
-        cat([cube_fitter.name, cube_fitter.z, cube_fitter.cube.channel, cube_fitter.cube.band, cube_fitter.cube.Ω, 
-         cube_fitter.cube.α, cube_fitter.cube.δ, cube_fitter.cube.wcs.wcs.naxis, 
-         cube_fitter.cube.wcs.wcs.cdelt[1], cube_fitter.cube.wcs.wcs.cdelt[2], 
-         cube_fitter.cube.wcs.wcs.ctype[1], cube_fitter.cube.wcs.wcs.ctype[2], 
-         cube_fitter.cube.wcs.wcs.crpix[1], cube_fitter.cube.wcs.wcs.crpix[2], 
-         cube_fitter.cube.wcs.wcs.crval[1], cube_fitter.cube.wcs.wcs.crval[2], 
-         cube_fitter.cube.wcs.wcs.cunit[1].name, cube_fitter.cube.wcs.wcs.cunit[2].name, 
-         cube_fitter.cube.wcs.wcs.pc[1,1], cube_fitter.cube.wcs.wcs.pc[1,2], 
-         cube_fitter.cube.wcs.wcs.pc[2,1], cube_fitter.cube.wcs.wcs.pc[2,2]], aperture_vals, dims=1),
+            cat([cube_fitter.name, cube_fitter.z, cube_fitter.cube.channel, cube_fitter.cube.band, cube_fitter.cube.Ω, 
+            cube_fitter.cube.α, cube_fitter.cube.δ, cube_fitter.cube.wcs.wcs.naxis, 
+            cube_fitter.cube.wcs.wcs.cdelt[1], cube_fitter.cube.wcs.wcs.cdelt[2], 
+            cube_fitter.cube.wcs.wcs.ctype[1], cube_fitter.cube.wcs.wcs.ctype[2], 
+            cube_fitter.cube.wcs.wcs.crpix[1], cube_fitter.cube.wcs.wcs.crpix[2], 
+            cube_fitter.cube.wcs.wcs.crval[1], cube_fitter.cube.wcs.wcs.crval[2], 
+            cube_fitter.cube.wcs.wcs.cunit[1].name, cube_fitter.cube.wcs.wcs.cunit[2].name, 
+            cube_fitter.cube.wcs.wcs.pc[1,1], cube_fitter.cube.wcs.wcs.pc[1,2], 
+            cube_fitter.cube.wcs.wcs.pc[2,1], cube_fitter.cube.wcs.wcs.pc[2,2]], aperture_vals, dims=1),
 
-        Vector{String}(cat(["Target name", "Target redshift", "MIRI channel", "MIRI band",
-        "Solid angle per pixel (rad.)", "Right ascension of target (deg.)", "Declination of target (deg.)",
-        "number of World Coordinate System axes", 
-        "first axis increment per pixel", "second axis increment per pixel",
-        "first axis coordinate type", "second axis coordinate type",
-        "axis 1 coordinate of the reference pixel", "axis 2 coordinate of the reference pixel",
-        "first axis value at the reference pixel", "second axis value at the reference pixel",
-        "first axis units", "second axis units",
-        "linear transformation matrix element", "linear transformation matrix element",
-        "linear transformation matrix element", "linear transformation matrix element"], aperture_comments, dims=1))
-    )
+            Vector{String}(cat(["Target name", "Target redshift", "MIRI channel", "MIRI band",
+            "Solid angle per pixel (rad.)", "Right ascension of target (deg.)", "Declination of target (deg.)",
+            "number of World Coordinate System axes", 
+            "first axis increment per pixel", "second axis increment per pixel",
+            "first axis coordinate type", "second axis coordinate type",
+            "axis 1 coordinate of the reference pixel", "axis 2 coordinate of the reference pixel",
+            "first axis value at the reference pixel", "second axis value at the reference pixel",
+            "first axis units", "second axis units",
+            "linear transformation matrix element", "linear transformation matrix element",
+            "linear transformation matrix element", "linear transformation matrix element"], aperture_comments, dims=1))
+        )
+    else
+        hdr = FITSHeader(
+            Vector{String}(cat(["TARGNAME", "REDSHIFT", "CHANNEL", "BAND", "PIXAR_SR", "RA", "DEC"], aperture_keys, dims=1)),
+
+            cat([cube_fitter.name, cube_fitter.z, cube_fitter.cube.channel, cube_fitter.cube.band, cube_fitter.cube.Ω, 
+            cube_fitter.cube.α, cube_fitter.cube.δ], aperture_vals, dims=1),
+
+            Vector{String}(cat(["Target name", "Target redshift", "MIRI channel", "MIRI band",
+            "Solid angle per pixel (rad.)", "Right ascension of target (deg.)", "Declination of target (deg.)"], 
+            aperture_comments, dims=1))
+        )
+    end
 
     if cube_fitter.save_full_model
         # Create the 3D intensity model FITS file

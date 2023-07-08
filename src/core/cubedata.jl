@@ -379,7 +379,7 @@ function interpolate_nans!(cube::DataCube)
         σ = cube.σ[index, :]
 
         # Filter NaNs
-        if sum(.!isfinite.(I) .| .!isfinite.(σ)) > (size(I, 1) / 10)
+        if sum(.!isfinite.(I) .| .!isfinite.(σ)) > (size(I, 1) / 2)
             # Keep NaNs in spaxels that are a majority NaN (i.e., we do not want to fit them)
             @debug "Too many NaNs in spaxel $index -- this spaxel will not be fit"
             continue
