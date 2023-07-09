@@ -557,7 +557,7 @@ function losvd_rfft(vsyst::Real, v::Real, σ::Real, nl::Integer; σ_diff::Real=0
     # Prepare quantities
     a = (vsyst + v)/σ
     b = σ_diff/σ
-    ω = range(0., π*σ*factor, nl)
+    ω = isfinite(σ) ? range(0., π*σ*factor, nl) : ones(nl) .* NaN  # handle cases where the spaxel isn't fit 
     # Calculate Fourier transform
     lvd_rfft = @. exp(1im*a*ω - 0.5*(1-b^2)*ω^2)
     # Take complex conjugate
@@ -1247,7 +1247,9 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, velscale::Re
     ssps = zeros(Float64, length(ssp_λ), n_ssps)
     # Interpolate the SSPs to the right ages/metallicities (this is slow)
     for i in 1:n_ssps
-        ssps[:, i] = params[pᵢ] .* [ssp_templates[j](params[pᵢ+1], params[pᵢ+2]) for j in eachindex(ssp_λ)] ./ N
+        # normalize the templates by their median so that the amplitude is properly separated from the age and metallicity during fitting
+        temp = [ssp_templates[j](params[pᵢ+1], params[pᵢ+2]) for j in eachindex(ssp_λ)]
+        ssps[:, i] = params[pᵢ] .* temp ./ median(temp)
         pᵢ += 3
     end
 
@@ -1297,7 +1299,9 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, velscale::Re
     ssps = zeros(Float64, length(ssp_λ), n_ssps)
     # Interpolate the SSPs to the right ages/metallicities (this is slow)
     for i in 1:n_ssps
-        ssps[:, i] = params[pᵢ] .* [ssp_templates[j](params[pᵢ+1], params[pᵢ+2]) for j in eachindex(ssp_λ)] ./ N
+        # normalize the templates by their median so that the amplitude is properly separated from the age and metallicity during fitting
+        temp = [ssp_templates[j](params[pᵢ+1], params[pᵢ+2]) for j in eachindex(ssp_λ)]
+        ssps[:, i] = params[pᵢ] .* temp ./ median(temp)
         pᵢ += 3
     end
 

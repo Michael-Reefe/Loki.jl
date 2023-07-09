@@ -7,23 +7,23 @@
 
 # Use one old population and one young population
 [[stellar_population_ages]]
-val = 10.0
-plim = [7.5, 13.7]
+val = 8.0
+plim = [7.5, 10.0]
 locked = false
 [[stellar_population_ages]]
-val = 0.01
-plim = [0.001, 0.03]
+val = 0.005
+plim = [0.001, 0.02]
 locked = false
 
 # Metallicities in [M/H]
 
 # The old population should have a lower metallicity and vice versa
 [[stellar_population_metallicities]]
-val = -0.35
+val = -2.0
 plim = [-2.3, 0.0]
 locked = false
 [[stellar_population_metallicities]]
-val = 0.06
+val = 0.2
 plim = [0.0, 0.40]
 locked = false
 
@@ -45,7 +45,7 @@ locked = false
 
 # E(B-V) Reddening factor
 [attenuation.E_BV]
-val = 0.10
+val = 0.01
 plim = [0.0, 4.0]
 locked = false
 

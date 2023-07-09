@@ -954,11 +954,11 @@ end
 Get the continuum limits vector for a given CubeFitter object, split up by the 2 continuum fitting steps.
 Also returns a boolean vector for which parameters are allowed to vary.
 """
-get_continuum_plimits(cube_fitter::CubeFitter; split::Bool=false) = cube_fitter.spectral_region == :MIR ? 
-    get_mir_continuum_plimits(cube_fitter; split=split) : get_opt_continuum_plimits(cube_fitter)
+get_continuum_plimits(cube_fitter::CubeFitter, init::Bool; split::Bool=false) = cube_fitter.spectral_region == :MIR ? 
+    get_mir_continuum_plimits(cube_fitter, init; split=split) : get_opt_continuum_plimits(cube_fitter, init)
 
 
-function get_mir_continuum_plimits(cube_fitter::CubeFitter; split::Bool=false)
+function get_mir_continuum_plimits(cube_fitter::CubeFitter, init::Bool; split::Bool=false)
 
     dust_features = cube_fitter.dust_features
     abs_features = cube_fitter.abs_features
@@ -1011,13 +1011,17 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter; split::Bool=false)
 end
 
 
-function get_opt_continuum_plimits(cube_fitter::CubeFitter)
+function get_opt_continuum_plimits(cube_fitter::CubeFitter, init::Bool)
 
     continuum = cube_fitter.continuum
 
     amp_ssp_plim = (0., Inf)
     ssp_plim = vcat([[amp_ssp_plim, ai.limits, zi.limits] for (ai, zi) in zip(continuum.ssp_ages, continuum.ssp_metallicities)]...)
-    ssp_locked = vcat([[false, ai.locked, zi.locked] for (ai, zi) in zip(continuum.ssp_ages, continuum.ssp_metallicities)]...)
+    if !init
+        ssp_locked = vcat([[false, true, true] for _ in 1:cube_fitter.n_ssps]...)
+    else
+        ssp_locked = vcat([[false, ai.locked, zi.locked] for (ai, zi) in zip(continuum.ssp_ages, continuum.ssp_metallicities)]...)
+    end
 
     stel_kin_plim = [continuum.stel_vel.limits, continuum.stel_vdisp.limits]
     stel_kin_locked = [continuum.stel_vel.locked, continuum.stel_vdisp.locked]
@@ -1047,9 +1051,10 @@ end
 Get the vector of starting values for the continuum fit for a given CubeFitter object. Again, the
 vector is split up by the 2 continuum fitting steps.
 """
-get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, init::Bool; split::Bool=false) = 
-    cube_fitter.spectral_region == :MIR ? get_mir_continuum_initial_values(cube_fitter, λ, I, N, init, split=split) :
-    get_opt_continuum_initial_values(cube_fitter, λ, I, N, init)
+get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, 
+    Ω::Vector{<:Real}, init::Bool; split::Bool=false) = cube_fitter.spectral_region == :MIR ? 
+    get_mir_continuum_initial_values(cube_fitter, λ, I, N, init, split=split) :
+    get_opt_continuum_initial_values(cube_fitter, λ, I, N, Ω, init)
 
 
 function get_mir_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, init::Bool; split::Bool=false)
@@ -1199,7 +1204,8 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
 end
 
 
-function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, init::Bool)
+function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, 
+    Ω::Vector{<:Real}, init::Bool)
 
     # Check if the cube fitter has initial fit parameters 
     if !init
@@ -1210,8 +1216,14 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
         p₀ = copy(cube_fitter.p_init_cont)
 
         # scale all flux amplitudes by the difference in medians between the spaxel and the summed spaxels
-        # (should be close to 1 since the sum is already normalized by the number of spaxels included anyways)
-        scale = max(nanmedian(I), 1e-10) * N / nanmedian(sumdim(cube_fitter.cube.I, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2)))
+        # ---> Note here that we do not include the number of pixels in the calculation, as is done in the MIR case,
+        #      which means this inherently includes the ratio of the solid angles between 1 spaxel and the full cube within
+        #      this scaling factor. This is necessary in the optical case because our SSP amplitudes (or masses) are measured
+        #      in units that should be independent of solid angle (solar masses), so any effects of the solid angle should
+        #      be removed prior to fitting such that the solid angle can be divided out from the amplitudes during
+        #      the fitting process, whereas in the MIR case all of our continuum amplitudes are measured in (normalized) 
+        #      per-solid-angle units.
+        scale = max(nanmedian(I), 1e-10) * N / nanmedian(sumdim(cube_fitter.cube.I, (1,2)))
 
         # SSP amplitudes
         pᵢ = 1
@@ -1226,13 +1238,9 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
         @debug "Calculating initial starting points..." 
 
         # SSP amplitudes
-        λcent = median(λ)
-        Icent = I[argmin(abs.(λ .- λcent))]
         m_ssps = zeros(cube_fitter.n_ssps)
         for i in 1:cube_fitter.n_ssps
-            sspIcent = cube_fitter.ssp_templates[argmin(abs.(cube_fitter.ssp_λ .- λcent))](continuum.ssp_ages[i].value, 
-                continuum.ssp_metallicities[i].value)
-            m_ssps[i] = Icent * N / sspIcent / cube_fitter.n_ssps / 2
+            m_ssps[i] = nanmedian(I) * median(Ω) / attenuation([median(λ)], continuum.E_BV.value)[1] / cube_fitter.n_ssps
         end
 
         ssp_pars = vcat([[mi, ai.value, zi.value] for (mi, ai, zi) in zip(m_ssps, continuum.ssp_ages, continuum.ssp_metallicities)]...)
@@ -1447,7 +1455,7 @@ function pretty_print_opt_continuum_results(cube_fitter::CubeFitter, popt::Vecto
     msg *= "\n#> STELLAR POPULATIONS <#\n"
     pᵢ = 1
     for i ∈ 1:cube_fitter.n_ssps
-        msg *= "SSP_$(i)_mass: \t\t\t $(@sprintf "%.3e" popt[pᵢ]) +/- $(@sprintf "%.3e" perr[pᵢ]) Msun \t Limits: (0, Inf)\n"
+        msg *= "SSP_$(i)_amp: \t\t\t $(@sprintf "%.3e" popt[pᵢ]) +/- $(@sprintf "%.3e" perr[pᵢ]) [x norm] \t Limits: (0, Inf)\n"
         msg *= "SSP_$(i)_age: \t\t\t $(@sprintf "%.3f" popt[pᵢ+1]) +/- $(@sprintf "%.3f" perr[pᵢ+1]) Gyr \t Limits: " *
             "($(@sprintf "%.3f" continuum.ssp_ages[i].limits[1]), $(@sprintf "%.3f" continuum.ssp_ages[i].limits[2]))" *
             (continuum.ssp_ages[i].locked ? " (fixed)" : "") * "\n"
