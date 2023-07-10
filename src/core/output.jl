@@ -431,9 +431,10 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
         param_errs[2].stellar_kinematics[:vdisp][index] = out_errs[index, pᵢ+1, 2]
         pᵢ += 2
 
-        param_maps.attenuation[:E_BV][index] = out_params[index, pᵢ]
-        param_errs[1].attenuation[:E_BV][index] = out_errs[index, pᵢ, 1]
-        param_errs[2].attenuation[:E_BV][index] = out_errs[index, pᵢ, 2]
+        # Report the E(B-V) for gas, rather than stars
+        param_maps.attenuation[:E_BV][index] = out_params[index, pᵢ] / 0.44
+        param_errs[1].attenuation[:E_BV][index] = out_errs[index, pᵢ, 1] / 0.44
+        param_errs[2].attenuation[:E_BV][index] = out_errs[index, pᵢ, 2] / 0.44
         pᵢ += 1
         if cube_fitter.fit_uv_bump
             param_maps.attenuation[:delta_UV][index] = out_params[index, pᵢ]
@@ -549,7 +550,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
 
             # End of line parameters: recreate the un-extincted (intrinsic) line model
             I_line, comps_l = model_line_residuals(cube_fitter.cube.λ, out_params[index, vᵢ:pᵢ-1], cube_fitter.n_lines, cube_fitter.n_comps,
-                cube_fitter.lines, cube_fitter.flexible_wavesol, comps_c["extinction"], lsf_interp_func, true)
+                cube_fitter.lines, cube_fitter.flexible_wavesol, comps_c["attenuation_gas"], lsf_interp_func, true)
 
             # Combine the continuum and line models
             I_model = I_cont .+ I_line
@@ -558,7 +559,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             # Renormalize
             I_model .*= N
             for comp ∈ keys(comps)
-                if !(comp ∈ ["extinction", "abs_ice", "abs_ch"])
+                if !(comp ∈ ["attenuation_stars", "attenuation_gas"])
                     comps[comp] .*= N
                 end
             end
@@ -760,7 +761,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     elseif occursin("vdisp", String(name_i))
         bunit = L"$\sigma_*$ (km s$^{-1}$)"
     elseif occursin("E_BV", String(name_i))
-        bunit = L"$E(B-V)$"
+        bunit = L"$E(B-V)_{\rm gas}$"
     elseif occursin("delta_UV", String(name_i))
         bunit = L"$\delta$"
     end

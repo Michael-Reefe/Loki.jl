@@ -58,6 +58,9 @@ kinematic_group_OII = [
 kinematic_group_Balmer = [
     "HI_H_"
 ]
+# Case B recombination amplitude ratios
+tie_amp_Balmer = [0.107, 0.159, 0.262, 0.470, 1.0, 2.86]
+
 kinematic_group_He = [
     "HeI_",
     "HeII_"
@@ -884,8 +887,8 @@ default = "Voigt"
 # acomps: specify which, if any, lines to add an additional component, and what type
 # of profile it should be. Can add an arbitrary number of additional components.
 [acomps]
-OIII_04960 = ["Voigt"]
-OIII_05008 = ["Voigt"]
+# OIII_04960 = ["Voigt"]
+# OIII_05008 = ["Voigt"]
 
 # NeVI_7652 = ["Voigt"]
 # NeII_12813 = ["Voigt"]

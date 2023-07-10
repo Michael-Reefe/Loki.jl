@@ -522,6 +522,7 @@ struct CubeFitter{T<:Real,S<:Integer}
     fit_all_samin::Bool
     use_pah_templates::Bool
     pah_template_map::BitMatrix
+    fit_joint::Bool
     fit_uv_bump::Bool
     fit_covering_frac::Bool
 
@@ -769,7 +770,7 @@ struct CubeFitter{T<:Real,S<:Integer}
         end
         # Convert to a vectorized "TransitionLines" object
         lines = TransitionLines(lines.names[ln_filt], lines.latex[ln_filt], lines.annotate[ln_filt], lines.λ₀[ln_filt], 
-                                lines.profiles[ln_filt, :], lines.tied_voff[ln_filt, :], lines.tied_fwhm[ln_filt, :], 
+                                lines.profiles[ln_filt, :], lines.tied_amp[ln_filt, :], lines.tied_voff[ln_filt, :], lines.tied_fwhm[ln_filt, :], 
                                 lines.acomp_amp[ln_filt, :], lines.voff[ln_filt, :], lines.fwhm[ln_filt, :], lines.h3[ln_filt, :], 
                                 lines.h4[ln_filt, :], lines.η[ln_filt, :])
         n_lines = length(lines.names)
@@ -789,6 +790,31 @@ struct CubeFitter{T<:Real,S<:Integer}
         # Remove unnecessary rows/keys from the tied_kinematics object after the lines have been filtered
         @debug "TiedKinematics before filtering: $tied_kinematics"
         for j ∈ 1:n_comps
+            keep0 = Int64[]
+            for (k, key) ∈ enumerate(tied_kinematics.key_amp[j])
+                if any(lines.tied_amp[:, j] .== key)
+                    # Remove the unneeded elements
+                    append!(keep0, [k])
+                end
+            end
+            tied_kinematics.key_amp[j] = tied_kinematics.key_amp[j][keep0]
+            tied_kinematics.amp[j] = tied_kinematics.amp[j][keep0]
+            # Remove line ratios for lines that fall outside the fitting region
+            for i in eachindex(tied_kinematics.amp[j])
+                # Make a copy so we're not modifying the dictionary as we loop through it
+                acp = copy(tied_kinematics.amp[j][i])
+                for lk in keys(acp)
+                    if !(lk in lines.names)
+                        delete!(tied_kinematics.amp[j][i], lk)
+                    end
+                end
+                # Renormalize the ratios so the largest is 1.0
+                max_ratio = maximum(values(tied_kinematics.amp[j][i]))
+                for lk in keys(tied_kinematics.amp[j][i])
+                    tied_kinematics.amp[j][i][lk] /= max_ratio
+                end
+            end
+
             keep1 = Int64[]
             for (k, key) ∈ enumerate(tied_kinematics.key_voff[j])
                 if any(lines.tied_voff[:, j] .== key)
@@ -893,8 +919,8 @@ struct CubeFitter{T<:Real,S<:Integer}
         new{typeof(z), typeof(n_lines)}(cube, z, name, spectral_region, out[:user_mask], out[:plot_spaxels], out[:plot_maps], out[:plot_range], out[:parallel], 
             out[:save_fits], out[:save_full_model], out[:overwrite], out[:track_memory], out[:track_convergence], out[:make_movies], 
             out[:extinction_curve], out[:extinction_screen], out[:fit_sil_emission], out[:fit_all_samin], out[:use_pah_templates], pah_template_map, 
-            out[:fit_uv_bump], out[:fit_covering_frac], continuum, n_dust_cont, n_power_law, n_dust_features, n_abs_features, dust_features, abs_features, 
-            abs_taus, n_ssps, ssp_λ, ssp_templates, velscale, vsyst, n_lines, n_acomps, n_comps, lines, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, 
+            out[:fit_joint], out[:fit_uv_bump], out[:fit_covering_frac], continuum, n_dust_cont, n_power_law, n_dust_features, n_abs_features, dust_features, 
+            abs_features, abs_taus, n_ssps, ssp_λ, ssp_templates, velscale, vsyst, n_lines, n_acomps, n_comps, lines, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, 
             n_params_cont, n_params_lines, n_params_extra, out[:cosmology], flexible_wavesol, out[:n_bootstrap], out[:random_seed], out[:line_test_lines], 
             out[:line_test_threshold], out[:plot_line_test], p_init_cont, p_init_line, p_init_pahtemp)
     end
@@ -1514,9 +1540,13 @@ function get_line_plimits(cube_fitter::CubeFitter, init::Bool)
     ln_lock = BitVector()
     ln_names = Vector{String}()
     
+    amp_tied = []
+    amp_ratios = []
     voff_tied = []
     fwhm_tied = []
     for j ∈ 1:cube_fitter.n_comps
+        append!(amp_tied, [[[] for _ in cube_fitter.tied_kinematics.key_amp[j]]])
+        append!(amp_ratios, [[[] for _ in cube_fitter.tied_kinematics.key_amp[j]]])
         append!(voff_tied, [[[] for _ in cube_fitter.tied_kinematics.key_voff[j]]])
         append!(fwhm_tied, [[[] for _ in cube_fitter.tied_kinematics.key_fwhm[j]]])
     end
@@ -1528,13 +1558,19 @@ function get_line_plimits(cube_fitter::CubeFitter, init::Bool)
         for j ∈ 1:cube_fitter.n_comps
             if !isnothing(cube_fitter.lines.profiles[i, j])
 
-                amp_ln_plim = isone(j) ? amp_plim : cube_fitter.lines.acomp_amp[i, j-1].limits
                 # name
                 ln_name = string(cube_fitter.lines.names[i]) * "_$(j)"
+                amp_ln_plim = isone(j) ? amp_plim : cube_fitter.lines.acomp_amp[i, j-1].limits
 
-                # get the right voff and fwhm parameters based on if theyre tied or not
-                vt = ft = false
-                kv = kf = nothing
+                # get the right amp, voff, and fwhm parameters based on if theyre tied or not
+                at = vt = ft = false
+                ka = kv = kf = nothing
+                if !isnothing(cube_fitter.lines.tied_amp[i, j])
+                    key_amp = cube_fitter.lines.tied_amp[i, j]
+                    ka = findfirst(cube_fitter.tied_kinematics.key_amp[j] .== key_amp)
+                    at = true
+                end
+
                 if isnothing(cube_fitter.lines.tied_voff[i, j])
                     voff_ln_plim = cube_fitter.lines.voff[i, j].limits
                     voff_ln_locked = cube_fitter.lines.voff[i, j].locked
@@ -1558,6 +1594,11 @@ function get_line_plimits(cube_fitter::CubeFitter, init::Bool)
                     fwhm_ln_locked = cube_fitter.tied_kinematics.fwhm[j][kf].locked
                     fwhm_ln_name = "$(key_fwhm)_$(j)_fwhm"
                     ft = true
+                end
+
+                if at
+                    append!(amp_tied[j][ka], [ind])
+                    append!(amp_ratios[j][ka], [cube_fitter.tied_kinematics.amp[j][ka][cube_fitter.lines.names[i]]])
                 end
 
                 # Depending on flexible_wavesol, we need to add 2 voffs instead of 1 voff
@@ -1610,7 +1651,13 @@ function get_line_plimits(cube_fitter::CubeFitter, init::Bool)
 
     # Combine all "tied" vectors
     tied = []
+    tied_amp_inds = []
+    tied_amp_ratios = []
     for j ∈ 1:cube_fitter.n_comps
+        for k ∈ 1:length(cube_fitter.tied_kinematics.key_amp[j])
+            append!(tied_amp_inds, [tuple(amp_tied[j][k]...)])
+            append!(tied_amp_ratios, [tuple(amp_ratios[j][k]...)])
+        end
         for k ∈ 1:length(cube_fitter.tied_kinematics.key_voff[j])
             append!(tied, [tuple(voff_tied[j][k]...)])
         end
@@ -1625,6 +1672,13 @@ function get_line_plimits(cube_fitter::CubeFitter, init::Bool)
     for group in tied
         if length(group) > 1
             append!(tied_pairs, [(group[1],group[j],1.0) for j in 2:length(group)])
+        end
+    end
+    for groupind in eachindex(tied_amp_inds)
+        group = tied_amp_inds[groupind]
+        ratio = tied_amp_ratios[groupind]
+        if length(group) > 1
+            append!(tied_pairs, [(group[1],group[j],ratio[j]/ratio[1]) for j in 2:length(group)])
         end
     end
 
@@ -1665,6 +1719,13 @@ function get_line_initial_values(cube_fitter::CubeFitter, init::Bool)
                 if !isnothing(cube_fitter.lines.profiles[i, j])
 
                     amp_ln = isone(j) ? A_ln[i] : cube_fitter.lines.acomp_amp[i, j-1].value
+                    if isnothing(cube_fitter.lines.tied_amp[i, j])
+                        amp_ln *= 1.0
+                    else
+                        key_amp = cube_fitter.lines.tied_amp[i, j]
+                        ka = findfirst(cube_fitter.tied_kinematics.key_amp[j] .== key_amp)
+                        amp_ln *= cube_fitter.tied_kinematics.amp[j][ka][cube_fitter.lines.names[i]]
+                    end
                     if isnothing(cube_fitter.lines.tied_voff[i, j])
                         voff_ln = cube_fitter.lines.voff[i, j].value
                     else

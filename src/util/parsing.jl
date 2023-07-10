@@ -102,7 +102,7 @@ function parse_options()
     # Read in the options file
     options = TOML.parsefile(joinpath(@__DIR__, "..", "options", "options.toml"))
     keylist1 = ["n_bootstrap", "extinction_curve", "extinction_screen", "fit_sil_emission", "fit_all_samin", "use_pah_templates", 
-                "fit_uv_bump", "fit_covering_frac", "parallel", "plot_spaxels", "plot_maps", "save_fits", "overwrite", "track_memory", 
+                "fit_joint", "fit_uv_bump", "fit_covering_frac", "parallel", "plot_spaxels", "plot_maps", "save_fits", "overwrite", "track_memory", 
                 "track_convergence", "save_full_model", "line_test_lines", "line_test_threshold", "plot_line_test", "make_movies", 
                 "cosmology"]
     keylist2 = ["h", "omega_m", "omega_K", "omega_r"]
@@ -492,6 +492,7 @@ function parse_lines()
     h3s = Vector{Union{Parameter,Nothing}}(nothing, length(lines["lines"]))
     h4s = Vector{Union{Parameter,Nothing}}(nothing, length(lines["lines"]))
     ηs = Vector{Union{Parameter,Nothing}}(nothing, length(lines["lines"]))
+    tied_amp = Vector{Union{Symbol,Nothing}}(nothing, length(lines["lines"]))
     tied_voff = Vector{Union{Symbol,Nothing}}(nothing, length(lines["lines"]))
     tied_fwhm = Vector{Union{Symbol,Nothing}}(nothing, length(lines["lines"]))
     prof_out = Vector{Union{Symbol,Nothing}}(nothing, length(lines["lines"]))
@@ -503,6 +504,7 @@ function parse_lines()
     acomp_h3s = Matrix{Union{Parameter,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
     acomp_h4s = Matrix{Union{Parameter,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
     acomp_ηs = Matrix{Union{Parameter,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
+    acomp_tied_amp = Matrix{Union{Symbol,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
     acomp_tied_voff = Matrix{Union{Symbol,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
     acomp_tied_fwhm = Matrix{Union{Symbol,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
     acomp_prof_out = Matrix{Union{Symbol,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
@@ -639,7 +641,7 @@ function parse_lines()
         end
 
         # Check if the kinematics should be tied to other lines based on the kinematic groups
-        tied_voff[i] = tied_fwhm[i] = nothing
+        tied_amp[i] = tied_voff[i] = tied_fwhm[i] = nothing
         for group ∈ kinematic_groups
             for groupmember ∈ lines["kinematic_group_" * group]
                 #= Loop through the items in the "kinematic_group_*" list and see if the line name matches any of them.
@@ -649,6 +651,11 @@ function parse_lines()
                 =#
                 if occursin(groupmember, line)
 
+                    # Check if amp should  be tied
+                    tie_amp_group = false
+                    if haskey(lines, "tie_amp_" * group)
+                        tie_amp_group = true
+                    end
                     # Check if voff should be tied
                     tie_voff_group = true
                     if haskey(lines, "tie_voff_" * group)
@@ -660,6 +667,13 @@ function parse_lines()
                         tie_fwhm_group = lines["tie_fwhm_" * group]
                     end
 
+                    if tie_amp_group
+                        @assert isnothing(tied_amp[i]) "Line $(line[i]) is already part of the kinematic group $(tied_amp[i]), but it also passed filtering criteria" *
+                            "to be included in the group $group. Make sure your filters are not too lenient!"
+                        @debug "Tying amplitudes for $line to the group: $group"
+                        # Use the group label
+                        tied_amp[i] = Symbol(group)
+                    end
                     if tie_voff_group
                         # Make sure line is not already a member of another group
                         @assert isnothing(tied_voff[i]) "Line $(line[i]) is already part of the kinematic group $(tied_voff[i]), but it also passed filtering criteria" * 
@@ -689,12 +703,19 @@ function parse_lines()
         end
 
         # Repeat for the acomps
+        acomp_tied_amp[i, :] .= nothing
         acomp_tied_voff[i, :] .= nothing
         acomp_tied_fwhm[i, :] .= nothing
         for j ∈ 1:lines["n_acomps"]
             for group ∈ acomp_kinematic_groups[j]
                 for groupmember ∈ lines["acomp_$(j)_kinematic_group_" * group]
                     if occursin(groupmember, line)
+
+                        # Check if amp should be tied
+                        tie_acomp_amp_group = false
+                        if haskey(lines, "tie_acomp_amp_" * group)
+                            tie_acomp_amp_group = true
+                        end
 
                         # Check if voff should be tied
                         tie_acomp_voff_group = true
@@ -705,6 +726,16 @@ function parse_lines()
                         tie_acomp_fwhm_group = true
                         if haskey(lines, "tie_acomp_fwhm_" * group)
                             tie_acomp_fwhm_group = lines["tie_acomp_fwhm_" * group]
+                        end
+
+                        if !isnothing(acomp_profiles[line][j]) && tie_acomp_amp_group
+                            # Make sure line is not already a member of another group
+                            @assert isnothing(acomp_tied_amp[i, j]) "Line $(line[i]) acomp $(j) is already part of the kinematic group $(acomp_tied_amp[i, j]), " *
+                                "but it also passed filtering criteria to be included in the group $group. Make sure your filters are not too lenient!"
+                            @debug "Tying amplitudes for $line acomp $(j) to the group: $group"
+
+                            # only set acomp_tied if the line actually *has* an acomp
+                            acomp_tied_amp[i,j] = Symbol(group)
                         end
 
                         if !isnothing(acomp_profiles[line][j]) && tie_acomp_voff_group
@@ -788,24 +819,37 @@ function parse_lines()
 
     # create vectorized object for all the line data
     lines_out = TransitionLines(names[ss], latex[ss], annotate[ss], cent_vals[ss], hcat(prof_out[ss], acomp_prof_out[ss, :]), 
-        hcat(tied_voff[ss], acomp_tied_voff[ss, :]), hcat(tied_fwhm[ss], acomp_tied_fwhm[ss, :]), acomp_amps[ss, :],
-        hcat(voffs[ss], acomp_voffs[ss, :]), hcat(fwhms[ss], acomp_fwhms[ss, :]), hcat(h3s[ss], acomp_h3s[ss, :]), 
+        hcat(tied_amp[ss], acomp_tied_amp[ss, :]), hcat(tied_voff[ss], acomp_tied_voff[ss, :]), hcat(tied_fwhm[ss], acomp_tied_fwhm[ss, :]), 
+        acomp_amps[ss, :], hcat(voffs[ss], acomp_voffs[ss, :]), hcat(fwhms[ss], acomp_fwhms[ss, :]), hcat(h3s[ss], acomp_h3s[ss, :]), 
         hcat(h4s[ss], acomp_h4s[ss, :]), hcat(ηs[ss], acomp_ηs[ss, :]))
 
     @debug "#######################################################"
 
     # Create a dictionary containing all of the unique `tie` keys, and the tied parameters 
     # corresponding to that tied key
+    kin_tied_key_amp = [unique(lines_out.tied_amp[:, j]) for j ∈ 1:size(lines_out.tied_amp, 2)]
+    kin_tied_key_amp = [kin_tied_key_amp[i][.!isnothing.(kin_tied_key_amp[i])] for i in eachindex(kin_tied_key_amp)]
     kin_tied_key_voff = [unique(lines_out.tied_voff[:, j]) for j ∈ 1:size(lines_out.tied_voff, 2)]
     kin_tied_key_voff = [kin_tied_key_voff[i][.!isnothing.(kin_tied_key_voff[i])] for i in eachindex(kin_tied_key_voff)]
     kin_tied_key_fwhm = [unique(lines_out.tied_fwhm[:, j]) for j ∈ 1:size(lines_out.tied_fwhm, 2)]
     kin_tied_key_fwhm = [kin_tied_key_fwhm[i][.!isnothing.(kin_tied_key_fwhm[i])] for i in eachindex(kin_tied_key_fwhm)]
+    @debug "kin_tied_key_amp: $kin_tied_key_amp"
     @debug "kin_tied_key_voff: $kin_tied_key_voff"
     @debug "kin_tied_key_fwhm: $kin_tied_key_fwhm"
     
+    amp_tied = [Vector{Dict{Symbol, Float64}}(undef, length(kin_tied_key_amp[j])) for j ∈ 1:size(lines_out.tied_amp, 2)]
     voff_tied = [Vector{Parameter}(undef, length(kin_tied_key_voff[j])) for j ∈ 1:size(lines_out.tied_voff, 2)]
     fwhm_tied = [Vector{Parameter}(undef, length(kin_tied_key_fwhm[j])) for j ∈ 1:size(lines_out.tied_fwhm, 2)]
     msg = ""
+    # Iterate and create the tied amplitude parameters
+    for j ∈ 1:size(lines_out.tied_amp, 2)
+        for (i, kin_tie) ∈ enumerate(kin_tied_key_amp[j])
+            a_ratio = isone(j) ? lines["tie_amp_$kin_tie"] : lines["tie_acomp_amp_$kin_tie"]
+            lines_in_group = lines_out.names[lines_out.tied_amp[:, j] .== kin_tie]
+            amp_tied[j][i] = Dict(ln => ri for (ln, ri) in zip(lines_in_group, a_ratio))
+            msg *= "\namp_tied_$(kin_tie)_$(j) $(amp_tied[j][i])"
+        end
+    end
     # Iterate and create the tied voff parameters
     for j ∈ 1:size(lines_out.tied_voff, 2)
         for (i, kin_tie) ∈ enumerate(kin_tied_key_voff[j])
@@ -874,7 +918,7 @@ function parse_lines()
     end
 
     @debug msg
-    tied_kinematics = TiedKinematics(kin_tied_key_voff, voff_tied, kin_tied_key_fwhm, fwhm_tied)
+    tied_kinematics = TiedKinematics(kin_tied_key_amp, amp_tied, kin_tied_key_voff, voff_tied, kin_tied_key_fwhm, fwhm_tied)
 
     # If tie_voigt_mixing is set, all Voigt profiles have the same tied mixing parameter eta
     if lines["tie_voigt_mixing"]

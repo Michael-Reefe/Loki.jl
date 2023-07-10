@@ -1278,8 +1278,9 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, velscale::Re
         pᵢ += 1
     end
     pᵢ += 1
-    comps["extinction"] = attenuation(λ, E_BV, δ=δ, f_nodust=f_nodust)
-    contin .*= comps["extinction"]
+    comps["attenuation_stars"] = attenuation(λ, E_BV, δ=δ, f_nodust=f_nodust)
+    comps["attenuation_gas"] = attenuation(λ, E_BV/0.44, δ=δ, f_nodust=f_nodust)
+    contin .*= comps["attenuation_stars"]
 
     if return_components
         return contin, comps
@@ -2127,7 +2128,7 @@ function calculate_eqw(λ::Vector{T}, profile::Symbol, comps::Dict, n_ssps::Inte
     for i ∈ 1:n_ssps
         contin .+= comps["SSP_$i"]
     end
-    contin .*= comps["extinction"]
+    contin .*= comps["attenuation_stars"]
 
     # Integrate the flux ratio to get equivalent width
     if profile == :Gaussian
@@ -2158,14 +2159,14 @@ function calculate_eqw(λ::Vector{T}, profile::Symbol, comps::Dict, n_ssps::Inte
         error("Unrecognized line profile $profile")
     end
     # Continuum is extincted, so make sure the feature is too
-    feature .*= comps["extinction"]
+    feature .*= comps["attenuation_gas"]
 
     # May blow up for spaxels where the continuum is close to 0
     eqw = NumericalIntegration.integrate(λ, feature ./ contin, Trapezoidal())
     err = 0.
     if propagate_err
-        feature_err[:,1] .*= comps["extinction"]
-        feature_err[:,2] .*= comps["extinction"]
+        feature_err[:,1] .*= comps["attenuation_gas"]
+        feature_err[:,2] .*= comps["attenuation_gas"]
         err_lo = eqw - NumericalIntegration.integrate(λ, feature_err[:,1] ./ contin, Trapezoidal())
         err_up = NumericalIntegration.integrate(λ, feature_err[:,2] ./ contin, Trapezoidal()) - eqw
         err = (err_up + err_lo) / 2
