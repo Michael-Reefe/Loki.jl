@@ -225,6 +225,247 @@ end
 
 
 """
+    fshift(array, Δx, Δy)
+
+Shift a 2D image by a non-integer amount Δx and Δy using bilinear interpolation.
+Originally written in IDL for the IDLAstronomy Library: https://idlastro.gsfc.nasa.gov/ftp/contrib/malumuth/fshift.pro
+
+Original docstring is copied below:
+
+;+
+;			fshift
+;
+; Routine to shift an image by non-integer values
+;
+; CALLING SEQUENCE:
+;	results = fshift(image,delx,dely)
+;
+; INPUTS:
+;	image - 2D image to be shifted
+;	delx - shift in x (same direction as IDL SHIFT function)
+;	dely - shift in y
+;
+; OUTPUTS:
+;	shifted image is returned as the function results
+;
+; HISTORY:
+;	version 2  D. Lindler  May, 1992 - rewritten for IDL version 2
+;	19-may-1992	JKF/ACC		- move to GHRS DAF.
+;-
+;--------------------------------------------------------------------
+
+"""
+function fshift(array::AbstractArray, Δx::T, Δy::T) where {T<:Real}
+
+    # Separate shift into an integer and fractional shift
+    intx = floor(Int, Δx)
+    inty = floor(Int, Δy)
+    fracx = Δx - intx
+    fracy = Δy - inty
+    if fracx < 0
+        fracx += 1
+        intx -= 1
+    end
+    if fracy < 0
+        fracy += 1
+        inty -= 1
+    end
+
+    # Shift by the integer portion
+    s = circshift(array, (intx, inty))
+    if iszero(fracx) && iszero(fracy)
+        return s
+    end
+
+    # Use bilinear interpolation between four pixels
+    return s .* ((1 .- fracx) .* (1 .- fracy)) .+ 
+           circshift(s, (0,1)) .* ((1 .- fracx) .* fracy) .+
+           circshift(s, (1,0)) .* (fracx .* (1 .- fracy)) .+
+           circshift(s, (1,1)) .* fracx .* fracy
+
+end
+
+
+"""
+    frebin(array, nsout, nlout=1, total=false)
+
+Rebin a 1D or 2D array onto a new pixel grid that may or may not be an integer fraction or multiple
+of the original grid. Originally written in IDL for the IDLAstronomy Library: https://idlastro.gsfc.nasa.gov/ftp/pro/image/frebin.pro
+
+Original docstring is copied below:
+
+;+
+; NAME:
+;   FREBIN
+;
+; PURPOSE:
+;   Shrink or expand the size of an array an arbitrary amount using interpolation
+;
+; EXPLANATION: 
+;   FREBIN is an alternative to CONGRID or REBIN.    Like CONGRID it
+;   allows expansion or contraction by an arbitrary amount. ( REBIN requires 
+;   integral factors of the original image size.)    Like REBIN it conserves 
+;   flux by ensuring that each input pixel is equally represented in the output
+;   array.       
+;
+; CALLING SEQUENCE:
+;   result = FREBIN( image, nsout, nlout, [ /TOTAL] )
+;
+; INPUTS:
+;    image - input image, 1-d or 2-d numeric array
+;    nsout - number of samples in the output image, numeric scalar
+;
+; OPTIONAL INPUT:
+;    nlout - number of lines in the output image, numeric scalar
+;            If not supplied, then set equal to 1
+;
+; OPTIONAL KEYWORD INPUTS:
+;   /total - if set, the output pixels will be the sum of pixels within
+;          the appropriate box of the input image.  Otherwise they will
+;          be the average.    Use of the /TOTAL keyword conserves total counts.
+; 
+; OUTPUTS:
+;    The resized image is returned as the function result.    If the input
+;    image is of type DOUBLE or FLOAT then the resized image is of the same
+;    type.     If the input image is BYTE, INTEGER or LONG then the output
+;    image is usually of type FLOAT.   The one exception is expansion by
+;    integral amount (pixel duplication), when the output image is the same
+;    type as the input image.  
+;     
+; EXAMPLE:
+;     Suppose one has an 800 x 800 image array, im, that must be expanded to
+;     a size 850 x 900 while conserving the total counts:
+;
+;     IDL> im1 = frebin(im,850,900,/total) 
+;
+;     im1 will be a 850 x 900 array, and total(im1) = total(im)
+; NOTES:
+;    If the input image sizes are a multiple of the output image sizes
+;    then FREBIN is equivalent to the IDL REBIN function for compression,
+;    and simple pixel duplication on expansion.
+;
+;    If the number of output pixels are not integers, the output image
+;    size will be truncated to an integer.  The platescale, however, will
+;    reflect the non-integer number of pixels.  For example, if you want to
+;    bin a 100 x 100 integer image such that each output pixel is 3.1
+;    input pixels in each direction use:
+;           n = 100/3.1   ; 32.2581
+;          image_out = frebin(image,n,n)
+;
+;     The output image will be 32 x 32 and a small portion at the trailing
+;     edges of the input image will be ignored.
+; 
+; PROCEDURE CALLS:
+;    None.
+; HISTORY:
+;    Adapted from May 1998 STIS  version, written D. Lindler, ACC
+;    Added /NOZERO, use INTERPOLATE instead of CONGRID, June 98 W. Landsman  
+;    Fixed for nsout non-integral but a multiple of image size  Aug 98 D.Lindler
+;    DJL, Oct 20, 1998, Modified to work for floating point image sizes when
+;		expanding the image. 
+;    Improve speed by addressing arrays in memory order W.Landsman Dec/Jan 2001
+;-
+;----------------------------------------------------------------------------
+"""
+function frebin(array::AbstractArray, nsout::S, nlout::S=1, total::Bool=false) where {S<:Integer}
+
+    # Determine the size of the input array
+    ns = size(array, 1)
+    nl = length(array)/ns
+
+    # Determine if the new sizes are integral factors of the original sizes
+    sbox = ns/nsout
+    lbox = nl/nlout
+
+    # Contraction by an integral amount
+    if (sbox == round(Int, sbox)) && (lbox == round(Int, lbox)) && (ns % nsout == 0) && (nl % nlout == 0)
+        return @pipe array |> 
+            reshape(_, (Int(sbox), nsout, Int(lbox), nlout)) |> 
+            (total ? sum : mean)(_, dims=(1,3)) |>
+            dropdims(_, dims=(1,3))
+    end
+
+    # Expansion by an integral amount
+    if (nsout % ns == 0) && (nlout % nl == 0)
+        xindex = (1:nsout) / (nsout/ns)
+        if isone(nl)  # 1D case, linear interpolation
+            return Spline1D(1:ns, array, k=1)(xindex) * (total ? sbox : 1.)
+        end
+        yindex = (1:nlout) / (nlout/nl)
+        interpfunc = Spline2D(1:ns, 1:Int(nl), array, kx=1, ky=1)
+        return [interpfunc(x, y) for x in xindex, y in yindex] .* (total ? sbox.*lbox : 1.)
+    end
+
+    ns1 = ns-1
+    nl1 = nl-1
+
+    # Do 1D case separately
+    if isone(nl)
+        result = zeros(eltype(array), nsout)
+        for i ∈ 0:nsout-1
+            rstart = i*sbox                # starting position for each box
+            istart = floor(Int, rstart)
+            rstop = rstart + sbox          # ending position for each box
+            istop = Int(clamp(floor(rstop), 0, ns1))
+            frac1 = rstart-istart
+            frac2 = 1.0 - (rstop-istop)
+
+            # add pixel values from istart to istop and subtract fractional pixel from istart to start and
+            # fractional pixel from rstop to istop
+
+            result[i+1] = sum(array[istart+1:istop+1]) - frac1*array[istart+1] - frac2*array[istop+1]
+        end
+        return result .* (total ? 1.0 : 1 ./ (sbox.*lbox))
+    end
+
+    # Now, do 2D case
+    # First, bin second dimension
+    temp = zeros(eltype(array), ns, nlout)
+    # Loop on output image lines
+    for i ∈ 0:nlout-1
+        rstart = i*lbox                # starting position for each box 
+        istart = floor(Int, rstart)
+        rstop = rstart + lbox
+        istop = Int(clamp(floor(rstop), 0, nl1))
+        frac1 = rstart-istart
+        frac2 = 1.0 - (rstop-istop)
+
+        # add pixel values from istart to istop and subtract fractional pixel from istart to start and
+        # fractional pixel from rstop to istop
+
+        if istart == istop
+            temp[:,i+1] .= (1 .- frac1 .- frac2).*array[:,istart+1]
+        else
+            temp[:,i+1] .= sumdim(array[:,istart+1:istop+1], 2) .- frac1.*array[:,istart+1] .- frac2.*array[:,istop+1]
+        end
+    end
+    temp = temp'
+    # Bin in first dimension
+    result = zeros(eltype(array), nlout, nsout)
+    # Loop on output image samples
+    for i ∈ 0:nsout-1
+        rstart = i*sbox                # starting position for each box
+        istart = floor(Int, rstart)
+        rstop = rstart + sbox          # ending position for each box
+        istop = Int(clamp(floor(rstop), 0, ns1))
+        frac1 = rstart-istart
+        frac2 = 1.0 - (rstop-istop)
+
+        # add pixel values from istart to istop and subtract fractional pixel from istart to start and
+        # fractional pixel from rstop to istop
+
+        if istart == istop
+            result[:,i+1] .= (1 .- frac1 .- frac2).*temp[:,istart+1]
+        else
+            result[:,i+1] .= sumdim(temp[:,istart+1:istop+1], 2) .- frac1.*temp[:,istart+1] .- frac2.*temp[:,istop+1]
+        end
+    end
+    return transpose(result) .* (total ? 1.0 : 1 ./ (sbox.*lbox))
+
+end
+
+
+"""
     convolveGaussian1D(flux, σ)
 
 Convolve a spectrum by a Gaussian with different sigma for every pixel.
@@ -874,36 +1115,6 @@ function get_logarithmic_λ(λlim::Vector{<:Real}, n::Integer; logscale::Union{R
 end
 
 
-# function log_rebin(λ::Vector{<:Real}, flux::Vector{<:Real}; logscale::Union{Real,Nothing}=nothing, oversample::Integer=1)
-#     @assert length(λ) == length(flux) "Wavelength and flux must be the same length!"
-#     λlim = [minimum(λ), maximum(λ)]
-#     n = length(flux)
-#     m = n * oversample
-
-#     dλ = diff(λlim)[1] / (n - 1)              # assume constant dlam
-#     lim = λlim ./ dλ .+ [-0.5, 0.5]
-#     borders = range(lim..., n+1)
-#     lnlim = log.(lim)                         # all in units of dlam
-
-#     if isnothing(logscale)
-#         logscale = diff(lnlim)[1]/m
-#     else
-#         m = floor(Int, diff(lnlim)[1]/logscale)
-#         lnlim[2] = lnlim[1] + m*logscale
-#     end
-#     new_borders = exp.(range(lnlim..., length=m+1))
-#     k = floor.(Int, clamp.(new_borders .- lim[1], 0., n-1)) .+ 1
-#     # integrate the flux over the windows given by k
-#     newflux = [k[i] < k[i+1] ? reduce(+, flux[k[i]:k[i+1]-1]) : 0. for i in eachindex(k[1:end-1])]
-#     newflux .+= diff((new_borders .- borders[k]) .* flux[k])
-#     newflux ./= diff(new_borders)
-    
-#     newλ = .√(new_borders[2:end] .* new_borders[1:end-1]) .* dλ  # geometric mean
-
-#     newλ, newflux
-# end
-
-
 """
     resample_conserving_flux(new_wave, old_wave, flux, err=nothing, mask=nothing; fill=NaN)
 
@@ -1119,16 +1330,20 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
 
     if use_pah_templates
         pah3 = Smith3_interp.(λ)
-        contin .+= params[pᵢ] .* pah3 ./ maximum(pah3) .* comps["extinction"]
+        contin .+= params[pᵢ] .* maximum(1 ./ comps["extinction"]) .* pah3 ./ maximum(pah3) .* comps["extinction"]
         pah4 = Smith4_interp.(λ)
-        contin .+= params[pᵢ+1] .* pah4 ./ maximum(pah4) .* comps["extinction"]
+        contin .+= params[pᵢ+1] .* maximum(1 ./ comps["extinction"]) .* pah4 ./ maximum(pah4) .* comps["extinction"]
     else
         for (j, prof) ∈ enumerate(dust_prof)
             if prof == :Drude
-                comps["dust_feat_$j"] = Drude.(λ, params[pᵢ:pᵢ+2]...)
+                amp = params[pᵢ]
+                amp *= maximum(1 ./ comps["extinction"])
+                comps["dust_feat_$j"] = Drude.(λ, amp, params[pᵢ+1:pᵢ+2]...)
                 pᵢ += 3
             elseif prof == :PearsonIV
-                comps["dust_feat_$j"] = PearsonIV.(λ, params[pᵢ:pᵢ+4]...)
+                amp = params[pᵢ]
+                amp *= maximum(1 ./ comps["extinction"])
+                comps["dust_feat_$j"] = PearsonIV.(λ, amp, params[pᵢ+1:pᵢ+4]...)
                 pᵢ += 5
             end
             contin .+= comps["dust_feat_$j"] .* comps["extinction"] 
@@ -1207,22 +1422,31 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
 
     if use_pah_templates
         pah3 = Smith3_interp.(λ)
-        contin .+= params[pᵢ] .* pah3 ./ maximum(pah3) .* ext
+        contin .+= params[pᵢ] .* maximum(1 ./ ext) .* pah3 ./ maximum(pah3) .* ext
         pah4 = Smith4_interp.(λ)
-        contin .+= params[pᵢ+1] .* pah4 ./ maximum(pah4) .* ext
+        contin .+= params[pᵢ+1] .* maximum(1 ./ ext) .* pah4 ./ maximum(pah4) .* ext
     else
         if all(dust_prof .== :Drude)
             for j ∈ 1:length(dust_prof) 
-                contin .+= Drude.(λ, params[pᵢ:pᵢ+2]...) .* ext
+                amp = params[pᵢ]
+                # Convert amplitude to a normalized amplitude relative to the extinction
+                amp *= maximum(1 ./ ext)
+                contin .+= Drude.(λ, amp, params[pᵢ+1:pᵢ+2]...) .* ext
                 pᵢ += 3
             end
         else
             for (j, prof) ∈ enumerate(dust_prof)
                 if prof == :Drude
-                    df = Drude.(λ, params[pᵢ:pᵢ+2]...)
+                    amp = params[pᵢ]
+                    # Convert amplitude to a normalized amplitude relative to the extinction
+                    amp *= maximum(1 ./ ext)
+                    df = Drude.(λ, amp, params[pᵢ+1:pᵢ+2]...)
                     pᵢ += 3
                 elseif prof == :PearsonIV
-                    df = PearsonIV.(λ, params[pᵢ:pᵢ+4]...)
+                    amp = params[pᵢ]
+                    # Convert amplitude to a normalized amplitude relative to the extinction
+                    amp *= maximum(1 ./ ext)
+                    df = PearsonIV.(λ, amp, params[pᵢ+1:pᵢ+4]...)
                     pᵢ += 5
                 end
                 contin .+= df .* ext
@@ -1236,8 +1460,8 @@ end
 
 # Optical fitting version of the function
 function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, velscale::Real, vsyst::Real, n_ssps::Integer, 
-    ssp_λ::Vector{T}, ssp_templates::Vector{Spline2D}, fit_uv_bump::Bool, fit_covering_frac::Bool, Ω::Vector{<:Real},
-    return_components::Bool) where {T<:Real}    
+    ssp_λ::Vector{T}, ssp_templates::Union{Vector{Spline2D},Matrix{<:Real}}, fit_uv_bump::Bool, fit_covering_frac::Bool, 
+    Ω::Vector{<:Real}, return_components::Bool) where {T<:Real}    
 
     # Prepare outputs
     comps = Dict{String, Vector{Float64}}()
@@ -1248,7 +1472,11 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, velscale::Re
     # Interpolate the SSPs to the right ages/metallicities (this is slow)
     for i in 1:n_ssps
         # normalize the templates by their median so that the amplitude is properly separated from the age and metallicity during fitting
-        temp = [ssp_templates[j](params[pᵢ+1], params[pᵢ+2]) for j in eachindex(ssp_λ)]
+        if ssp_templates isa Vector{Spline2D}
+            temp = [ssp_templates[j](params[pᵢ+1], params[pᵢ+2]) for j in eachindex(ssp_λ)]
+        else
+            temp = ssp_templates[:,i]
+        end
         ssps[:, i] = params[pᵢ] .* temp ./ median(temp)
         pᵢ += 3
     end
@@ -1291,7 +1519,8 @@ end
 
 
 function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, velscale::Real, vsyst::Real, n_ssps::Integer, 
-    ssp_λ::Vector{T}, ssp_templates::Vector{Spline2D}, fit_uv_bump::Bool, fit_covering_frac::Bool, Ω::Vector{<:Real}) where {T<:Real}    
+    ssp_λ::Vector{T}, ssp_templates::Union{Vector{Spline2D},Matrix{<:Real}}, fit_uv_bump::Bool, fit_covering_frac::Bool, 
+    Ω::Vector{<:Real}) where {T<:Real}    
 
     # Prepare outputs
     contin = zeros(Float64, length(λ))
@@ -1301,7 +1530,11 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, velscale::Re
     # Interpolate the SSPs to the right ages/metallicities (this is slow)
     for i in 1:n_ssps
         # normalize the templates by their median so that the amplitude is properly separated from the age and metallicity during fitting
-        temp = [ssp_templates[j](params[pᵢ+1], params[pᵢ+2]) for j in eachindex(ssp_λ)]
+        if ssp_templates isa Vector{Spline2D}
+            temp = [ssp_templates[j](params[pᵢ+1], params[pᵢ+2]) for j in eachindex(ssp_λ)]
+        else
+            temp = ssp_templates[:,i]
+        end
         ssps[:, i] = params[pᵢ] .* temp ./ median(temp)
         pᵢ += 3
     end
@@ -1336,6 +1569,41 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, velscale::Re
 end
 
 
+function test_line_snr(λ0::Real, half_window_size::Real, λ::Vector{T}, I::Vector{T}) where {T<:Real}
+
+    # Line testing region
+    region = (λ0 - half_window_size) .< λ .< (λ0 + half_window_size)
+    @assert sum(region) > 40 "The spectrum does not cover the line in question sufficiently!"
+
+    # Subtract linear trend
+    m = (mean(I[region][end-19:end]) - mean(I[region][1:20])) / (λ[region][end-9] - λ[region][10])
+    Ilin = mean(I[region][1:20]) .+ m.*(λ[region] .- λ[region][10])
+    λsub = λ[region]
+    Isub = I[region] .- Ilin
+
+    # Smooth with a width of 3 pixels
+    Iconv, _ = convolveGaussian1D([zeros(9); Isub; zeros(9)], 3 .* ones(length(Isub)+18))
+
+    # Maximum within the center of the region of the SMOOTHED spectrum
+    central = (λ0 - half_window_size/3) .< λsub .< (λ0 + half_window_size/3)
+    # RMS to the left/right of the region of the UNSMOOTHED spectrum
+    sides = ((λ0 - half_window_size) .< λsub .< (λ0 - half_window_size/3)) .| ((λ0 + half_window_size/3) .< λsub .< (λ0 + half_window_size))
+    rms = nanstd(Isub[sides])
+
+    # Sigma clipping
+    mask = abs.(Isub[central] .- Iconv[10:end-9][central]) .> 3rms
+    amp = nanmaximum(Iconv[10:end-9][central][.~mask])
+
+    # Sigma clipping
+    mask = abs.(Isub[sides] .- Iconv[10:end-9][sides]) .> 3rms
+    rms = nanstd(Isub[sides][.~mask])
+
+    # Rough estimate of the signal-to-noise ratio of the line
+    amp/rms
+
+end
+
+
 """
     model_pah_residuals(λ, params, n_dust_feat, return_components)
 Create a model of the PAH features at the given wavelengths `λ`, given the parameter vector `params`.
@@ -1360,10 +1628,16 @@ function model_pah_residuals(λ::Vector{T}, params::Vector{T}, dust_prof::Vector
     pᵢ = 1
     for (j, prof) ∈ enumerate(dust_prof)
         if prof == :Drude
-            df = Drude.(λ, params[pᵢ:pᵢ+2]...)
+            amp = params[pᵢ]
+            # Convert amplitude to a normalized amplitude relative to the extinction
+            amp *= maximum(1 ./ ext_curve)
+            df = Drude.(λ, amp, params[pᵢ+1:pᵢ+2]...)
             pᵢ += 3
         elseif prof == :PearsonIV
-            df = PearsonIV.(λ, params[pᵢ:pᵢ+4]...)
+            amp = params[pᵢ]
+            # Convert amplitude to a normalized amplitude relative to the extinction
+            amp *= maximum(1 ./ ext_curve)
+            df = PearsonIV.(λ, amp, params[pᵢ+1:pᵢ+4]...)
             pᵢ += 5
         end
         contin .+= df
@@ -1391,16 +1665,25 @@ function model_pah_residuals(λ::Vector{T}, params::Vector{T}, dust_prof::Vector
     pᵢ = 1
     if all(dust_prof .== :Drude)
         for j ∈ 1:length(dust_prof) 
-            contin .+= Drude.(λ, params[pᵢ:pᵢ+2]...)
+            amp = params[pᵢ]
+            # Convert amplitude to a normalized amplitude relative to the extinction
+            amp *= maximum(1 ./ ext_curve)
+            contin .+= Drude.(λ, amp, params[pᵢ+1:pᵢ+2]...)
             pᵢ += 3
         end
     else
         for (j, prof) ∈ enumerate(dust_prof)
             if prof == :Drude
-                df = Drude.(λ, params[pᵢ:pᵢ+2]...)
+                amp = params[pᵢ]
+                # Convert amplitude to a normalized amplitude relative to the extinction
+                amp *= maximum(1 ./ ext_curve)
+                df = Drude.(λ, amp, params[pᵢ+1:pᵢ+2]...)
                 pᵢ += 3
             elseif prof == :PearsonIV
-                df = PearsonIV.(λ, params[pᵢ:pᵢ+4]...)
+                amp = params[pᵢ]
+                # Convert amplitude to a normalized amplitude relative to the extinction
+                amp *= maximum(1 ./ ext_curve)
+                df = PearsonIV.(λ, amp, params[pᵢ+1:pᵢ+4]...)
                 pᵢ += 5
             end
             contin .+= df
@@ -1498,6 +1781,9 @@ function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_co
                 # Convert FWHM from km/s to μm
                 fwhm_μm = Doppler_shift_λ(lines.λ₀[k], fwhm/2) - Doppler_shift_λ(lines.λ₀[k], -fwhm/2)
 
+                # Convert amplitude to a normalized amplitude relative to the extinction
+                amp *= maximum(1 ./ ext_curve)
+
                 # Evaluate line profile
                 if lines.profiles[k, j] == :Gaussian
                     comps["line_$(k)_$(j)"] = Gaussian.(λ, amp, mean_μm, fwhm_μm)
@@ -1588,6 +1874,9 @@ function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_co
                 # Convert FWHM from km/s to μm
                 fwhm_μm = Doppler_shift_λ(lines.λ₀[k], fwhm/2) - Doppler_shift_λ(lines.λ₀[k], -fwhm/2)
 
+                # Convert amplitude to a normalized amplitude relative to the extinction
+                amp *= maximum(1 ./ ext_curve)
+
                 # Evaluate line profile
                 if lines.profiles[k, j] == :Gaussian
                     contin .+= Gaussian.(λ, amp, mean_μm, fwhm_μm)
@@ -1638,12 +1927,17 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     pₒ = 1
     # Initial parameter vector index where dust profiles start
     pᵢ = 3 + 2n_dust_cont + 2n_power_law + 4 + 3n_abs_feat + (fit_sil_emission ? 6 : 0)
+    # Extinction normalization factor
+    max_ext = maximum(1 ./ extinction)
 
     for ii ∈ 1:n_dust_feat
 
         # unpack the parameters
         A, μ, fwhm = popt_c[pᵢ:pᵢ+2]
         A_err, μ_err, fwhm_err = perr_c[pᵢ:pᵢ+2]
+        # Undo the normalization due to the extinction
+        A *= max_ext
+        A_err *= max_ext
         # Convert peak intensity to CGS units (erg s^-1 cm^-2 μm^-1 sr^-1)
         A_cgs = MJysr_to_cgs(A*N, μ)
         # Convert the error in the intensity to CGS units
@@ -1716,6 +2010,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                 # (\/ pretty much the same as the model_line_residuals function, but calculating the integrated intensities)
                 amp = popt_l[pᵢ]
                 amp_err = propagate_err ? perr_l[pᵢ] : 0.
+
                 voff = popt_l[pᵢ+1]
                 voff_err = propagate_err ? perr_l[pᵢ+1] : 0.
                 # fill values with nothings for profiles that may / may not have them
@@ -1787,6 +2082,10 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                 fwhm_μm = Doppler_shift_λ(λ0, fwhm/2) - Doppler_shift_λ(λ0, -fwhm/2)
                 fwhm_μm_err = propagate_err ? λ0 / C_KMS * fwhm_err : 0.
 
+                # Undo the normalization from the extinction
+                amp *= max_ext
+                amp_err *= max_ext
+
                 # Convert amplitude to erg s^-1 cm^-2 μm^-1 sr^-1, put back in the normalization
                 amp_cgs = MJysr_to_cgs(amp*N, mean_μm)
                 amp_cgs_err = propagate_err ? MJysr_to_cgs_err(amp*N, amp_err*N, mean_μm, mean_μm_err) : 0.
@@ -1837,6 +2136,9 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
 
     # Normalization
     @debug "Normalization: $N"
+
+    # Max extinction factor
+    max_ext = maximum(1 ./ extinction)
 
     # Loop through lines
     p_lines = zeros(3n_lines+3n_acomps)
@@ -1920,6 +2222,10 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                 # Convert FWHM from km/s to μm
                 fwhm_μm = Doppler_shift_λ(λ0, fwhm/2) - Doppler_shift_λ(λ0, -fwhm/2)
                 fwhm_μm_err = propagate_err ? λ0 / C_KMS * fwhm_err : 0.
+
+                # Undo the normalization from the extinction
+                amp *= max_ext
+                amp_err *= max_ext
 
                 # Convert from erg s^-1 cm^-2 Ang^-1 sr^-1 to erg s^-1 cm^-2 μm^-1 sr^-1, putting back in the normalization
                 amp_cgs = amp * N * 1e4

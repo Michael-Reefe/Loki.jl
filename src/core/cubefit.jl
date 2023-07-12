@@ -980,8 +980,10 @@ end
 Get the continuum limits vector for a given CubeFitter object, split up by the 2 continuum fitting steps.
 Also returns a boolean vector for which parameters are allowed to vary.
 """
-get_continuum_plimits(cube_fitter::CubeFitter, init::Bool; split::Bool=false) = cube_fitter.spectral_region == :MIR ? 
-    get_mir_continuum_plimits(cube_fitter, init; split=split) : get_opt_continuum_plimits(cube_fitter, init)
+get_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, init::Bool; 
+    split::Bool=false) = cube_fitter.spectral_region == :MIR ? 
+    get_mir_continuum_plimits(cube_fitter, init; split=split) : 
+    get_opt_continuum_plimits(cube_fitter, λ, I, init)
 
 
 function get_mir_continuum_plimits(cube_fitter::CubeFitter, init::Bool; split::Bool=false)
@@ -992,7 +994,7 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, init::Bool; split::B
     continuum = cube_fitter.continuum
 
     amp_dc_plim = (0., Inf)
-    amp_df_plim = (0., clamp(1 / exp(-continuum.τ_97.limits[2]), 1., Inf))
+    amp_df_plim = (0., 1.)
 
     stellar_plim = [amp_dc_plim, continuum.T_s.limits]
     stellar_lock = [false, continuum.T_s.locked]
@@ -1037,7 +1039,7 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, init::Bool; split::B
 end
 
 
-function get_opt_continuum_plimits(cube_fitter::CubeFitter, init::Bool)
+function get_opt_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, init::Bool)
 
     continuum = cube_fitter.continuum
 
@@ -1054,6 +1056,14 @@ function get_opt_continuum_plimits(cube_fitter::CubeFitter, init::Bool)
 
     atten_plim = [continuum.E_BV.limits]
     atten_locked = [continuum.E_BV.locked]
+
+    # test the SNR of the H-beta line
+    Hβ_snr = test_line_snr(0.4862691, 0.0080, λ, I)
+    # if the SNR is less than 3, we cannot constrain E(B-V), so lock it to 0
+    if Hβ_snr < 3
+        atten_locked = [true]
+    end
+
     if cube_fitter.fit_uv_bump
         push!(atten_plim, continuum.δ_uv.limits)
         push!(atten_locked, continuum.δ_uv.locked)
@@ -1233,6 +1243,8 @@ end
 function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, 
     Ω::Vector{<:Real}, init::Bool)
 
+    continuum = cube_fitter.continuum
+
     # Check if the cube fitter has initial fit parameters 
     if !init
 
@@ -1257,10 +1269,25 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
             p₀[pᵢ] *= scale
             pᵢ += 3
         end
+        # If stellar velocities hit any limits, reset them to sensible starting values
+        if (p₀[pᵢ] == continuum.stel_vel.limits[1]) || (p₀[pᵢ] == continuum.stel_vel.limits[2])
+            p₀[pᵢ] = 0.
+        end
+        if (p₀[pᵢ+1] == continuum.stel_vdisp.limits[1]) || (p₀[pᵢ+1] == continuum.stel_vdisp.limits[2])
+            p₀[pᵢ+1] = 100.
+        end
+        pᵢ += 2
+
+        # test the SNR of the H-beta line
+        Hβ_snr = test_line_snr(0.4862691, 0.0060, λ, I)
+        # if the SNR is less than 3, we cannot constrain E(B-V), so lock it to 0
+        if Hβ_snr < 3
+            @debug "Locking E(B-V) to 0 due to insufficient H-beta emission"
+            p₀[pᵢ] = 0.
+        end
 
     else
 
-        continuum = cube_fitter.continuum
         @debug "Calculating initial starting points..." 
 
         # SSP amplitudes
@@ -1534,8 +1561,7 @@ names of each parameter as strings.
 """
 function get_line_plimits(cube_fitter::CubeFitter, init::Bool)
 
-    # Set up the limits vector
-    amp_plim = (0., Inf)
+    amp_plim = (0., 1.)
     ln_plims = Vector{Tuple}()
     ln_lock = BitVector()
     ln_names = Vector{String}()

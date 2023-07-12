@@ -48,6 +48,7 @@ using Dates
 using InteractiveUtils
 using ColorSchemes
 using LaTeXStrings
+using Pipe
 
 # PyCall needed for some matplotlib modules
 using PyCall
@@ -59,6 +60,7 @@ const py_warnings::PyObject = PyNULL()
 const plt::PyObject = PyNULL()
 const py_anchored_artists::PyObject = PyNULL()
 const py_ticker::PyObject = PyNULL()
+const py_colormap::PyObject = PyNULL()
 const py_animation::PyObject = PyNULL()
 
 # Astropy modules
@@ -97,6 +99,8 @@ function __init__()
     copy!(py_anchored_artists, pyimport_conda("mpl_toolkits.axes_grid1.anchored_artists", "matplotlib"))
     # ticker --> used for formatting axis ticks and tick labels
     copy!(py_ticker, pyimport_conda("matplotlib.ticker", "matplotlib"))
+    # cm --> used for formatting matplotlib colormaps
+    copy!(py_colormap, pyimport_conda("matplotlib.cm", "matplotlib"))
     # animation --> used for making mp4 movie files (optional)
     copy!(py_animation, pyimport_conda("matplotlib.animation", "matplotlib"))
     # python package for adjusting matplotlib text so it doesn't overlap
@@ -212,6 +216,8 @@ export DataCube,   # DataCube struct
        write_fits,
 
        # Utility functions
+       frebin,
+       fshift,
        resample_conserving_flux,
        air_to_vacuum,
        Doppler_shift_v,

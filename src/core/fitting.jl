@@ -213,7 +213,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     end
 
     # Get the priors and "locked" booleans for each parameter, split up by the 2 steps for the continuum fit
-    plims, lock = get_continuum_plimits(cube_fitter, init || use_ap)
+    plims, lock = get_continuum_plimits(cube_fitter, λ_spax, I_spax, init || use_ap)
 
     # Split up the initial parameter vector into the components that we need for each fitting step
     if !bootstrap_iter
@@ -246,6 +246,31 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     @debug "Continuum Lower limits: \n $lb"
     @debug "Continuum Upper limits: \n $ub"
 
+    # Pre-compute the stellar templates, if all the ages and metallicities are locked
+    # (to speed up fitting)
+    if cube_fitter.spectral_region == :OPT
+        lock_ssps = true
+        ages = []
+        logzs = []
+        pᵢ = 1
+        for _ in 1:cube_fitter.n_ssps
+            lock_ssps &= lock[pᵢ+1] & lock[pᵢ+2]
+            push!(ages, pars_0[pᵢ+1])
+            push!(logzs, pars_0[pᵢ+2])
+            pᵢ += 3
+        end
+        if lock_ssps
+            @debug "Pre-calculating SSPs since all ages and metallicities are locked."
+            stellar_templates = zeros(length(cube_fitter.ssp_λ), cube_fitter.n_ssps)
+            for i in 1:cube_fitter.n_ssps
+                stellar_templates[:, i] .= [cube_fitter.ssp_templates[j](ages[i], logzs[i]) for j in eachindex(cube_fitter.ssp_λ)]
+            end
+        else
+            @debug "SSPs will be interpolated during the fit since ages and/or metallicities are free."
+            stellar_templates = cube_fitter.ssp_templates
+        end
+    end
+
     # Fitting functions for either optical or MIR continuum
     function fit_cont_mir(x, pfree; n=0)
         ptot = zeros(Float64, length(pars_0))
@@ -260,7 +285,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         ptot[.~lock] = pfree
         ptot[lock] .= pfix
         model_continuum(x, ptot, N, cube_fitter.velscale, cube_fitter.vsyst, cube_fitter.n_ssps, cube_fitter.ssp_λ, 
-            cube_fitter.ssp_templates, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, area_sr_spax[1+n:end-n])
+            stellar_templates, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, area_sr_spax[1+n:end-n])
     end
     fit_cont = cube_fitter.spectral_region == :MIR ? fit_cont_mir : fit_cont_opt
 
@@ -380,7 +405,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     end
 
     # Get the priors and "locked" booleans for each parameter, split up by the 2 steps for the continuum fit
-    plims_1, plims_2, lock_1, lock_2 = get_continuum_plimits(cube_fitter, init || use_ap, split=true)
+    plims_1, plims_2, lock_1, lock_2 = get_continuum_plimits(cube_fitter, λ_spax, I_spax, init || use_ap, split=true)
 
     # Split up the initial parameter vector into the components that we need for each fitting step
     if !bootstrap_iter
@@ -842,10 +867,14 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
                                     cube_fitter.flexible_wavesol, ext_curve_norm, lsf_interp_func), 
                                 σnorm)
         x_tol = 1e-5
-        f_tol = abs(fit_func(λnorm, p₀, 0) - fit_func(λnorm, clamp.(p₀ .- x_tol, lower_bounds, upper_bounds), 0))
+        f_tol = abs(fit_func(λnorm, p₀, 0) - fit_func(λnorm, clamp.(p₀ .- x_tol, lower_bounds, upper_bounds), 0)) / n_free
+
+        # Replace infinite upper limits with finite ones so SAMIN can calculate convergence
+        lb_samin = lbfree_tied
+        ub_samin = [isfinite(ub) ? ub : 1e10 for ub in ubfree_tied]
 
         # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
-        res = Optim.optimize(p -> fit_step3(λnorm, p, fit_func), lbfree_tied, ubfree_tied, pfree_tied, 
+        res = Optim.optimize(p -> fit_step3(λnorm, p, fit_func), lb_samin, ub_samin, pfree_tied, 
             SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
         
         p₁ = res.minimizer
@@ -1014,7 +1043,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     end
 
     # Get the priors and "locked" booleans for each parameter, split up by the 2 steps for the continuum fit
-    plims_cont, lock_cont = get_continuum_plimits(cube_fitter, init || use_ap)
+    plims_cont, lock_cont = get_continuum_plimits(cube_fitter, λ_spax, I_spax, init || use_ap)
 
     # Split up the initial parameter vector into the components that we need for each fitting step
     if !bootstrap_iter
@@ -1087,6 +1116,30 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
 
     @debug "Line Lower limits: \n $(lower_bounds_lines_tied)"
     @debug "Line Upper Limits: \n $(upper_bounds_lines_tied))"
+
+    # Pre-compute the stellar templates, if all the ages and metallicities are locked
+    if cube_fitter.spectral_region == :OPT
+        lock_ssps = true
+        ages = []
+        logzs = []
+        pᵢ = 1
+        for _ in 1:cube_fitter.n_ssps
+            lock_ssps &= lock_cont[pᵢ+1] & lock_cont[pᵢ+2]
+            push!(ages, pars_0_cont[pᵢ+1])
+            push!(logzs, pars_0_cont[pᵢ+2])
+            pᵢ += 3
+        end
+        if lock_ssps
+            @debug "Pre-calculating SSPs since all ages and metallicities are locked."
+            stellar_templates = zeros(length(cube_fitter.ssp_λ), cube_fitter.n_ssps)
+            for i in 1:cube_fitter.n_ssps
+                stellar_templates[:, i] .= [cube_fitter.ssp_templates[j](ages[i], logzs[i]) for j in eachindex(cube_fitter.ssp_λ)]
+            end
+        else
+            @debug "SSPs will be interpolated during the fit since ages and/or metallicities are free."
+            stellar_templates = cube_fitter.ssp_templates
+        end
+    end
 
     # Fitting functions for either optical or MIR continuum
     function fit_joint_mir(x, pfree_tied_all; n=0)
@@ -1178,7 +1231,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         
         # Generate the models
         Icont = model_continuum(x, ptot_cont, N, cube_fitter.velscale, cube_fitter.vsyst, cube_fitter.n_ssps, cube_fitter.ssp_λ, 
-            cube_fitter.ssp_templates, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, area_sr_spax[1+n:end-n])
+            stellar_templates, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, area_sr_spax[1+n:end-n])
         Ilines = model_line_residuals(x, ptot_lines, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol,
             ext_curve_gas, lsf_interp_func)
 
@@ -1192,53 +1245,63 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     lower_bounds = [lb_cont; lbfree_lines_tied]
     upper_bounds = [ub_cont; ubfree_lines_tied]
 
-    # if (init || use_ap || cube_fitter.fit_all_samin) && !bootstrap_iter
-    # # if false
-    #     @debug "Beginning joint continuum+line fitting with Simulated Annealing:"
+    # Force skip SAMIN fitting if the extinction has been locked to 0
+    override = false
+    if (cube_fitter.spectral_region == :OPT) && iszero(pars_0_cont[1 + 3cube_fitter.n_ssps + 2]) && lock_cont[1 + 3cube_fitter.n_ssps + 2]
+        override = true
+    end
 
-    #     # Parameter and function tolerance levels for convergence with SAMIN,
-    #     # these are a bit loose since we're mainly just looking to get into the right global minimum region with SAMIN
-    #     # before refining the fit later with a LevMar local minimum routine
-    #     fit_func = p -> -ln_likelihood(I_spax, fit_joint(λ_spax, p, n=0), σ_spax)
-    #     x_tol = 1e-5
-    #     f_tol = abs(fit_func(p₀) - fit_func(clamp.(p₀ .- x_tol, lower_bounds, upper_bounds)))
+    if (init || use_ap || cube_fitter.fit_all_samin) && !bootstrap_iter && !override
+    # if false
+        @debug "Beginning joint continuum+line fitting with Simulated Annealing:"
 
-    #     # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
-    #     res = Optim.optimize(fit_func, lower_bounds, upper_bounds, p₀, 
-    #         SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
+        # Parameter and function tolerance levels for convergence with SAMIN,
+        # these are a bit loose since we're mainly just looking to get into the right global minimum region with SAMIN
+        # before refining the fit later with a LevMar local minimum routine
+        fit_func = p -> -ln_likelihood(I_spax, fit_joint(λ_spax, p, n=0), σ_spax)
+        x_tol = 1e-5
+        f_tol = abs(fit_func(p₀) - fit_func(clamp.(p₀ .- x_tol, lower_bounds, upper_bounds))) / (n_free_cont + n_free_lines)
+
+        # Replace infinite upper limits with finite ones so SAMIN can calculate convergence
+        lb_samin = lower_bounds
+        ub_samin = [isfinite(ub) ? ub : 1e10 for ub in upper_bounds]
+
+        # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
+        res = Optim.optimize(fit_func, lb_samin, ub_samin, p₀, 
+            SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
         
-    #     p₁ = res.minimizer
+        p₁ = res.minimizer
 
-    #     # Write convergence results to file, if specified
-    #     if cube_fitter.track_convergence
-    #         global file_lock
-    #         # use the ReentrantLock to prevent multiple processes from trying to write to the same file at once
-    #         lock(file_lock) do 
-    #             open(joinpath("output_$(cube_fitter.name)", "loki.convergence.log"), "a") do conv
-    #                 redirect_stdout(conv) do
-    #                     println("Spaxel ($(spaxel[1]),$(spaxel[2])) on worker $(myid()):")
-    #                     println(res)
-    #                     println("-------------------------------------------------------")
-    #                 end
-    #             end
-    #         end
-    #     end
+        # Write convergence results to file, if specified
+        if cube_fitter.track_convergence
+            global file_lock
+            # use the ReentrantLock to prevent multiple processes from trying to write to the same file at once
+            lock(file_lock) do 
+                open(joinpath("output_$(cube_fitter.name)", "loki.convergence.log"), "a") do conv
+                    redirect_stdout(conv) do
+                        println("Spaxel ($(spaxel[1]),$(spaxel[2])) on worker $(myid()):")
+                        println(res)
+                        println("-------------------------------------------------------")
+                    end
+                end
+            end
+        end
 
-    # else
-    #     p₁ = p₀
+    else
+        p₁ = p₀
 
-    # end
+    end
 
     # Parinfo and config objects
     parinfo, config = get_continuum_parinfo(n_free_cont+n_free_lines, lower_bounds, upper_bounds)
 
-    res = cmpfit(λ_spax, I_spax, σ_spax, fit_joint, p₀, parinfo=parinfo, config=config)
+    res = cmpfit(λ_spax, I_spax, σ_spax, fit_joint, p₁, parinfo=parinfo, config=config)
     n = 1
-    while res.niter < 5
+    while res.niter < 5 
         @warn "LM Solver is stuck on the initial state for the continuum+lines fit of spaxel $spaxel. Retrying..."
         # For some reason, masking out a pixel or two seems to fix the problem. This loop shouldn't ever need more than 1 iteration.
         res = cmpfit(λ_spax[1+n:end-n], I_spax[1+n:end-n], σ_spax[1+n:end-n], (x, p) -> fit_joint(x, p, n=n), 
-            p₀, parinfo=parinfo, config=config)
+            p₁, parinfo=parinfo, config=config)
         n += 1
         if n > 10
             @warn "LM solver has exceeded 10 tries on the continuum fit of spaxel $spaxel. Aborting."
@@ -1603,7 +1666,7 @@ function plot_spaxel_fit(spectral_region::Symbol, λ_um::Vector{<:Real}, I::Vect
         end
         ax2.set_ylim(-1.1maximum(((I.-I_model) ./ norm .* factor)[.~mask_lines .& .~mask_bad]), 1.1maximum(((I.-I_model) ./ norm .* factor)[.~mask_lines .& .~mask_bad]))
         ax3.set_yscale("log") # logarithmic extinction axis
-        ax3.set_ylim(1e-3, 1.)
+        ax3.set_ylim(spectral_region == :MIR ? 1e-3 : 1e-5, 1.)
         if spectral_region == :MIR
             if screen
                 ax3.set_ylabel(L"$e^{-\tau_{\lambda}}$")
@@ -1750,14 +1813,16 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
                 cube_fitter.fit_sil_emission, cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, cube_fitter.lines, 
                 cube_fitter.flexible_wavesol, lsf_interp_func, popt_c, popt_l, perr_c, perr_l, comps[ext_key], mask_lines, 
                 I_spline, area_sr, !bootstrap_iter)
-            p_out = [popt_c; popt_l; p_dust; p_lines; χ2; dof]
-            p_err = [perr_c; perr_l; p_dust_err; p_lines_err; 0.; 0.]
+            max_ext = maximum(1 ./ comps[ext_key])  # save the maximum extinction factor for calculating line amplitudes later
+            p_out = [popt_c; popt_l; p_dust; p_lines; χ2; dof; max_ext]
+            p_err = [perr_c; perr_l; p_dust_err; p_lines_err; 0.; 0.; 0.]
         else
             p_lines, p_lines_err = calculate_extra_parameters(λ, I, norm, comps, cube_fitter.n_ssps, cube_fitter.n_lines,
                 cube_fitter.n_acomps, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol, lsf_interp_func,
                 popt_l, perr_l, comps[ext_key], mask_lines, I_spline, area_sr, !bootstrap_iter)
-            p_out = [popt_c; popt_l; p_lines; χ2; dof]
-            p_err = [perr_c; perr_l; p_lines_err; 0.; 0.]
+            max_ext = maximum(1 ./ comps[ext_key])  # save the maximum extinction factor for calculating line amplitudes later
+            p_out = [popt_c; popt_l; p_lines; χ2; dof; max_ext]
+            p_err = [perr_c; perr_l; p_lines_err; 0.; 0.; 0.]
         end
         
         return p_out, p_err, popt_c, popt_l, perr_c, perr_l, I_model, comps, χ2, dof, pahtemp
@@ -2137,9 +2202,9 @@ function fit_cube!(cube_fitter::CubeFitter)
     # Prepare output array
     @info "===> Preparing output data structures... <==="
     out_params = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
-        cube_fitter.n_params_extra + 2) .* NaN
+        cube_fitter.n_params_extra + 3) .* NaN
     out_errs = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
-        cube_fitter.n_params_extra + 2, 2) .* NaN
+        cube_fitter.n_params_extra + 3, 2) .* NaN
     # "cube_data" object holds the primary wavelength, intensity, and errors
     # this is just a convenience object since these may be different when fitting an integrated spectrum
     # within an aperture
@@ -2265,9 +2330,9 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Vector{PyObject})
     # Prepare output array
     @info "===> Preparing output data structures... <==="
     out_params = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
-        cube_fitter.n_params_extra + 2) .* NaN
+        cube_fitter.n_params_extra + 3) .* NaN
     out_errs = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
-        cube_fitter.n_params_extra + 2, 2) .* NaN
+        cube_fitter.n_params_extra + 3, 2) .* NaN
 
     # If using an aperture, overwrite the cube_data object with the quantities within
     # the aperture, which are calculated here.

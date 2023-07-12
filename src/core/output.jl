@@ -120,9 +120,12 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             pᵢ += 6
         end
 
+        # Extinction normalization factor for the PAH/line amplitudes
+        max_ext = out_params[index, end]
+
         # Dust feature log(amplitude), mean, FWHM
         for (k, df) ∈ enumerate(cube_fitter.dust_features.names)
-            param_maps.dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z)*N)-17 : -Inf
+            param_maps.dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z)*max_ext*N)-17 : -Inf
             param_errs[1].dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
             param_errs[2].dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
             param_maps.dust_features[df][:mean][index] = out_params[index, pᵢ+1] * (1+z)
@@ -283,7 +286,7 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
                     # Convert amplitudes to the correct units, then take the log
                     amp_norm = param_maps.lines[ln][:amp][index]
                     amp_norm_err = [param_errs[1].lines[ln][:amp][index], param_errs[2].lines[ln][:amp][index]]
-                    param_maps.lines[ln][:amp][index] = amp_norm > 0 ? log10(amp_norm * N * (1+z))-17 : -Inf
+                    param_maps.lines[ln][:amp][index] = amp_norm > 0 ? log10(amp_norm * max_ext * N * (1+z))-17 : -Inf
                     param_errs[1].lines[ln][:amp][index] = amp_norm > 0 ? amp_norm_err[1] / (log(10) * amp_norm) : NaN
                     param_errs[2].lines[ln][:amp][index] = amp_norm > 0 ? amp_norm_err[2] / (log(10) * amp_norm) : NaN
 
@@ -566,6 +569,9 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             
         end
 
+        # Extinction normalization factor for line amplitudes
+        max_ext = out_params[index, end]
+
         for k ∈ 1:cube_fitter.n_lines
             for j ∈ 1:cube_fitter.n_comps
                 if !isnothing(cube_fitter.lines.profiles[k, j])
@@ -577,7 +583,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
                     amp_norm = param_maps.lines[ln][:amp][index]
                     amp_norm_err = [param_errs[1].lines[ln][:amp][index], param_errs[2].lines[ln][:amp][index]]
                     # Convert amplitude to erg/s/cm^2/Hz/sr to match with the MIR 
-                    param_maps.lines[ln][:amp][index] = amp_norm > 0 ? log10(amp_norm * N * λ0^2/(C_KMS * 1e13) / (1+z)) : -Inf
+                    param_maps.lines[ln][:amp][index] = amp_norm > 0 ? log10(amp_norm * max_ext * N * λ0^2/(C_KMS * 1e13) / (1+z)) : -Inf
                     param_errs[1].lines[ln][:amp][index] = amp_norm > 0 ? amp_norm_err[1] / (log(10) * amp_norm) : NaN
                     param_errs[2].lines[ln][:amp][index] = amp_norm > 0 ? amp_norm_err[2] / (log(10) * amp_norm) : NaN
 
@@ -606,7 +612,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             for i ∈ 1:cube_fitter.n_ssps
                 cube_model.stellar[index, :, i] .= comps["SSP_$i"] ./ (1 .+ z)
             end
-            cube_model.attenuation[index, :] .= comps["extinction"]
+            cube_model.attenuation[index, :] .= comps["attenuation_gas"]
 
             for j ∈ 1:cube_fitter.n_comps
                 for k ∈ 1:cube_fitter.n_lines
@@ -685,7 +691,7 @@ Plotting function for 2D parameter maps which are output by `fit_cube!`
 """
 function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::String, Ω::Float64, z::Float64, psf_fwhm::Float64,
     cosmo::Cosmology.AbstractCosmology, python_wcs::Union{PyObject,Nothing}; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, 
-    snr_thresh::Float64=3., cmap::Symbol=:cubehelix, line_latex::Union{String,Nothing}=nothing)
+    snr_thresh::Float64=3., cmap::PyObject=py_colormap.cubehelix, line_latex::Union{String,Nothing}=nothing)
 
     # I know this is ugly but I couldn't figure out a better way to do it lmao
     if occursin("amp", String(name_i))
@@ -797,13 +803,17 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         vmin = 0.
         vmax = 1.
     end
+    nan_color = "k"
+    text_color = "w"
     # if taking a voff, make sure vmin/vmax are symmetric and change the colormap to coolwarm
-    if occursin("voff", String(name_i)) || occursin("index", String(name_i))
+    if occursin("voff", String(name_i)) || occursin("index", String(name_i)) || occursin("vel", String(name_i))
         vabs = max(abs(vmin), abs(vmax))
         vmin = -vabs
         vmax = vabs
-        if cmap == :cubehelix
-            cmap = :RdBu_r
+        if cmap == py_colormap.cubehelix
+            cmap = py_colormap.RdBu_r
+            nan_color = "w"
+            text_color = "k"
         end
     end
     if occursin("chi2", String(name_i))
@@ -812,15 +822,18 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         vmax = min(nanmaximum(filtered), 30)
     end
     # default cmap is magma for FWHMs and equivalent widths
-    if (occursin("fwhm", String(name_i)) || occursin("eqw", String(name_i))) && cmap == :cubehelix
-        cmap = :magma
+    if (occursin("fwhm", String(name_i)) || occursin("eqw", String(name_i))) || occursin("vdisp", String(name_i)) && cmap == py_colormap.cubehelix
+        cmap = py_colormap.magma
     end
 
     # Add small value to vmax to prevent the maximum color value from being the same as the background
     small = 0.
-    if cmap == :cubehelix
+    if cmap == py_colormap.cubehelix
         small = (vmax - vmin) / 1e3
     end
+
+    # Set NaN color to either black or white
+    cmap.set_bad(color=nan_color)
 
     cdata = ax.imshow(filtered', origin=:lower, cmap=cmap, vmin=vmin, vmax=vmax+small)
     # ax.axis(:off)
@@ -855,22 +868,22 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         unit = "Gpc"
     end
     if cosmo.h ≈ 1.0
-        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, L"%$l$h^{-1}$ %$unit", "lower left", pad=1, color=:black, 
+        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, L"%$l$h^{-1}$ %$unit", "lower left", pad=1, color=text_color, 
             frameon=false, size_vertical=0.4, label_top=false)
     else
-        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, L"%$l %$unit", "lower left", pad=1, color=:black,
+        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, L"%$l %$unit", "lower left", pad=1, color=text_color,
             frameon=false, size_vertical=0.4, label_top=false)
     end
     ax.add_artist(scalebar)
 
     # Add circle for the PSF FWHM
-    psf = plt.Circle(size(data) .* (0.9, 0.1), psf_fwhm / pix_as / 2, color="k")
+    psf = plt.Circle(size(data) .* (0.9, 0.1), psf_fwhm / pix_as / 2, color=text_color)
     ax.add_patch(psf)
-    ax.annotate("PSF", size(data) .* (0.9, 0.1) .+ (0., psf_fwhm / pix_as / 2 * 1.5 + 1.75), ha=:center, va=:center)
+    ax.annotate("PSF", size(data) .* (0.9, 0.1) .+ (0., psf_fwhm / pix_as / 2 * 1.5 + 1.75), ha=:center, va=:center, color=text_color)
 
     # Add line label, if applicable
     if !isnothing(line_latex)
-        ax.annotate(line_latex, size(data) .* 0.95, ha=:right, va=:top, fontsize=16)
+        ax.annotate(line_latex, size(data) .* 0.95, ha=:right, va=:top, fontsize=16, color=text_color)
     end
 
     fig.colorbar(cdata, ax=ax, label=bunit)

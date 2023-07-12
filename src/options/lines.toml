@@ -55,16 +55,18 @@ acomp_1_kinematic_group_OIII = [
 kinematic_group_OII = [
     "OII_"
 ]
+kinematic_group_SII = [
+    "SII_"
+]
+kinematic_group_NeIII = [
+    "NeIII_"
+]
 kinematic_group_Balmer = [
     "HI_H_"
 ]
 # Case B recombination amplitude ratios
-tie_amp_Balmer = [0.107, 0.159, 0.262, 0.470, 1.0, 2.86]
+tie_amp_Balmer = [0.105, 0.158, 0.256, 0.466, 1.0, 2.87]
 
-kinematic_group_He = [
-    "HeI_",
-    "HeII_"
-]
 
 # Line voff and FWHM limits
 voff_plim = [-500.0, 500.0]            # -1000 to 1000 km/s from the rest wavelength
@@ -273,6 +275,16 @@ latex = "[Fe XI]"
 annotate = true
 
 # Sulfur lines
+[lines.SII_04069]
+wave = 0.4069749
+latex = "[S II]"
+annotate = false
+
+[lines.SII_04077]
+wave = 0.4077500
+latex = "[S II]"
+annotate = false
+
 [lines.SIII_06314]
 wave = 0.6313806
 latex = "[S III]"

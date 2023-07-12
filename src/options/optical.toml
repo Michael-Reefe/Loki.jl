@@ -9,23 +9,23 @@
 [[stellar_population_ages]]
 val = 8.0
 plim = [7.5, 10.0]
-locked = false
+locked = true
 [[stellar_population_ages]]
-val = 0.005
+val = 0.002
 plim = [0.001, 0.02]
-locked = false
+locked = true
 
 # Metallicities in [M/H]
 
 # The old population should have a lower metallicity and vice versa
 [[stellar_population_metallicities]]
-val = -2.0
+val = 0.0
 plim = [-2.3, 0.0]
-locked = false
+locked = true
 [[stellar_population_metallicities]]
-val = 0.2
+val = 0.0
 plim = [0.0, 0.40]
-locked = false
+locked = true
 
 ################# Stellar Kinematics #################
 
