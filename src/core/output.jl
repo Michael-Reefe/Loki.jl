@@ -439,13 +439,13 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
         param_errs[1].attenuation[:E_BV][index] = out_errs[index, pᵢ, 1] / 0.44
         param_errs[2].attenuation[:E_BV][index] = out_errs[index, pᵢ, 2] / 0.44
         pᵢ += 1
-        if cube_fitter.fit_uv_bump
+        if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
             param_maps.attenuation[:delta_UV][index] = out_params[index, pᵢ]
             param_errs[1].attenuation[:delta_UV][index] = out_errs[index, pᵢ, 1]
             param_errs[2].attenuation[:delta_UV][index] = out_errs[index, pᵢ, 2]
             pᵢ += 1
         end
-        if cube_fitter.fit_covering_frac
+        if cube_fitter.fit_covering_frac && cube_fitter.extinction_curve == "calzetti"
             param_maps.attenuation[:frac][index] = out_params[index, pᵢ]
             param_errs[1].attenuation[:frac][index] = out_errs[index, pᵢ, 1]
             param_errs[2].attenuation[:frac][index] = out_errs[index, pᵢ, 2]
@@ -456,7 +456,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             # End of continuum parameters: recreate the continuum model
             I_cont, comps_c = model_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], N, cube_fitter.velscale, cube_fitter.vsyst,
                 cube_fitter.n_ssps, cube_fitter.ssp_λ, cube_fitter.ssp_templates, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac,
-                cube_data.area_sr, true)
+                cube_data.area_sr, cube_fitter.extinction_curve, true)
         end
 
         # Save marker of the point where the continuum parameters end and the line parameters begin
@@ -612,7 +612,8 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             for i ∈ 1:cube_fitter.n_ssps
                 cube_model.stellar[index, :, i] .= comps["SSP_$i"] ./ (1 .+ z)
             end
-            cube_model.attenuation[index, :] .= comps["attenuation_gas"]
+            cube_model.attenuation_stars[index, :] .= comps["attenuation_stars"]
+            cube_model.attenuation_gas[index, :] .= comps["attenuation_gas"]
 
             for j ∈ 1:cube_fitter.n_comps
                 for k ∈ 1:cube_fitter.n_lines
@@ -1676,7 +1677,11 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
             for i ∈ 1:size(cube_model.stellar, 4)
                 write(f, cube_model.stellar[:, :, :, i]; name="STELLAR_POPULATION_$i")                  # Stellar population models
             end
-            write(f, cube_model.attenuation; name="ATTENUATION")                                        # Attenuation model
+            for (k, line) ∈ enumerate(cube_fitter.lines.names)
+                write(f, cube_model.lines[:, :, :, k]; name="$line")                                    # Emission line profiles
+            end
+            write(f, cube_model.attenuation_stars; name="ATTENUATION_STARS")                            # Starlight attenuation model
+            write(f, cube_model.attenuation_gas; name="ATTENUATION_GAS")                                # Gas attenuation model
             write(f, ["wave"], [cube_data.λ .* (1 .+ cube_fitter.z)],                                   # wavelength vector
                 hdutype=TableHDU, name="WAVELENGTH", units=Dict(:wave => "um"))
 

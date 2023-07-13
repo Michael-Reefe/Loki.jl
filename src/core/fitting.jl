@@ -285,7 +285,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         ptot[.~lock] = pfree
         ptot[lock] .= pfix
         model_continuum(x, ptot, N, cube_fitter.velscale, cube_fitter.vsyst, cube_fitter.n_ssps, cube_fitter.ssp_λ, 
-            stellar_templates, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, area_sr_spax[1+n:end-n])
+            stellar_templates, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, area_sr_spax[1+n:end-n], 
+            cube_fitter.extinction_curve)
     end
     fit_cont = cube_fitter.spectral_region == :MIR ? fit_cont_mir : fit_cont_opt
 
@@ -324,7 +325,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
             cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, false, true)
     else
         I_model, comps = model_continuum(λ, popt, N, cube_fitter.velscale, cube_fitter.vsyst, cube_fitter.n_ssps, cube_fitter.ssp_λ, 
-            cube_fitter.ssp_templates, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, area_sr, true)
+            cube_fitter.ssp_templates, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, area_sr, cube_fitter.extinction_curve, true)
     end
     
     # Estimate PAH template amplitude
@@ -1101,6 +1102,15 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     lbfree_lines_tied = lower_bounds_lines_tied[.~lock_lines_tied]
     ubfree_lines_tied = upper_bounds_lines_tied[.~lock_lines_tied]
 
+    # Decrease initial line amplitudes if the Hβ SNR is low
+    if (cube_fitter.spectral_region == :OPT) && !init && !use_ap && !bootstrap_iter
+        Hβ = test_line_snr(0.4862691, 0.0080, λ_spax, I_spax)
+        if Hβ < 3
+            amp_inds = contains.(names_lines_tied[.~lock_lines_tied], "amp")
+            pfree_lines_tied[amp_inds] ./= 3.0
+        end
+    end
+
     @debug """\n
     ##################################################################################################################
     ########################################## FITTING THE CONTINUUM & LINES #########################################
@@ -1218,20 +1228,26 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         pₑ = 1 + 3cube_fitter.n_ssps + 2
         E_BV = ptot_cont[pₑ]
         δ_UV = f_nodust = nothing
-        if cube_fitter.fit_uv_bump
+        if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
             δ_UV = ptot_cont[pₑ+1]
             pₑ += 1
         end
-        if cube_fitter.fit_covering_frac
+        if cube_fitter.fit_covering_frac && cube_fitter.extinction_curve == "calzetti"
             f_nodust = ptot_cont[pₑ+1]
             pₑ += 1
         end
         # E(B-V)_stars = 0.44E(B-V)_gas
-        ext_curve_gas = attenuation(x, E_BV/0.44, δ=δ_UV, f_nodust=f_nodust)
+        if cube_fitter.extinction_curve == "ccm"
+            ext_curve_gas = attenuation_cardelli(x, E_BV/0.44)
+        elseif cube_fitter.extinction_curve == "calzetti"
+            ext_curve_gas = attenuation_calzetti(x, E_BV/0.44, δ=δ_UV, f_nodust=f_nodust)
+        else
+            error("Unrecognized extinction curve $(cube_fitter.extinction_curve)")
+        end
         
         # Generate the models
         Icont = model_continuum(x, ptot_cont, N, cube_fitter.velscale, cube_fitter.vsyst, cube_fitter.n_ssps, cube_fitter.ssp_λ, 
-            stellar_templates, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, area_sr_spax[1+n:end-n])
+            stellar_templates, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, area_sr_spax[1+n:end-n], cube_fitter.extinction_curve)
         Ilines = model_line_residuals(x, ptot_lines, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol,
             ext_curve_gas, lsf_interp_func)
 
@@ -1239,7 +1255,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         Icont .+ Ilines
     end
     fit_joint = cube_fitter.spectral_region == :MIR ? fit_joint_mir : fit_joint_opt
-
+       
     # Combine parameters
     p₀ = [pfree_cont; pfree_lines_tied]
     lower_bounds = [lb_cont; lbfree_lines_tied]
@@ -1355,7 +1371,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         ext_key = "extinction"
     else
         Icont, comps_cont = model_continuum(λ, popt_cont, N, cube_fitter.velscale, cube_fitter.vsyst, cube_fitter.n_ssps, cube_fitter.ssp_λ, 
-            cube_fitter.ssp_templates, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, area_sr, true)
+            cube_fitter.ssp_templates, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, area_sr, cube_fitter.extinction_curve, true)
         ext_key = "attenuation_gas"
     end
     Ilines, comps_lines = model_line_residuals(λ, popt_lines, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol,
@@ -1982,7 +1998,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                 else
                     I_boot_cont, comps_boot_cont = model_continuum(λ, p_out[1:split1], norm, cube_fitter.velscale, cube_fitter.vsyst, 
                         cube_fitter.n_ssps, cube_fitter.ssp_λ, cube_fitter.ssp_templates, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac,
-                        area_sr, true)
+                        area_sr, cube_fitter.extinction_curve, true)
                     ext_key = "attenuation_gas"
                 end
                 I_boot_line, comps_boot_line = model_line_residuals(λ, p_out[split1+1:split2], cube_fitter.n_lines, cube_fitter.n_comps,

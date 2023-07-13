@@ -41,13 +41,15 @@ val = 100.0
 plim = [0.01, 1000.0]
 locked = false
 
-########## Calzetti attenuation options ###############
+########## Attenuation options ###############
 
-# E(B-V) Reddening factor
-[attenuation.E_BV]
+# E(B-V) Reddening factor for starlight and gas
+[attenuation.E_BV_stars]
 val = 0.01
 plim = [0.0, 4.0]
 locked = false
+
+# Only relevant for Calzetti extinction curves:
 
 # UV bump slope (delta), not fit unless fit_uv_bump is true
 [attenuation.uv_slope]

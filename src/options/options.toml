@@ -53,7 +53,9 @@ save_full_model = true
 # extinction profile, "ct" for the Chiar & Tielens (2005) extinction profile,
 # "ohm" for the Ossenkopf, Henning, & Mathis (1992) extinction profile, or "d+" for the 
 # Donnan et al. (2022) extinction profile.
-extinction_curve = "kvt"
+# optical options: may be either "calzetti" for the Calzetti et al. (2000) starburst galaxy curve,
+# or "ccm" for the Cardelli, Clayton, & Mathis (1989) Milky Way curve.
+extinction_curve = "ccm"
 
 # extinction_screen: Controls whether extinction is modeled as e^-tau (true) or
 # (1 - e^-tau) / tau (false), following PAHFIT.
@@ -77,10 +79,10 @@ fit_joint = true
 # which is typically sufficient as long as the lines one wishes to fit are prominent in the sum of all spaxels)
 fit_all_samin = false
 
-# whether or not to fit the UV bump for the optical attenuation curve
+# whether or not to fit the UV bump for the calzetti attenuation curve
 fit_uv_bump = false
 
-# whether or not to fit a dust covering fraction for the optical attenuation curve
+# whether or not to fit a dust covering fraction for the calzetti attenuation curve
 fit_covering_frac = false
 
 # user_mask = []

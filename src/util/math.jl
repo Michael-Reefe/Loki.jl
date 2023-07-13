@@ -225,247 +225,6 @@ end
 
 
 """
-    fshift(array, Δx, Δy)
-
-Shift a 2D image by a non-integer amount Δx and Δy using bilinear interpolation.
-Originally written in IDL for the IDLAstronomy Library: https://idlastro.gsfc.nasa.gov/ftp/contrib/malumuth/fshift.pro
-
-Original docstring is copied below:
-
-;+
-;			fshift
-;
-; Routine to shift an image by non-integer values
-;
-; CALLING SEQUENCE:
-;	results = fshift(image,delx,dely)
-;
-; INPUTS:
-;	image - 2D image to be shifted
-;	delx - shift in x (same direction as IDL SHIFT function)
-;	dely - shift in y
-;
-; OUTPUTS:
-;	shifted image is returned as the function results
-;
-; HISTORY:
-;	version 2  D. Lindler  May, 1992 - rewritten for IDL version 2
-;	19-may-1992	JKF/ACC		- move to GHRS DAF.
-;-
-;--------------------------------------------------------------------
-
-"""
-function fshift(array::AbstractArray, Δx::T, Δy::T) where {T<:Real}
-
-    # Separate shift into an integer and fractional shift
-    intx = floor(Int, Δx)
-    inty = floor(Int, Δy)
-    fracx = Δx - intx
-    fracy = Δy - inty
-    if fracx < 0
-        fracx += 1
-        intx -= 1
-    end
-    if fracy < 0
-        fracy += 1
-        inty -= 1
-    end
-
-    # Shift by the integer portion
-    s = circshift(array, (intx, inty))
-    if iszero(fracx) && iszero(fracy)
-        return s
-    end
-
-    # Use bilinear interpolation between four pixels
-    return s .* ((1 .- fracx) .* (1 .- fracy)) .+ 
-           circshift(s, (0,1)) .* ((1 .- fracx) .* fracy) .+
-           circshift(s, (1,0)) .* (fracx .* (1 .- fracy)) .+
-           circshift(s, (1,1)) .* fracx .* fracy
-
-end
-
-
-"""
-    frebin(array, nsout, nlout=1, total=false)
-
-Rebin a 1D or 2D array onto a new pixel grid that may or may not be an integer fraction or multiple
-of the original grid. Originally written in IDL for the IDLAstronomy Library: https://idlastro.gsfc.nasa.gov/ftp/pro/image/frebin.pro
-
-Original docstring is copied below:
-
-;+
-; NAME:
-;   FREBIN
-;
-; PURPOSE:
-;   Shrink or expand the size of an array an arbitrary amount using interpolation
-;
-; EXPLANATION: 
-;   FREBIN is an alternative to CONGRID or REBIN.    Like CONGRID it
-;   allows expansion or contraction by an arbitrary amount. ( REBIN requires 
-;   integral factors of the original image size.)    Like REBIN it conserves 
-;   flux by ensuring that each input pixel is equally represented in the output
-;   array.       
-;
-; CALLING SEQUENCE:
-;   result = FREBIN( image, nsout, nlout, [ /TOTAL] )
-;
-; INPUTS:
-;    image - input image, 1-d or 2-d numeric array
-;    nsout - number of samples in the output image, numeric scalar
-;
-; OPTIONAL INPUT:
-;    nlout - number of lines in the output image, numeric scalar
-;            If not supplied, then set equal to 1
-;
-; OPTIONAL KEYWORD INPUTS:
-;   /total - if set, the output pixels will be the sum of pixels within
-;          the appropriate box of the input image.  Otherwise they will
-;          be the average.    Use of the /TOTAL keyword conserves total counts.
-; 
-; OUTPUTS:
-;    The resized image is returned as the function result.    If the input
-;    image is of type DOUBLE or FLOAT then the resized image is of the same
-;    type.     If the input image is BYTE, INTEGER or LONG then the output
-;    image is usually of type FLOAT.   The one exception is expansion by
-;    integral amount (pixel duplication), when the output image is the same
-;    type as the input image.  
-;     
-; EXAMPLE:
-;     Suppose one has an 800 x 800 image array, im, that must be expanded to
-;     a size 850 x 900 while conserving the total counts:
-;
-;     IDL> im1 = frebin(im,850,900,/total) 
-;
-;     im1 will be a 850 x 900 array, and total(im1) = total(im)
-; NOTES:
-;    If the input image sizes are a multiple of the output image sizes
-;    then FREBIN is equivalent to the IDL REBIN function for compression,
-;    and simple pixel duplication on expansion.
-;
-;    If the number of output pixels are not integers, the output image
-;    size will be truncated to an integer.  The platescale, however, will
-;    reflect the non-integer number of pixels.  For example, if you want to
-;    bin a 100 x 100 integer image such that each output pixel is 3.1
-;    input pixels in each direction use:
-;           n = 100/3.1   ; 32.2581
-;          image_out = frebin(image,n,n)
-;
-;     The output image will be 32 x 32 and a small portion at the trailing
-;     edges of the input image will be ignored.
-; 
-; PROCEDURE CALLS:
-;    None.
-; HISTORY:
-;    Adapted from May 1998 STIS  version, written D. Lindler, ACC
-;    Added /NOZERO, use INTERPOLATE instead of CONGRID, June 98 W. Landsman  
-;    Fixed for nsout non-integral but a multiple of image size  Aug 98 D.Lindler
-;    DJL, Oct 20, 1998, Modified to work for floating point image sizes when
-;		expanding the image. 
-;    Improve speed by addressing arrays in memory order W.Landsman Dec/Jan 2001
-;-
-;----------------------------------------------------------------------------
-"""
-function frebin(array::AbstractArray, nsout::S, nlout::S=1, total::Bool=false) where {S<:Integer}
-
-    # Determine the size of the input array
-    ns = size(array, 1)
-    nl = length(array)/ns
-
-    # Determine if the new sizes are integral factors of the original sizes
-    sbox = ns/nsout
-    lbox = nl/nlout
-
-    # Contraction by an integral amount
-    if (sbox == round(Int, sbox)) && (lbox == round(Int, lbox)) && (ns % nsout == 0) && (nl % nlout == 0)
-        return @pipe array |> 
-            reshape(_, (Int(sbox), nsout, Int(lbox), nlout)) |> 
-            (total ? sum : mean)(_, dims=(1,3)) |>
-            dropdims(_, dims=(1,3))
-    end
-
-    # Expansion by an integral amount
-    if (nsout % ns == 0) && (nlout % nl == 0)
-        xindex = (1:nsout) / (nsout/ns)
-        if isone(nl)  # 1D case, linear interpolation
-            return Spline1D(1:ns, array, k=1)(xindex) * (total ? sbox : 1.)
-        end
-        yindex = (1:nlout) / (nlout/nl)
-        interpfunc = Spline2D(1:ns, 1:Int(nl), array, kx=1, ky=1)
-        return [interpfunc(x, y) for x in xindex, y in yindex] .* (total ? sbox.*lbox : 1.)
-    end
-
-    ns1 = ns-1
-    nl1 = nl-1
-
-    # Do 1D case separately
-    if isone(nl)
-        result = zeros(eltype(array), nsout)
-        for i ∈ 0:nsout-1
-            rstart = i*sbox                # starting position for each box
-            istart = floor(Int, rstart)
-            rstop = rstart + sbox          # ending position for each box
-            istop = Int(clamp(floor(rstop), 0, ns1))
-            frac1 = rstart-istart
-            frac2 = 1.0 - (rstop-istop)
-
-            # add pixel values from istart to istop and subtract fractional pixel from istart to start and
-            # fractional pixel from rstop to istop
-
-            result[i+1] = sum(array[istart+1:istop+1]) - frac1*array[istart+1] - frac2*array[istop+1]
-        end
-        return result .* (total ? 1.0 : 1 ./ (sbox.*lbox))
-    end
-
-    # Now, do 2D case
-    # First, bin second dimension
-    temp = zeros(eltype(array), ns, nlout)
-    # Loop on output image lines
-    for i ∈ 0:nlout-1
-        rstart = i*lbox                # starting position for each box 
-        istart = floor(Int, rstart)
-        rstop = rstart + lbox
-        istop = Int(clamp(floor(rstop), 0, nl1))
-        frac1 = rstart-istart
-        frac2 = 1.0 - (rstop-istop)
-
-        # add pixel values from istart to istop and subtract fractional pixel from istart to start and
-        # fractional pixel from rstop to istop
-
-        if istart == istop
-            temp[:,i+1] .= (1 .- frac1 .- frac2).*array[:,istart+1]
-        else
-            temp[:,i+1] .= sumdim(array[:,istart+1:istop+1], 2) .- frac1.*array[:,istart+1] .- frac2.*array[:,istop+1]
-        end
-    end
-    temp = temp'
-    # Bin in first dimension
-    result = zeros(eltype(array), nlout, nsout)
-    # Loop on output image samples
-    for i ∈ 0:nsout-1
-        rstart = i*sbox                # starting position for each box
-        istart = floor(Int, rstart)
-        rstop = rstart + sbox          # ending position for each box
-        istop = Int(clamp(floor(rstop), 0, ns1))
-        frac1 = rstart-istart
-        frac2 = 1.0 - (rstop-istop)
-
-        # add pixel values from istart to istop and subtract fractional pixel from istart to start and
-        # fractional pixel from rstop to istop
-
-        if istart == istop
-            result[:,i+1] .= (1 .- frac1 .- frac2).*temp[:,istart+1]
-        else
-            result[:,i+1] .= sumdim(temp[:,istart+1:istop+1], 2) .- frac1.*temp[:,istart+1] .- frac2.*temp[:,istop+1]
-        end
-    end
-    return transpose(result) .* (total ? 1.0 : 1 ./ (sbox.*lbox))
-
-end
-
-
-"""
     convolveGaussian1D(flux, σ)
 
 Convolve a spectrum by a Gaussian with different sigma for every pixel.
@@ -808,7 +567,7 @@ end
 
 
 """
-    attenuation(λ_ang, Av, δ=nothing, f_nodust=nothing, uv_bump=nothing)
+    attenuation_calzetti(λ, E_BV, δ=nothing, f_nodust=nothing, uv_bump=nothing)
 
 Adapted from pPXF (Cappellari 2017), original docstring below:
 
@@ -826,10 +585,8 @@ reddening curve. When ``uv_bump = f_nodust = None`` this function uses the
 comes from Noll+09. The modelling of the attenuated fraction follows Lower+22.
 
 """
-function attenuation(λ::Vector{<:Real}, E_BV::Real; δ::Union{Real,Nothing}=nothing,
-    f_nodust::Union{Real,Nothing}=nothing, uv_bump::Union{Real,Nothing}=nothing)
-
-    Rv = 4.05         # C+00 eqn (5)
+function attenuation_calzetti(λ::Vector{<:Real}, E_BV::Real; δ::Union{Real,Nothing}=nothing,
+    f_nodust::Union{Real,Nothing}=nothing, uv_bump::Union{Real,Nothing}=nothing, Rv::Real=4.05)
 
     # C+00 equations (3)-(4) but extrapolate for lam < 0.12 or lam > 2.2
     k₁ = @. Rv + ifelse(λ > 0.63, 2.76536/λ - 4.93776, ((0.029249/λ - 0.526482)/λ + 4.01243)/λ - 5.7328)
@@ -853,6 +610,107 @@ function attenuation(λ::Vector{<:Real}, E_BV::Real; δ::Union{Real,Nothing}=not
     end
 
     frac
+end
+
+
+"""
+    attenuation_cardelli(λ, E_BV, Rv)
+
+Adapted from BADASS (Sexton et al. 2016). Original docstring below:
+
+Deredden a flux vector using the CCM 1989 parameterization 
+Returns an array of the unreddened flux
+
+INPUTS:
+wave - array of wavelengths (in Angstroms)
+dec - calibrated flux array, same number of elements as wave
+ebv - colour excess E(B-V) float. If a negative ebv is supplied
+      fluxes will be reddened rather than dereddened	 
+
+OPTIONAL INPUT:
+r_v - float specifying the ratio of total selective
+      extinction R(V) = A(V)/E(B-V). If not specified,
+      then r_v = 3.1
+        
+OUTPUTS:
+funred - unreddened calibrated flux array, same number of 
+         elements as wave
+         
+NOTES:
+1. This function was converted from the IDL Astrolib procedure
+   last updated in April 1998. All notes from that function
+   (provided below) are relevant to this function 
+   
+2. (From IDL:) The CCM curve shows good agreement with the Savage & Mathis (1979)
+   ultraviolet curve shortward of 1400 A, but is probably
+   preferable between 1200 and 1400 A.
+3. (From IDL:) Many sightlines with peculiar ultraviolet interstellar extinction 
+   can be represented with a CCM curve, if the proper value of 
+   R(V) is supplied.
+4. (From IDL:) Curve is extrapolated between 912 and 1000 A as suggested by
+   Longo et al. (1989, ApJ, 339,474)
+5. (From IDL:) Use the 4 parameter calling sequence if you wish to save the 
+   original flux vector.
+6. (From IDL:) Valencic et al. (2004, ApJ, 616, 912) revise the ultraviolet CCM
+   curve (3.3 -- 8.0 um-1).	But since their revised curve does
+   not connect smoothly with longer and shorter wavelengths, it is
+   not included here.
+
+7. For the optical/NIR transformation, the coefficients from 
+   O'Donnell (1994) are used
+
+>>> ccm_unred([1000, 2000, 3000], [1, 1, 1], 2 ) 
+array([9.7976e+012, 1.12064e+07, 32287.1])
+"""
+function attenuation_cardelli(λ::Vector{<:Real}, E_BV::Real, Rv::Real=3.10)
+    # inverse wavelength (microns)
+    x = 1.0 ./ λ
+
+    # Correction invalid for any x > 11
+    if any(x .> 11.0)
+        @warn "Input wavelength vector has values outside the allowable range of 1/λ < 11. Returning ones."
+        return ones(length(x))
+    end
+
+    a = zeros(length(x))
+    b = zeros(length(x))
+
+    # Infrared
+    good = 0.3 .< x .< 1.1
+    a[good] = @. 0.574x[good]^1.61
+    b[good] = @. -0.527x[good]^1.61
+
+    # Optical/NIR
+    good = 1.1 .≤ x .< 3.3
+    y = x .- 1.82
+    a[good] = Polynomial([1.0, 0.104, -0.609, 0.701, 1.137, -1.718, -0.827, 1.647, -0.505]).(y[good])
+    b[good] = Polynomial([0.0, 1.952, 2.908, -3.989, -7.985, 11.102, 5.491, -10.805, 3.347]).(y[good])
+
+    # Mid-UV
+    good = 3.3 .≤ x .< 8.0
+    Fa = zeros(sum(good))
+    Fb = zeros(sum(good))
+
+    good1 = x .> 5.9
+    if sum(good1) > 0
+        y = x .- 5.9
+        Fa[good1] = @. -0.04473y[good1]^2 - 0.009779y[good1]^3
+        Fb[good1] = @. 0.2130y[good1]^2 + 0.1207y[good1]^3
+    end
+
+    a[good] = @. 1.752 - 0.316x[good] - 0.104/((x[good] - 4.67)^2 + 0.341) + Fa
+    b[good] = @. -3.090 + 1.825x[good] + 1.206/((x[good] - 4.62)^2 + 0.263) + Fb
+
+    # Far-UV
+    good = 8.0 .≤ x .≤ 11.0
+    y = x .- 8.0
+    a[good] = Polynomial([-1.703, -0.628, 0.137, -0.070]).(y[good])
+    b[good] = Polynomial([13.670, 4.257, -0.420, 0.374]).(y[good])
+
+    # Calculate the extintion
+    Av = Rv .* E_BV
+    aλ = Av .* (a .+ b./Rv)
+    @. 10^(-0.4 * aλ)
 end
 
 
@@ -1461,7 +1319,7 @@ end
 # Optical fitting version of the function
 function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, velscale::Real, vsyst::Real, n_ssps::Integer, 
     ssp_λ::Vector{T}, ssp_templates::Union{Vector{Spline2D},Matrix{<:Real}}, fit_uv_bump::Bool, fit_covering_frac::Bool, 
-    Ω::Vector{<:Real}, return_components::Bool) where {T<:Real}    
+    Ω::Vector{<:Real}, extinction_curve::String, return_components::Bool) where {T<:Real}    
 
     # Prepare outputs
     comps = Dict{String, Vector{Float64}}()
@@ -1498,16 +1356,23 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, velscale::Re
         δ = params[pᵢ+1]
         f_nodust = params[pᵢ+2]
         pᵢ += 2
-    elseif fit_uv_bump
+    elseif fit_uv_bump && extinction_curve == "calzetti"
         δ = params[pᵢ+1]
         pᵢ += 1
-    elseif fit_covering_frac
+    elseif fit_covering_frac && extinction_curve == "calzetti"
         f_nodust = params[pᵢ+1]
         pᵢ += 1
     end
     pᵢ += 1
-    comps["attenuation_stars"] = attenuation(λ, E_BV, δ=δ, f_nodust=f_nodust)
-    comps["attenuation_gas"] = attenuation(λ, E_BV/0.44, δ=δ, f_nodust=f_nodust)
+    if extinction_curve == "ccm"
+        comps["attenuation_stars"] = attenuation_cardelli(λ, E_BV)
+        comps["attenuation_gas"] = attenuation_cardelli(λ, E_BV/0.44)
+    elseif extinction_curve == "calzetti"
+        comps["attenuation_stars"] = attenuation_calzetti(λ, E_BV, δ=δ, f_nodust=f_nodust)
+        comps["attenuation_gas"] = attenuation_calzetti(λ, E_BV/0.44, δ=δ, f_nodust=f_nodust)
+    else
+        error("Unrecognized extinctino curve $extinction_curve")
+    end
     contin .*= comps["attenuation_stars"]
 
     if return_components
@@ -1520,7 +1385,7 @@ end
 
 function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, velscale::Real, vsyst::Real, n_ssps::Integer, 
     ssp_λ::Vector{T}, ssp_templates::Union{Vector{Spline2D},Matrix{<:Real}}, fit_uv_bump::Bool, fit_covering_frac::Bool, 
-    Ω::Vector{<:Real}) where {T<:Real}    
+    Ω::Vector{<:Real}, extinction_curve::String) where {T<:Real}    
 
     # Prepare outputs
     contin = zeros(Float64, length(λ))
@@ -1553,15 +1418,21 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, velscale::Re
         δ = params[pᵢ+1]
         f_nodust = params[pᵢ+2]
         pᵢ += 2
-    elseif fit_uv_bump
+    elseif fit_uv_bump && extinction_curve == "calzetti"
         δ = params[pᵢ+1]
         pᵢ += 1
-    elseif fit_covering_frac
+    elseif fit_covering_frac && extinction_curve == "calzetti"
         f_nodust = params[pᵢ+1]
         pᵢ += 1
     end
     pᵢ += 1
-    att = attenuation(λ, E_BV, δ=δ, f_nodust=f_nodust)
+    if extinction_curve == "ccm"
+        att = attenuation_cardelli(λ, E_BV)
+    elseif extinction_curve == "calzetti"
+        att = attenuation_calzetti(λ, E_BV, δ=δ, f_nodust=f_nodust)
+    else
+        error("Unrecognized extinctino curve $extinction_curve")
+    end
     contin .*= att
 
     contin

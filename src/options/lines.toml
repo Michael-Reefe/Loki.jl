@@ -64,8 +64,8 @@ kinematic_group_NeIII = [
 kinematic_group_Balmer = [
     "HI_H_"
 ]
-# Case B recombination amplitude ratios
-tie_amp_Balmer = [0.105, 0.158, 0.256, 0.466, 1.0, 2.87]
+# Case B recombination flux ratios
+tie_flux_Balmer = [0.105, 0.158, 0.256, 0.466, 1.0, 2.87]
 
 
 # Line voff and FWHM limits
@@ -133,12 +133,12 @@ annotate = true
 [lines.HI_H_epsilon]
 wave = 0.3971202
 latex = "H$\\varepsilon$"
-annotate = true
+annotate = false
 
 [lines.HI_H_zeta]
 wave = 0.3890166
 latex = "H$\\zeta$"
-annotate = true
+annotate = false
 
 # Helium lines
 [lines.HeI_03889]

@@ -17,6 +17,7 @@ using LinearAlgebra
 using EllipsisNotation
 using SpecialFunctions
 using FFTW
+using Polynomials
 
 # Optimization packages
 using Optim
@@ -176,8 +177,7 @@ export DataCube,   # DataCube struct
        save_fits,
        adjust_wcs_alignment!, 
        reproject_channels!, 
-       cube_rebin!,
-       psf_kernel, 
+       # psf_kernel, 
        convolve_psf!,
 
        # Parameter structs
@@ -215,11 +215,16 @@ export DataCube,   # DataCube struct
        make_movie,
        write_fits,
 
-       # Utility functions
+       # Utility functions that the user may wish to take advantage of
        frebin,
        fshift,
+       make_python_wcs,
+       attenuation_calzetti,
+       attenuation_cardelli,  # (AKA ccm_unred)
        resample_conserving_flux,
        air_to_vacuum,
+       extend,
+       sumdim,
        Doppler_shift_v,
        Doppler_shift_λ,
        Doppler_width_v,

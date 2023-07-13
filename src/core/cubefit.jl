@@ -332,7 +332,8 @@ struct OpticalCubeModel{T<:Real} <: CubeModel
 
     model::Array{T, 3}
     stellar::Array{T, 4}
-    attenuation::Array{T, 3}
+    attenuation_stars::Array{T, 3}
+    attenuation_gas::Array{T, 3}
     lines::Array{T, 4}
 
 end
@@ -408,12 +409,14 @@ function cubemodel_empty(shape::Tuple, n_ssps::Integer, line_names::Vector{Symbo
     @debug "model cube"
     stellar = zeros(floattype, shape..., n_ssps)
     @debug "stellar population comp cubes"
-    attenuation = zeros(floattype, shape...)
-    @debug "attenuation comp cube"
+    attenuation_stars = zeros(floattype, shape...)
+    @debug "attenuation_stars comp cube"
+    attenuation_gas = zeros(floattype, shape...)
+    @debug "attenuation_gas comp cube"
     lines = zeros(floattype, shape..., length(line_names))
     @debug "lines comp cubes"
 
-    OpticalCubeModel(model, stellar, attenuation, lines)
+    OpticalCubeModel(model, stellar, attenuation_stars, attenuation_gas, lines)
 
 end
 
@@ -770,7 +773,7 @@ struct CubeFitter{T<:Real,S<:Integer}
         end
         # Convert to a vectorized "TransitionLines" object
         lines = TransitionLines(lines.names[ln_filt], lines.latex[ln_filt], lines.annotate[ln_filt], lines.λ₀[ln_filt], 
-                                lines.profiles[ln_filt, :], lines.tied_amp[ln_filt, :], lines.tied_voff[ln_filt, :], lines.tied_fwhm[ln_filt, :], 
+                                lines.profiles[ln_filt, :], lines.tied_flux[ln_filt, :], lines.tied_voff[ln_filt, :], lines.tied_fwhm[ln_filt, :], 
                                 lines.acomp_amp[ln_filt, :], lines.voff[ln_filt, :], lines.fwhm[ln_filt, :], lines.h3[ln_filt, :], 
                                 lines.h4[ln_filt, :], lines.η[ln_filt, :])
         n_lines = length(lines.names)
@@ -792,7 +795,7 @@ struct CubeFitter{T<:Real,S<:Integer}
         for j ∈ 1:n_comps
             keep0 = Int64[]
             for (k, key) ∈ enumerate(tied_kinematics.key_amp[j])
-                if any(lines.tied_amp[:, j] .== key)
+                if any(lines.tied_flux[:, j] .== key)
                     # Remove the unneeded elements
                     append!(keep0, [k])
                 end
@@ -1064,11 +1067,11 @@ function get_opt_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, 
         atten_locked = [true]
     end
 
-    if cube_fitter.fit_uv_bump
+    if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
         push!(atten_plim, continuum.δ_uv.limits)
         push!(atten_locked, continuum.δ_uv.locked)
     end
-    if cube_fitter.fit_covering_frac
+    if cube_fitter.fit_covering_frac && cube_fitter.extinction_curve == "calzetti"
         push!(atten_plim, continuum.frac.limits)
         push!(atten_locked, continuum.frac.locked)
     end
@@ -1293,7 +1296,14 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
         # SSP amplitudes
         m_ssps = zeros(cube_fitter.n_ssps)
         for i in 1:cube_fitter.n_ssps
-            m_ssps[i] = nanmedian(I) * median(Ω) / attenuation([median(λ)], continuum.E_BV.value)[1] / cube_fitter.n_ssps
+            if cube_fitter.extinction_curve == "ccm"
+                att = attenuation_cardelli([median(λ)], continuum.E_BV.value)[1]
+            elseif cube_fitter.extinction_curve == "calzetti"
+                att = attenuation_calzetti([median(λ)], continuum.E_BV.value)[1]
+            else
+                error("Uncrecognized extinction curve $(cube_fitter.extinction_curve)")
+            end
+            m_ssps[i] = nanmedian(I) * median(Ω) / att / cube_fitter.n_ssps
         end
 
         ssp_pars = vcat([[mi, ai.value, zi.value] for (mi, ai, zi) in zip(m_ssps, continuum.ssp_ages, continuum.ssp_metallicities)]...)
@@ -1303,7 +1313,7 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
 
         # Attenuation
         atten_pars = [continuum.E_BV.value]
-        if cube_fitter.fit_uv_bump
+        if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
             push!(atten_pars, continuum.δ_uv.value)
         end
         if cube_fitter.fit_covering_frac
@@ -1532,13 +1542,13 @@ function pretty_print_opt_continuum_results(cube_fitter::CubeFitter, popt::Vecto
         "($(@sprintf "%.2f" continuum.E_BV.limits[1]), $(@sprintf "%.2f" continuum.E_BV.limits[2]))" * 
         (continuum.E_BV.locked ? " (fixed)" : "") * "\n"
     pᵢ += 1
-    if cube_fitter.fit_uv_bump
+    if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
         msg *= "δ_UV: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ]) +/- $(@sprintf "%.2f" perr[pᵢ]) [-] \t Limits: " *
             "($(@sprintf "%.2f" continuum.δ_uv.limits[1]), $(@sprintf "%.2f" continuum.δ_uv.limits[2]))" * 
             (continuum.δ_uv.locked ? " (fixed)" : "") * "\n"
         pᵢ += 1
     end
-    if cube_fitter.fit_covering_frac
+    if cube_fitter.fit_covering_frac && cube_fitter.extinction_curve == "calzetti"
         msg *= "frac: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ]) +/- $(@sprintf "%.2f" perr[pᵢ]) [-] \t Limits: " *
             "($(@sprintf "%.2f" continuum.frac.limits[1]), $(@sprintf "%.2f" continuum.frac.limits[2]))" * 
             (continuum.frac.locked ? " (fixed)" : "") * "\n"
@@ -1591,8 +1601,8 @@ function get_line_plimits(cube_fitter::CubeFitter, init::Bool)
                 # get the right amp, voff, and fwhm parameters based on if theyre tied or not
                 at = vt = ft = false
                 ka = kv = kf = nothing
-                if !isnothing(cube_fitter.lines.tied_amp[i, j])
-                    key_amp = cube_fitter.lines.tied_amp[i, j]
+                if !isnothing(cube_fitter.lines.tied_flux[i, j])
+                    key_amp = cube_fitter.lines.tied_flux[i, j]
                     ka = findfirst(cube_fitter.tied_kinematics.key_amp[j] .== key_amp)
                     at = true
                 end
@@ -1745,10 +1755,8 @@ function get_line_initial_values(cube_fitter::CubeFitter, init::Bool)
                 if !isnothing(cube_fitter.lines.profiles[i, j])
 
                     amp_ln = isone(j) ? A_ln[i] : cube_fitter.lines.acomp_amp[i, j-1].value
-                    if isnothing(cube_fitter.lines.tied_amp[i, j])
-                        amp_ln *= 1.0
-                    else
-                        key_amp = cube_fitter.lines.tied_amp[i, j]
+                    if !isnothing(cube_fitter.lines.tied_flux[i, j])
+                        key_amp = cube_fitter.lines.tied_flux[i, j]
                         ka = findfirst(cube_fitter.tied_kinematics.key_amp[j] .== key_amp)
                         amp_ln *= cube_fitter.tied_kinematics.amp[j][ka][cube_fitter.lines.names[i]]
                     end

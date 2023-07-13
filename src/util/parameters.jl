@@ -183,7 +183,7 @@ struct TransitionLines
     # 1st axis: labels each transition line
     # 2nd axis: labels the components of each line
     profiles::Matrix{Union{Symbol,Nothing}}
-    tied_amp::Matrix{Union{Symbol,Nothing}}
+    tied_flux::Matrix{Union{Symbol,Nothing}}
     tied_voff::Matrix{Union{Symbol,Nothing}}
     tied_fwhm::Matrix{Union{Symbol,Nothing}}
 
