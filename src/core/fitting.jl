@@ -1107,7 +1107,8 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         Hβ = test_line_snr(0.4862691, 0.0080, λ_spax, I_spax)
         if Hβ < 3
             amp_inds = contains.(names_lines_tied[.~lock_lines_tied], "amp")
-            pfree_lines_tied[amp_inds] ./= 3.0
+            scale_factor = clamp((Hβ-1.0)/3.0, 1e-5, Inf)
+            pfree_lines_tied[amp_inds] .*= scale_factor
         end
     end
 
@@ -1227,20 +1228,21 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         # Generate the attenuation curve beforehand so it can be used for the lines
         pₑ = 1 + 3cube_fitter.n_ssps + 2
         E_BV = ptot_cont[pₑ]
+        E_BV_factor = ptot_cont[pₑ+1]
         δ_UV = f_nodust = nothing
         if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
-            δ_UV = ptot_cont[pₑ+1]
+            δ_UV = ptot_cont[pₑ+2]
             pₑ += 1
         end
         if cube_fitter.fit_covering_frac && cube_fitter.extinction_curve == "calzetti"
-            f_nodust = ptot_cont[pₑ+1]
+            f_nodust = ptot_cont[pₑ+2]
             pₑ += 1
         end
         # E(B-V)_stars = 0.44E(B-V)_gas
         if cube_fitter.extinction_curve == "ccm"
-            ext_curve_gas = attenuation_cardelli(x, E_BV/0.44)
+            ext_curve_gas = attenuation_cardelli(x, E_BV)
         elseif cube_fitter.extinction_curve == "calzetti"
-            ext_curve_gas = attenuation_calzetti(x, E_BV/0.44, δ=δ_UV, f_nodust=f_nodust)
+            ext_curve_gas = attenuation_calzetti(x, E_BV, δ=δ_UV, f_nodust=f_nodust)
         else
             error("Unrecognized extinction curve $(cube_fitter.extinction_curve)")
         end
@@ -1547,12 +1549,20 @@ function plot_spaxel_fit(spectral_region::Symbol, λ_um::Vector{<:Real}, I::Vect
 
         # If max is above 10^4, normalize so the y axis labels aren't super wide
         factor = spectral_region == :MIR ? 1 ./ λ : ones(length(λ))
-        power = floor(Int, log10(maximum(I .* factor)))
+
+        min_inten = sum((I .* factor) .< -0.01) > 30 ? -2nanstd(I .* factor) : -0.01
+        max_inten = isnothing(range) ? 
+                    1.3nanmaximum(I[.~mask_lines .& .~mask_bad] .* factor[.~mask_lines .& .~mask_bad]) : 
+                    1.1nanmaximum((I .* factor)[range[1] .< λ .< range[2]])
+
+        power = floor(Int, log10(max_inten))
         if (power ≥ 4) || (power ≤ -4)
             norm = 10.0^power
         else
             norm = 1.0
         end
+        min_inten /= norm
+        max_inten /= norm
 
         # make color schemes: https://paletton.com/#uid=3000z0kDlkVsFuswHp7LfgmSRaH
         # https://paletton.com/#uid=73u1F0k++++qKZWAF+V+VAEZXqK
@@ -1640,11 +1650,6 @@ function plot_spaxel_fit(spectral_region::Symbol, λ_um::Vector{<:Real}, I::Vect
         end
         # plot extinction
         ax3.plot(λ, spectral_region == :MIR ? ext_full : att_gas, "k:", alpha=0.5, label="Extinction")
-
-        min_inten = sum((I ./ norm .* factor) .< -0.01) > 30 ? -2nanstd(I ./ norm .* factor) : -0.01
-        max_inten = isnothing(range) ? 
-                    1.3nanmaximum(I[.~mask_lines .& .~mask_bad] ./ norm .* factor[.~mask_lines .& .~mask_bad]) : 
-                    1.1nanmaximum((I ./ norm .* factor)[range[1] .< λ .< range[2]])
 
         # plot vertical dashed lines for emission line wavelengths
         for (lw, ln) ∈ zip(line_wave, line_names)

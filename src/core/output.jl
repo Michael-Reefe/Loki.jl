@@ -121,7 +121,7 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
         end
 
         # Extinction normalization factor for the PAH/line amplitudes
-        max_ext = out_params[index, end]
+        max_ext = out_params[index, size(out_params, 3)]
 
         # Dust feature log(amplitude), mean, FWHM
         for (k, df) ∈ enumerate(cube_fitter.dust_features.names)
@@ -435,10 +435,13 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
         pᵢ += 2
 
         # Report the E(B-V) for gas, rather than stars
-        param_maps.attenuation[:E_BV][index] = out_params[index, pᵢ] / 0.44
-        param_errs[1].attenuation[:E_BV][index] = out_errs[index, pᵢ, 1] / 0.44
-        param_errs[2].attenuation[:E_BV][index] = out_errs[index, pᵢ, 2] / 0.44
-        pᵢ += 1
+        param_maps.attenuation[:E_BV][index] = out_params[index, pᵢ]
+        param_errs[1].attenuation[:E_BV][index] = out_errs[index, pᵢ, 1] 
+        param_errs[2].attenuation[:E_BV][index] = out_errs[index, pᵢ, 2] 
+        param_maps.attenuation[:E_BV_factor][index] = out_params[index, pᵢ+1]
+        param_errs[1].attenuation[:E_BV_factor][index] = out_errs[index, pᵢ+1, 1] 
+        param_errs[2].attenuation[:E_BV_factor][index] = out_errs[index, pᵢ+1, 2] 
+        pᵢ += 2
         if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
             param_maps.attenuation[:delta_UV][index] = out_params[index, pᵢ]
             param_errs[1].attenuation[:delta_UV][index] = out_errs[index, pᵢ, 1]
@@ -570,14 +573,16 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
         end
 
         # Extinction normalization factor for line amplitudes
-        max_ext = out_params[index, end]
+        # "CartesianIndex and arrays of CartesianIndex are not compatible with the end keyword to represent the last index
+        # of a dimension. Do not use end in indexing expressions that may contain either CartesianIndex or arrays thereof"
+        max_ext = out_params[index, size(out_params, 3)]
 
         for k ∈ 1:cube_fitter.n_lines
             for j ∈ 1:cube_fitter.n_comps
                 if !isnothing(cube_fitter.lines.profiles[k, j])
 
                     ln = Symbol(cube_fitter.lines.names[k], "_$(j)")
-                    λ0 = cube_fitter.lines.λ₀[k] * 1e4
+                    λ0 = cube_fitter.lines.λ₀[k] * (1 + param_maps.lines[ln][:voff][index]/C_KMS) * 1e4
 
                     # Convert amplitudes to the correct units, then take the log
                     amp_norm = param_maps.lines[ln][:amp][index]
@@ -758,7 +763,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     elseif occursin("cutoff", String(name_i))
         bunit = L"$\nu$"
     elseif occursin("mass", String(name_i))
-        bunit = L"$\log_{10}(M / M_{\odot})$"
+        bunit = L"$\log_{10}(M / h^2M_{\odot})$"
     elseif occursin("age", String(name_i))
         bunit = L"$t$ (Gyr)"
     elseif occursin("metallicity", String(name_i))
@@ -767,6 +772,8 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         bunit = L"$v_*$ (km s$^{-1}$)"
     elseif occursin("vdisp", String(name_i))
         bunit = L"$\sigma_*$ (km s$^{-1}$)"
+    elseif occursin("E_BV_factor", String(name_i))
+        bunit = L"$E(B-V)_{\rm stars}/E(B-V)_{\rm gas}$"
     elseif occursin("E_BV", String(name_i))
         bunit = L"$E(B-V)_{\rm gas}$"
     elseif occursin("delta_UV", String(name_i))
@@ -797,8 +804,8 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     fig = plt.figure()
     ax = fig.add_subplot(111, projection=python_wcs) 
     # Need to filter out any NaNs in order to use quantile
-    vmin = nanminimum(filtered)
-    vmax = nanmaximum(filtered)
+    vmin = nanquantile(filtered, 0.01)
+    vmax = nanquantile(filtered, 0.99)
     # override vmin/vmax for mixing parameter
     if occursin("mixing", String(name_i))
         vmin = 0.
@@ -813,8 +820,8 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         vmax = vabs
         if cmap == py_colormap.cubehelix
             cmap = py_colormap.RdBu_r
-            nan_color = "w"
-            text_color = "k"
+            # nan_color = "w"
+            # text_color = "k"
         end
     end
     if occursin("chi2", String(name_i))
@@ -878,9 +885,10 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     ax.add_artist(scalebar)
 
     # Add circle for the PSF FWHM
-    psf = plt.Circle(size(data) .* (0.9, 0.1), psf_fwhm / pix_as / 2, color=text_color)
+    r = psf_fwhm / pix_as / 2
+    psf = plt.Circle(size(data) .* (0.95, 0.05) .+ (-r, r), r, color=text_color)
     ax.add_patch(psf)
-    ax.annotate("PSF", size(data) .* (0.9, 0.1) .+ (0., psf_fwhm / pix_as / 2 * 1.5 + 1.75), ha=:center, va=:center, color=text_color)
+    ax.annotate("PSF", size(data) .* (0.95, 0.05) .+ (-r, 2.5r + 1.75), ha=:center, va=:center, color=text_color)
 
     # Add line label, if applicable
     if !isnothing(line_latex)
@@ -992,6 +1000,7 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         # Get the components that make up the complex
         indiv_inds = findall(cube_fitter.dust_features.complexes .== dust_complex)
         indivs = [cube_fitter.dust_features.names[i] for i ∈ indiv_inds]
+
         # Sum up individual component fluxes
         total_flux = log10.(sum([exp10.(param_maps.dust_features[df][:flux]) for df ∈ indivs]))
         # Wavelength and name
@@ -1000,6 +1009,13 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         comp_name = "PAH $dust_complex " * L"$\mu$m"
         save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "dust_features", "$(name_i).pdf")
         plot_parameter_map(total_flux, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
+            cube_fitter.cosmology, cube_fitter.cube.wcs, line_latex=comp_name)
+
+        # Repeat for equivalent width
+        total_eqw = sum([param_maps.dust_features[df][:eqw] for df ∈ indivs])
+        name_i = "complex_$(dust_complex)_total_eqw"
+        save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "dust_features", "$(name_i).pdf")
+        plot_parameter_map(total_eqw, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
             cube_fitter.cosmology, cube_fitter.cube.wcs, line_latex=comp_name)
     end
 
@@ -1084,6 +1100,82 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
             
         end
     end
+
+    # Total parameters for combined lines
+    for comb_lines in cube_fitter.lines.combined
+        # Check to make sure the lines were actually fit
+        if !all([ln in cube_fitter.lines.names for ln in comb_lines])
+            continue
+        end
+        # Get all of the line names + additional components
+        component_keys = Symbol[]
+        line_inds = [findfirst(name .== cube_fitter.lines.names) for name in comb_lines]
+        for (ind, name) in zip(line_inds, comb_lines)
+            n_line_comps = sum(.!isnothing.(cube_fitter.lines.profiles[ind, :]))
+            append!(component_keys, [Symbol(name, "_$(j)") for j in 1:n_line_comps])
+        end
+        # Generate a group name based on the lines in the group
+        species = unique([replace(string(ln), match(r"(_[0-9]+)", string(ln))[1] => "") for ln in comb_lines])
+        species = String[]
+        for line in comb_lines
+            ln = string(line)
+            m = match(r"(_[0-9]+)", ln)
+            if !isnothing(m)
+                ln = replace(ln, m[1] => "")
+            end
+            m = match(r"(HI_)", ln)
+            if !isnothing(m)
+                ln = replace(ln, m[1] => "")
+            end
+            push!(species, ln)
+        end
+        species = unique(species)
+        group_name = join(species, "+")
+
+        # Get the SNR filter and wavelength
+        snr_filter = dropdims(maximum(cat([param_maps.lines[comp][:SNR] for comp in component_keys]..., dims=3), dims=3), dims=3)
+        wave_i = median([cube_fitter.lines.λ₀[ind] for ind in line_inds])
+
+        # Make a latex group name similar to the other group name
+        species_ltx = unique([cube_fitter.lines.latex[ind] for ind in line_inds])
+        group_name_ltx = join(species_ltx, L"$+$")
+
+        # Total Flux
+        total_flux = log10.(sum([exp10.(param_maps.lines[comp][:flux]) for comp in component_keys]))
+        name_i = join([group_name, "total_flux"], "_")
+        save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(group_name)", "$(name_i).pdf")
+        plot_parameter_map(total_flux, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
+            cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
+            line_latex=group_name_ltx)
+        
+        # Total equivalent width
+        total_eqw = sum([param_maps.lines[comp][:eqw] for comp in component_keys])
+        name_i = join([group_name, "total_eqw"], "_")
+        save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(group_name)", "$(name_i).pdf")
+        plot_parameter_map(total_eqw, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
+            cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
+            line_latex=group_name_ltx)
+
+        # Voff and FWHM
+        if all(.!isnothing.(cube_fitter.lines.tied_voff[line_inds, 1]))
+            voff = param_maps.lines[component_keys[1]][:voff]
+            name_i = join([group_name, "voff"], "_")
+            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(group_name)", "$(name_i).pdf") 
+            plot_parameter_map(voff, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
+                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
+                line_latex=group_name_ltx)  
+        end
+        if all(.!isnothing.(cube_fitter.lines.tied_fwhm[line_inds, 1]))
+            fwhm = param_maps.lines[component_keys[1]][:fwhm]
+            name_i = join([group_name, "fwhm"], "_")
+            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(group_name)", "$(name_i).pdf") 
+            plot_parameter_map(fwhm, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
+                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
+                line_latex=group_name_ltx)  
+        end
+        
+    end
+
 
     # Reduced chi^2 
     data = param_maps.statistics[:chi2] ./ param_maps.statistics[:dof]
@@ -1182,6 +1274,81 @@ function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
                 line_latex=cube_fitter.lines.latex[k])
             
         end
+    end
+
+    # Total parameters for combined lines
+    for comb_lines in cube_fitter.lines.combined
+        # Check to make sure the lines were actually fit
+        if !all([ln in cube_fitter.lines.names for ln in comb_lines])
+            continue
+        end
+        # Get all of the line names + additional components
+        component_keys = Symbol[]
+        line_inds = [findfirst(name .== cube_fitter.lines.names) for name in comb_lines]
+        for (ind, name) in zip(line_inds, comb_lines)
+            n_line_comps = sum(.!isnothing.(cube_fitter.lines.profiles[ind, :]))
+            append!(component_keys, [Symbol(name, "_$(j)") for j in 1:n_line_comps])
+        end
+        # Generate a group name based on the lines in the group
+        species = unique([replace(string(ln), match(r"(_[0-9]+)", string(ln))[1] => "") for ln in comb_lines])
+        species = String[]
+        for line in comb_lines
+            ln = string(line)
+            m = match(r"(_[0-9]+)", ln)
+            if !isnothing(m)
+                ln = replace(ln, m[1] => "")
+            end
+            m = match(r"(HI_)", ln)
+            if !isnothing(m)
+                ln = replace(ln, m[1] => "")
+            end
+            push!(species, ln)
+        end
+        species = unique(species)
+        group_name = join(species, "+")
+
+        # Get the SNR filter and wavelength
+        snr_filter = dropdims(maximum(cat([param_maps.lines[comp][:SNR] for comp in component_keys]..., dims=3), dims=3), dims=3)
+        wave_i = median([cube_fitter.lines.λ₀[ind] for ind in line_inds])
+
+        # Make a latex group name similar to the other group name
+        species_ltx = unique([cube_fitter.lines.latex[ind] for ind in line_inds])
+        group_name_ltx = join(species_ltx, L"$+$")
+
+        # Total Flux
+        total_flux = log10.(sum([exp10.(param_maps.lines[comp][:flux]) for comp in component_keys]))
+        name_i = join([group_name, "total_flux"], "_")
+        save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(group_name)", "$(name_i).pdf")
+        plot_parameter_map(total_flux, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
+            cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
+            line_latex=group_name_ltx)
+        
+        # Total equivalent width
+        total_eqw = sum([param_maps.lines[comp][:eqw] for comp in component_keys])
+        name_i = join([group_name, "total_eqw"], "_")
+        save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(group_name)", "$(name_i).pdf")
+        plot_parameter_map(total_eqw, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
+            cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
+            line_latex=group_name_ltx)
+         
+        # Voff and FWHM
+        if all(.!isnothing.(cube_fitter.lines.tied_voff[line_inds, 1]))
+            voff = param_maps.lines[component_keys[1]][:voff]
+            name_i = join([group_name, "voff"], "_")
+            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(group_name)", "$(name_i).pdf") 
+            plot_parameter_map(voff, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
+                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
+                line_latex=group_name_ltx)  
+        end
+        if all(.!isnothing.(cube_fitter.lines.tied_fwhm[line_inds, 1]))
+            fwhm = param_maps.lines[component_keys[1]][:fwhm]
+            name_i = join([group_name, "fwhm"], "_")
+            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(group_name)", "$(name_i).pdf") 
+            plot_parameter_map(fwhm, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
+                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
+                line_latex=group_name_ltx)  
+        end
+        
     end
 
     # Reduced chi^2 
@@ -1693,7 +1860,8 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
             for i ∈ 1:size(cube_model.stellar, 4)
                 write_key(f["STELLAR_POPULATION_$i"], "BUNIT", "erg/s/cm^2/ang/sr")
             end
-            write_key(f["ATTENUATION"], "BUNIT", "unitless")
+            write_key(f["ATTENUATION_STARS"], "BUNIT", "unitless")
+            write_key(f["ATTENUATION_GAS"], "BUNIT", "unitless")
         end
     end
 

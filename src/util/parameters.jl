@@ -141,6 +141,7 @@ struct OpticalContinuum <: Continuum
     
     # Dust attenuation
     E_BV::Parameter
+    E_BV_factor::Parameter
     δ_uv::Parameter
     frac::Parameter
 
@@ -183,7 +184,7 @@ struct TransitionLines
     # 1st axis: labels each transition line
     # 2nd axis: labels the components of each line
     profiles::Matrix{Union{Symbol,Nothing}}
-    tied_flux::Matrix{Union{Symbol,Nothing}}
+    tied_amp::Matrix{Union{Symbol,Nothing}}
     tied_voff::Matrix{Union{Symbol,Nothing}}
     tied_fwhm::Matrix{Union{Symbol,Nothing}}
 
@@ -194,6 +195,9 @@ struct TransitionLines
     h3::Matrix{Union{Parameter,Nothing}}
     h4::Matrix{Union{Parameter,Nothing}}
     η::Matrix{Union{Parameter,Nothing}}
+
+    # Combined lines (for map purposes)
+    combined::Vector{Vector{Symbol}}
 
 end
 

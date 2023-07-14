@@ -231,6 +231,7 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_ssps::Integer, n_lines::S, n_com
     # Add attenuation parameters
     attenuation = Dict{Symbol, Array{Float64, 2}}()
     attenuation[:E_BV] = copy(nan_arr)
+    attenuation[:E_BV_factor] = copy(nan_arr)
     attenuation[:delta_UV] = copy(nan_arr)
     attenuation[:frac] = copy(nan_arr)
     @debug "attenuation maps with keys $(keys(attenuation))"
@@ -773,9 +774,9 @@ struct CubeFitter{T<:Real,S<:Integer}
         end
         # Convert to a vectorized "TransitionLines" object
         lines = TransitionLines(lines.names[ln_filt], lines.latex[ln_filt], lines.annotate[ln_filt], lines.λ₀[ln_filt], 
-                                lines.profiles[ln_filt, :], lines.tied_flux[ln_filt, :], lines.tied_voff[ln_filt, :], lines.tied_fwhm[ln_filt, :], 
+                                lines.profiles[ln_filt, :], lines.tied_amp[ln_filt, :], lines.tied_voff[ln_filt, :], lines.tied_fwhm[ln_filt, :], 
                                 lines.acomp_amp[ln_filt, :], lines.voff[ln_filt, :], lines.fwhm[ln_filt, :], lines.h3[ln_filt, :], 
-                                lines.h4[ln_filt, :], lines.η[ln_filt, :])
+                                lines.h4[ln_filt, :], lines.η[ln_filt, :], lines.combined)
         n_lines = length(lines.names)
         n_comps = size(lines.profiles, 2)
         n_acomps = sum(.!isnothing.(lines.profiles[:, 2:end]))
@@ -795,7 +796,7 @@ struct CubeFitter{T<:Real,S<:Integer}
         for j ∈ 1:n_comps
             keep0 = Int64[]
             for (k, key) ∈ enumerate(tied_kinematics.key_amp[j])
-                if any(lines.tied_flux[:, j] .== key)
+                if any(lines.tied_amp[:, j] .== key)
                     # Remove the unneeded elements
                     append!(keep0, [k])
                 end
@@ -861,7 +862,7 @@ struct CubeFitter{T<:Real,S<:Integer}
             n_params_cont = (2+4) + 2n_dust_cont + 2n_power_law + 3n_abs_features + (out[:fit_sil_emission] ? 6 : 0)
             n_params_cont += 3 * sum(dust_features.profiles .== :Drude) + 5 * sum(dust_features.profiles .== :PearsonIV)
         elseif spectral_region == :OPT
-            n_params_cont = 3n_ssps + 2 + 1
+            n_params_cont = 3n_ssps + 2 + 2
             if out[:fit_uv_bump]
                 n_params_cont += 1
             end
@@ -1057,14 +1058,14 @@ function get_opt_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, 
     stel_kin_plim = [continuum.stel_vel.limits, continuum.stel_vdisp.limits]
     stel_kin_locked = [continuum.stel_vel.locked, continuum.stel_vdisp.locked]
 
-    atten_plim = [continuum.E_BV.limits]
-    atten_locked = [continuum.E_BV.locked]
+    atten_plim = [continuum.E_BV.limits, continuum.E_BV_factor.limits]
+    atten_locked = [continuum.E_BV.locked, continuum.E_BV_factor.locked]
 
     # test the SNR of the H-beta line
     Hβ_snr = test_line_snr(0.4862691, 0.0080, λ, I)
     # if the SNR is less than 3, we cannot constrain E(B-V), so lock it to 0
     if Hβ_snr < 3
-        atten_locked = [true]
+        atten_locked[1] = true
     end
 
     if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
@@ -1131,7 +1132,7 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
 
         # Power law amplitudes
         for _ ∈ 1:cube_fitter.n_power_law
-            p₀[pᵢ] = clamp(p₀[pᵢ]*scale, 0., max_amp)
+            p₀[pᵢ] *= scale
             pᵢ += 2
         end
 
@@ -1152,7 +1153,7 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
 
         # Dust feature amplitudes
         for i ∈ 1:cube_fitter.n_dust_feat
-            p₀[pᵢ] = clamp(p₀[pᵢ]*scale, 0., max_amp)
+            p₀[pᵢ] = clamp(p₀[pᵢ]*scale, 0., 1.)
             pᵢ += 3
             if cube_fitter.dust_features.profiles[i] == :PearsonIV
                 pᵢ += 2
@@ -1266,6 +1267,20 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
         #      per-solid-angle units.
         scale = max(nanmedian(I), 1e-10) * N / nanmedian(sumdim(cube_fitter.cube.I, (1,2)))
 
+        # Start with a small reddening despite the initial fit
+        # pₑ = 1 + 3cube_fitter.n_ssps + 2
+        # ebv_orig = p₀[pₑ]
+        # ebv_factor = p₀[pₑ+1]
+        # p₀[pₑ] = min(p₀[pₑ], continuum.E_BV.value)
+        # # Rescale to keep the continuum at a good starting point
+        # if cube_fitter.extinction_curve == "ccm"
+        #     scale *= median(attenuation_cardelli(λ, p₀[pₑ]*ebv_factor) ./ attenuation_cardelli(λ, ebv_orig*ebv_factor))
+        # elseif cube_fitter.extinction_curve == "calzetti"
+        #     scale *= median(attenuation_calzetti(λ, p₀[pₑ]*ebv_factor) ./ attenuation_calzetti(λ, ebv_orig*ebv_factor))
+        # else
+        #     error("Unrecognized extinction curve $(cube_fitter.extinction_curve)")
+        # end
+
         # SSP amplitudes
         pᵢ = 1
         for _ ∈ 1:cube_fitter.n_ssps
@@ -1280,7 +1295,6 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
             p₀[pᵢ+1] = 100.
         end
         pᵢ += 2
-
         # test the SNR of the H-beta line
         Hβ_snr = test_line_snr(0.4862691, 0.0060, λ, I)
         # if the SNR is less than 3, we cannot constrain E(B-V), so lock it to 0
@@ -1312,7 +1326,7 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
         stel_kin_pars = [continuum.stel_vel.value, continuum.stel_vdisp.value]
 
         # Attenuation
-        atten_pars = [continuum.E_BV.value]
+        atten_pars = [continuum.E_BV.value, continuum.E_BV_factor.value]
         if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
             push!(atten_pars, continuum.δ_uv.value)
         end
@@ -1327,7 +1341,7 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
 
     @debug "Continuum Parameter labels: \n [" *
         join(["SSP_$(i)_mass, SSP_$(i)_age, SSP_$(i)_metallicity" for i in 1:cube_fitter.n_ssps], ", ") * 
-        "stel_vel, stel_vdisp, E_BV, " *
+        "stel_vel, stel_vdisp, E_BV, E_BV_factor, " *
         (cube_fitter.fit_uv_bump ? "delta_uv, " : "") *
         (cube_fitter.fit_covering_frac ? "covering_frac, " : "") * 
         "]"
@@ -1541,7 +1555,10 @@ function pretty_print_opt_continuum_results(cube_fitter::CubeFitter, popt::Vecto
     msg *= "E_BV: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ]) +/- $(@sprintf "%.2f" perr[pᵢ]) [-] \t Limits: " *
         "($(@sprintf "%.2f" continuum.E_BV.limits[1]), $(@sprintf "%.2f" continuum.E_BV.limits[2]))" * 
         (continuum.E_BV.locked ? " (fixed)" : "") * "\n"
-    pᵢ += 1
+    msg *= "E_BV_factor: \t\t\t $(@sprintf "%.2f" popt[pᵢ+1]) +/- $(@sprintf "%.2f" perr[pᵢ+1]) [-] \t Limits: " *
+        "($(@sprintf "%.2f" continuum.E_BV_factor.limits[1]), $(@sprintf "%.2f" continuum.E_BV_factor.limits[2]))" *
+        (continuum.E_BV_factor.locked ? " (fixed)" : "") * "\n"
+    pᵢ += 2
     if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
         msg *= "δ_UV: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ]) +/- $(@sprintf "%.2f" perr[pᵢ]) [-] \t Limits: " *
             "($(@sprintf "%.2f" continuum.δ_uv.limits[1]), $(@sprintf "%.2f" continuum.δ_uv.limits[2]))" * 
@@ -1601,8 +1618,8 @@ function get_line_plimits(cube_fitter::CubeFitter, init::Bool)
                 # get the right amp, voff, and fwhm parameters based on if theyre tied or not
                 at = vt = ft = false
                 ka = kv = kf = nothing
-                if !isnothing(cube_fitter.lines.tied_flux[i, j])
-                    key_amp = cube_fitter.lines.tied_flux[i, j]
+                if !isnothing(cube_fitter.lines.tied_amp[i, j])
+                    key_amp = cube_fitter.lines.tied_amp[i, j]
                     ka = findfirst(cube_fitter.tied_kinematics.key_amp[j] .== key_amp)
                     at = true
                 end
@@ -1755,8 +1772,8 @@ function get_line_initial_values(cube_fitter::CubeFitter, init::Bool)
                 if !isnothing(cube_fitter.lines.profiles[i, j])
 
                     amp_ln = isone(j) ? A_ln[i] : cube_fitter.lines.acomp_amp[i, j-1].value
-                    if !isnothing(cube_fitter.lines.tied_flux[i, j])
-                        key_amp = cube_fitter.lines.tied_flux[i, j]
+                    if !isnothing(cube_fitter.lines.tied_amp[i, j])
+                        key_amp = cube_fitter.lines.tied_amp[i, j]
                         ka = findfirst(cube_fitter.tied_kinematics.key_amp[j] .== key_amp)
                         amp_ln *= cube_fitter.tied_kinematics.amp[j][ka][cube_fitter.lines.names[i]]
                     end

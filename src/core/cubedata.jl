@@ -213,7 +213,7 @@ function from_fits_jwst(filename::String)::DataCube
 
     spectral_region = :MIR
     if haskey(hdr0, "SPECREG")
-        spectral_region = hdr0["SPECREG"]
+        spectral_region = Symbol(hdr0["SPECREG"])
     end
     rest_frame = false
     if haskey(hdr0, "RESTFRAM")
@@ -290,6 +290,7 @@ function to_vacuum_wavelength!(cube::DataCube; linear_resample::Bool=true)
             cube.I, cube.σ, cube.mask = resample_conserving_flux(λlin, cube.λ, cube.I, cube.σ, cube.mask)
             cube.λ = collect(λlin)
         end
+        cube.vacuum_wave = true
     else
         @debug "The wavelength vector is already in vacuum wavelengths for cube with channel $(cube.channel), " *
             "band $(cube.band)."
@@ -896,7 +897,7 @@ function from_fits(filenames::Vector{String}, z::Real)::Observation
 
     spectral_region = :MIR
     if haskey(hdr, "SPECREG")
-        spectral_region = hdr["SPECREG"]
+        spectral_region = Symbol(hdr["SPECREG"])
     end
     rest_frame = false
     if haskey(hdr, "RESTFRAM")

@@ -43,10 +43,20 @@ locked = false
 
 ########## Attenuation options ###############
 
-# E(B-V) Reddening factor for starlight and gas
-[attenuation.E_BV_stars]
-val = 0.01
-plim = [0.0, 4.0]
+# E(B-V) Reddening factor for the gas
+[attenuation.E_BV]
+val = 0.10
+plim = [0.0, 1.0]
+locked = false
+
+# Factor to convert E(B-V) from gas to starlight,
+# typically locked to 0.44
+# N.b. if you are fitting continuum and lines in separate steps,
+# this *must* be locked because it is completely unconstrained
+# in the continuum fitting step.
+[attenuation.E_BV_factor]
+val = 0.44
+plim = [0.0, 10.0]
 locked = false
 
 # Only relevant for Calzetti extinction curves:

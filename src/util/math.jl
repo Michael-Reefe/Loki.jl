@@ -1351,25 +1351,26 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, velscale::Re
 
     # Apply attenuation law
     E_BV = params[pᵢ]
+    E_BV_factor = params[pᵢ+1]
     δ = f_nodust = nothing
     if fit_uv_bump && fit_covering_frac
-        δ = params[pᵢ+1]
-        f_nodust = params[pᵢ+2]
+        δ = params[pᵢ+2]
+        f_nodust = params[pᵢ+3]
         pᵢ += 2
     elseif fit_uv_bump && extinction_curve == "calzetti"
-        δ = params[pᵢ+1]
+        δ = params[pᵢ+2]
         pᵢ += 1
     elseif fit_covering_frac && extinction_curve == "calzetti"
-        f_nodust = params[pᵢ+1]
+        f_nodust = params[pᵢ+2]
         pᵢ += 1
     end
-    pᵢ += 1
+    pᵢ += 2
     if extinction_curve == "ccm"
-        comps["attenuation_stars"] = attenuation_cardelli(λ, E_BV)
-        comps["attenuation_gas"] = attenuation_cardelli(λ, E_BV/0.44)
+        comps["attenuation_stars"] = attenuation_cardelli(λ, E_BV * E_BV_factor)
+        comps["attenuation_gas"] = attenuation_cardelli(λ, E_BV)
     elseif extinction_curve == "calzetti"
-        comps["attenuation_stars"] = attenuation_calzetti(λ, E_BV, δ=δ, f_nodust=f_nodust)
-        comps["attenuation_gas"] = attenuation_calzetti(λ, E_BV/0.44, δ=δ, f_nodust=f_nodust)
+        comps["attenuation_stars"] = attenuation_calzetti(λ, E_BV * E_BV_factor, δ=δ, f_nodust=f_nodust)
+        comps["attenuation_gas"] = attenuation_calzetti(λ, E_BV, δ=δ, f_nodust=f_nodust)
     else
         error("Unrecognized extinctino curve $extinction_curve")
     end
@@ -1413,23 +1414,24 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, velscale::Re
 
     # Apply attenuation law
     E_BV = params[pᵢ]
+    E_BV_factor = params[pᵢ+1]
     δ = f_nodust = nothing
     if fit_uv_bump && fit_covering_frac
-        δ = params[pᵢ+1]
-        f_nodust = params[pᵢ+2]
+        δ = params[pᵢ+2]
+        f_nodust = params[pᵢ+3]
         pᵢ += 2
     elseif fit_uv_bump && extinction_curve == "calzetti"
-        δ = params[pᵢ+1]
+        δ = params[pᵢ+2]
         pᵢ += 1
     elseif fit_covering_frac && extinction_curve == "calzetti"
-        f_nodust = params[pᵢ+1]
+        f_nodust = params[pᵢ+2]
         pᵢ += 1
     end
-    pᵢ += 1
+    pᵢ += 2
     if extinction_curve == "ccm"
-        att = attenuation_cardelli(λ, E_BV)
+        att = attenuation_cardelli(λ, E_BV * E_BV_factor)
     elseif extinction_curve == "calzetti"
-        att = attenuation_calzetti(λ, E_BV, δ=δ, f_nodust=f_nodust)
+        att = attenuation_calzetti(λ, E_BV * E_BV_factor, δ=δ, f_nodust=f_nodust)
     else
         error("Unrecognized extinctino curve $extinction_curve")
     end
