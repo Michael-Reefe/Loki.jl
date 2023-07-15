@@ -414,7 +414,8 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             # Un-normalize the amplitudes by applying the normalization factors used in the fitting routines
             # (median of the SSP template, followed by normalization N)
             ssp_med = median([cube_fitter.ssp_templates[j](out_params[index, pᵢ+1], out_params[index, pᵢ+2]) for j in eachindex(cube_fitter.ssp_λ)])
-            param_maps.stellar_populations[i][:mass][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ] / ssp_med * N / (1+z)) : -Inf
+            Ω_med = median(cube_fitter.cube.Ω)
+            param_maps.stellar_populations[i][:mass][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ] * Ω_med / ssp_med * N / (1+z)) : -Inf
             param_errs[1].stellar_populations[i][:mass][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
             param_errs[2].stellar_populations[i][:mass][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
             param_maps.stellar_populations[i][:age][index] = out_params[index, pᵢ+1]

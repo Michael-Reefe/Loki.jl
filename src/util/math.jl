@@ -522,13 +522,14 @@ function convolve_losvd(ssps::Array{T, 2}, vsyst::Real, v::Real, σ::Real, velsc
     # Pad with 0s up to a factor of small primes to increase efficiency 
     s = size(ssps)
     npad = nextprod([2,3,5], s[1])
-    ssp_temps = zeros(npad, s[2])
+    ssp_temps = zeros(typeof(v), npad, s[2])
     for j in axes(ssps, 2)
         ssp_temps[1:s[1], j] = ssps[:, j]
     end
 
     # Calculate the Fourier transform of the templates
     ssp_rfft = rfft(ssp_temps, 1)
+
     # Calculate the Fourier transform of the LOSVD
     nl = size(ssp_rfft, 1)
     lvd_rfft = losvd_rfft(vsysts, vs, σs, nl, σ_diff=0., factor=1.)
@@ -557,7 +558,7 @@ function losvd_rfft(vsyst::Real, v::Real, σ::Real, nl::Integer; σ_diff::Real=0
     # Prepare quantities
     a = (vsyst + v)/σ
     b = σ_diff/σ
-    ω = isfinite(σ) ? range(0., π*σ*factor, nl) : ones(nl) .* NaN  # handle cases where the spaxel isn't fit 
+    ω = isfinite(σ) ? range(0., π*σ*factor, nl) : ones(typeof(v), nl) .* NaN  # handle cases where the spaxel isn't fit 
     # Calculate Fourier transform
     lvd_rfft = @. exp(1im*a*ω - 0.5*(1-b^2)*ω^2)
     # Take complex conjugate
@@ -1119,13 +1120,14 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
-function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
+function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
     n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, use_pah_templates::Bool, 
-    return_components::Bool) where {T<:Real}
+    return_components::Bool)
 
     # Prepare outputs
-    comps = Dict{String, Vector{Float64}}()
-    contin = zeros(Float64, length(λ))
+    out_type = eltype(params)
+    comps = Dict{String, Vector{out_type}}()
+    contin = zeros(out_type, length(λ))
 
     # Stellar blackbody continuum (usually at 5000 K)
     comps["stellar"] = params[1] .* Blackbody_ν.(λ, params[2]) ./ N
@@ -1168,7 +1170,7 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
     pᵢ += 4
 
     # Other absorption features
-    abs_tot = ones(Float64, length(λ))
+    abs_tot = ones(out_type, length(λ))
     for k ∈ 1:n_abs_feat
         prof = Drude.(λ, 1.0, params[pᵢ+1:pᵢ+2]...)
         comps["abs_feat_$k"] = extinction.(prof, params[pᵢ], screen=true)
@@ -1218,11 +1220,12 @@ end
 
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
-function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
-    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, use_pah_templates::Bool) where {T<:Real}
+function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
+    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, use_pah_templates::Bool)
 
     # Prepare outputs
-    contin = zeros(Float64, length(λ))
+    out_type = eltype(params)
+    contin = zeros(out_type, length(λ))
 
     # Stellar blackbody continuum (usually at 5000 K)
     contin .+= params[1] .* Blackbody_ν.(λ, params[2]) ./ N
@@ -1262,7 +1265,7 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
     pᵢ += 4
 
     # Other absorption features
-    abs_tot = ones(Float64, length(λ))
+    abs_tot = ones(out_type, length(λ))
     for k ∈ 1:n_abs_feat
         prof = Drude.(λ, 1.0, params[pᵢ+1:pᵢ+2]...)
         abs_tot .*= extinction.(prof, params[pᵢ], screen=true)
@@ -1317,16 +1320,17 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
 end
 
 # Optical fitting version of the function
-function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, velscale::Real, vsyst::Real, n_ssps::Integer, 
-    ssp_λ::Vector{T}, ssp_templates::Union{Vector{Spline2D},Matrix{<:Real}}, fit_uv_bump::Bool, fit_covering_frac::Bool, 
-    Ω::Vector{<:Real}, extinction_curve::String, return_components::Bool) where {T<:Real}    
+function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, velscale::Real, vsyst::Real, n_ssps::Integer, 
+    ssp_λ::Vector{<:Real}, ssp_templates::Union{Vector{Spline2D},Matrix{<:Real}}, fit_uv_bump::Bool, fit_covering_frac::Bool, 
+    Ω::Vector{<:Real}, extinction_curve::String, return_components::Bool)   
 
     # Prepare outputs
-    comps = Dict{String, Vector{Float64}}()
-    contin = zeros(Float64, length(λ))
+    out_type = eltype(params)
+    comps = Dict{String, Vector{out_type}}()
+    contin = zeros(out_type, length(λ))
     pᵢ = 1
 
-    ssps = zeros(Float64, length(ssp_λ), n_ssps)
+    ssps = zeros(out_type, length(ssp_λ), n_ssps)
     # Interpolate the SSPs to the right ages/metallicities (this is slow)
     for i in 1:n_ssps
         # normalize the templates by their median so that the amplitude is properly separated from the age and metallicity during fitting
@@ -1345,7 +1349,7 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, velscale::Re
 
     # Combine the convolved stellar templates together with the weights
     for i in 1:n_ssps
-        comps["SSP_$i"] = conv_ssps[:, i] ./ Ω
+        comps["SSP_$i"] = conv_ssps[:, i] ./ Ω .* median(Ω)
         contin .+= comps["SSP_$i"]
     end
 
@@ -1384,15 +1388,16 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, velscale::Re
 end
 
 
-function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, velscale::Real, vsyst::Real, n_ssps::Integer, 
-    ssp_λ::Vector{T}, ssp_templates::Union{Vector{Spline2D},Matrix{<:Real}}, fit_uv_bump::Bool, fit_covering_frac::Bool, 
-    Ω::Vector{<:Real}, extinction_curve::String) where {T<:Real}    
+function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, velscale::Real, vsyst::Real, n_ssps::Integer, 
+    ssp_λ::Vector{<:Real}, ssp_templates::Union{Vector{Spline2D},Matrix{<:Real}}, fit_uv_bump::Bool, fit_covering_frac::Bool, 
+    Ω::Vector{<:Real}, extinction_curve::String)
 
     # Prepare outputs
-    contin = zeros(Float64, length(λ))
+    out_type = eltype(params)
+    contin = zeros(out_type, length(λ))
     pᵢ = 1
 
-    ssps = zeros(Float64, length(ssp_λ), n_ssps)
+    ssps = zeros(out_type, length(ssp_λ), n_ssps)
     # Interpolate the SSPs to the right ages/metallicities (this is slow)
     for i in 1:n_ssps
         # normalize the templates by their median so that the amplitude is properly separated from the age and metallicity during fitting
@@ -1410,7 +1415,7 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, velscale::Re
     pᵢ += 2
 
     # Combine the convolved stellar templates together with the weights
-    contin .+= sumdim(conv_ssps, 2) ./ Ω
+    contin .+= sumdim(conv_ssps, 2) ./ Ω .* median(Ω)
 
     # Apply attenuation law
     E_BV = params[pᵢ]
@@ -1490,12 +1495,13 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in
     addition to the overall fit
 """
-function model_pah_residuals(λ::Vector{T}, params::Vector{T}, dust_prof::Vector{Symbol}, ext_curve::Vector{T}, 
-    return_components::Bool) where {T<:Real}
+function model_pah_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, dust_prof::Vector{Symbol}, ext_curve::Vector{<:Real}, 
+    return_components::Bool) 
 
     # Prepare outputs
-    comps = Dict{String, Vector{Float64}}()
-    contin = zeros(Float64, length(λ))
+    out_type = eltype(params)
+    comps = Dict{String, Vector{out_type}}()
+    contin = zeros(out_type, length(λ))
 
     # Add dust features with drude profiles
     pᵢ = 1
@@ -1529,10 +1535,11 @@ end
 
 
 # Multiple dispatch for more efficiency
-function model_pah_residuals(λ::Vector{T}, params::Vector{T}, dust_prof::Vector{Symbol}, ext_curve::Vector{T}) where {T<:Real}
+function model_pah_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, dust_prof::Vector{Symbol}, ext_curve::Vector{<:Real})
 
     # Prepare outputs
-    contin = zeros(Float64, length(λ))
+    out_type = eltype(params)
+    contin = zeros(out_type, length(λ))
 
     # Add dust features with drude profiles
     pᵢ = 1
@@ -1595,12 +1602,13 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
-function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_comps::S, lines::TransitionLines, 
-    flexible_wavesol::Bool, ext_curve::Vector{T}, lsf::Function, return_components::Bool) where {T<:Real,S<:Integer}
+function model_line_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, n_lines::S, n_comps::S, lines::TransitionLines, 
+    flexible_wavesol::Bool, ext_curve::Vector{<:Real}, lsf::Function, return_components::Bool) where {S<:Integer}
 
     # Prepare outputs
-    comps = Dict{String, Vector{Float64}}()
-    contin = zeros(Float64, length(λ))
+    out_type = eltype(params)
+    comps = Dict{String, Vector{out_type}}()
+    contin = zeros(out_type, length(λ))
 
     pᵢ = 1
     # Add emission lines
@@ -1689,11 +1697,12 @@ end
 
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
-function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_comps::S, lines::TransitionLines, 
-    flexible_wavesol::Bool, ext_curve::Vector{T}, lsf::Function) where {T<:Real,S<:Integer}
+function model_line_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, n_lines::S, n_comps::S, lines::TransitionLines, 
+    flexible_wavesol::Bool, ext_curve::Vector{<:Real}, lsf::Function) where {S<:Integer}
 
     # Prepare outputs
-    contin = zeros(Float64, length(λ))
+    out_type = eltype(params)
+    contin = zeros(out_type, length(λ))
 
     pᵢ = 1
     # Add emission lines

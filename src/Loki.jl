@@ -49,7 +49,7 @@ using Dates
 using InteractiveUtils
 using ColorSchemes
 using LaTeXStrings
-using Pipe
+using Pipe: @pipe
 
 # PyCall needed for some matplotlib modules
 using PyCall

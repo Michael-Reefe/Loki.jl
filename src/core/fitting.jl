@@ -293,10 +293,17 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     res = cmpfit(λ_spax, I_spax, σ_spax, fit_cont, pfree, parinfo=parinfo, config=config)
     n = 1
     while res.niter < 5
-        @warn "LM Solver is stuck on the initial state for the continuum fit of spaxel $spaxel. Retrying..."
-        # For some reason, masking out a pixel or two seems to fix the problem. This loop shouldn't ever need more than 1 iteration.
-        res = cmpfit(λ_spax[1+n:end-n], I_spax[1+n:end-n], σ_spax[1+n:end-n], (x, pfree) -> fit_cont(x, pfree, n=n), 
-            pfree, parinfo=parinfo, config=config)
+        @warn "LM Solver is stuck on the initial state for the continuum fit of spaxel $spaxel. Jittering starting params..."
+        # Jitter the starting parameters a bit
+        jit_lo = (lb .- pfree) ./ 100  # defined to be negative
+        jit_hi = (ub .- pfree) ./ 100  # defined to be positive
+        # handle infinite upper bounds
+        jit_hi[.~isfinite.(jit_hi)] .= .-jit_lo[.~isfinite.(jit_hi)]
+        # sample from a uniform distribution
+        jitter = [jh > jl ? rand(Uniform(jl, jh)) : 0.0 for (jl,jh) in zip(jit_lo, jit_hi)]
+        # redo the fit with the slightly jittered starting parameters
+        @debug "Jittered starting parameters: $(pfree .+ jitter)"
+        res = cmpfit(λ_spax, I_spax, σ_spax, fit_cont, pfree .+ jitter, parinfo=parinfo, config=config)
         n += 1
         if n > 10
             @warn "LM solver has exceeded 10 tries on the continuum fit of spaxel $spaxel. Aborting."
@@ -464,9 +471,17 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     res_1 = cmpfit(λ_spax, I_spax, σ_spax, fit_step1, p1free, parinfo=parinfo_1, config=config)
     n = 1
     while res_1.niter < 5
-        @warn "LM Solver is stuck on the initial state for the continuum (step 1) fit of spaxel $spaxel. Retrying..."
-        # For some reason, masking out a pixel or two seems to fix the problem. This loop shouldn't ever need more than 1 iteration.
-        res_1 = cmpfit(λ_spax[1+n:end-n], I_spax[1+n:end-n], σ_spax[1+n:end-n], fit_step1, p1free, parinfo=parinfo_1, config=config)
+        @warn "LM Solver is stuck on the initial state for the continuum fit (step 1) of spaxel $spaxel. Jittering starting params..."
+        # Jitter the starting parameters a bit
+        jit_lo = (lb_1 .- p1free) ./ 100  # defined to be negative
+        jit_hi = (ub_1 .- p1free) ./ 100  # defined to be positive
+        # handle infinite upper bounds
+        jit_hi[.~isfinite.(jit_hi)] .= .-jit_lo[.~isfinite.(jit_hi)]
+        # sample from a uniform distribution
+        jitter = [jh > jl ? rand(Uniform(jl, jh)) : 0.0 for (jl,jh) in zip(jit_lo, jit_hi)]
+        # redo the fit with the slightly jittered starting parameters
+        @debug "Jittered starting parameters: $(p1free .+ jitter)"
+        res_1 = cmpfit(λ_spax, I_spax, σ_spax, fit_step1, p1free .+ jitter, parinfo=parinfo_1, config=config)
         n += 1
         if n > 10
             @warn "LM solver has exceeded 10 tries on the continuum fit of spaxel $spaxel. Aborting."
@@ -521,10 +536,17 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     res_2 = cmpfit(λ_spax, I_spax.-I_cont, σ_spax, fit_step2, p2free, parinfo=parinfo_2, config=config)
     n = 1
     while res_2.niter < 5
-        @warn "LM Solver is stuck on the initial state for the continuum (step 2) fit of spaxel $spaxel. Retrying..."
-        # For some reason, masking out a pixel or two seems to fix the problem. This loop shouldn't ever need more than 1 iteration.
-        res_2 = cmpfit(λ_spax[1+n:end-n], (I_spax.-I_cont)[1+n:end-n], σ_spax[1+n:end-n], (x, p) -> fit_step2(x, p, false, n=n), 
-            p2free, parinfo=parinfo_2, config=config)
+        @warn "LM Solver is stuck on the initial state for the continuum fit (step 2) of spaxel $spaxel. Jittering starting params..."
+        # Jitter the starting parameters a bit
+        jit_lo = (lb_2 .- p2free) ./ 100  # defined to be negative
+        jit_hi = (ub_2 .- p2free) ./ 100  # defined to be positive
+        # handle infinite upper bounds
+        jit_hi[.~isfinite.(jit_hi)] .= .-jit_lo[.~isfinite.(jit_hi)]
+        # sample from a uniform distribution
+        jitter = [jh > jl ? rand(Uniform(jl, jh)) : 0.0 for (jl,jh) in zip(jit_lo, jit_hi)]
+        # redo the fit with the slightly jittered starting parameters
+        @debug "Jittered starting parameters: $(p2free .+ jitter)"
+        res_2 = cmpfit(λ_spax, I_spax.-I_cont, σ_spax, fit_step2, p2free .+ jitter, parinfo=parinfo_2, config=config)
         n += 1
         if n > 10
             @warn "LM solver has exceeded 10 tries on the continuum fit of spaxel $spaxel. Aborting."
@@ -594,6 +616,8 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
     @debug "Performing line component testing..."
 
     # Perform a test to see if each line with > 1 component really needs multiple components to be fit
+    line_names = Symbol[]
+    profiles_to_fit_list = Int[]
     pᵢ = 1
     for i in 1:cube_fitter.n_lines
         n_prof = 0
@@ -622,12 +646,14 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
             continue
         end
         # Only test the lines that are specified to be tested
-        if !(cube_fitter.lines.names[i] ∈ cube_fitter.line_test_lines)
+        if !(cube_fitter.lines.names[i] ∈ vcat(cube_fitter.line_test_lines...))
             continue
         end
+
         # Constrain the fitting region
         voff_max = max(abs(lower_bounds[pstart+1]), abs(upper_bounds[pstart+1]))
-        wbounds = cube_fitter.lines.λ₀[i] .* (1-2voff_max/C_KMS, 1+2voff_max/C_KMS)
+        fwhm_max = (!isnothing(cube_fitter.lines.tied_voff[i, 1]) && cube_fitter.flexible_wavesol) ? upper_bounds[pstart+3] : upper_bounds[pstart+2]
+        wbounds = cube_fitter.lines.λ₀[i] .* (1-(voff_max+fwhm_max)/C_KMS, 1+(voff_max+fwhm_max)/C_KMS)
         region = wbounds[1] .< λnorm .< wbounds[2]
 
         line_object = TransitionLines(
@@ -636,6 +662,7 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
             [cube_fitter.lines.annotate[i]],
             [cube_fitter.lines.λ₀[i]], 
             reshape(cube_fitter.lines.profiles[i, :], (1, cube_fitter.n_comps)), 
+            reshape(cube_fitter.lines.tied_amp[i, :], (1, cube_fitter.n_comps)),
             reshape(cube_fitter.lines.tied_voff[i, :], (1, cube_fitter.n_comps)),
             reshape(cube_fitter.lines.tied_fwhm[i, :], (1, cube_fitter.n_comps)), 
             reshape(cube_fitter.lines.acomp_amp[i, :], (1, cube_fitter.n_comps-1)), 
@@ -643,13 +670,14 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
             reshape(cube_fitter.lines.fwhm[i, :], (1, cube_fitter.n_comps)), 
             reshape(cube_fitter.lines.h3[i, :], (1, cube_fitter.n_comps)),
             reshape(cube_fitter.lines.h4[i, :], (1, cube_fitter.n_comps)), 
-            reshape(cube_fitter.lines.η[i, :], (1, cube_fitter.n_comps))
+            reshape(cube_fitter.lines.η[i, :], (1, cube_fitter.n_comps)),
+            cube_fitter.lines.combined
         )
 
         # Make sure I and σ are properly normalized
-        m = (mean(Inorm[region][end-4:end]) - mean(Inorm[region][1:5])) / (λnorm[region][end-2] - λnorm[region][3])
-        Ilin = Inorm[region][1] .+ m .* (λnorm[region] .- λnorm[region][1])
-        N = abs(nanmaximum(Inorm[region] .- Ilin))
+        m = (mean(Inorm[region][end-9:end]) - mean(Inorm[region][1:10])) / (λnorm[region][end-4] - λnorm[region][5])
+        Ilin = mean(Inorm[region][1:10]) .+ m .* (λnorm[region] .- λnorm[region][5])
+        N = nanmaximum(abs.(Inorm[region] .- Ilin))
         Ifit = (Inorm[region] .- Ilin) ./ N
         σfit = σnorm[region] ./ N
 
@@ -702,26 +730,8 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
         test_stat_final = round(test_stat, sigdigits=3)
         @debug "$(cube_fitter.lines.names[i]) will have $profiles_to_fit components"
 
-        # Lock the amplitudes to 0 for any profiles that will not be fit
-        for np in 1:n_prof
-            if profiles_to_fit < np
-                amp_ind = pstart + sum(pcomps[1:np-1])
-                # Amplitude
-                p₀[amp_ind] = 0.
-                param_lock[amp_ind] = 1
-                # Voff (flexible_wavesol only applies to the first component which is always fit, So
-                # here we can safely assume voff is always the 2nd and fwhm is always the 3rd comp)
-                param_lock[amp_ind+1] = 1
-                # FWHM (lock at a small nonzero value to prevent infinities)
-                param_lock[amp_ind+2] = 1
-                if cube_fitter.lines.profiles[i, np] == :GaussHermite
-                    param_lock[amp_ind+3:amp_ind+4] .= 1
-                end
-                if cube_fitter.lines.profiles[i, np] == :Voigt
-                    param_lock[amp_ind+3] = 1
-                end
-            end
-        end
+        push!(profiles_to_fit_list, profiles_to_fit)
+        push!(line_names, cube_fitter.lines.names[i])
 
         if cube_fitter.plot_line_test
             ax.set_xlabel(L"$\lambda_{\rm rest}$ ($\mu$m)")
@@ -738,6 +748,50 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
             end
             plt.savefig(joinpath(folder, "spaxel_$(spaxel[1])_$(spaxel[2]).pdf"), dpi=300, bbox_inches="tight")
             plt.close()
+        end
+    end
+
+    for group in cube_fitter.line_test_lines
+        # Get the group member indices
+        inds = [findfirst(ln .== line_names) for ln in group]
+        # Fit the maximum number of components in the group
+        profiles_group = maximum(profiles_to_fit_list[inds])
+
+        # Lock the amplitudes to 0 for any profiles that will not be fit
+        pᵢ = 1
+        for i in 1:cube_fitter.n_lines
+            for j in 1:cube_fitter.n_comps
+                if !isnothing(cube_fitter.lines.profiles[i, j])
+                    amp_ind = pᵢ
+                    # Check if using a flexible_wavesol tied voff -> if so there is an extra voff parameter
+                    if !isnothing(cube_fitter.lines.tied_voff[i, j]) && cube_fitter.flexible_wavesol && isone(j)
+                        pc = 4
+                    else
+                        pc = 3
+                    end
+                    if cube_fitter.lines.profiles[i, j] == :GaussHermite
+                        pc += 2
+                    elseif cube_fitter.lines.profiles[i, j] == :Voigt
+                        pc += 1
+                    end
+                    pᵢ += pc
+                    # Check if the line is a member of the group, and if so, lock any profiles > profiles_group
+                    if (cube_fitter.lines.names[i] in group) && (profiles_group < j)
+                        # Amplitude
+                        p₀[amp_ind] = 0.
+                        # Voff (flexible_wavesol only applies to the first component which is always fit, So
+                        # here we can safely assume voff is always the 2nd and fwhm is always the 3rd comp)
+                        # FWHM (lock at a small nonzero value to prevent infinities)
+                        param_lock[amp_ind:amp_ind+2] .= 1
+                        if cube_fitter.lines.profiles[i, j] == :GaussHermite
+                            param_lock[amp_ind+3:amp_ind+4] .= 1
+                        end
+                        if cube_fitter.lines.profiles[i, j] == :Voigt
+                            param_lock[amp_ind+3] = 1
+                        end
+                    end
+                end
+            end
         end
     end
 end
@@ -769,8 +823,9 @@ See Smith, Draine, et al. 2007; http://tir.astro.utoledo.edu/jdsmith/research/pa
     the initial parameter vector for individual spaxel fits
 """
 function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real},
-    σ::Vector{<:Real}, mask_bad::BitVector, continuum::Vector{<:Real}, ext_curve::Vector{<:Real}, lsf_interp_func::Function, N::Real; 
-    init::Bool=false, use_ap::Bool=false, bootstrap_iter::Bool=false, p1_boots::Union{Vector{<:Real},Nothing}=nothing)
+    σ::Vector{<:Real}, mask_lines::BitVector, mask_bad::BitVector, continuum::Vector{<:Real}, ext_curve::Vector{<:Real}, 
+    lsf_interp_func::Function, N::Real; init::Bool=false, use_ap::Bool=false, bootstrap_iter::Bool=false, 
+    p1_boots::Union{Vector{<:Real},Nothing}=nothing)
 
     @debug """\n
     #########################################################
@@ -915,9 +970,17 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     res = cmpfit(λnorm, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func_2), p₁, parinfo=parinfo, config=config)
     n = 1
     while res.niter < 5
-        @warn "LM Solver is stuck on the initial state for the line fit of spaxel $spaxel. Retrying..."
-        res = cmpfit(λnorm[1+n:end-n], Inorm[1+n:end-n], σnorm[1+n:end-n], (x, p) -> fit_step3(x, p, fit_func_2, n=n), 
-            p₁, parinfo=parinfo, config=config)
+        @warn "LM Solver is stuck on the initial state for the line fit of spaxel $spaxel. Jittering starting params..."
+        # Jitter the starting parameters a bit
+        jit_lo = (lbfree_tied .- p₁) ./ 100  # defined to be negative
+        jit_hi = (ubfree_tied .- p₁) ./ 100  # defined to be positive
+        # handle infinite upper bounds
+        jit_hi[.~isfinite.(jit_hi)] .= .-jit_lo[.~isfinite.(jit_hi)]
+        # sample from a uniform distribution
+        jitter = [jh > jl ? rand(Uniform(jl, jh)) : 0.0 for (jl,jh) in zip(jit_lo, jit_hi)]
+        # redo the fit with the slightly jittered starting parameters
+        @debug "Jittered starting parameters: $(p₁ .+ jitter)"
+        res = cmpfit(λnorm, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func_2), p₁ .+ jitter, parinfo=parinfo, config=config)
         n += 1
         if n > 10
             @warn "LM solver has exceeded 10 tries on the line fit of spaxel $spaxel. Aborting."
@@ -1009,8 +1072,9 @@ end
 
 
 function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
-    σ::Vector{<:Real}, mask_bad::BitVector, N::Real, area_sr::Vector{<:Real}, lsf_interp_func::Function; 
-    init::Bool=false, use_ap::Bool=false, bootstrap_iter::Bool=false, p1_boots_cont::Union{Vector{<:Real},Nothing}=nothing, 
+    σ::Vector{<:Real}, mask_lines::BitVector, mask_bad::BitVector, I_spline::Vector{<:Real}, N::Real, area_sr::Vector{<:Real}, 
+    lsf_interp_func::Function; init::Bool=false, use_ap::Bool=false, bootstrap_iter::Bool=false, 
+    p1_boots_cont::Union{Vector{<:Real},Nothing}=nothing, 
     p1_boots_line::Union{Vector{<:Real},Nothing}=nothing) 
 
     @assert !cube_fitter.use_pah_templates "The fit_joint and use_pah_templates options are mutually exclusive!"
@@ -1107,7 +1171,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         Hβ = test_line_snr(0.4862691, 0.0080, λ_spax, I_spax)
         if Hβ < 3
             amp_inds = contains.(names_lines_tied[.~lock_lines_tied], "amp")
-            scale_factor = clamp((Hβ-1.0)/3.0, 1e-5, Inf)
+            scale_factor = clamp((Hβ-1.0)/3.0, 1e-3, Inf)
             pfree_lines_tied[amp_inds] .*= scale_factor
         end
     end
@@ -1154,18 +1218,19 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
 
     # Fitting functions for either optical or MIR continuum
     function fit_joint_mir(x, pfree_tied_all; n=0)
+        out_type = eltype(pfree_tied_all)
 
         # Split into continuum and lines parameters
         pfree_cont = pfree_tied_all[1:n_free_cont]
         pfree_lines_tied = pfree_tied_all[n_free_cont+1:end]
 
         # Organize continuum parameters
-        ptot_cont = zeros(Float64, length(pars_0_cont))
+        ptot_cont = zeros(out_type, length(pars_0_cont))
         ptot_cont[.~lock_cont] = pfree_cont
         ptot_cont[lock_cont] .= pfix_cont
 
         # Organize lines parameters
-        ptot_lines = zeros(Float64, length(p_lines_tied))
+        ptot_lines = zeros(out_type, length(p_lines_tied))
         ptot_lines[.~lock_lines_tied] .= pfree_lines_tied
         ptot_lines[lock_lines_tied] .= pfix_lines_tied
 
@@ -1203,18 +1268,19 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     end
 
     function fit_joint_opt(x, pfree_tied_all; n=0)
+        out_type = eltype(pfree_tied_all)
 
         # Split into continuum and lines parameters
         pfree_cont = pfree_tied_all[1:n_free_cont]
         pfree_lines_tied = pfree_tied_all[n_free_cont+1:end]
 
         # Organize continuum parameters
-        ptot_cont = zeros(Float64, length(pars_0_cont))
+        ptot_cont = zeros(out_type, length(pars_0_cont))
         ptot_cont[.~lock_cont] = pfree_cont
         ptot_cont[lock_cont] .= pfix_cont
 
         # Organize lines parameters
-        ptot_lines = zeros(Float64, length(p_lines_tied))
+        ptot_lines = zeros(out_type, length(p_lines_tied))
         ptot_lines[.~lock_lines_tied] .= pfree_lines_tied
         ptot_lines[lock_lines_tied] .= pfix_lines_tied
 
@@ -1316,13 +1382,20 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     res = cmpfit(λ_spax, I_spax, σ_spax, fit_joint, p₁, parinfo=parinfo, config=config)
     n = 1
     while res.niter < 5 
-        @warn "LM Solver is stuck on the initial state for the continuum+lines fit of spaxel $spaxel. Retrying..."
-        # For some reason, masking out a pixel or two seems to fix the problem. This loop shouldn't ever need more than 1 iteration.
-        res = cmpfit(λ_spax[1+n:end-n], I_spax[1+n:end-n], σ_spax[1+n:end-n], (x, p) -> fit_joint(x, p, n=n), 
-            p₁, parinfo=parinfo, config=config)
+        @warn "LM Solver is stuck on the initial state for the continuum+lines fit of spaxel $spaxel. Jittering starting params..."
+        # Jitter the starting parameters a bit
+        jit_lo = (lower_bounds .- p₁) ./ 100  # defined to be negative
+        jit_hi = (upper_bounds .- p₁) ./ 100  # defined to be positive
+        # handle infinite upper bounds
+        jit_hi[.~isfinite.(jit_hi)] .= .-jit_lo[.~isfinite.(jit_hi)]
+        # sample from a uniform distribution
+        jitter = [jh > jl ? rand(Uniform(jl, jh)) : 0.0 for (jl,jh) in zip(jit_lo, jit_hi)]
+        # redo the fit with the slightly jittered starting parameters
+        @debug "Jittered starting parameters: $(p₁ .+ jitter)"
+        res = cmpfit(λ_spax, I_spax, σ_spax, fit_joint, p₁ .+ jitter, parinfo=parinfo, config=config)
         n += 1
         if n > 10
-            @warn "LM solver has exceeded 10 tries on the continuum fit of spaxel $spaxel. Aborting."
+            @warn "LM solver has exceeded 10 tries on the continuum+lines fit of spaxel $spaxel. Aborting."
             break
         end
     end 
@@ -1549,20 +1622,23 @@ function plot_spaxel_fit(spectral_region::Symbol, λ_um::Vector{<:Real}, I::Vect
 
         # If max is above 10^4, normalize so the y axis labels aren't super wide
         factor = spectral_region == :MIR ? 1 ./ λ : ones(length(λ))
-
-        min_inten = sum((I .* factor) .< -0.01) > 30 ? -2nanstd(I .* factor) : -0.01
-        max_inten = isnothing(range) ? 
-                    1.3nanmaximum(I[.~mask_lines .& .~mask_bad] .* factor[.~mask_lines .& .~mask_bad]) : 
-                    1.1nanmaximum((I .* factor)[range[1] .< λ .< range[2]])
-
-        power = floor(Int, log10(max_inten))
+        power = floor(Int, log10(maximum(I .* factor)))
         if (power ≥ 4) || (power ≤ -4)
             norm = 10.0^power
         else
             norm = 1.0
         end
-        min_inten /= norm
-        max_inten /= norm
+
+        min_inten = sum((I ./ norm .* factor) .< -0.01) > 30 ? -2nanstd(I ./ norm .* factor) : -0.01
+        max_inten = isnothing(range) ? 
+                    1.3nanmaximum(I[.~mask_lines .& .~mask_bad] ./ norm .* factor[.~mask_lines .& .~mask_bad]) : 
+                    1.1nanmaximum((I ./ norm .* factor)[range[1] .< λ .< range[2]])
+        
+        if max_inten < 1
+            norm /= 10
+            max_inten *= 10
+            power -= 1
+        end
 
         # make color schemes: https://paletton.com/#uid=3000z0kDlkVsFuswHp7LfgmSRaH
         # https://paletton.com/#uid=73u1F0k++++qKZWAF+V+VAEZXqK
@@ -1787,11 +1863,11 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     if !cube_fitter.fit_joint
         popt_c, I_cont, comps_cont, n_free_c, perr_c, pahtemp = continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, mask_bad, norm, area_sr, 
             cube_fitter.use_pah_templates && pah_template_spaxel, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_cont)
-        popt_l, I_line, comps_line, n_free_l, perr_l = line_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_bad, I_cont, comps_cont[ext_key], 
+        popt_l, I_line, comps_line, n_free_l, perr_l = line_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, mask_bad, I_cont, comps_cont[ext_key], 
             lsf_interp_func, norm, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_l)
     else
         popt_c, popt_l, I_cont, I_line, comps_cont, comps_line, n_free_c, n_free_l, perr_c, perr_l, pahtemp = all_fit_spaxel(cube_fitter,
-            spaxel, λ, I, σ, mask_bad, norm, area_sr, lsf_interp_func, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots_cont=p1_boots_cont,
+            spaxel, λ, I, σ, mask_lines, mask_bad, I_spline, norm, area_sr, lsf_interp_func, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots_cont=p1_boots_cont,
             p1_boots_line=p1_boots_l)
     end
 

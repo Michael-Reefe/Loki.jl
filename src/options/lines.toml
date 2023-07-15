@@ -901,8 +901,8 @@ default = "Voigt"
 # acomps: specify which, if any, lines to add an additional component, and what type
 # of profile it should be. Can add an arbitrary number of additional components.
 [acomps]
-# OIII_04960 = ["Voigt"]
-# OIII_05008 = ["Voigt"]
+OIII_04960 = ["Voigt"]
+OIII_05008 = ["Voigt"]
 
 # NeVI_7652 = ["Voigt"]
 # NeII_12813 = ["Voigt"]

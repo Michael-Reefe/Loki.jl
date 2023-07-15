@@ -572,7 +572,7 @@ struct CubeFitter{T<:Real,S<:Integer}
     flexible_wavesol::Bool
     n_bootstrap::S
     random_seed::S
-    line_test_lines::Vector{Symbol}
+    line_test_lines::Vector{Vector{Symbol}}
     line_test_threshold::T
     plot_line_test::Bool
 
@@ -592,7 +592,7 @@ struct CubeFitter{T<:Real,S<:Integer}
         for key in keys(kwargs)
             out[key] = kwargs[key]
         end
-        out[:line_test_lines] = [Symbol(ln) for ln in out[:line_test_lines]]
+        out[:line_test_lines] = [[Symbol(ln) for ln in group] for group in out[:line_test_lines]]
         out[:plot_spaxels] = Symbol(out[:plot_spaxels])
         if !haskey(out, :plot_range)
             out[:plot_range] = nothing
@@ -1061,10 +1061,11 @@ function get_opt_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, 
     atten_plim = [continuum.E_BV.limits, continuum.E_BV_factor.limits]
     atten_locked = [continuum.E_BV.locked, continuum.E_BV_factor.locked]
 
-    # test the SNR of the H-beta line
+    # test the SNR of the H-beta and H-gamma lines
     Hβ_snr = test_line_snr(0.4862691, 0.0080, λ, I)
-    # if the SNR is less than 3, we cannot constrain E(B-V), so lock it to 0
-    if Hβ_snr < 3
+    Hγ_snr = test_line_snr(0.4341691, 0.0080, λ, I)
+    # if the SNR is less than 3, we cannot constrain E(B-V)_gas, so lock it to 0
+    if (Hβ_snr < 3) || (Hγ_snr < 2)
         atten_locked[1] = true
     end
 
@@ -1258,14 +1259,7 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
         p₀ = copy(cube_fitter.p_init_cont)
 
         # scale all flux amplitudes by the difference in medians between the spaxel and the summed spaxels
-        # ---> Note here that we do not include the number of pixels in the calculation, as is done in the MIR case,
-        #      which means this inherently includes the ratio of the solid angles between 1 spaxel and the full cube within
-        #      this scaling factor. This is necessary in the optical case because our SSP amplitudes (or masses) are measured
-        #      in units that should be independent of solid angle (solar masses), so any effects of the solid angle should
-        #      be removed prior to fitting such that the solid angle can be divided out from the amplitudes during
-        #      the fitting process, whereas in the MIR case all of our continuum amplitudes are measured in (normalized) 
-        #      per-solid-angle units.
-        scale = max(nanmedian(I), 1e-10) * N / nanmedian(sumdim(cube_fitter.cube.I, (1,2)))
+        scale = max(nanmedian(I), 1e-10) * N / nanmedian(sumdim(cube_fitter.cube.I, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2)))
 
         # Start with a small reddening despite the initial fit
         # pₑ = 1 + 3cube_fitter.n_ssps + 2
@@ -1297,8 +1291,9 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
         pᵢ += 2
         # test the SNR of the H-beta line
         Hβ_snr = test_line_snr(0.4862691, 0.0060, λ, I)
+        Hγ_snr = test_line_snr(0.4341691, 0.0080, λ, I)
         # if the SNR is less than 3, we cannot constrain E(B-V), so lock it to 0
-        if Hβ_snr < 3
+        if (Hβ_snr < 3) || (Hγ_snr < 2)
             @debug "Locking E(B-V) to 0 due to insufficient H-beta emission"
             p₀[pᵢ] = 0.
         end
@@ -1317,7 +1312,7 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
             else
                 error("Uncrecognized extinction curve $(cube_fitter.extinction_curve)")
             end
-            m_ssps[i] = nanmedian(I) * median(Ω) / att / cube_fitter.n_ssps
+            m_ssps[i] = nanmedian(I) / att / cube_fitter.n_ssps
         end
 
         ssp_pars = vcat([[mi, ai.value, zi.value] for (mi, ai, zi) in zip(m_ssps, continuum.ssp_ages, continuum.ssp_metallicities)]...)
