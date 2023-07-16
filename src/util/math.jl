@@ -450,8 +450,8 @@ end
 Simple power law function where the flux is proportional to the wavelength to the power alpha,
 normalized at 9.7 um.
 """
-@inline function power_law(λ::Real, α::Real)
-    (λ/9.7)^α
+@inline function power_law(λ::Real, α::Real, ref_λ::Real=9.7)
+    (λ/ref_λ)^α
 end
 
 
@@ -503,7 +503,7 @@ end
 
 
 """
-    convolve_losvd(ssp_templates, vsyst, v, σ, npix)
+    convolve_losvd(templates, vsyst, v, σ, npix)
 
 Convolve a set of stellar population templates with a line-of-sight velocity distribution (LOSVD)
 to produce templates according to the fitted stellar kinematics. Uses the Fourier Transforms of 
@@ -512,30 +512,45 @@ the templates and the LOSVD to quickly calculate the convolution.
 Adapted and simplified from the pPXF and BADASS python codes.
 Cappellari (2017) http://adsabs.harvard.edu/abs/2017MNRAS.466..798C
 """
-function convolve_losvd(ssps::Array{T, 2}, vsyst::Real, v::Real, σ::Real, velscale::Real, npix::Integer) where {T<:Real}
+function convolve_losvd(_templates::AbstractArray{T}, vsyst::Real, v::Real, σ::Real, velscale::Real, npix::Integer;
+    temp_fft::Bool=false, npad_in::Integer=0) where {T<:Number}
+
+    if temp_fft
+        @assert npad_in > 0 "npad_in must be specified for inputs that are already FFT'ed!"
+    end
 
     # Normalize velocities to pixel units
     vsysts = vsyst / velscale
     vs = v / velscale
     σs = σ / velscale
 
-    # Pad with 0s up to a factor of small primes to increase efficiency 
-    s = size(ssps)
-    npad = nextprod([2,3,5], s[1])
-    ssp_temps = zeros(typeof(v), npad, s[2])
-    for j in axes(ssps, 2)
-        ssp_temps[1:s[1], j] = ssps[:, j]
+    templates = copy(_templates)
+    if ndims(_templates) == 1
+        templates = reshape(_templates, (length(templates), 1))
     end
 
-    # Calculate the Fourier transform of the templates
-    ssp_rfft = rfft(ssp_temps, 1)
+    # Check if the templates are already FFT'ed
+    if !temp_fft
+        # Pad with 0s up to a factor of small primes to increase efficiency 
+        s = size(templates)
+        npad = nextprod([2,3,5], s[1])
+        temps = zeros(typeof(v), npad, s[2])
+        for j in axes(templates, 2)
+            temps[1:s[1], j] = templates[:, j]
+        end
+        # Calculate the Fourier transform of the templates
+        temp_rfft = rfft(temps, 1)
+    else
+        npad = npad_in
+        temp_rfft = templates
+    end
 
     # Calculate the Fourier transform of the LOSVD
-    nl = size(ssp_rfft, 1)
+    nl = size(temp_rfft, 1)
     lvd_rfft = losvd_rfft(vsysts, vs, σs, nl, σ_diff=0., factor=1.)
 
     # Calculate the inverse Fourier transform of the resultant distribution
-    conv_temp = irfft(ssp_rfft .* lvd_rfft, npad, 1)
+    conv_temp = irfft(temp_rfft .* lvd_rfft, npad, 1)
 
     # Take only enough pixels to match the length of the input spectrum
     conv_temp[1:npix, :]
@@ -1320,9 +1335,10 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
 end
 
 # Optical fitting version of the function
-function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, velscale::Real, vsyst::Real, n_ssps::Integer, 
-    ssp_λ::Vector{<:Real}, ssp_templates::Union{Vector{Spline2D},Matrix{<:Real}}, fit_uv_bump::Bool, fit_covering_frac::Bool, 
-    Ω::Vector{<:Real}, extinction_curve::String, return_components::Bool)   
+function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, velscale::Real, vsyst_ssp::Real, vsyst_feii::Real, 
+    npad_feii::Integer, n_ssps::Integer, ssp_λ::Vector{<:Real}, ssp_templates::Union{Vector{Spline2D},Matrix{<:Real}}, 
+    feii_templates_fft::Matrix{<:Complex}, n_power_law::Integer, fit_uv_bump::Bool, fit_covering_frac::Bool, fit_opt_na_feii::Bool, 
+    fit_opt_br_feii::Bool, extinction_curve::String, return_components::Bool)   
 
     # Prepare outputs
     out_type = eltype(params)
@@ -1344,12 +1360,12 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, ve
     end
 
     # Convolve with a line-of-sight velocity distribution (LOSVD) according to the stellar velocity and dispersion
-    conv_ssps = convolve_losvd(ssps, vsyst, params[pᵢ], params[pᵢ+1], velscale, length(λ))
+    conv_ssps = convolve_losvd(ssps, vsyst_ssp, params[pᵢ], params[pᵢ+1], velscale, length(λ))
     pᵢ += 2
 
     # Combine the convolved stellar templates together with the weights
     for i in 1:n_ssps
-        comps["SSP_$i"] = conv_ssps[:, i] ./ Ω .* median(Ω)
+        comps["SSP_$i"] = conv_ssps[:, i]
         contin .+= comps["SSP_$i"]
     end
 
@@ -1380,6 +1396,30 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, ve
     end
     contin .*= comps["attenuation_stars"]
 
+    # Fe II emission
+    if fit_opt_na_feii
+        conv_na_feii = convolve_losvd(feii_templates_fft[:, 1], vsyst_feii, params[pᵢ+1], params[pᵢ+2], velscale, length(λ), 
+            temp_fft=true, npad_in=npad_feii)
+        comps["na_feii"] = params[pᵢ] .* conv_na_feii[:, 1]
+        contin .+= comps["na_feii"] .* comps["attenuation_gas"]
+        pᵢ += 3
+    end
+    if fit_opt_br_feii
+        conv_br_feii = convolve_losvd(feii_templates_fft[:, 2], vsyst_feii, params[pᵢ+1], params[pᵢ+2], velscale, length(λ),
+            temp_fft=true, npad_in=npad_feii)
+        comps["br_feii"] = params[pᵢ] .* conv_br_feii[:, 1]
+        contin .+= comps["br_feii"] .* comps["attenuation_gas"]
+        pᵢ += 3
+    end
+
+    # Power laws
+    for j ∈ 1:n_power_law
+        # Reference wavelength at 5100 angstroms for the amplitude
+        comps["power_law_$j"] = params[pᵢ] .* power_law.(λ, params[pᵢ+1], 0.5100)
+        contin .+= comps["power_law_$j"]
+        pᵢ += 2
+    end
+
     if return_components
         return contin, comps
     end
@@ -1388,9 +1428,10 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, ve
 end
 
 
-function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, velscale::Real, vsyst::Real, n_ssps::Integer, 
-    ssp_λ::Vector{<:Real}, ssp_templates::Union{Vector{Spline2D},Matrix{<:Real}}, fit_uv_bump::Bool, fit_covering_frac::Bool, 
-    Ω::Vector{<:Real}, extinction_curve::String)
+function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, velscale::Real, vsyst_ssp::Real, vsyst_feii::Real, 
+    npad_feii::Integer, n_ssps::Integer, ssp_λ::Vector{<:Real}, ssp_templates::Union{Vector{Spline2D},Matrix{<:Real}}, 
+    feii_templates_fft::Matrix{<:Complex}, n_power_law::Integer, fit_uv_bump::Bool, fit_covering_frac::Bool, fit_opt_na_feii::Bool, 
+    fit_opt_br_feii::Bool, extinction_curve::String)   
 
     # Prepare outputs
     out_type = eltype(params)
@@ -1411,11 +1452,13 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, ve
     end
 
     # Convolve with a line-of-sight velocity distribution (LOSVD) according to the stellar velocity and dispersion
-    conv_ssps = convolve_losvd(ssps, vsyst, params[pᵢ], params[pᵢ+1], velscale, length(λ))
+    conv_ssps = convolve_losvd(ssps, vsyst_ssp, params[pᵢ], params[pᵢ+1], velscale, length(λ))
     pᵢ += 2
 
     # Combine the convolved stellar templates together with the weights
-    contin .+= sumdim(conv_ssps, 2) ./ Ω .* median(Ω)
+    for i in 1:n_ssps
+        contin .+= conv_ssps[:, i]
+    end
 
     # Apply attenuation law
     E_BV = params[pᵢ]
@@ -1434,16 +1477,38 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, ve
     end
     pᵢ += 2
     if extinction_curve == "ccm"
-        att = attenuation_cardelli(λ, E_BV * E_BV_factor)
+        att_stars = attenuation_cardelli(λ, E_BV * E_BV_factor)
+        att_gas = attenuation_cardelli(λ, E_BV)
     elseif extinction_curve == "calzetti"
-        att = attenuation_calzetti(λ, E_BV * E_BV_factor, δ=δ, f_nodust=f_nodust)
+        att_stars = attenuation_calzetti(λ, E_BV * E_BV_factor, δ=δ, f_nodust=f_nodust)
+        att_gas = attenuation_calzetti(λ, E_BV, δ=δ, f_nodust=f_nodust)
     else
         error("Unrecognized extinctino curve $extinction_curve")
     end
-    contin .*= att
+    contin .*= att_stars
+
+    # Fe II emission
+    if fit_opt_na_feii
+        conv_na_feii = convolve_losvd(feii_templates_fft[:, 1], vsyst_feii, params[pᵢ+1], params[pᵢ+2], velscale, length(λ), 
+            temp_fft=true, npad_in=npad_feii)
+        contin .+= params[pᵢ] .* conv_na_feii[:, 1] .* att_gas
+        pᵢ += 3
+    end
+    if fit_opt_br_feii
+        conv_br_feii = convolve_losvd(feii_templates_fft[:, 2], vsyst_feii, params[pᵢ+1], params[pᵢ+2], velscale, length(λ),
+            temp_fft=true, npad_in=npad_feii)
+        contin .+= params[pᵢ] .* conv_br_feii[:, 1] .* att_gas
+        pᵢ += 3
+    end
+
+    # Power laws
+    for _ ∈ 1:n_power_law
+        # Reference wavelength at 5100 angstroms for the amplitude
+        contin .+= params[pᵢ] .* power_law.(λ, params[pᵢ+1], 0.5100)
+        pᵢ += 2
+    end
 
     contin
-
 end
 
 
@@ -2010,9 +2075,9 @@ end
 
 
 function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, comps::Dict, n_ssps::Integer,
-    n_lines::Integer, n_acomps::Integer, n_comps::Integer, lines::TransitionLines, flexible_wavesol::Bool, 
-    lsf::Function, popt_l::Vector{T}, perr_l::Vector{T}, extinction::Vector{T}, mask_lines::BitVector, 
-    continuum::Vector{T}, area_sr::Vector{T}, propagate_err::Bool=true) where {T<:Real}
+    n_power_law::Integer, fit_opt_na_feii::Bool, fit_opt_br_feii::Bool, n_lines::Integer, n_acomps::Integer, n_comps::Integer, 
+    lines::TransitionLines, flexible_wavesol::Bool, lsf::Function, popt_l::Vector{T}, perr_l::Vector{T}, extinction::Vector{T}, 
+    mask_lines::BitVector, continuum::Vector{T}, area_sr::Vector{T}, propagate_err::Bool=true) where {T<:Real}
 
     @debug "Calculating extra parameters"
 
@@ -2130,8 +2195,9 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                     fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err, propagate_err=propagate_err)
                 
                 # Calculate equivalent width using the helper function
-                p_lines[pₒ+1], p_lines_err[pₒ+1] = calculate_eqw(λ, lines.profiles[k, j], comps, n_ssps, amp*N, amp_err*N, mean_μm, 
-                    mean_μm_err, fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err, propagate_err=propagate_err)
+                p_lines[pₒ+1], p_lines_err[pₒ+1] = calculate_eqw(λ, lines.profiles[k, j], comps, n_ssps, n_power_law, fit_opt_na_feii,
+                    fit_opt_br_feii, amp*N, amp_err*N, mean_μm, mean_μm_err, fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, 
+                    η=η, η_err=η_err, propagate_err=propagate_err)
 
                 # SNR
                 p_lines[pₒ+2] = amp*N*ext / std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)])
@@ -2306,7 +2372,8 @@ end
 
 
 function calculate_eqw(λ::Vector{T}, profile::Symbol, comps::Dict, n_ssps::Integer, 
-    amp::T, amp_err::T, peak::T, peak_err::T, fwhm::T, fwhm_err::T; 
+    n_power_law::Integer, fit_opt_na_feii::Bool, fit_opt_br_feii::Bool, amp::T, amp_err::T, 
+    peak::T, peak_err::T, fwhm::T, fwhm_err::T; 
     h3::Union{T,Nothing}=nothing, h3_err::Union{T,Nothing}=nothing, 
     h4::Union{T,Nothing}=nothing, h4_err::Union{T,Nothing}=nothing, 
     η::Union{T,Nothing}=nothing, η_err::Union{T,Nothing}=nothing, 
@@ -2317,6 +2384,15 @@ function calculate_eqw(λ::Vector{T}, profile::Symbol, comps::Dict, n_ssps::Inte
         contin .+= comps["SSP_$i"]
     end
     contin .*= comps["attenuation_stars"]
+    if fit_opt_na_feii
+        contin .+= comps["na_feii"] .* comps["attenuation_gas"]
+    end
+    if fit_opt_br_feii
+        contin .+= comps["br_feii"] .* comps["attenuation_gas"]
+    end
+    for j ∈ 1:n_power_law
+        contin .+= comps["power_law_$j"]
+    end
 
     # Integrate the flux ratio to get equivalent width
     if profile == :Gaussian

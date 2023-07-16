@@ -60,7 +60,7 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
         end
 
         for j ∈ 1:cube_fitter.n_power_law
-            param_maps.power_law[j][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z)) : -Inf
+            param_maps.power_law[j][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*N*(1+z))-17 : -Inf
             param_errs[1].power_law[j][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN 
             param_errs[2].power_law[j][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN 
             param_maps.power_law[j][:index][index] = out_params[index, pᵢ+1]
@@ -409,12 +409,12 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
 
         # Stellar continuum amplitude, temp
         # Convert back to observed-frame amplitudes by multiplying by 1+z
+        Ω_med = median(cube_fitter.cube.Ω)
         pᵢ = 1
         for i ∈ 1:cube_fitter.n_ssps
             # Un-normalize the amplitudes by applying the normalization factors used in the fitting routines
             # (median of the SSP template, followed by normalization N)
             ssp_med = median([cube_fitter.ssp_templates[j](out_params[index, pᵢ+1], out_params[index, pᵢ+2]) for j in eachindex(cube_fitter.ssp_λ)])
-            Ω_med = median(cube_fitter.cube.Ω)
             param_maps.stellar_populations[i][:mass][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ] * Ω_med / ssp_med * N / (1+z)) : -Inf
             param_errs[1].stellar_populations[i][:mass][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
             param_errs[2].stellar_populations[i][:mass][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
@@ -435,7 +435,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
         param_errs[2].stellar_kinematics[:vdisp][index] = out_errs[index, pᵢ+1, 2]
         pᵢ += 2
 
-        # Report the E(B-V) for gas, rather than stars
+        # Attenuation 
         param_maps.attenuation[:E_BV][index] = out_params[index, pᵢ]
         param_errs[1].attenuation[:E_BV][index] = out_errs[index, pᵢ, 1] 
         param_errs[2].attenuation[:E_BV][index] = out_errs[index, pᵢ, 2] 
@@ -456,11 +456,49 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             pᵢ += 1
         end
 
+        # Fe II emission
+        if cube_fitter.fit_opt_na_feii
+            param_maps.feii[:na_amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ] * N / (1+z)) : -Inf
+            param_errs[1].feii[:na_amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
+            param_errs[2].feii[:na_amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
+            param_maps.feii[:na_vel][index] = out_params[index, pᵢ+1]
+            param_errs[1].feii[:na_vel][index] = out_errs[index, pᵢ+1, 1]
+            param_errs[2].feii[:na_vel][index] = out_errs[index, pᵢ+1, 2]
+            param_maps.feii[:na_vdisp][index] = out_params[index, pᵢ+2]
+            param_errs[1].feii[:na_vdisp][index] = out_errs[index, pᵢ+2, 1]
+            param_errs[2].feii[:na_vdisp][index] = out_errs[index, pᵢ+2, 2]
+            pᵢ += 3
+        end
+        if cube_fitter.fit_opt_br_feii
+            param_maps.feii[:br_amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ] * N / (1+z)) : -Inf
+            param_errs[1].feii[:br_amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
+            param_errs[2].feii[:br_amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
+            param_maps.feii[:br_vel][index] = out_params[index, pᵢ+1]
+            param_errs[1].feii[:br_vel][index] = out_errs[index, pᵢ+1, 1]
+            param_errs[2].feii[:br_vel][index] = out_errs[index, pᵢ+1, 2]
+            param_maps.feii[:br_vdisp][index] = out_params[index, pᵢ+2]
+            param_errs[1].feii[:br_vdisp][index] = out_errs[index, pᵢ+2, 1]
+            param_errs[2].feii[:br_vdisp][index] = out_errs[index, pᵢ+2, 2]
+            pᵢ += 3
+        end
+
+        # Power laws
+        for j ∈ 1:cube_fitter.n_power_law
+            param_maps.power_law[j][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ] * N / (1+z)) : -Inf
+            param_errs[1].power_law[j][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
+            param_errs[2].power_law[j][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
+            param_maps.power_law[:index][index] = out_params[index, pᵢ+1]
+            param_errs[1].power_law[:index][index] = out_errs[index, pᵢ+1, 1]
+            param_errs[2].power_law[:index][index] = out_errs[index, pᵢ+1, 2]
+            pᵢ += 2
+        end
+
         if cube_fitter.save_full_model
             # End of continuum parameters: recreate the continuum model
-            I_cont, comps_c = model_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], N, cube_fitter.velscale, cube_fitter.vsyst,
-                cube_fitter.n_ssps, cube_fitter.ssp_λ, cube_fitter.ssp_templates, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac,
-                cube_data.area_sr, cube_fitter.extinction_curve, true)
+            I_cont, comps_c = model_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], N, cube_fitter.velscale, cube_fitter.vsyst_ssp,
+                cube_fitter.vsyst_feii, cube_fitter.n_ssps, cube_fitter.ssp_λ, cube_fitter.ssp_templates, cube_fitter.feii_templates_fft,
+                cube_fitter.n_power_law, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, 
+                cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve, true)
         end
 
         # Save marker of the point where the continuum parameters end and the line parameters begin
@@ -620,6 +658,15 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             end
             cube_model.attenuation_stars[index, :] .= comps["attenuation_stars"]
             cube_model.attenuation_gas[index, :] .= comps["attenuation_gas"]
+            if cube_fitter.fit_opt_na_feii
+                cube_model.na_feii[index, :] .= comps["na_feii"]
+            end
+            if cube_fitter.fit_opt_br_feii
+                cube_model.br_feii[index, :] .= comps["br_feii"]
+            end
+            for l ∈ 1:cube_fitter.n_power_law
+                cube_model.power_law[index, :] .= comps["power_law_$l"]
+            end
 
             for j ∈ 1:cube_fitter.n_comps
                 for k ∈ 1:cube_fitter.n_lines
@@ -701,83 +748,87 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     snr_thresh::Float64=3., cmap::PyObject=py_colormap.cubehelix, line_latex::Union{String,Nothing}=nothing)
 
     # I know this is ugly but I couldn't figure out a better way to do it lmao
-    if occursin("amp", String(name_i))
-        if occursin("stellar_continuum", String(name_i))
+    if occursin("amp", name_i)
+        if occursin("stellar_continuum", name_i)
             bunit = L"$\log_{10}(A_{*})$" # normalized
-        elseif occursin("dust_continuum", String(name_i))
+        elseif occursin("dust_continuum", name_i)
             bunit = L"$\log_{10}(A_{\rm dust})$" # normalized
-        elseif occursin("power_law", String(name_i))
-            bunit = L"$\log_{10}(A_{\rm pl})$" # normalized
-        elseif occursin("hot_dust", String(name_i))
+        elseif occursin("power_law", name_i)
+            bunit = L"$\log_{10}(A_{\rm pl} / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-2}$)"
+        elseif occursin("hot_dust", name_i)
             bunit = L"$\log_{10}(A_{\rm sil})$" # normalized
         else
             bunit = L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$"
         end
-    elseif occursin("temp", String(name_i))
+    elseif occursin("temp", name_i)
         bunit = L"$T$ (K)"
-    elseif occursin("fwhm", String(name_i)) && (occursin("PAH", String(name_i)) || occursin("abs", String(name_i)))
+    elseif occursin("fwhm", name_i) && (occursin("PAH", name_i) || occursin("abs", name_i))
         bunit = L"FWHM ($\mu$m)"
-    elseif occursin("fwhm", String(name_i)) && !occursin("PAH", String(name_i)) && !occursin("abs", String(name_i))
+    elseif occursin("fwhm", name_i) && !occursin("PAH", name_i) && !occursin("abs", name_i)
         bunit = L"FWHM (km s$^{-1}$)"
-    elseif occursin("mean", String(name_i)) || occursin("peak", String(name_i))
+    elseif occursin("mean", name_i) || occursin("peak", name_i)
         bunit = L"$\mu$ ($\mu$m)"
-    elseif occursin("voff", String(name_i))
+    elseif occursin("voff", name_i)
         bunit = L"$v_{\rm off}$ (km s$^{-1}$)"
-    elseif occursin("SNR", String(name_i))
+    elseif occursin("SNR", name_i)
         bunit = L"$S/N$"
-    elseif occursin("tau", String(name_i))
-        if occursin("warm", String(name_i))
+    elseif occursin("tau", name_i)
+        if occursin("warm", name_i)
             bunit = L"$\tau_{\rm warm}$"
-        elseif occursin("cold", String(name_i))
+        elseif occursin("cold", name_i)
             bunit = L"$\tau_{\rm cold}$"
-        elseif occursin("ice", String(name_i))
+        elseif occursin("ice", name_i)
             bunit = L"$\tau_{\rm ice}$"
-        elseif occursin("ch", String(name_i))
+        elseif occursin("ch", name_i)
             bunit = L"$\tau_{\rm CH}$"
-        elseif occursin("9_7", String(name_i))
+        elseif occursin("9_7", name_i)
             bunit = L"$\tau_{9.7}$"
         else
             bunit = L"$\tau$"
         end
-    elseif occursin("flux", String(name_i))
+    elseif occursin("flux", name_i)
         bunit = L"$\log_{10}(F /$ erg s$^{-1}$ cm$^{-2}$)"
-    elseif occursin("eqw", String(name_i))
+    elseif occursin("eqw", name_i)
         bunit = L"$W_{\rm eq}$ ($\mu$m)"
-    elseif occursin("chi2", String(name_i))
+    elseif occursin("chi2", name_i)
         bunit = L"$\tilde{\chi}^2$"
-    elseif occursin("dof", String(name_i))
+    elseif occursin("dof", name_i)
         bunit = "d.o.f."
-    elseif occursin("h3", String(name_i))
+    elseif occursin("h3", name_i)
         bunit = L"$h_3$"
-    elseif occursin("h4", String(name_i))
+    elseif occursin("h4", name_i)
         bunit = L"$h_4$"
-    elseif occursin("mixing", String(name_i))
+    elseif occursin("mixing", name_i)
         bunit = L"$\eta$"
-    elseif occursin("beta", String(name_i))
+    elseif occursin("beta", name_i)
         bunit = L"$\beta$"
-    elseif occursin("frac", String(name_i))
+    elseif occursin("frac", name_i)
         bunit = L"$C_f$"
-    elseif occursin("index", String(name_i)) && occursin("PAH", String(name_i))
+    elseif occursin("index", name_i) && occursin("PAH", name_i)
         bunit = L"$m$"
-    elseif occursin("index", String(name_i)) && !occursin("PAH", String(name_i))
+    elseif occursin("index", name_i)
         bunit = L"$\alpha$"
-    elseif occursin("cutoff", String(name_i))
+    elseif occursin("cutoff", name_i)
         bunit = L"$\nu$"
-    elseif occursin("mass", String(name_i))
+    elseif occursin("mass", name_i)
         bunit = L"$\log_{10}(M / h^2M_{\odot})$"
-    elseif occursin("age", String(name_i))
+    elseif occursin("age", name_i)
         bunit = L"$t$ (Gyr)"
-    elseif occursin("metallicity", String(name_i))
+    elseif occursin("metallicity", name_i)
         bunit = L"[M$/$H]"
-    elseif occursin("vel", String(name_i))
+    elseif occursin("vel", name_i) && occursin("stellar", name_i)
         bunit = L"$v_*$ (km s$^{-1}$)"
-    elseif occursin("vdisp", String(name_i))
+    elseif occursin("vel", name_i)
+        bunit = L"$v$ (km s$^{-1}$)"
+    elseif occursin("vdisp", name_i) && occursin("stellar", name_i)
         bunit = L"$\sigma_*$ (km s$^{-1}$)"
-    elseif occursin("E_BV_factor", String(name_i))
+    elseif occursin("vdisp", name_i)
+        bunit = L"$\sigma$ (km s$^{-1}$)"
+    elseif occursin("E_BV_factor", name_i)
         bunit = L"$E(B-V)_{\rm stars}/E(B-V)_{\rm gas}$"
-    elseif occursin("E_BV", String(name_i))
+    elseif occursin("E_BV", name_i)
         bunit = L"$E(B-V)_{\rm gas}$"
-    elseif occursin("delta_UV", String(name_i))
+    elseif occursin("delta_UV", name_i)
         bunit = L"$\delta$"
     end
 
@@ -1225,6 +1276,28 @@ function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "extinction", "$(name_i).pdf")
         plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf),
             cube_fitter.cosmology, cube_fitter.cube.wcs)
+    end
+
+    # Fe II parameters
+    if cube_fitter.fit_opt_na_feii || cube_fitter.fit_opt_br_feii
+        for parameter ∈ keys(param_maps.feii)
+            data = param_maps.feii[parameter]
+            name_i = join(["feii", parameter], "_")
+            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "continuum", "$(name_i).pdf")    
+            plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf),
+                cube_fitter.cosmology, cube_fitter.cube.wcs)
+        end
+    end
+
+    # Power law parameters
+    for j in keys(param_maps.power_law)
+        for parameter in keys(param_maps.power_law[j])
+            data = param_maps.power_law[j][parameter]
+            name_i = join(["power_law", j, parameter], "_")
+            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "continuum", "$(name_i).pdf")
+            plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf),
+                cube_fitter.cosmology, cube_fitter.cube.wcs)
+        end
     end
 
     # Line parameters
@@ -1845,6 +1918,15 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
             for i ∈ 1:size(cube_model.stellar, 4)
                 write(f, cube_model.stellar[:, :, :, i]; name="STELLAR_POPULATION_$i")                  # Stellar population models
             end
+            if cube_fitter.fit_opt_na_feii
+                write(f, cube_model.na_feii; name="NA_FEII")                                            # Narrow Fe II emission
+            end
+            if cube_fitter.fit_opt_br_feii
+                write(f, cube_model.br_feii; name="BR_FEII")                                            # Broad Fe II emission
+            end
+            for j in 1:size(cube_model.power_law, 4)
+                write(f, cube_model.power_law[:, :, :, j]; name="POWER_LAW_$j")                         # Power laws
+            end
             for (k, line) ∈ enumerate(cube_fitter.lines.names)
                 write(f, cube_model.lines[:, :, :, k]; name="$line")                                    # Emission line profiles
             end
@@ -1860,6 +1942,15 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
             write_key(f["MODEL"], "BUNIT", "erg/s/cm^2/ang/sr")
             for i ∈ 1:size(cube_model.stellar, 4)
                 write_key(f["STELLAR_POPULATION_$i"], "BUNIT", "erg/s/cm^2/ang/sr")
+            end
+            if cube_fitter.fit_opt_na_feii
+                write_key(f["NA_FEII"], "BUNIT", "erg/s/cm^2/ang/sr")
+            end
+            if cube_fitter.fit_opt_br_feii
+                write_key(f["BR_FEII"], "BUNIT", "erg/s/cm^2/ang/sr")
+            end
+            for j ∈ 1:size(cube_model.power_law, 4)
+                write_key(f["POWER_LAW_$j"], "BUNIT", "erg/s/cm^2/sr")
             end
             write_key(f["ATTENUATION_STARS"], "BUNIT", "unitless")
             write_key(f["ATTENUATION_GAS"], "BUNIT", "unitless")
@@ -1913,6 +2004,36 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 end
                 write(f, data; name=name_i)
                 write_key(f[name_i], "BUNIT", bunit)
+            end
+
+            # Fe II emission
+            if cube_fitter.fit_opt_na_feii || cube_fitter.fit_opt_br_feii
+                for parameter ∈ keys(param_data.feii)
+                    data = param_data.feii[parameter]
+                    name_i = join(["feii", parameter], "_")
+                    if occursin("amp", String(name_i))
+                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                    else
+                        bunit = "km/s"
+                    end
+                    write(f, data; name=name_i)
+                    write_key(f[name_i], "BUNIT", bunit)
+                end
+            end
+
+            # Power laws
+            for j ∈ keys(param_data.power_law)
+                for parameter ∈ keys(param_data.power_law[j])
+                    data = param_data.power_law[j][parameter]
+                    name_i = join(["power_law", j, parameter], "_")
+                    if occursin("amp", String(name_i))
+                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                    else
+                        bunit = "unitless"
+                    end
+                    write(f, data; name=name_i)
+                    write_key(f[name_i], "BUNIT", bunit)
+                end
             end
 
             # Line parameters

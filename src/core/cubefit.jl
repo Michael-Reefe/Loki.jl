@@ -62,6 +62,8 @@ struct OpticalParamMaps{T<:Real} <: ParamMaps
 
     stellar_populations::Dict{Int, Dict{Symbol, Array{T, 2}}}
     stellar_kinematics::Dict{Symbol, Array{T, 2}}
+    feii::Dict{Symbol, Array{T, 2}}
+    power_law::Dict{Int, Dict{Symbol, Array{T, 2}}}
     attenuation::Dict{Symbol, Array{T, 2}}
     lines::Dict{Symbol, Dict{Symbol, Array{T, 2}}}
     statistics::Dict{Symbol, Array{T, 2}}
@@ -200,8 +202,8 @@ end
 
 
 # Optical version 
-function parammaps_empty(shape::Tuple{S,S,S}, n_ssps::Integer, n_lines::S, n_comps::S, cf_lines::TransitionLines,
-    flexible_wavesol::Bool)::OpticalParamMaps where {S<:Integer}
+function parammaps_empty(shape::Tuple{S,S,S}, n_ssps::S, n_power_law::S, n_lines::S, n_comps::S, 
+    cf_lines::TransitionLines, flexible_wavesol::Bool)::OpticalParamMaps where {S<:Integer}
 
     @debug """\n
     Creating OpticalParamMaps struct with shape $shape
@@ -227,6 +229,24 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_ssps::Integer, n_lines::S, n_com
     stellar_kinematics[:vel] = copy(nan_arr)
     stellar_kinematics[:vdisp] = copy(nan_arr)
     @debug "stellar kinematics maps with keys $(keys(stellar_kinematics))"
+
+    # Add Fe II kinematics
+    feii = Dict{Symbol, Array{Float64, 2}}()
+    feii[:na_amp] = copy(nan_arr)
+    feii[:na_vel] = copy(nan_arr)
+    feii[:na_vdisp] = copy(nan_arr)
+    feii[:br_amp] = copy(nan_arr)
+    feii[:br_vel] = copy(nan_arr)
+    feii[:br_vdisp] = copy(nan_arr)
+    @debug "Fe II maps with keys $(keys(feii))"
+
+    # Add power laws
+    power_law = Dict{Int, Dict{Symbol, Array{Float64, 2}}}()
+    for i ∈ 1:n_power_law
+        power_law[i] = Dict{Symbol, Array{Float64, 2}}()
+        power_law[i][:amp] = copy(nan_arr)
+        power_law[i][:index] = copy(nan_arr)
+    end
 
     # Add attenuation parameters
     attenuation = Dict{Symbol, Array{Float64, 2}}()
@@ -274,7 +294,7 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_ssps::Integer, n_lines::S, n_com
     statistics[:dof] = copy(nan_arr)
     @debug "dof map"
 
-    OpticalParamMaps{Float64}(stellar_populations, stellar_kinematics, attenuation, lines, statistics)
+    OpticalParamMaps{Float64}(stellar_populations, stellar_kinematics, feii, power_law, attenuation, lines, statistics)
 end
 
 
@@ -333,6 +353,9 @@ struct OpticalCubeModel{T<:Real} <: CubeModel
 
     model::Array{T, 3}
     stellar::Array{T, 4}
+    na_feii::Array{T, 3}
+    br_feii::Array{T, 3}
+    power_law::Array{T, 4}
     attenuation_stars::Array{T, 3}
     attenuation_gas::Array{T, 3}
     lines::Array{T, 4}
@@ -396,7 +419,8 @@ function cubemodel_empty(shape::Tuple, n_dust_cont::Integer, n_power_law::Intege
 end
 
 
-function cubemodel_empty(shape::Tuple, n_ssps::Integer, line_names::Vector{Symbol}, floattype::DataType=Float32)::OpticalCubeModel
+function cubemodel_empty(shape::Tuple, n_ssps::Integer, n_power_law::Integer, line_names::Vector{Symbol}, 
+    floattype::DataType=Float32)::OpticalCubeModel
 
     @debug """\n
     Creating OpticalCubeModel struct with shape $shape
@@ -410,6 +434,12 @@ function cubemodel_empty(shape::Tuple, n_ssps::Integer, line_names::Vector{Symbo
     @debug "model cube"
     stellar = zeros(floattype, shape..., n_ssps)
     @debug "stellar population comp cubes"
+    na_feii = zeros(floattype, shape...)
+    @debug "narrow Fe II emission comp cube"
+    br_feii = zeros(floattype, shape...)
+    @debug "broad Fe II emission comp cube"
+    power_law = zeros(floattype, shape..., n_power_law)
+    @debug "power law comp cubes"
     attenuation_stars = zeros(floattype, shape...)
     @debug "attenuation_stars comp cube"
     attenuation_gas = zeros(floattype, shape...)
@@ -417,7 +447,7 @@ function cubemodel_empty(shape::Tuple, n_ssps::Integer, line_names::Vector{Symbo
     lines = zeros(floattype, shape..., length(line_names))
     @debug "lines comp cubes"
 
-    OpticalCubeModel(model, stellar, attenuation_stars, attenuation_gas, lines)
+    OpticalCubeModel(model, stellar, na_feii, br_feii, power_law, attenuation_stars, attenuation_gas, lines)
 
 end
 
@@ -497,7 +527,7 @@ Read from the options files:
 See [`ParamMaps`](@ref), [`parammaps_empta`](@ref), [`CubeModel`](@ref), [`cubemodel_empty`](@ref), 
     [`fit_spaxel`](@ref), [`fit_cube!`](@ref)
 """
-struct CubeFitter{T<:Real,S<:Integer} 
+struct CubeFitter{T<:Real,S<:Integer,C<:Complex} 
 
     # See explanations for each field in the docstring!
     
@@ -523,6 +553,8 @@ struct CubeFitter{T<:Real,S<:Integer}
     extinction_curve::String
     extinction_screen::Bool
     fit_sil_emission::Bool
+    fit_opt_na_feii::Bool
+    fit_opt_br_feii::Bool
     fit_all_samin::Bool
     use_pah_templates::Bool
     pah_template_map::BitMatrix
@@ -535,7 +567,7 @@ struct CubeFitter{T<:Real,S<:Integer}
 
     # MIR continuum parameters
     n_dust_cont::S
-    n_power_law::S
+    n_power_law::S  # (also used for optical power laws)
     n_dust_feat::S
     n_abs_feat::S
     dust_features::Union{DustFeatures,Nothing}
@@ -546,8 +578,11 @@ struct CubeFitter{T<:Real,S<:Integer}
     n_ssps::S
     ssp_λ::Union{Vector{T},Nothing}
     ssp_templates::Union{Vector{Spline2D},Nothing}
+    feii_templates_fft::Union{Matrix{C},Nothing}
     velscale::T
-    vsyst::T
+    vsyst_ssp::T
+    vsyst_feii::T
+    npad_feii::S
 
     # Line parameters
     n_lines::S
@@ -735,17 +770,24 @@ struct CubeFitter{T<:Real,S<:Integer}
 
             # Set defaults for the optical components that will not be fit
             n_ssps = 0
-            ssp_λ = ssp_templates = nothing
-            velscale = vsyst = 0
+            ssp_λ = ssp_templates = feii_templates_fft = nothing
+            npad_feii = velscale = vsyst_ssp = vsyst_feii = 0
 
         elseif spectral_region == :OPT
 
             continuum = parse_optical()
+
+            # Create the simple stellar population templates with FSPS
             ssp_λ, ages, metals, ssp_templates = generate_stellar_populations(λ, cube.lsf, z, out[:cosmology], name)
             # Create a 2D linear interpolation over the ages/metallicities
             ssp_templates = [Spline2D(ages, metals, ssp_templates[:, :, i], kx=1, ky=1) for i in eachindex(ssp_λ)]
 
-            ### PREPARE OUTPUTS ###            
+            # Load in the Fe II templates from Veron-Cetty et al. (2004)
+            npad_feii, feii_λ, na_feii_fft, br_feii_fft = generate_feii_templates(λ, cube.lsf)
+            # Create a matrix containing both templates
+            feii_templates_fft = [na_feii_fft br_feii_fft]
+
+            ### PREPARE OUTPUTS ###
             n_ssps = length(continuum.ssp_ages)
             msg = "### Model will include $n_ssps simple stellar population components ###"
             for (age, z) ∈ zip(continuum.ssp_ages, continuum.ssp_metallicities)
@@ -753,12 +795,20 @@ struct CubeFitter{T<:Real,S<:Integer}
             end
             @debug msg
 
+            n_power_law = length(continuum.α)
+            msg = "### Model will include $n_power_law power law components ###"
+            for pl ∈ continuum.α
+                msg *= "\n### with index = $(pl.value) ###"
+            end
+            @debug msg
+
             # Calculate velocity scale and systemic velocity offset b/w templates and input
             velscale = log(λ[2]/λ[1]) * C_KMS
-            vsyst = log(ssp_λ[1]/λ[1]) * C_KMS
+            vsyst_ssp = log(ssp_λ[1]/λ[1]) * C_KMS
+            vsyst_feii = log(feii_λ[1]/λ[1]) * C_KMS
 
             # Set defaults for the MIR components that will not be fit
-            n_dust_cont = n_power_law = n_dust_features = n_abs_features = 0
+            n_dust_cont = n_dust_features = n_abs_features = 0
             dust_features = abs_features = abs_taus = nothing
 
         end
@@ -862,7 +912,13 @@ struct CubeFitter{T<:Real,S<:Integer}
             n_params_cont = (2+4) + 2n_dust_cont + 2n_power_law + 3n_abs_features + (out[:fit_sil_emission] ? 6 : 0)
             n_params_cont += 3 * sum(dust_features.profiles .== :Drude) + 5 * sum(dust_features.profiles .== :PearsonIV)
         elseif spectral_region == :OPT
-            n_params_cont = 3n_ssps + 2 + 2
+            n_params_cont = 3n_ssps + 2 + 2 + 2n_power_law
+            if out[:fit_opt_na_feii]
+                n_params_cont += 3
+            end
+            if out[:fit_opt_br_feii]
+                n_params_cont += 3
+            end
             if out[:fit_uv_bump]
                 n_params_cont += 1
             end
@@ -920,13 +976,15 @@ struct CubeFitter{T<:Real,S<:Integer}
             p_init_pahtemp = readdlm(joinpath("output_$name", "spaxel_binaries", "init_fit_pahtemp.csv"), ',', Float64, '\n')[:, 1]
         end
 
-        new{typeof(z), typeof(n_lines)}(cube, z, name, spectral_region, out[:user_mask], out[:plot_spaxels], out[:plot_maps], out[:plot_range], out[:parallel], 
-            out[:save_fits], out[:save_full_model], out[:overwrite], out[:track_memory], out[:track_convergence], out[:make_movies], 
-            out[:extinction_curve], out[:extinction_screen], out[:fit_sil_emission], out[:fit_all_samin], out[:use_pah_templates], pah_template_map, 
-            out[:fit_joint], out[:fit_uv_bump], out[:fit_covering_frac], continuum, n_dust_cont, n_power_law, n_dust_features, n_abs_features, dust_features, 
-            abs_features, abs_taus, n_ssps, ssp_λ, ssp_templates, velscale, vsyst, n_lines, n_acomps, n_comps, lines, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, 
-            n_params_cont, n_params_lines, n_params_extra, out[:cosmology], flexible_wavesol, out[:n_bootstrap], out[:random_seed], out[:line_test_lines], 
-            out[:line_test_threshold], out[:plot_line_test], p_init_cont, p_init_line, p_init_pahtemp)
+        ctype = isnothing(feii_templates_fft) ? ComplexF64 : eltype(feii_templates_fft)
+        new{typeof(z), typeof(n_lines), ctype}(cube, z, name, spectral_region, out[:user_mask], out[:plot_spaxels], out[:plot_maps], out[:plot_range], 
+            out[:parallel], out[:save_fits], out[:save_full_model], out[:overwrite], out[:track_memory], out[:track_convergence], out[:make_movies], 
+            out[:extinction_curve], out[:extinction_screen], out[:fit_sil_emission], out[:fit_opt_na_feii], out[:fit_opt_br_feii], out[:fit_all_samin], 
+            out[:use_pah_templates], pah_template_map, out[:fit_joint], out[:fit_uv_bump], out[:fit_covering_frac], continuum, n_dust_cont, n_power_law, n_dust_features, 
+            n_abs_features, dust_features, abs_features, abs_taus, n_ssps, ssp_λ, ssp_templates, feii_templates_fft, velscale, vsyst_ssp, vsyst_feii, npad_feii, n_lines, 
+            n_acomps, n_comps, lines, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, out[:cosmology], 
+            flexible_wavesol, out[:n_bootstrap], out[:random_seed], out[:line_test_lines], out[:line_test_threshold], out[:plot_line_test], p_init_cont, p_init_line, 
+            p_init_pahtemp)
     end
 
 end
@@ -945,7 +1003,7 @@ function generate_cubemodel(cube_fitter::CubeFitter, aperture::Bool=false)
         arguments = [shape, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.names,
         cube_fitter.abs_features.names, cube_fitter.lines.names]
     elseif cube_fitter.spectral_region == :OPT
-        arguments = [shape, cube_fitter.n_ssps, cube_fitter.lines.names]
+        arguments = [shape, cube_fitter.n_ssps, cube_fitter.n_power_law, cube_fitter.lines.names]
     end
     cubemodel_empty(arguments...)
 end
@@ -966,8 +1024,8 @@ function generate_parammaps(cube_fitter::CubeFitter, aperture::Bool=false)
             cube_fitter.abs_features.names, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
             cube_fitter.flexible_wavesol]
     elseif cube_fitter.spectral_region == :OPT
-        arguments = [shape, cube_fitter.n_ssps, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines,
-            cube_fitter.flexible_wavesol]
+        arguments = [shape, cube_fitter.n_ssps, cube_fitter.n_power_law, cube_fitter.n_lines, cube_fitter.n_comps, 
+            cube_fitter.lines, cube_fitter.flexible_wavesol]
     end
     param_maps = parammaps_empty(arguments...)
     # 2D maps of fitting parameter +/- 1 sigma errors
@@ -1048,6 +1106,7 @@ function get_opt_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, 
     continuum = cube_fitter.continuum
 
     amp_ssp_plim = (0., Inf)
+    amp_pl_plim = (0., Inf)
     ssp_plim = vcat([[amp_ssp_plim, ai.limits, zi.limits] for (ai, zi) in zip(continuum.ssp_ages, continuum.ssp_metallicities)]...)
     if !init
         ssp_locked = vcat([[false, true, true] for _ in 1:cube_fitter.n_ssps]...)
@@ -1058,6 +1117,20 @@ function get_opt_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, 
     stel_kin_plim = [continuum.stel_vel.limits, continuum.stel_vdisp.limits]
     stel_kin_locked = [continuum.stel_vel.locked, continuum.stel_vdisp.locked]
 
+    feii_plim = []
+    feii_locked = []
+    if cube_fitter.fit_opt_na_feii
+        append!(feii_plim, [amp_ssp_plim, continuum.na_feii_vel.limits, continuum.na_feii_vdisp.limits])
+        append!(feii_locked, [false, continuum.na_feii_vel.locked, continuum.na_feii_vdisp.locked])
+    end
+    if cube_fitter.fit_opt_br_feii
+        append!(feii_plim, [amp_ssp_plim, continuum.br_feii_vel.limits, continuum.br_feii_vdisp.limits])
+        append!(feii_locked, [false, continuum.br_feii_vel.locked, continuum.br_feii_vdisp.locked])
+    end
+    
+    pl_plim = vcat([[amp_pl_plim, αi.limits] for αi in continuum.α]...)
+    pl_locked = vcat([[false, αi.locked] for αi in continuum.α]...)
+
     atten_plim = [continuum.E_BV.limits, continuum.E_BV_factor.limits]
     atten_locked = [continuum.E_BV.locked, continuum.E_BV_factor.locked]
 
@@ -1066,7 +1139,7 @@ function get_opt_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, 
     Hγ_snr = test_line_snr(0.4341691, 0.0080, λ, I)
     # if the SNR is less than 3, we cannot constrain E(B-V)_gas, so lock it to 0
     if (Hβ_snr < 3) || (Hγ_snr < 2)
-        atten_locked[1] = true
+        atten_locked = [true, true]
     end
 
     if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
@@ -1078,8 +1151,8 @@ function get_opt_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, 
         push!(atten_locked, continuum.frac.locked)
     end
 
-    plims = Vector{Tuple}(vcat(ssp_plim, stel_kin_plim, atten_plim))
-    lock = BitVector(vcat(ssp_locked, stel_kin_locked, atten_locked))
+    plims = Vector{Tuple}(vcat(ssp_plim, stel_kin_plim, atten_plim, feii_plim, pl_plim))
+    lock = BitVector(vcat(ssp_locked, stel_kin_locked, atten_locked, feii_locked, pl_locked))
 
     plims, lock
 
@@ -1093,9 +1166,9 @@ Get the vector of starting values for the continuum fit for a given CubeFitter o
 vector is split up by the 2 continuum fitting steps.
 """
 get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, 
-    Ω::Vector{<:Real}, init::Bool; split::Bool=false) = cube_fitter.spectral_region == :MIR ? 
+    init::Bool; split::Bool=false) = cube_fitter.spectral_region == :MIR ? 
     get_mir_continuum_initial_values(cube_fitter, λ, I, N, init, split=split) :
-    get_opt_continuum_initial_values(cube_fitter, λ, I, N, Ω, init)
+    get_opt_continuum_initial_values(cube_fitter, λ, I, N, init)
 
 
 function get_mir_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, init::Bool; split::Bool=false)
@@ -1115,11 +1188,16 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
 
         # scale all flux amplitudes by the difference in medians between the spaxel and the summed spaxels
         # (should be close to 1 since the sum is already normalized by the number of spaxels included anyways)
-        scale = max(nanmedian(I), 1e-10) * N / nanmedian(sumdim(cube_fitter.cube.I, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2)))
-        max_amp = 1 / exp(-max_τ)
+        I_init = sumdim(cube_fitter.cube.I, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+        N0 = Float64(abs(maximum(I_init[isfinite.(I_init)])))
+        N0 = N0 ≠ 0. ? N0 : 1.
+        scale = max(nanmedian(I), 1e-10) * N / nanmedian(I_init)
+        # Normalized amplitudes need a different scaling factor that is independent of the normalization
+        scale_N0 = scale * N0 / N
+        # max_amp = 1 / exp(-max_τ)
 
         # Rescale PAH templates
-        pah_frac .*= scale
+        pah_frac .*= scale_N0
 
         # Stellar amplitude
         p₀[1] *= scale
@@ -1133,7 +1211,7 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
 
         # Power law amplitudes
         for _ ∈ 1:cube_fitter.n_power_law
-            p₀[pᵢ] *= scale
+            p₀[pᵢ] *= scale_N0
             pᵢ += 2
         end
 
@@ -1154,7 +1232,7 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
 
         # Dust feature amplitudes
         for i ∈ 1:cube_fitter.n_dust_feat
-            p₀[pᵢ] = clamp(p₀[pᵢ]*scale, 0., 1.)
+            p₀[pᵢ] = clamp(p₀[pᵢ]*scale_N0, 0., 1.)
             pᵢ += 3
             if cube_fitter.dust_features.profiles[i] == :PearsonIV
                 pᵢ += 2
@@ -1245,8 +1323,7 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
 end
 
 
-function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, 
-    Ω::Vector{<:Real}, init::Bool)
+function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, init::Bool)
 
     continuum = cube_fitter.continuum
 
@@ -1259,7 +1336,13 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
         p₀ = copy(cube_fitter.p_init_cont)
 
         # scale all flux amplitudes by the difference in medians between the spaxel and the summed spaxels
-        scale = max(nanmedian(I), 1e-10) * N / nanmedian(sumdim(cube_fitter.cube.I, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2)))
+        I_init = sumdim(cube_fitter.cube.I, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+        N0 = Float64(abs(maximum(I_init[isfinite.(I_init)])))
+        N0 = N0 ≠ 0. ? N0 : 1.
+        # Here we use the normalization from the initial combined intensity because the amplitudes we are rescaling
+        # are normalized with respect to N0, not N. This is different from the MIR case where the amplitudes are not
+        # normalized to any particular N (at least for the blackbody components).
+        scale = max(nanmedian(I), 1e-10) * N0 / nanmedian(I_init)
 
         # Start with a small reddening despite the initial fit
         # pₑ = 1 + 3cube_fitter.n_ssps + 2
@@ -1281,6 +1364,7 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
             p₀[pᵢ] *= scale
             pᵢ += 3
         end
+
         # If stellar velocities hit any limits, reset them to sensible starting values
         if (p₀[pᵢ] == continuum.stel_vel.limits[1]) || (p₀[pᵢ] == continuum.stel_vel.limits[2])
             p₀[pᵢ] = 0.
@@ -1289,6 +1373,7 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
             p₀[pᵢ+1] = 100.
         end
         pᵢ += 2
+
         # test the SNR of the H-beta line
         Hβ_snr = test_line_snr(0.4862691, 0.0060, λ, I)
         Hγ_snr = test_line_snr(0.4341691, 0.0080, λ, I)
@@ -1296,22 +1381,48 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
         if (Hβ_snr < 3) || (Hγ_snr < 2)
             @debug "Locking E(B-V) to 0 due to insufficient H-beta emission"
             p₀[pᵢ] = 0.
+            p₀[pᵢ+1] = continuum.E_BV_factor.value
         end
+        if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
+            pᵢ += 1
+        end
+        if cube_fitter.fit_covering_frac && cube_fitter.extinction_curve == "calzetti"
+            pᵢ += 1
+        end
+        pᵢ += 2
+
+        # Fe II amplitudes
+        if cube_fitter.fit_opt_na_feii
+            p₀[pᵢ] *= scale
+            pᵢ += 3
+        end
+        if cube_fitter.fit_opt_br_feii
+            p₀[pᵢ] *= scale
+            pᵢ += 3
+        end
+
+        # Power law amplitudes
+        for _ ∈ 1:cube_fitter.n_power_law
+            p₀[pᵢ] *= scale
+            pᵢ += 2
+        end
+
 
     else
 
         @debug "Calculating initial starting points..." 
 
+        if cube_fitter.extinction_curve == "ccm"
+            att = attenuation_cardelli([median(λ)], continuum.E_BV.value)[1]
+        elseif cube_fitter.extinction_curve == "calzetti"
+            att = attenuation_calzetti([median(λ)], continuum.E_BV.value)[1]
+        else
+            error("Uncrecognized extinction curve $(cube_fitter.extinction_curve)")
+        end
+
         # SSP amplitudes
         m_ssps = zeros(cube_fitter.n_ssps)
         for i in 1:cube_fitter.n_ssps
-            if cube_fitter.extinction_curve == "ccm"
-                att = attenuation_cardelli([median(λ)], continuum.E_BV.value)[1]
-            elseif cube_fitter.extinction_curve == "calzetti"
-                att = attenuation_calzetti([median(λ)], continuum.E_BV.value)[1]
-            else
-                error("Uncrecognized extinction curve $(cube_fitter.extinction_curve)")
-            end
             m_ssps[i] = nanmedian(I) / att / cube_fitter.n_ssps
         end
 
@@ -1319,6 +1430,20 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
 
         # Stellar kinematics
         stel_kin_pars = [continuum.stel_vel.value, continuum.stel_vdisp.value]
+
+        # Fe II parameters
+        a_feii = 0.1 * nanmedian(I) / att
+        feii_pars = []
+        if cube_fitter.fit_opt_na_feii
+            append!(feii_pars, [a_feii, continuum.na_feii_vel.value, continuum.na_feii_vdisp.value])
+        end
+        if cube_fitter.fit_opt_br_feii
+            append!(feii_pars, [a_feii, continuum.br_feii_vel.value, continuum.br_feii_vdisp.value])
+        end
+        
+        # Power laws
+        a_pl = 0.5 * nanmedian(I) / att / cube_fitter.n_power_law
+        pl_pars = vcat([[a_pl, αi.value] for αi in continuum.α]...)
 
         # Attenuation
         atten_pars = [continuum.E_BV.value, continuum.E_BV_factor.value]
@@ -1330,16 +1455,18 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
         end
 
         # Initial parameter vector
-        p₀ = Vector{Float64}(vcat(ssp_pars, stel_kin_pars, atten_pars))
+        p₀ = Vector{Float64}(vcat(ssp_pars, stel_kin_pars, atten_pars, feii_pars, pl_pars))
 
     end
 
     @debug "Continuum Parameter labels: \n [" *
         join(["SSP_$(i)_mass, SSP_$(i)_age, SSP_$(i)_metallicity" for i in 1:cube_fitter.n_ssps], ", ") * 
-        "stel_vel, stel_vdisp, E_BV, E_BV_factor, " *
-        (cube_fitter.fit_uv_bump ? "delta_uv, " : "") *
+        "stel_vel, stel_vdisp, " * 
+        "E_BV, E_BV_factor, " * (cube_fitter.fit_uv_bump ? "delta_uv, " : "") *
         (cube_fitter.fit_covering_frac ? "covering_frac, " : "") * 
-        "]"
+        (cube_fitter.fit_opt_na_feii ? "na_feii_amp, na_feii_vel, na_feii_vdisp, " : "") *
+        (cube_fitter.fit_opt_br_feii ? "br_feii_amp, br_feii_vel, br_feii_vdisp, " : "") *
+        join(["power_law_$(j)_amp, power_law_$(j)_index, " for j in 1:cube_fitter.n_power_law], ", ") * "]"
         
     @debug "Continuum Starting Values: \n $p₀"
 
@@ -1545,7 +1672,6 @@ function pretty_print_opt_continuum_results(cube_fitter::CubeFitter, popt::Vecto
         "($(@sprintf "%.0f" continuum.stel_vdisp.limits[1]), $(@sprintf "%.0f" continuum.stel_vdisp.limits[2]))" * 
         (continuum.stel_vdisp.locked ? " (fixed)" : "") * "\n"
     pᵢ += 2
-    msg *= "\n"
     msg *= "\n#> ATTENUATION <#\n"
     msg *= "E_BV: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ]) +/- $(@sprintf "%.2f" perr[pᵢ]) [-] \t Limits: " *
         "($(@sprintf "%.2f" continuum.E_BV.limits[1]), $(@sprintf "%.2f" continuum.E_BV.limits[2]))" * 
@@ -1565,6 +1691,35 @@ function pretty_print_opt_continuum_results(cube_fitter::CubeFitter, popt::Vecto
             "($(@sprintf "%.2f" continuum.frac.limits[1]), $(@sprintf "%.2f" continuum.frac.limits[2]))" * 
             (continuum.frac.locked ? " (fixed)" : "") * "\n"
         pᵢ += 1
+    end
+    msg *= "\n#> FE II EMISSION <#\n"
+    if cube_fitter.fit_opt_na_feii
+        msg *= "na_feii_amp: \t\t\t $(@sprintf "%.3e" popt[pᵢ]) +/- $(@sprintf "%.3e" perr[pᵢ]) [x norm] \t Limits: (0, Inf)\n"
+        msg *= "na_feii_vel: \t\t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) km/s \t Limits: " *
+            "($(@sprintf "%.0f" continuum.na_feii_vel.limits[1]), $(@sprintf "%.0f" continuum.na_feii_vel.limits[2]))" * 
+            (continuum.na_feii_vel.locked ? " (fixed)" : "") * "\n"
+        msg *= "na_feii_vdisp: \t\t\t $(@sprintf "%.0f" popt[pᵢ+2]) +/- $(@sprintf "%.0f" perr[pᵢ+2]) km/s \t Limits: " *
+            "($(@sprintf "%.0f" continuum.na_feii_vdisp.limits[1]), $(@sprintf "%.0f" continuum.na_feii_vdisp.limits[2]))" * 
+            (continuum.na_feii_vel.locked ? " (fixed)" : "") * "\n"
+        pᵢ += 3
+    end
+    if cube_fitter.fit_opt_br_feii
+        msg *= "br_feii_amp: \t\t\t $(@sprintf "%.3e" popt[pᵢ]) +/- $(@sprintf "%.3e" perr[pᵢ]) [x norm] \t Limits: (0, Inf)\n"
+        msg *= "br_feii_vel: \t\t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) km/s \t Limits: " *
+            "($(@sprintf "%.0f" continuum.br_feii_vel.limits[1]), $(@sprintf "%.0f" continuum.br_feii_vel.limits[2]))" * 
+            (continuum.br_feii_vel.locked ? " (fixed)" : "") * "\n"
+        msg *= "br_feii_vdisp: \t\t\t $(@sprintf "%.0f" popt[pᵢ+2]) +/- $(@sprintf "%.0f" perr[pᵢ+2]) km/s \t Limits: " *
+            "($(@sprintf "%.0f" continuum.br_feii_vdisp.limits[1]), $(@sprintf "%.0f" continuum.br_feii_vdisp.limits[2]))" * 
+            (continuum.br_feii_vel.locked ? " (fixed)" : "") * "\n"
+        pᵢ += 3
+    end
+    msg *= "\n#> POWER LAWS <#\n"
+    for j ∈ 1:cube_fitter.n_power_law
+        msg *= "PL_$(j)_amp: \t\t\t\t $(@sprintf "%.3e" popt[pᵢ]) +/- $(@sprintf "%.3e" perr[pᵢ]) [x norm] \t Limits: (0, Inf)\n"
+        msg *= "PL_$(j)_index: \t\t\t\t $(@sprintf "%.3f" popt[pᵢ+1]) +/- $(@sprintf "%.3f" perr[pᵢ+1]) [-] \t Limits: " *
+            "($(@sprintf "%.3f" continuum.α[j].limits[1]), $(@sprintf "%.3f" continuum.α[j].limits[2]))" *
+            (continuum.α[j].locked ? " (fixed)" : "") * "\n"
+        pᵢ += 2
     end
     msg *= "\n"
     msg *= "######################################################################"

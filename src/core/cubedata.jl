@@ -1496,7 +1496,7 @@ Original docstring is copied below:
 ;-
 ;----------------------------------------------------------------------------
 """
-function frebin(array::AbstractArray, nsout::S, nlout::S=1, total::Bool=false) where {S<:Integer}
+function frebin(array::AbstractArray, nsout::S, nlout::S=1; total::Bool=false) where {S<:Integer}
 
     # Determine the size of the input array
     ns = size(array, 1)

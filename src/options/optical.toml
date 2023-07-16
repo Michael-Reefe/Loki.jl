@@ -38,8 +38,39 @@ locked = false
 # Stellar velocity dispersion
 [stellar_kinematics.vdisp]
 val = 100.0
-plim = [0.01, 1000.0]
+plim = [0.0, 1000.0]
 locked = false
+
+################# Fe II Kinematics ###################
+
+[na_feii_kinematics.vel]
+val = 0.0
+plim = [-500.0, 500.0]
+locked = false
+
+[na_feii_kinematics.vdisp]
+val = 100.0
+plim = [0.0, 500.0]
+locked = false
+
+[br_feii_kinematics.vel]
+val = 0.0
+plim = [-500.0, 500.0]
+locked = false
+
+[br_feii_kinematics.vdisp]
+val = 1000.0
+plim = [500.0, 2000.0]
+locked = false
+
+
+########## Power Law Options ################
+
+# Comment this out to not fit a power law
+# [[power_law_indices]]
+# val = 0.0
+# plim = [-6.0, 6.0]
+# locked = false
 
 ########## Attenuation options ###############
 
@@ -57,7 +88,7 @@ locked = false
 [attenuation.E_BV_factor]
 val = 0.44
 plim = [0.0, 10.0]
-locked = false
+locked = true
 
 # Only relevant for Calzetti extinction curves:
 

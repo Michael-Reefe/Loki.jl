@@ -138,7 +138,16 @@ struct OpticalContinuum <: Continuum
     # Stellar kinematics
     stel_vel::Parameter
     stel_vdisp::Parameter
+
+    # Fe II kinematics
+    na_feii_vel::Parameter
+    na_feii_vdisp::Parameter
+    br_feii_vel::Parameter
+    br_feii_vdisp::Parameter
     
+    # Power law indices
+    α::Vector{Parameter}
+
     # Dust attenuation
     E_BV::Parameter
     E_BV_factor::Parameter

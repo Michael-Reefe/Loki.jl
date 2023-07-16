@@ -217,7 +217,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
 
     # Split up the initial parameter vector into the components that we need for each fitting step
     if !bootstrap_iter
-        pars_0 = get_continuum_initial_values(cube_fitter, λ_spax, I_spax, N, area_sr_spax, init || use_ap)
+        pars_0 = get_continuum_initial_values(cube_fitter, λ_spax, I_spax, N, init || use_ap)
     else
         pars_0 = p1_boots
     end
@@ -272,7 +272,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     end
 
     # Fitting functions for either optical or MIR continuum
-    function fit_cont_mir(x, pfree; n=0)
+    function fit_cont_mir(x, pfree)
         ptot = zeros(Float64, length(pars_0))
         ptot[.~lock] .= pfree
         ptot[lock] .= pfix
@@ -280,12 +280,13 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
             cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission,
             false)
     end
-    function fit_cont_opt(x, pfree; n=0)
+    function fit_cont_opt(x, pfree)
         ptot = zeros(Float64, length(pars_0))
         ptot[.~lock] = pfree
         ptot[lock] .= pfix
-        model_continuum(x, ptot, N, cube_fitter.velscale, cube_fitter.vsyst, cube_fitter.n_ssps, cube_fitter.ssp_λ, 
-            stellar_templates, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, area_sr_spax[1+n:end-n], 
+        model_continuum(x, ptot, N, cube_fitter.velscale, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
+            cube_fitter.n_ssps, cube_fitter.ssp_λ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, 
+            cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, 
             cube_fitter.extinction_curve)
     end
     fit_cont = cube_fitter.spectral_region == :MIR ? fit_cont_mir : fit_cont_opt
@@ -295,8 +296,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     while res.niter < 5
         @warn "LM Solver is stuck on the initial state for the continuum fit of spaxel $spaxel. Jittering starting params..."
         # Jitter the starting parameters a bit
-        jit_lo = (lb .- pfree) ./ 100  # defined to be negative
-        jit_hi = (ub .- pfree) ./ 100  # defined to be positive
+        jit_lo = (lb .- pfree) ./ 20  # defined to be negative
+        jit_hi = (ub .- pfree) ./ 20  # defined to be positive
         # handle infinite upper bounds
         jit_hi[.~isfinite.(jit_hi)] .= .-jit_lo[.~isfinite.(jit_hi)]
         # sample from a uniform distribution
@@ -331,8 +332,9 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         I_model, comps = model_continuum(λ, popt, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
             cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, false, true)
     else
-        I_model, comps = model_continuum(λ, popt, N, cube_fitter.velscale, cube_fitter.vsyst, cube_fitter.n_ssps, cube_fitter.ssp_λ, 
-            cube_fitter.ssp_templates, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, area_sr, cube_fitter.extinction_curve, true)
+        I_model, comps = model_continuum(λ, popt, N, cube_fitter.velscale, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
+            cube_fitter.n_ssps, cube_fitter.ssp_λ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, 
+            cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve, true)
     end
     
     # Estimate PAH template amplitude
@@ -417,7 +419,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
 
     # Split up the initial parameter vector into the components that we need for each fitting step
     if !bootstrap_iter
-        pars_1, pars_2 = get_continuum_initial_values(cube_fitter, λ_spax, I_spax, N, area_sr_spax, init || use_ap, split=true)
+        pars_1, pars_2 = get_continuum_initial_values(cube_fitter, λ_spax, I_spax, N, init || use_ap, split=true)
     else
         pars_1 = vcat(p1_boots[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+3*cube_fitter.n_abs_feat+
             (cube_fitter.fit_sil_emission ? 6 : 0))], p1_boots[end-1:end])
@@ -473,8 +475,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     while res_1.niter < 5
         @warn "LM Solver is stuck on the initial state for the continuum fit (step 1) of spaxel $spaxel. Jittering starting params..."
         # Jitter the starting parameters a bit
-        jit_lo = (lb_1 .- p1free) ./ 100  # defined to be negative
-        jit_hi = (ub_1 .- p1free) ./ 100  # defined to be positive
+        jit_lo = (lb_1 .- p1free) ./ 20  # defined to be negative
+        jit_hi = (ub_1 .- p1free) ./ 20  # defined to be positive
         # handle infinite upper bounds
         jit_hi[.~isfinite.(jit_hi)] .= .-jit_lo[.~isfinite.(jit_hi)]
         # sample from a uniform distribution
@@ -538,8 +540,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     while res_2.niter < 5
         @warn "LM Solver is stuck on the initial state for the continuum fit (step 2) of spaxel $spaxel. Jittering starting params..."
         # Jitter the starting parameters a bit
-        jit_lo = (lb_2 .- p2free) ./ 100  # defined to be negative
-        jit_hi = (ub_2 .- p2free) ./ 100  # defined to be positive
+        jit_lo = (lb_2 .- p2free) ./ 20  # defined to be negative
+        jit_hi = (ub_2 .- p2free) ./ 20  # defined to be positive
         # handle infinite upper bounds
         jit_hi[.~isfinite.(jit_hi)] .= .-jit_lo[.~isfinite.(jit_hi)]
         # sample from a uniform distribution
@@ -674,16 +676,9 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
             cube_fitter.lines.combined
         )
 
-        # Make sure I and σ are properly normalized
-        m = (mean(Inorm[region][end-9:end]) - mean(Inorm[region][1:10])) / (λnorm[region][end-4] - λnorm[region][5])
-        Ilin = mean(Inorm[region][1:10]) .+ m .* (λnorm[region] .- λnorm[region][5])
-        N = nanmaximum(abs.(Inorm[region] .- Ilin))
-        Ifit = (Inorm[region] .- Ilin) ./ N
-        σfit = σnorm[region] ./ N
-
         if cube_fitter.plot_line_test
             fig, ax = plt.subplots()
-            ax.plot(λnorm[region], Ifit, "k-", label="Data")
+            ax.plot(λnorm[region], Inorm[region], "k-", label="Data")
         end
 
         # Perform fits for all possible numbers of components
@@ -709,7 +704,7 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
             config_test = CMPFit.Config()
 
 
-            res_test = cmpfit(λnorm[region], Ifit, σfit, fit_func_test, p₀[pstart:pstop], 
+            res_test = cmpfit(λnorm[region], Inorm[region], σnorm[region], fit_func_test, p₀[pstart:pstop], 
                                 parinfo=parinfo_test, config=config_test)
             # Save the reduced chi2 values
             test_chi2 = res_test.bestnorm
@@ -972,8 +967,8 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     while res.niter < 5
         @warn "LM Solver is stuck on the initial state for the line fit of spaxel $spaxel. Jittering starting params..."
         # Jitter the starting parameters a bit
-        jit_lo = (lbfree_tied .- p₁) ./ 100  # defined to be negative
-        jit_hi = (ubfree_tied .- p₁) ./ 100  # defined to be positive
+        jit_lo = (lbfree_tied .- p₁) ./ 20  # defined to be negative
+        jit_hi = (ubfree_tied .- p₁) ./ 20  # defined to be positive
         # handle infinite upper bounds
         jit_hi[.~isfinite.(jit_hi)] .= .-jit_lo[.~isfinite.(jit_hi)]
         # sample from a uniform distribution
@@ -1074,8 +1069,7 @@ end
 function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
     σ::Vector{<:Real}, mask_lines::BitVector, mask_bad::BitVector, I_spline::Vector{<:Real}, N::Real, area_sr::Vector{<:Real}, 
     lsf_interp_func::Function; init::Bool=false, use_ap::Bool=false, bootstrap_iter::Bool=false, 
-    p1_boots_cont::Union{Vector{<:Real},Nothing}=nothing, 
-    p1_boots_line::Union{Vector{<:Real},Nothing}=nothing) 
+    p1_boots_cont::Union{Vector{<:Real},Nothing}=nothing, p1_boots_line::Union{Vector{<:Real},Nothing}=nothing) 
 
     @assert !cube_fitter.use_pah_templates "The fit_joint and use_pah_templates options are mutually exclusive!"
 
@@ -1088,11 +1082,13 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     # Normalize
     λ_spax = copy(λ)
     I_spax = I ./ N
+    I_spline_spax = I_spline ./ N
     σ_spax = σ ./ N
 
     # Masked spectrum
     λ_spax = λ_spax[.~mask_bad]
     I_spax = I_spax[.~mask_bad]
+    I_spline_spax = I_spline_spax[.~mask_bad]
     σ_spax = σ_spax[.~mask_bad]
     area_sr_spax = area_sr[.~mask_bad]
 
@@ -1102,6 +1098,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
             region = pair[1] .< λ_spax .< pair[2]
             λ_spax = λ_spax[.~region]
             I_spax = I_spax[.~region]
+            I_spline_spax = I_spline_spax[.~region]
             σ_spax = σ_spax[.~region]
             area_sr_spax = area_sr_spax[.~region]
         end
@@ -1112,7 +1109,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
 
     # Split up the initial parameter vector into the components that we need for each fitting step
     if !bootstrap_iter
-        pars_0_cont = get_continuum_initial_values(cube_fitter, λ_spax, I_spax, N, area_sr_spax, init || use_ap)
+        pars_0_cont = get_continuum_initial_values(cube_fitter, λ_spax, I_spax, N, init || use_ap)
     else
         pars_0_cont = p1_boots_cont
     end
@@ -1140,7 +1137,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     # Perform line component tests to determine which line components are actually necessary to include in the fit
     if (length(cube_fitter.line_test_lines) > 0) && !init && !use_ap && !bootstrap_iter
         perform_line_component_test!(cube_fitter, spaxel, pars_0_lines, lock_lines, lower_bounds_lines, upper_bounds_lines, 
-            λ_spax, I_spax, σ_spax, lsf_interp_func)
+            λ_spax, I_spax .- I_spline_spax, σ_spax, lsf_interp_func)
     end
 
     # Combine all of the tied parameters
@@ -1314,8 +1311,9 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         end
         
         # Generate the models
-        Icont = model_continuum(x, ptot_cont, N, cube_fitter.velscale, cube_fitter.vsyst, cube_fitter.n_ssps, cube_fitter.ssp_λ, 
-            stellar_templates, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, area_sr_spax[1+n:end-n], cube_fitter.extinction_curve)
+        Icont = model_continuum(x, ptot_cont, N, cube_fitter.velscale, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
+            cube_fitter.n_ssps, cube_fitter.ssp_λ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, 
+            cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve)
         Ilines = model_line_residuals(x, ptot_lines, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol,
             ext_curve_gas, lsf_interp_func)
 
@@ -1384,8 +1382,8 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     while res.niter < 5 
         @warn "LM Solver is stuck on the initial state for the continuum+lines fit of spaxel $spaxel. Jittering starting params..."
         # Jitter the starting parameters a bit
-        jit_lo = (lower_bounds .- p₁) ./ 100  # defined to be negative
-        jit_hi = (upper_bounds .- p₁) ./ 100  # defined to be positive
+        jit_lo = (lower_bounds .- p₁) ./ 20  # defined to be negative
+        jit_hi = (upper_bounds .- p₁) ./ 20  # defined to be positive
         # handle infinite upper bounds
         jit_hi[.~isfinite.(jit_hi)] .= .-jit_lo[.~isfinite.(jit_hi)]
         # sample from a uniform distribution
@@ -1445,8 +1443,9 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
             cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, false, true)
         ext_key = "extinction"
     else
-        Icont, comps_cont = model_continuum(λ, popt_cont, N, cube_fitter.velscale, cube_fitter.vsyst, cube_fitter.n_ssps, cube_fitter.ssp_λ, 
-            cube_fitter.ssp_templates, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, area_sr, cube_fitter.extinction_curve, true)
+        Icont, comps_cont = model_continuum(λ, popt_cont, N, cube_fitter.velscale, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
+            cube_fitter.n_ssps, cube_fitter.ssp_λ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, 
+            cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve, true)
         ext_key = "attenuation_gas"
     end
     Ilines, comps_lines = model_line_residuals(λ, popt_lines, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol,
@@ -1523,6 +1522,7 @@ function plot_spaxel_fit(spectral_region::Symbol, λ_um::Vector{<:Real}, I::Vect
     range = nothing
     if spectral_region == :MIR
         fit_sil_emission = haskey(comps, "hot_dust")
+        fit_opt_na_feii = fit_opt_br_feii = false
         abs_feat = n_abs_features ≥ 1 ? reduce(.*, [comps["abs_feat_$i"] for i ∈ 1:n_abs_features]) : ones(length(λ_um))
         abs_full = comps["abs_ice"] .* comps["abs_ch"] .* abs_feat
         ext_full = abs_full .* comps["extinction"]
@@ -1534,6 +1534,8 @@ function plot_spaxel_fit(spectral_region::Symbol, λ_um::Vector{<:Real}, I::Vect
         end
     else
         fit_sil_emission = false
+        fit_opt_na_feii = haskey(comps, "na_feii")
+        fit_opt_br_feii = haskey(comps, "br_feii")
         abs_feat = ones(length(λ_um))
         abs_full = ones(length(λ_um))
         att_stars = comps["attenuation_stars"]
@@ -1555,11 +1557,20 @@ function plot_spaxel_fit(spectral_region::Symbol, λ_um::Vector{<:Real}, I::Vect
         # Loop over and plot individual model components
         for comp ∈ keys(comps)
             if (comp == "extinction") || (comp == "attenuation_stars")
-                append!(traces, [PlotlyJS.scatter(x=λ, y=(spectral_region == :MIR ? ext_full : att_gas) .* maximum(I_model) .* 1.1, mode="lines", 
-                    line=Dict(:color => "black", :width => 1, :dash => "dash"), name="Extinction")])
+                append!(traces, [PlotlyJS.scatter(x=λ, y=(spectral_region == :MIR ? ext_full : att_gas ./ median(att_gas)) .* maximum(I_model) .* 1.1, 
+                    mode="lines", line=Dict(:color => "black", :width => 1, :dash => "dash"), name="Extinction")])
             elseif occursin("hot_dust", comp)
                 append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* abs_full, mode="lines", line=Dict(:color => "yellow", :width => 1),
                     name="Hot Dust")])
+            elseif occursin("na_feii", comp)
+                append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* att_gas, mode="lines", line=Dict(:color => "yellow", :width => 1),
+                    name="Narrow Fe II")])
+            elseif occursin("br_feii", comp)
+                append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* att_gas, mode="lines", line=Dict(:color => "yellow", :width => 2),
+                    name="Broad Fe II")])
+            elseif occursin("power_law", comp)
+                append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* (spectral_region == :MIR ? ext_full : ones(length(λ))), mode="lines",
+                    line=Dict(:color => "black", :width => 0.5), name="Power Law")])
             elseif occursin("line", comp)
                 append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* (spectral_region == :MIR ? comps["extinction"] : att_gas), mode="lines",
                     line=Dict(:color => "rebeccapurple", :width => 1), name="Lines")])
@@ -1586,9 +1597,11 @@ function plot_spaxel_fit(spectral_region::Symbol, λ_um::Vector{<:Real}, I::Vect
                 append!(traces, [PlotlyJS.scatter(x=λ, y=comps["dust_feat_$i"] .* comps["extinction"], mode="lines", line=Dict(:color => "blue", :width => 1), name="PAHs")])
             end
         else
-            # Attenuated stellar continua
-            append!(traces, [PlotlyJS.scatter(x=λ, y=att_stars .* sum([comps["SSP_$i"] for i ∈ 1:n_ssps], dims=1)[1], mode="lines",
-                line=Dict(:color => "green", :width => 1), name="Stellar Continuum")])
+            # Add the summed up continuum
+            append!(traces, [PlotlyJS.scatter(x=λ, y=att_stars .* sum([comps["SSP_$i"] for i ∈ 1:n_ssps], dims=1)[1] .+
+                (fit_opt_na_feii ? comps["na_feii"] .* att_gas : zeros(length(λ))) .+ (fit_opt_br_feii ? comps["br_feii"] .* att_gas : zeros(length(λ))) .+
+                (n_power_law > 0 ? sum([comps["power_law_$j"] for j in 1:n_power_law], dims=1)[1] : zeros(length(λ))), mode="lines",
+                line=Dict(:color => "green", :width => 1), name="Continuum")])
             for i in 1:n_ssps
                 append!(traces, [PlotlyJS.scatter(x=λ, y=att_stars .* comps["SSP_$i"], mode="lines", line=Dict(:color => "green", :width => 0.5))])
             end
@@ -1700,13 +1713,26 @@ function plot_spaxel_fit(spectral_region::Symbol, λ_um::Vector{<:Real}, I::Vect
                 color="#0065ff", label="PAHs")
             # plot hot dust
             if haskey(comps, "hot_dust")
-                ax1.plot(λ, comps["hot_dust"] .* abs_full ./ norm .* factor, "-", color="#8ac800", alpha=0.6, label="Hot Dust")
+                ax1.plot(λ, comps["hot_dust"] .* abs_full ./ norm .* factor, "-", color="#8ac800", alpha=0.8, label="Hot Dust")
             end
         else
-            ax1.plot(λ, att_stars .* sum([comps["SSP_$i"] for i ∈ 1:n_ssps], dims=1)[1] ./ norm .* factor, "k-", lw=2, alpha=0.5, label="Continuum")
+            ax1.plot(λ, (att_stars .* sum([comps["SSP_$i"] for i ∈ 1:n_ssps], dims=1)[1] .+
+                (fit_opt_na_feii ? comps["na_feii"] .* att_gas : zeros(length(λ))) .+ 
+                (fit_opt_br_feii ? comps["br_feii"] .* att_gas : zeros(length(λ))) .+
+                (n_power_law > 0 ? sum([comps["power_law_$j"] for j in 1:n_power_law], dims=1)[1] : zeros(length(λ)))) ./ 
+                norm .* factor, "k-", lw=2, alpha=0.5, label="Continuum")
             # individual continuum components
             for i in 1:n_ssps
                 ax1.plot(λ, comps["SSP_$i"] .* att_stars ./ norm .* factor, "g-", alpha=0.75, label="SSPs")
+            end
+            for i in 1:n_power_law
+                ax1.plot(λ, comps["power_law_$i"] ./ norm .* factor, "k-", alpha=0.5, label="Power Law")
+            end
+            if haskey(comps, "na_feii")
+                ax1.plot(λ, comps["na_feii"] .* att_gas ./ norm .* factor, "-", color="goldenrod", alpha=0.8, label="Narrow Fe II")
+            end
+            if haskey(comps, "br_feii")
+                ax1.plot(λ, comps["br_feii"] .* att_gas ./ norm .* factor, "--", color="goldenrod", alpha=0.8, label="Broad Fe II")
             end
         end
         # full line profile
@@ -1914,9 +1940,10 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
             p_out = [popt_c; popt_l; p_dust; p_lines; χ2; dof; max_ext]
             p_err = [perr_c; perr_l; p_dust_err; p_lines_err; 0.; 0.; 0.]
         else
-            p_lines, p_lines_err = calculate_extra_parameters(λ, I, norm, comps, cube_fitter.n_ssps, cube_fitter.n_lines,
-                cube_fitter.n_acomps, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol, lsf_interp_func,
-                popt_l, perr_l, comps[ext_key], mask_lines, I_spline, area_sr, !bootstrap_iter)
+            p_lines, p_lines_err = calculate_extra_parameters(λ, I, norm, comps, cube_fitter.n_ssps, cube_fitter.n_power_law,
+                cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, 
+                cube_fitter.lines, cube_fitter.flexible_wavesol, lsf_interp_func, popt_l, perr_l, comps[ext_key], mask_lines, I_spline, 
+                area_sr, !bootstrap_iter)
             max_ext = maximum(1 ./ comps[ext_key])  # save the maximum extinction factor for calculating line amplitudes later
             p_out = [popt_c; popt_l; p_lines; χ2; dof; max_ext]
             p_err = [perr_c; perr_l; p_lines_err; 0.; 0.; 0.]
@@ -2077,9 +2104,10 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                         cube_fitter.fit_sil_emission, false, true)
                     ext_key = "extinction"
                 else
-                    I_boot_cont, comps_boot_cont = model_continuum(λ, p_out[1:split1], norm, cube_fitter.velscale, cube_fitter.vsyst, 
-                        cube_fitter.n_ssps, cube_fitter.ssp_λ, cube_fitter.ssp_templates, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac,
-                        area_sr, cube_fitter.extinction_curve, true)
+                    I_boot_cont, comps_boot_cont = model_continuum(λ, p_out[1:split1], norm, cube_fitter.velscale, cube_fitter.vsyst_ssp, 
+                        cube_fitter.vsyst_feii, cube_fitter.npad_feii, cube_fitter.n_ssps, cube_fitter.ssp_λ, cube_fitter.ssp_templates,
+                         cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, 
+                         cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve, true)
                     ext_key = "attenuation_gas"
                 end
                 I_boot_line, comps_boot_line = model_line_residuals(λ, p_out[split1+1:split2], cube_fitter.n_lines, cube_fitter.n_comps,

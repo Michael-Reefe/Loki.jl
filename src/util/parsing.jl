@@ -101,10 +101,10 @@ function parse_options()
 
     # Read in the options file
     options = TOML.parsefile(joinpath(@__DIR__, "..", "options", "options.toml"))
-    keylist1 = ["n_bootstrap", "extinction_curve", "extinction_screen", "fit_sil_emission", "fit_all_samin", "use_pah_templates", 
-                "fit_joint", "fit_uv_bump", "fit_covering_frac", "parallel", "plot_spaxels", "plot_maps", "save_fits", "overwrite", "track_memory", 
-                "track_convergence", "save_full_model", "line_test_lines", "line_test_threshold", "plot_line_test", "make_movies", 
-                "cosmology"]
+    keylist1 = ["n_bootstrap", "extinction_curve", "extinction_screen", "fit_sil_emission", "fit_opt_na_feii", "fit_opt_br_feii", 
+                "fit_all_samin", "use_pah_templates", "fit_joint", "fit_uv_bump", "fit_covering_frac", "parallel", "plot_spaxels", 
+                "plot_maps", "save_fits", "overwrite", "track_memory", "track_convergence", "save_full_model", "line_test_lines", 
+                "line_test_threshold", "plot_line_test", "make_movies", "cosmology"]
     keylist2 = ["h", "omega_m", "omega_K", "omega_r"]
 
     # Loop through the keys that should be in the file and confirm that they are there
@@ -346,7 +346,8 @@ function parse_optical()
 
     # Read in the dust file
     optical = TOML.parsefile(joinpath(@__DIR__, "..", "options", "optical.toml"))
-    keylist1 = ["attenuation", "stellar_population_ages", "stellar_population_metallicities", "stellar_kinematics"]
+    keylist1 = ["attenuation", "stellar_population_ages", "stellar_population_metallicities", "stellar_kinematics", 
+        "na_feii_kinematics", "br_feii_kinematics"]
     keylist2 = ["E_BV", "E_BV_factor", "uv_slope", "frac"]
     keylist3 = ["vel", "vdisp"]
     keylist4 = ["val", "plim", "locked"]
@@ -359,6 +360,8 @@ function parse_optical()
     end
     for key ∈ keylist3
         @assert haskey(optical["stellar_kinematics"], key) "Missing option $key in stellar_kinematics options!"
+        @assert haskey(optical["na_feii_kinematics"], key) "Missing option $key in na_feii_kinematics options!"
+        @assert haskey(optical["br_feii_kinematics"], key) "Missing option $key in br_feii_kinematics options!"
     end
     for key4 ∈ keylist4
         for key1 ∈ keylist1
@@ -394,6 +397,27 @@ function parse_optical()
     msg *= "\nVdisp $stel_vdisp"
     @debug msg
 
+    msg = "Fe II kinematics:"
+    na_feii_vel = from_dict(optical["na_feii_kinematics"]["vel"])
+    msg *= "\nNA Velocity $na_feii_vel"
+    na_feii_vdisp = from_dict(optical["na_feii_kinematics"]["vdisp"])
+    msg *= "\nNA Vdisp $na_feii_vdisp"
+    br_feii_vel = from_dict(optical["br_feii_kinematics"]["vel"])
+    msg *= "\nBR Velocity $br_feii_vel"
+    br_feii_vdisp = from_dict(optical["br_feii_kinematics"]["vdisp"])
+    msg *= "\nBR Vdisp $br_feii_vdisp"
+    @debug msg
+
+    α = Parameter[]
+    if haskey(optical, "power_law_indices")
+        msg *= "Power Laws:"
+        α = [from_dict(optical["power_law_indices"][i]) for i in eachindex(optical["power_law_indices"])]
+        for αi in α
+            msg *= "\nIndex $αi"
+        end
+        @debug msg
+    end
+ 
     # attenuation parameters
     msg = "Attenuation:"
     E_BV = from_dict(optical["attenuation"]["E_BV"])
@@ -406,7 +430,8 @@ function parse_optical()
     msg *= "\nfrac $frac"
     @debug msg
 
-    continuum = OpticalContinuum(ssp_ages, ssp_metallicities, stel_vel, stel_vdisp, E_BV, E_BV_factor, δ_uv, frac)
+    continuum = OpticalContinuum(ssp_ages, ssp_metallicities, stel_vel, stel_vdisp, na_feii_vel, na_feii_vdisp, 
+        br_feii_vel, br_feii_vdisp, α, E_BV, E_BV_factor, δ_uv, frac)
 
     continuum
 end
@@ -1063,7 +1088,7 @@ end
 
 
 """
-    prepare_ssps(λ, lsf, z, Ω, cosmo)
+    generate_stellar_populations(λ, lsf, z, Ω, cosmo, name)
 
 Prepare a 3D grid of Simple Stellar Population (SSP) templates over age, metallicity, and wavelength.
 Each template will be cropped around the region of interest given by `λ` (in microns), and degraded 
@@ -1108,7 +1133,7 @@ function generate_stellar_populations(λ::Vector{<:Real}, lsf::Vector{<:Real}, z
     ssp_λlin = collect(λleft:Δλ:λright)
     
     # LSF FWHM of the input spectrum in microns, interpolated at the locations of the SSP templates
-    inp_fwhm = Spline1D(λ, lsf ./ C_KMS .* λ, k=1)(ssp_λlin)
+    inp_fwhm = Spline1D(λ, lsf ./ C_KMS .* λ, k=1, bc="nearest")(ssp_λlin)
     # FWHM resolution of the FSPS templates in um
     ssp_lsf = Spline1D(ssp_λ, abs.(ssp0.resolutions[mask]), k=1, bc="nearest")(ssp_λlin)
     ssp_fwhm = ssp_lsf ./ C_KMS .* ssp_λlin .* 2√(2log(2))
@@ -1158,5 +1183,97 @@ function generate_stellar_populations(λ::Vector{<:Real}, lsf::Vector{<:Real}, z
     serialize(joinpath("output_$name", "stellar_templates.loki"), (λ=ssp_lnλ, age=ages, logz=logzs, templates=ssp_templates))
 
     ssp_lnλ, ages, logzs, ssp_templates
+end
+
+
+"""
+    generate_feii_templates(λ, lsf)
+
+Prepare two Fe II emission templates from Veron-Cetty et al. (2004): https://www.aanda.org/articles/aa/pdf/2004/14/aa0714.pdf
+derived from the spectrum of I Zw 1 (Seyfert 1). This function loads the templates from the files, converts to vacuum wavelengths,
+interpolates the flux onto a logarithmically spaced grid, and convolves the templates to match the spectral resolution of the
+input spectrum (given by the `lsf` argument, in km/s).
+
+The returned values are the length of the templates in wavelength space, the wavelength grid, and the Fourier Transforms of the
+templates themselves (this is done to speed up the convolution with a LOSVD during the actual fitting -- we cannot return the 
+FFTs of the stellar templates because they may have to be interpolated between age/metallicity, but since the Fe II templates are
+fixed, we are free to pre-compute the FFTs).
+"""
+function generate_feii_templates(λ::Vector{<:Real}, lsf::Vector{<:Real})
+
+    # Make sure λ is logarithmically binned
+    @assert (λ[2]/λ[1]) ≈ (λ[end]/λ[end-1]) "Input spectrum must be logarithmically binned to fit optical data!"
+
+    # Read the templates in from the specified directory
+    template_path = joinpath(@__DIR__, "..", "templates", "veron-cetty_2004")
+    na_feii_temp, _ = readdlm(joinpath(template_path, "VC04_na_feii_template.csv"), ',', Float64, '\n', header=true)
+    br_feii_temp, _ = readdlm(joinpath(template_path, "VC04_br_feii_template.csv"), ',', Float64, '\n', header=true)
+    feii_λ = na_feii_temp[:, 1]
+    na_feii_temp = na_feii_temp[:, 2]
+    br_feii_temp = br_feii_temp[:, 2]
+
+    # Convert to microns
+    feii_λ ./= 1e4
+    # Convert to vacuum wavelengths
+    feii_λ = air_to_vacuum.(feii_λ)
+    # Linear spacing 
+    Δλ = (maximum(feii_λ) - minimum(feii_λ)) / length(feii_λ)
+
+    # Cut off the templates a little bit before/after the input spectrum
+    λleft, λright = minimum(λ)*0.98, maximum(λ)*1.02 
+    inrange = (λleft ≥ minimum(feii_λ)) && (λright ≤ maximum(feii_λ))
+    if !inrange
+        @debug "The input spectrum falls outside the range covered by the Fe II templates. The templates will be padded with 0s."
+        λpad_l = collect(λleft:Δλ:minimum(feii_λ))
+        λpad_r = collect(maximum(feii_λ):Δλ:λright)
+        feii_λ = [λpad_l; feii_λ; λpad_r]
+        Fpad_l = zeros(length(λpad_l))
+        Fpad_r = zeros(length(λpad_r))
+        na_feii_temp = [Fpad_l; na_feii_temp; Fpad_r]
+        br_feii_temp = [Fpad_l; br_feii_temp; Fpad_r]
+    else
+        mask = λleft .< feii_λ .< λright
+        feii_λ = feii_λ[mask]
+        na_feii_temp = na_feii_temp[mask]
+        br_feii_temp = br_feii_temp[mask]
+    end
+
+    # Resample to a linear wavelength grid
+    feii_λlin = collect(λleft:Δλ:λright)
+    na_feii_temp = Spline1D(feii_λ, na_feii_temp, k=1, bc="nearest")(feii_λlin)
+    br_feii_temp = Spline1D(feii_λ, br_feii_temp, k=1, bc="nearest")(feii_λlin)
+
+    # LSF FWHM of the input spectrum in microns, interpolated at the locations of the SSP templates
+    inp_fwhm = Spline1D(λ, lsf ./ C_KMS .* λ, k=1, bc="nearest")(feii_λlin)
+    # FWHM resolution of the Fe II templates in um
+    feii_fwhm = 1.0/1e4
+    # Difference in resolutions between the input spectrum and SSP templates, in pixels
+    σ_diff = sqrt.(clamp.(inp_fwhm.^2 .- feii_fwhm.^2, 0., Inf)) ./ (2√(2log(2))) ./ Δλ
+
+    # Convolve the templates to match the resolution of the input spectrum
+    na_feii_temp, _ = convolveGaussian1D(na_feii_temp, σ_diff)
+    br_feii_temp, _ = convolveGaussian1D(br_feii_temp, σ_diff)
+
+    # Logarithmically rebinned wavelengths
+    logscale = log(λ[2]/λ[1])
+    feii_lnλ = get_logarithmic_λ([minimum(feii_λlin), maximum(feii_λlin)], length(feii_λlin), logscale=logscale)
+    na_feii_temp = Spline1D(feii_λlin, na_feii_temp, k=1, bc="nearest")(feii_lnλ)
+    br_feii_temp = Spline1D(feii_λlin, br_feii_temp, k=1, bc="nearest")(feii_lnλ)
+
+    # Pad with 0s up to the next product of small prime factors -> to make the FFT more efficient
+    npad = nextprod([2,3,5], length(feii_lnλ))
+    na_feii_temp = [na_feii_temp; zeros(npad - length(na_feii_temp))]
+    br_feii_temp = [br_feii_temp; zeros(npad - length(br_feii_temp))]
+
+    # Re-normalize the spectra so the maximum is 1
+    na_feii_temp ./= maximum(na_feii_temp)
+    br_feii_temp ./= maximum(br_feii_temp)
+
+    # Pre-compute the Fourier Transforms of the templates to save time during fitting
+    na_feii_temp_rfft = rfft(na_feii_temp)
+    br_feii_temp_rfft = rfft(br_feii_temp)
+
+    npad, feii_lnλ, na_feii_temp_rfft, br_feii_temp_rfft
+
 end
 
