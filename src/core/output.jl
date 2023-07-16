@@ -496,9 +496,9 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
         if cube_fitter.save_full_model
             # End of continuum parameters: recreate the continuum model
             I_cont, comps_c = model_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], N, cube_fitter.velscale, cube_fitter.vsyst_ssp,
-                cube_fitter.vsyst_feii, cube_fitter.n_ssps, cube_fitter.ssp_λ, cube_fitter.ssp_templates, cube_fitter.feii_templates_fft,
-                cube_fitter.n_power_law, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, 
-                cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve, true)
+                cube_fitter.vsyst_feii, cube_fitter.npad_feii, cube_fitter.n_ssps, cube_fitter.ssp_λ, cube_fitter.ssp_templates, 
+                cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, 
+                cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve, true)
         end
 
         # Save marker of the point where the continuum parameters end and the line parameters begin
