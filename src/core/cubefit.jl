@@ -8,25 +8,25 @@ fitting is performed with Loki.
 abstract type ParamMaps end
 
 """
-    MIRParamMaps(stellar_continuum, dust_continuum, power_law, dust_features, abs_features, extinction,
-        hot_dust, lines, statistics)
+    MIRParamMaps
+
+A structure for holding 2D maps of fitting parameters generated after fitting a cube.  Each parameter
+that is fit (i.e. stellar continuum temperature, optical depth, line ampltidue, etc.) corresponds to one 
+2D map with the value of that parameter, with each spaxel's fit value located at the corresponding location
+in the parameter map.
 
 # Fields
 - `stellar_continuum::Dict{Symbol, Array{Float64, 2}}`: The stellar continuum parameters: amplitude and temperature
 - `dust_continuum::Dict{Int, Dict{Symbol, Array{Float64, 2}}}`: The dust continuum parameters: amplitude and temperature for each
     dust continuum component
+- `power_law::Dict{Int, Dict{Symbol, Array{T, 2}}}`: Power law continuum parameters: amplitude and index for each component.
 - `dust_features::Dict{String, Dict{Symbol, Array{Float64, 2}}}`: The dust feature parameters: amplitude, central wavelength, and FWHM
     for each PAH feature
 - `extinction::Dict{Symbol, Array{Float64, 2}}`: Extinction parameters: optical depth at 9.7 μm and mixing ratio
 - `hot_dust::Dict{Symbol, Array{Float64, 2}}`: Hot dust parameters: amplitude, temperature, covering fraction, warm tau, and cold tau
 - `lines::Dict{Symbol, Dict{Symbol, Array{Float64, 2}}}`: The emission line parameters: amplitude, voff, FWHM, and any additional 
     line profile parameters for each line
-- `reduced_χ2::Array{Float64, 2}`: The reduced chi^2 value of each fit
-
-A structure for holding 2D maps of fitting parameters generated after fitting a cube.  Each parameter
-that is fit (i.e. stellar continuum temperature, optical depth, line ampltidue, etc.) corresponds to one 
-2D map with the value of that parameter, with each spaxel's fit value located at the corresponding location
-in the parameter map.
+- `statistics::Array{Float64, 2}`: The reduced chi^2 value and degrees of freedom for each fit.
 
 See ['parammaps_empty`](@ref) for a default constructor function.
 """
@@ -49,12 +49,20 @@ end
     OpticalParamMaps(stellar_populations, stellar_kinematics, lines, statistics)
 
 A structure for holding 2D maps of fitting parameters generated after fitting a cube.  Each parameter
-that is fit (i.e. stellar continuum temperature, optical depth, line ampltidue, etc.) corresponds to one 
+that is fit (i.e. stellar age, kinematics, Fe II emission, line amplitudes, etc.) corresponds to one 
 2D map with the value of that parameter, with each spaxel's fit value located at the corresponding location
 in the parameter map.
 
 # Fields
--
+- `stellar_populations::Dict{Int, Dict{Symbol, Array{T, 2}}}`: The stellar population parameters: mass, age, and metallicity.
+- `stellar_kinematics::Dict{Symbol, Array{T, 2}}`: The stellar line-of-sight velocity and velocity dispersion.
+- `feii::Dict{Symbol, Array{T, 2}}`: Narrow and/or broad Fe II emission parameters, including amplitude, velocity, and FWHM.
+- `power_law::Dict{Int, Dict{Symbol, Array{T, 2}}}`: Power law parameters, including amplitude and index.
+- `attenuation::Dict{Symbol, Array{T, 2}}`: Attenuation parameters, including E(B-V), E(B-V) factor, and optionally UV bump slope
+and dust covering fraction.
+- `lines::Dict{Symbol, Dict{Symbol, Array{T, 2}}}`: Emission line parameters, including amplitude, velocity, and FWHM, and any 
+additional line profile parameters for non-Gaussian profiles.
+- `statistics::Dict{Symbol, Array{T, 2}}`: Reduced chi^2 and degrees of freedom.
 
 See ['parammaps_empty`](@ref) for a default constructor function.
 """
@@ -72,12 +80,24 @@ end
 
 
 """
-    parammaps_empty(shape, args...)
+    parammaps_empty(shape, n_dust_cont, n_power_law, cf_dustfeat, ab_names, n_lines, n_comps, cf_lines,
+        flexible_wavesol)
 
-A constructor function for making a default empty ParamMaps structure with all necessary fields for a given
+A constructor function for making a default empty MIRParamMaps structure with all necessary fields for a given
 fit of a DataCube.
+
+# Arguments {S<:Integer}
+- `shape::Tuple{S,S,S}`: Tuple specifying the 3D shape of the input data cube.
+- `n_dust_cont::S`: The number of dust continuum components in the fit.
+- `n_power_law::S`: The number of power law continuum components in the fit.
+- `cf_dustfeat::DustFeatures`: A DustFeatures object specifying all of the PAH emission in the fit.
+- `ab_names::Vector{String}`: The names of each absorption feature included in the fit.
+- `n_lines::S`: The number of emission lines in the fit.
+- `n_comps::S`: The maximum number of profiles that are being fit to a line.
+- `cf_lines::TransitionLines`: A TransitionLines object specifying all of the line emission in the fit.
+- `flexible_wavesol::Bool`: See the CubeFitter's `flexible_wavesol` parameter.
 """
-function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, n_power_law::Integer, cf_dustfeat::DustFeatures,
+function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::S, n_power_law::S, cf_dustfeat::DustFeatures,
     ab_names::Vector{String}, n_lines::S, n_comps::S, cf_lines::TransitionLines, 
     flexible_wavesol::Bool)::MIRParamMaps where {S<:Integer}
 
@@ -201,7 +221,21 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, n_power_law:
 end
 
 
-# Optical version 
+"""
+    parammaps_empty(shape, n_ssps, n_power_law, n_lines, n_comps, cf_lines, flexible_wavesol)
+
+A constructor function for making a default empty OpticalParamMaps structure with all necessary fields for a given
+fit of a DataCube.
+
+# Arguments {S<:Integer}
+- `shape::Tuple{S,S,S}`: Tuple specifying the 3D shape of the input data cube.
+- `n_ssps::S`: The number of simple stellar populations in the fit.
+- `n_power_law::S`: The number of power law continuum components in the fit.
+- `n_lines::S`: The number of emission lines in the fit.
+- `n_comps::S`: The maximum number of profiles that are being fit to a line.
+- `cf_lines::TransitionLines`: A TransitionLines object specifying all of the line emission in the fit.
+- `flexible_wavesol::Bool`: See the CubeFitter's `flexible_wavesol` parameter.
+"""
 function parammaps_empty(shape::Tuple{S,S,S}, n_ssps::S, n_power_law::S, n_lines::S, n_comps::S, 
     cf_lines::TransitionLines, flexible_wavesol::Bool)::OpticalParamMaps where {S<:Integer}
 
@@ -308,12 +342,16 @@ This will be the same shape as the input data, and preferably the same datatype 
 and error in Float32 format, so we should also output in Float32 format).  This is useful as a way to quickly
 compare the full model, or model components, to the data.
 
-# Fields
+# Fields {T<:Real}
 - `model::Array{T, 3}`: The full 3D model.
 - `stellar::Array{T, 3}`: The stellar component of the continuum.
 - `dust_continuum::Array{T, 4}`: The dust components of the continuum. The 4th axis runs over each individual dust component.
+- `power_law::Array{T, 4}`: The power law components of the continuum. The 4th axis runs over each individual power law.
 - `dust_features::Array{T, 4}`: The dust (PAH) feature profiles. The 4th axis runs over each individual dust profile.
+- `abs_features::Array{T, 4}`: The absorption feature profiles. The 4th axis runs over each individual absorption profile.
 - `extinction::Array{T, 3}`: The extinction profile.
+- `abs_ice::Array{T, 3}`: The water-ice absorption feature profile.
+- `abs_ch::Array{T, 3}`: The CH absorption feature profile.
 - `hot_dust::Array{T, 3}`: The hot dust emission profile
 - `lines::Array{T, 4}`: The line profiles. The 4th axis runs over each individual line.
 
@@ -344,8 +382,15 @@ This will be the same shape as the input data, and preferably the same datatype 
 and error in Float32 format, so we should also output in Float32 format).  This is useful as a way to quickly
 compare the full model, or model components, to the data.
 
-# Fields
-- 
+# Fields {T<:Real}
+- `model::Array{T, 3}`: The full 3D model.
+- `stellar::Array{T, 4}`: The simple stellar population components of the continuum. The 4th axis runs over each individual population.
+- `na_feii::Array{T, 3}`: The narrow Fe II emission component.
+- `br_feii::Array{T, 3}`: The broad Fe II emission component.
+- `power_law::Array{T, 4}`: The power law components of the continuum. The 4th axis runs over each individual power law.
+- `attenuation_stars::Array{T, 3}`: The dust attenuation on the stellar population.
+- `attenuation_gas::Array{T, 3}`: The dust attenuation on the gas, related to attenuation_stars by E(B-V)_stars = E(B-V)_factor * E(B-V)_gas
+- `lines::Array{T, 4}`: The line profiles. The 4th axis runs over each individual line.
 
 See [`cubemodel_empty`](@ref) for a default constructor method.
 """
@@ -364,17 +409,18 @@ end
 
 
 """
-    cubemodel_empty(shape, n_dust_cont, df_names, line_names; floattype=floattype)
+    cubemodel_empty(shape, n_dust_cont, n_power_law, df_names, ab_names, line_names[, floattype])
 
-A constructor function for making a default empty CubeModel object with all the necessary fields for a given
+A constructor function for making a default empty MIRCubeModel object with all the necessary fields for a given
 fit of a DataCube.
 
 # Arguments
-`S<:Integer`
-- `shape::Tuple{S,S,S}`: The dimensions of the DataCube being fit, formatted as a tuple of (nx, ny, nz)
+- `shape::Tuple`: The dimensions of the DataCube being fit, formatted as a tuple of (nx, ny, nz)
 - `n_dust_cont::Integer`: The number of dust continuum components in the fit (usually given by the number of temperatures 
     specified in the dust.toml file)
+- `n_power_law::Integer`: The number of power law continuum components in the fit.
 - `df_names::Vector{String}`: List of names of PAH features being fit, i.e. "PAH_12.62", ...
+- `ab_names::Vector{String}`: List of names of absorption features being fit, i.e. "abs_HCO+_12.1", ...
 - `line_names::Vector{Symbol}`: List of names of lines being fit, i.e. "NeVI_7652", ...
 - `floattype::DataType=Float32`: The type of float to use in the arrays. Should ideally be the same as the input data,
     which for JWST is Float32.
@@ -419,6 +465,20 @@ function cubemodel_empty(shape::Tuple, n_dust_cont::Integer, n_power_law::Intege
 end
 
 
+"""
+    cubemodel_empty(shape, n_ssps, n_power_law, line_names[, floattype])
+
+A constructor function for making a default empty OpticalCubeModel object with all the necessary fields for a given
+fit of a DataCube.
+    
+# Arguments
+- `shape::Tuple`: The dimensions of the DataCube being fit, formatted as a tuple of (nx, ny, nz)
+- `n_ssps::Integer`: The number of simple stellar population continuum components in the fit.
+- `n_power_law::Integer`: The number of power law continuum components in the fit.
+- `line_names::Vector{Symbol}`: List of names of lines being fit, i.e. "NeVI_7652", ...
+- `floattype::DataType=Float32`: The type of float to use in the arrays. Should ideally be the same as the input data,
+which for JWST is Float32.
+"""
 function cubemodel_empty(shape::Tuple, n_ssps::Integer, n_power_law::Integer, line_names::Vector{Symbol}, 
     floattype::DataType=Float32)::OpticalCubeModel
 
@@ -453,76 +513,118 @@ end
 
 
 """
-    CubeFitter(cube, z, name; plot_spaxels=plot_spaxels, plot_maps=plot_maps, save_fits=save_fits)
+    CubeFitter(cube, z, name; <keyword arguments>)
 
 This is the main structure used for fitting IFU cubes, containing all of the necessary data, metadata,
 fitting options, and associated functions for generating ParamMaps and CubeModel structures to handle the outputs 
 of all the fits.  This is essentially the "configuration object" that tells the rest of the fitting code how
 to run. The actual fitting functions (`fit_spaxel` and `fit_cube!`) require an instance of this structure.
 
-# Fields
-`T<:Real, S<:Integer`
+Other than `cube`, `z`, and `name`, all fields listed below will be populated by the defaults given in the 
+`config.toml`, `dust.toml`, `lines.toml`, and `optical.toml` configuration files, or by quantities derived from
+these options. For more detailed explanations on these options, please refer to the options files and the README file.
+
+# Fields {T<:Real, S<:Integer, C<:Complex}
+
+## Data
 - `cube::DataCube`: The main DataCube object containing the cube that is being fit
 - `z::Real`: The redshift of the target that is being fit
-- `plot_spaxels::Symbol=:pyplot`: A Symbol specifying the plotting backend to be used when plotting individual spaxel fits, can
-    be either `:pyplot` or `:plotly`
-- `plot_maps::Bool=true`: Whether or not to plot 2D maps of the best-fit parameters after the fitting is finished
-- `parallel::Bool=true`: Whether or not to fit multiple spaxels in parallel using multiprocessing
-- `save_fits::Bool=true`: Whether or not to save the final best-fit models and parameters as FITS files
-Read from the options files:
+- `name::String`: The name of the fitting run being performed.
+- `spectral_region::Symbol`: Either :MIR for mid-infrared, or :OPT for optical.
+
+## Basic configuration options
+- `user_mask::Union{Vector{<:Tuple},Nothing}`: An optional mask specifying areas of the spectrum to ignore during fitting.
+- `plot_spaxels::Symbol`: A Symbol specifying the plotting backend to be used when plotting individual spaxel fits, can
+    be either `:pyplot`, `:plotly`, or `:both`
+- `plot_maps::Bool`: Whether or not to plot 2D maps of the best-fit parameters after the fitting is finished
+- `plot_range::Union{Vector{<:Tuple},Nothing}`: An optional list of spectral regions to extract zoomed-in plots from (useful for plotting
+specific emission lines of interest).
+- `parallel::Bool`: Whether or not to fit multiple spaxels in parallel using multiprocessing
+- `save_fits::Bool`: Whether or not to save the final best-fit models and parameters as FITS files
+- `save_full_model::Bool`: Whether or not to save the full 3D best-fit model as a FITS file.
 - `overwrite::Bool`: Whether or not to overwrite old fits of spaxels when rerunning
 - `track_memory::Bool`: Whether or not to save diagnostic files showing memory usage of the program
 - `track_convergence::Bool`: Whether or not to save diagnostic files showing convergence of line fitting for each spaxel
 - `make_movies::Bool`: Whether or not to save mp4 files of the final model
-- `extinction_curve::String`: The type of extinction curve being used, either `"kvt"` or `"d+"`
+
+## Basic fitting options
+- `extinction_curve::String`: The type of extinction curve being used, i.e. `"kvt"` or `"d+"`
 - `extinction_screen::Bool`: Whether or not the extinction is modeled as a screen
-- `T_s::Parameter`: The stellar temperature parameter
-- `T_dc::Vector{Parameter}`: The dust continuum temperature parameters
-- `τ_97::Parameter`: The dust opacity at 9.7 um parameter
-- `τ_ice::Parameter`: The peak opacity from ice absorption (at around 6.9 um)
-- `τ_ch::Parameter`: The peak opacity from CH absorption (at around 6.9 um)
-- `β::Parameter`: The extinction profile mixing parameter
-- `T_hot::Parameter`: The hot dust temperature
-- `Cf_hot::Parameter`: The hot dust covering fraction
-- `τ_warm::Parameter`: The warm dust optical depth
-- `τ_cold::Parameter`: The cold dust optical depth
-- `n_dust_cont::Integer`: The number of dust continuum profiles
-- `df_names::Vector{String}`: The names of each PAH feature profile
-- `dust_features::Vector{Dict}`: All of the fitting parameters for each PAH feature
-- `n_lines::Integer`: The number of lines being fit
-- `line_names::Vector{Symbol}`: The names of each line being fit
-- `line_profiles::Vector{Symbol}`: The profiles of each line being fit
-- `line_acomp_profiles::Vector{Union{Nothing,Symbol}}`: Same as `line_profiles`, but for the additional components
-- `lines::Vector{TransitionLine}`: All of the fitting parameters for each line
-- `n_kin_tied::Integer`: The number of tied velocity offsets
-- `line_tied::Vector{Union{String,Nothing}}`: List of line tie keys which specify whether the voff of the given line should be
-    tied to other lines. The line tie key itself may be either `nothing` (untied), or a String specifying the group of lines
-    being tied, i.e. "H2"
-- `kin_tied_key::Vector{String}`: List of only the unique keys in line_tied (not including `nothing`)
-- `voff_tied::Vector{Parameter}`: The actual tied voff parameter objects, corresponding to the `kin_tied_key`
-- `fwhm_tied::Vector{Parameter}`: The actual tied fwhm parameter objects, corresponding to the `kin_tied_key`
-- `n_acomp_kin_tied::Integer`: Same as `n_kin_tied`, but for additional components
-- `line_acomp_tied::Vector{Union{String,Nothing}}`: Same as `line_tied`, but for additional components
-- `acomp_kin_tied_key::Vector{String}`: Same as `kin_tied_key`, but for additional components
-- `acomp_voff_tied::Vector{Parameter}`: Same as `voff_tied`, but for additional components
-- `acomp_fwhm_tied::Vector{Parameter}`: Same as `fwhm_tied`, but for additional components
+- `fit_sil_emission::Bool`: Whether or not to fit MIR hot silicate dust emission
+- `fit_opt_na_feii::Bool`: Whether or not to fit optical narrow Fe II emission
+- `fit_opt_br_feii::Bool`: Whether or not to fit optical broad Fe II emission
+- `fit_all_samin::Bool`: Whether or not to fit all spaxels with simulated annealing
+- `use_pah_templates::Bool`: Whether or not to fit the continuum in two steps, where the first step uses PAH templates,
+and the second step fits the PAH residuals with the PAHFIT Drude model.
+- `pah_template_map::BitMatrix`: Map of booleans specifying individual spaxels to fit with PAH templates, if use_pah_templates
+is true. By default, if use_pah_templates is true, all spaxels will be fit with PAH templates.
+- `fit_joint::Bool`: If true, fit the continuum and lines simultaneously. If false, the lines will first be masked and the
+continuum will be fit, then the continuum is subtracted and the lines are fit to the residuals.
+- `fit_uv_bump::Bool`: Whether or not to fit the UV bump in the dust attenuation profile. Only applies if the extinction
+curve is "calzetti".
+- `fit_covering_frac::Bool`: Whether or not to fit a dust covering fraction in the attenuation profile. Only applies if the
+extinction curve is "calzetti".
+
+## Continuum parameters
+- `continuum::Continuum`: A Continuum structure holding information about various continuum fitting parameters.
+This object will obviously be different depending on if the spectral region is :MIR or :OPT.
+
+## MIR continuum parameters
+- `n_dust_cont::S`: The number of dust continuum components
+- `n_power_law::S`: The number of power law continuum components
+- `n_dust_feat::S`: The number of PAH features
+- `n_abs_feat::S`: The number of absorption features
+- `dust_features::Union{DustFeatures,Nothing}`: All of the fitting parameters for each PAH feature
+- `abs_features::Union{DustFeatures,Nothing}`: All of the fitting parameters for each absorption feature
+- `abs_taus::Union{Vector{Parameter},Nothing}`: A vector of amplitude parameters for the absorption features
+
+## Optical continuum parameters
+- `n_ssps::S`: The number of simple stellar population components
+- `ssp_λ::Union{Vector{T},Nothing}`: The wavelength grid for the simple stellar population templates
+- `ssp_templates::Union{Vector{Spline2D},Nothing}`: A vector of interpolating functions for the simple stellar populations
+at each point in the wavelength grid.
+- `feii_templates_fft::Union{Matrix{C},Nothing}`: A matrix of the Fourier transforms of the narrow and broad Fe II templates
+- `velscale::T`: The constant velocity scale of the wavelength grid, which assumes logarithmic spacing, in km/s/pixel.
+- `vsyst_ssp::T`: The systemic velocity offset between the input wavelength grid and the SSP template wavelength grid.
+- `vsyst_feii::T`: The systemic velocity offset between the input wavelength grid and the Fe II template wavelength grid.
+- `npad_feii::S`: The length of the Fe II templates (NOT the length of the Fourier transformed templates).
+
+## Line parameters
+- `n_lines::S`: The number of lines being fit
+- `n_acomps::S`: The summed total number of line profiles fit to all lines in the spectrum, including additional components.
+- `n_comps::S`: The maximum number of additional profiles that may be fit to any given line.
+- `lines::TransitionLines`: A TransitionLines struct containing parameters and tied information for the emission lines.
+
+## Tied Kinematics
+- `tied_kinematics::TiedKinematics`: A TiedKinematics struct containing information about which lines have tied velocities and FWHMs.
+
+## Tied voigt mixing
 - `tie_voigt_mixing::Bool`: Whether or not the Voigt mixing parameter is tied between all the lines with Voigt profiles
 - `voigt_mix_tied::Parameter`: The actual tied Voigt mixing parameter object, given `tie_voigt_mixing` is true
-- `n_params_cont::Integer`: The total number of free fitting parameters for the continuum fit (not including emission lines)
-- `n_params_lines::Integer`: The total number of free fitting parameters for the emission line fit (not including the continuum)
+
+## Number of parameters
+- `n_params_cont::S`: The total number of free fitting parameters for the continuum fit (not including emission lines)
+- `n_params_lines::S`: The total number of free fitting parameters for the emission line fit (not including the continuum)
+- `n_params_extra::S`: The total number of extra parameters calculated for each fit (includes things like line fluxes and equivalent widths)
+
+## General options
 - `cosmology::Cosmology.AbstractCosmology`: The Cosmology, used solely to create physical scale bars on the 2D parameter plots
-- `χ²_thresh::Real`: The threshold for reduced χ² values, below which the best fit parameters for a given
-    row will be set
 - `flexible_wavesol::Bool`: Whether or not to allow small variations in the velocity offsets even when tied, to account
     for a bad wavelength solution
-- `p_best_cont::Array{T}`: A rolling collection of best fit continuum parameters for the best fitting spaxels
-    along each row, for fits with a reduced χ² below χ²_thresh, which are used for the starting parameters in the following
-    fits for the given row
-- `p_best_line::Array{T}`: Same as `p_best_cont`, but for the line parameters
-- `χ²_best::SharedVector{T}`: The reduced χ² values associated with the `p_best_cont` and `p_best_line` values
-    in each row
-- `best_spaxel::SharedVector{Tuple{S,S}}`: The locations of the spaxels associated with the `p_best_cont` and `p_best_line`
-    values in each row
+- `n_bootstrap::S`: The number of bootstrapping iterations that should be performed for each fit.
+- `random_seed::S`: An optional number to use as a seed for the RNG utilized during bootstrapping, to ensure consistency between
+attempts.
+- `line_test_lines::Vector{Vector{Symbol}}`: A list of lines which should be tested for additional components. They may be grouped
+together (hence the vector-of-a-vector structure) such that lines in a group will all be given the maximum number of parameters that
+any one line passes the test for.
+- `line_test_threshold::T`: A threshold which must be met in the chi^2 ratio between a fit without an additional line profile and
+one with the additional profile, in order to include the additional profile in the final fit.
+- `plot_line_test::Bool`: Whether or not to plot the line test results.
+
+## Best fit parameters
+- `p_init_cont::Vector{T}`: The best-fit continuum parameters for the initial fit to the sum of all spaxels.
+- `p_init_line::Vector{T}`: Same as `p_init_cont`, but for the line parameters
+- `p_init_pahtemp::Vector{T}`: Same as `p_init_cont`, but for the PAH templates amplitudes
 
 See [`ParamMaps`](@ref), [`parammaps_empta`](@ref), [`CubeModel`](@ref), [`cubemodel_empty`](@ref), 
     [`fit_spaxel`](@ref), [`fit_cube!`](@ref)
@@ -991,7 +1093,7 @@ end
 
 
 """
-    generate_cubemodel(cube_fitter)
+    generate_cubemodel(cube_fitter[, aperture])
 
 Generate a CubeModel object corresponding to the options given by the CubeFitter object
 """
@@ -1010,7 +1112,7 @@ end
 
 
 """
-    generate_parammaps(cube_fitter)
+    generate_parammaps(cube_fitter[, aperture])
 
 Generate three ParamMaps objects (for the values and upper/lower errors) corrresponding to the options given
 by the CubeFitter object.
@@ -1037,9 +1139,9 @@ end
 
 
 """
-    get_continuum_plimits(cube_fitter, I)
+    get_continuum_plimits(cube_fitter, λ, I, init; split)
 
-Get the continuum limits vector for a given CubeFitter object, split up by the 2 continuum fitting steps.
+Get the continuum limits vector for a given CubeFitter object, possibly split up by the 2 continuum fitting steps.
 Also returns a boolean vector for which parameters are allowed to vary.
 """
 get_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, init::Bool; 
@@ -1048,6 +1150,7 @@ get_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:R
     get_opt_continuum_plimits(cube_fitter, λ, I, init)
 
 
+# MIR implementation of the get_continuum_plimits function
 function get_mir_continuum_plimits(cube_fitter::CubeFitter, init::Bool; split::Bool=false)
 
     dust_features = cube_fitter.dust_features
@@ -1101,6 +1204,7 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, init::Bool; split::B
 end
 
 
+# Optical implementation of the get_continuum_plimits function
 function get_opt_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, init::Bool)
 
     continuum = cube_fitter.continuum
@@ -1160,10 +1264,10 @@ end
 
 
 """
-    get_continuum_initial_values(cube_fitter, I, init)
+    get_continuum_initial_values(cube_fitter, λ, I, N, init; split)
 
 Get the vector of starting values for the continuum fit for a given CubeFitter object. Again, the
-vector is split up by the 2 continuum fitting steps.
+vector may be split up by the 2 continuum fitting steps.
 """
 get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, 
     init::Bool; split::Bool=false) = cube_fitter.spectral_region == :MIR ? 
@@ -1171,6 +1275,7 @@ get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vec
     get_opt_continuum_initial_values(cube_fitter, λ, I, N, init)
 
 
+# MIR implementation of the get_continuum_initial_values function
 function get_mir_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, init::Bool; split::Bool=false)
 
     # Check if the cube fitter has initial fit parameters 
@@ -1196,8 +1301,8 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
         scale_N0 = scale * N0 / N
         # max_amp = 1 / exp(-max_τ)
 
-        # Rescale PAH templates
-        pah_frac .*= scale_N0
+        # Dont rescale PAH templates
+        # pah_frac .*= scale_N0
 
         # Stellar amplitude
         p₀[1] *= scale
@@ -1211,7 +1316,7 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
 
         # Power law amplitudes
         for _ ∈ 1:cube_fitter.n_power_law
-            p₀[pᵢ] *= scale_N0
+            # p₀[pᵢ] *= scale_N0
             pᵢ += 2
         end
 
@@ -1231,13 +1336,13 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
         end
 
         # Dust feature amplitudes
-        for i ∈ 1:cube_fitter.n_dust_feat
-            p₀[pᵢ] = clamp(p₀[pᵢ]*scale_N0, 0., 1.)
-            pᵢ += 3
-            if cube_fitter.dust_features.profiles[i] == :PearsonIV
-                pᵢ += 2
-            end
-        end
+        # for i ∈ 1:cube_fitter.n_dust_feat
+        #     # p₀[pᵢ] = clamp(p₀[pᵢ]*scale_N0, 0., 1.)
+        #     pᵢ += 3
+        #     if cube_fitter.dust_features.profiles[i] == :PearsonIV
+        #         pᵢ += 2
+        #     end
+        # end
 
     # Otherwise, we estimate the initial parameters based on the data
     else
@@ -1323,6 +1428,7 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
 end
 
 
+# Optical implementation of the get_continuum_initial_values function
 function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, init::Bool)
 
     continuum = cube_fitter.continuum
@@ -1528,7 +1634,7 @@ end
 
 
 """
-    pretty_print_continuum_results(cube_fitter, popt, perr)
+    pretty_print_continuum_results(cube_fitter, popt, perr, I)
 
 Print out a nicely formatted summary of the continuum fit results for a given CubeFitter object.
 """
@@ -1538,6 +1644,7 @@ pretty_print_continuum_results(cube_fitter::CubeFitter, popt::Vector{<:Real}, pe
         pretty_print_opt_continuum_results(cube_fitter, popt, perr, I)
 
 
+# MIR implementation of the pretty_print_continuum_results function
 function pretty_print_mir_continuum_results(cube_fitter::CubeFitter, popt::Vector{<:Real}, perr::Vector{<:Real},
     I::Vector{<:Real})
 
@@ -1643,6 +1750,7 @@ function pretty_print_mir_continuum_results(cube_fitter::CubeFitter, popt::Vecto
 end
 
 
+# Optical implementation of the pretty_print_continuum_results function
 function pretty_print_opt_continuum_results(cube_fitter::CubeFitter, popt::Vector{<:Real}, perr::Vector{<:Real},
     I::Vector{<:Real})
 
@@ -1731,7 +1839,7 @@ end
 
 
 """
-    get_line_plimits(cube_fitter)
+    get_line_plimits(cube_fitter, init)
 
 Get the line limits vector for a given CubeFitter object. Also returns boolean locked values and
 names of each parameter as strings.
@@ -1996,7 +2104,7 @@ end
 
 
 """
-    pretty_print_line_results(cube_fitter, popt, perr, prof_ln, acomp_prof_ln)
+    pretty_print_line_results(cube_fitter, popt, perr)
 
 Print out a nicely formatted summary of the line fit results for a given CubeFitter object.
 """

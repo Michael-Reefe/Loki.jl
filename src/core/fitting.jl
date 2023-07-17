@@ -11,21 +11,20 @@ CubeFitter. An example of this is provided in the test driver files in the test 
 
 
 """
-mask_emission_lines(λ, I, σ)
+    mask_emission_lines(λ, I, spectral_region; [Δ, n_inc_thresh, thresh])
 
 Mask out emission lines in a given spectrum using a numerical second derivative and flagging 
 negative(positive) spikes, indicating strong concave-downness(upness) up to some tolerance threshold (i.e. 3-sigma).
 The widths of the lines are estimated using the number of pixels for which the numerical first derivative
-is above some (potentially different) tolerance threshold.
+is above some (potentially different) tolerance threshold. Returns the mask as a BitVector.
 
 # Arguments
 - `λ::Vector{<:Real}`: The wavelength vector of the spectrum
-- `I::Vector{<:Real}`: The flux vector of the spectrum
-- `Δ::Integer=3`: The resolution (width) of the numerical derivative calculations, in pixels
-- `thresh2::Real=3.`: The sensitivity threshold for flagging lines with the second derivative test, in units of the RMS.
-- `thresh1::Real=1.`: The sensitivity threshold for estimating line widths with the first derivative test, in units of the RMS.
-- `W::Tuple`: The half-window sizes used to calculate the variance in the numerical second derivative.
-- `override`: List of pairs of wavelength boundaries between which the mask should be forced to be false.
+- `I::Vector{<:Real}`: The intensity vector of the spectrum
+- `spectral_region::Symbol`: Either :MIR for mid-infrared or :OPT for optical
+- `Δ::Union{Integer,Nothing}=nothing`: The resolution (width) of the numerical derivative calculations, in pixels
+- `n_inc_thresh::Union{Integer,Nothing}=nothing`
+- `thresh::Real=3.`: The sensitivity threshold for flagging lines with the second derivative test, in units of the RMS.
 
 See also [`continuum_cubic_spline`](@ref)
 """
@@ -106,17 +105,17 @@ end
 
 
 """
-    continuum_cubic_spline(λ, I, σ)
+    continuum_cubic_spline(λ, I, σ, spectral_region)
 
 Mask out the emission lines in a given spectrum using `mask_emission_lines` and replace them with
 a coarse cubic spline fit to the continuum, using wide knots to avoid reinterpolating the lines or
-noise.
+noise. Returns the line mask, spline-interpolated I, and spline-interpolated σ.
 
 # Arguments
 - `λ::Vector{<:Real}`: The wavelength vector of the spectrum
 - `I::Vector{<:Real}`: The flux vector of the spectrum
 - `σ::Vector{<:Real}`: The uncertainty vector of the spectrum 
-- `z::Real`: The redshift.
+- `spectral_region::Symbol`: Either :MIR for mid-infrared or :OPT for optical
 
 See also [`mask_emission_lines`](@ref)
 """
@@ -156,12 +155,13 @@ end
 
 
 """
-    continuum_fit_spaxel(cube_fitter, λ, I, σ, mask_lines, I_spline, σ_spline; init=init, use_ap=use_ap)
+    continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, mask_bad, N, area_sr; 
+        [init, use_ap, bootstrap_iter, p1_boots])
 
 Fit the continuum of a given spaxel in the DataCube, masking out the emission lines, using the 
 Levenberg-Marquardt least squares fitting method with the `CMPFit` package.  
 
-This function has been adapted from PAHFIT (with some heavy adjustments -> masking out lines, allowing
+This procedure has been adapted from PAHFIT (with some heavy adjustments -> masking out lines, allowing
 PAH parameters to vary, and tying certain parameters together). See Smith, Draine, et al. 2007; 
 http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 
@@ -171,8 +171,16 @@ http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 - `λ::Vector{<:Real}`: The 1D wavelength vector 
 - `I::Vector{<:Real}`: The 1D intensity vector
 - `σ::Vector{<:Real}`: The 1D error vector
+- `mask_lines::BitVector`: The mask giving the locations of emission lines
+- `mask_bad::BitVector`: The mask giving the locations of bad pixels
+- `N::Real`: The normalization
+- `area_sr::Vector{<:Real}`: The 1D solid angle vector 
 - `init::Bool=false`: Flag for the initial fit which fits the sum of all spaxels, to get an estimation for
     the initial parameter vector for individual spaxel fits
+- `use_ap::Bool=false`: Flag for fitting an integrated spectrum within an aperture
+- `bootstrap_iter::Bool=false`: Flag for fitting multiple iterations of the same spectrum with bootstrapping
+- `p1_boots::Union{Vector{<:Real},Nothing}=nothing`: If `bootstrap_iter` is true, this should give the best-fit parameter vector
+for the initial non-bootstrapped fit of the spectrum.
 """
 function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
     σ::Vector{<:Real}, mask_lines::BitVector, mask_bad::BitVector, N::Real, area_sr::Vector{<:Real}; init::Bool=false, use_ap::Bool=false, 
@@ -611,6 +619,18 @@ end
 Calculates the significance of additional line components and determines whether or not to include them in the fit.
 Modifies the p₀ and param_lock vectors in-place to reflect these changes (by locking the amplitudes and other parameters
 for non-necessary line components to 0).
+
+# Arguments 
+- `cube_fitter::CubeFitter`: The CubeFitter object containing the data, parameters, and options for the fit
+- `spaxel::CartesianIndex`: The 2D index of the spaxel being fit.
+- `p₀::Vector{<:Real}`: The initial parameter vector 
+- `param_lock::BitVector`: A vector specifying which parameters are locked
+- `lower_bounds::Vector{<:Real}`: A vector specifying lower limits on the parameters
+- `upper_bounds::Vector{<:Real}`: A vector specifying upper limits on the parameters
+- `λnorm::Vector{<:Real}`: The 1D wavelength vector
+- `Inorm::Vector{<:Real}`: The 1D normalized intensity vector
+- `σnorm::Vector{<:Real}`: The 1D normalized error vector
+- `lsf_interp_func::Function`: Interpolating function for the line-spread function (LSF) in km/s as a function of wavelength
 """
 function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::CartesianIndex, p₀::Vector{<:Real}, 
     param_lock::BitVector, lower_bounds::Vector{<:Real}, upper_bounds::Vector{<:Real}, λnorm::Vector{<:Real},
@@ -793,29 +813,35 @@ end
 
 
 """
-    line_fit_spaxel(cube_fitter, spaxel, λ, I, σ, continuum, ext_curve, mask_lines, lsf_interp_func; init=init, use_ap=use_ap)
+    line_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, mask_bad, continuum, ext_curve, 
+        lsf_interp_func, N; [init, use_ap, bootstrap_iter, p1_boots])
 
 Fit the emission lines of a given spaxel in the DataCube, subtracting the continuum, using the 
-Simulated Annealing and L-BFGS fitting methods with the `Optim` package.
+Simulated Annealing fitting method with the `Optim` package and the Levenberg-Marquardt method with `CMPFit`.
 
-This function has been adapted from PAHFIT (with some heavy adjustments -> lines are now fit in a 
-separate second step, and no longer using the Levenberg-Marquardt method; line width and voff limits are also
-adjusted to compensate for the better spectral resolution of JWST compared to Spitzer). 
+This procedure has been adapted from PAHFIT (with some heavy adjustments). 
 See Smith, Draine, et al. 2007; http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 
 # Arguments
-`S<:Integer`
 - `cube_fitter::CubeFitter`: The CubeFitter object containing the data, parameters, and options for the fit
 - `spaxel::CartesianIndex`: The 2D index of the spaxel being fit.
 - `λ::Vector{<:Real}`: The 1D wavelength vector 
 - `I::Vector{<:Real}`: The 1D intensity vector
 - `σ::Vector{<:Real}`: The 1D error vector
+- `mask_lines::BitVector`: The mask giving the locations of emission Lines
+- `mask_bad::BitVector`: The mask giving the locations of bad pixels
 - `continuum::Vector{<:Real}`: The fitted continuum level of the spaxel being fit (which will be subtracted
     before the lines are fit)
 - `ext_curve::Vector{<:Real}`: The extinction curve of the spaxel being fit (which will be used to calculate
     extinction-corrected line amplitudes and fluxes)
+- `lsf_interp_func::Function`: Interpolating function for the line-spread function (LSF) in km/s as a function of wavelength
+- `N::Real`: The normalization
 - `init::Bool=false`: Flag for the initial fit which fits the sum of all spaxels, to get an estimation for
     the initial parameter vector for individual spaxel fits
+- `use_ap::Bool=false`: Flag for fitting an integrated spectrum within an aperture
+- `bootstrap_iter::Bool=false`: Flag for fitting multiple iterations of the same spectrum with bootstrapping
+- `p1_boots::Union{Vector{<:Real},Nothing}=nothing`: If `bootstrap_iter` is true, this should give the best-fit parameter vector
+for the initial non-bootstrapped fit of the spectrum.
 """
 function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real},
     σ::Vector{<:Real}, mask_lines::BitVector, mask_bad::BitVector, continuum::Vector{<:Real}, ext_curve::Vector{<:Real}, 
@@ -1066,6 +1092,36 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
 end
 
 
+"""
+    all_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, mask_bad, I_spline, N, area_sr, lsf_interp_func;
+        [init, use_ap, bootstrap_iter, p1_boots_cont, p1_boots_line])
+
+Fit the continuum and emission lines in a spaxel simultaneously with a combination of the Simulated Annealing
+and Levenberg-Marquardt algorithms.
+
+This procedure has been adapted from PAHFIT (with some heavy adjustments). 
+See Smith, Draine, et al. 2007; http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
+
+# Arguments
+- `cube_fitter::CubeFitter`: The CubeFitter object containing the data, parameters, and options for the fit
+- `spaxel::CartesianIndex`: The 2D index of the spaxel being fit.
+- `λ::Vector{<:Real}`: The 1D wavelength vector 
+- `I::Vector{<:Real}`: The 1D intensity vector
+- `σ::Vector{<:Real}`: The 1D error vector
+- `mask_lines::BitVector`: The mask giving the locations of emission Lines
+- `mask_bad::BitVector`: The mask giving the locations of bad pixels
+- `I_spline::Vector{<:Real}`: The cubic-spline fit to the continuum 
+- `N::Real`: The normalization
+- `area_sr::Vector{<:Real}`: The 1D solid angle vector
+- `lsf_interp_func::Function`: Interpolating function for the line-spread function (LSF) in km/s as a function of wavelength
+- `init::Bool=false`: Flag for the initial fit which fits the sum of all spaxels, to get an estimation for
+the initial parameter vector for individual spaxel fits
+- `use_ap::Bool=false`: Flag for fitting an integrated spectrum within an aperture
+- `bootstrap_iter::Bool=false`: Flag for fitting multiple iterations of the same spectrum with bootstrapping
+- `p1_boots_cont::Union{Vector{<:Real},Nothing}=nothing`: If `bootstrap_iter` is true, this should give the best-fit parameter vector
+for the initial non-bootstrapped fit of the continuum.
+- `p1_boots_line::Union{Vector{<:Real},Nothing}=nothing`: Same as `p1_boots_cont`, but for the line parameters.
+"""
 function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
     σ::Vector{<:Real}, mask_lines::BitVector, mask_bad::BitVector, I_spline::Vector{<:Real}, N::Real, area_sr::Vector{<:Real}, 
     lsf_interp_func::Function; init::Bool=false, use_ap::Bool=false, bootstrap_iter::Bool=false, 
@@ -1488,29 +1544,41 @@ end
 
 
 """
-    plot_spaxel_fit(λ, I, I_cont, σ, comps, n_dust_cont, n_dust_features, line_wave, line_names, screen, z, χ2red, 
-        name, label; backend=backend)
+    plot_spaxel_fit(spectral_region, λ_um, I, I_model, σ, mask_bad, mask_lines, comps, n_dust_cont, n_power_law,
+        n_dust_features, n_abs_features, n_ssps, n_comps, line_wave_um, line_names, line_annotate, line_latex, 
+        screen, z, χ2red, name, label; [backend, I_boot_min, I_boot_max, range_um, spline])
 
-Plot the fit for an individual spaxel, `I_cont`, and its individual components `comps`, using the given 
-backend (`:pyplot` or `:plotly`).
+Plot the best fit for an individual spaxel using the given backend (`:pyplot` or `:plotly`).
 
-# Arguments
-`T<:Real,S<:Integer`
-- `λ::Vector{<:Real}`: The wavelength vector of the spaxel to be plotted
+# Arguments {T<:Real}
+- `spectral_region::Symbol`: Either :MIR for mid-infrared or :OPT for optical
+- `λ_um::Vector{<:Real}`: The wavelength vector of the spaxel to be plotted, in microns
 - `I::Vector{<:Real}`: The intensity data vector of the spaxel to be plotted
 - `I_model::Vector{<:Real}`: The intensity model vector of the spaxel to be plotted
 - `σ::Vector{<:Real}`: The uncertainty vector of the spaxel to be plotted
+- `mask_bad::BitVector`: The mask giving the locations of bad pixels
+- `mask_lines::BitVector`: The mask giving the locations of emission lines
 - `comps::Dict{String, Vector{T}}`: The dictionary of individual components of the model intensity
 - `n_dust_cont::Integer`: The number of dust continuum components in the fit
+- `n_power_law::Integer`: The number of power law continuum components in the fit
 - `n_dust_features::Integer`: The number of PAH features in the fit
-- `line_wave::Vector{<:Real}`: List of nominal central wavelengths for each line in the fit
+- `n_abs_features::Integer`: The number of absorption features in the fit
+- `n_ssps::Integer`: The number of simple stellar populations in the fit
+- `n_comps::Integer`: The maximum number of line profiles per line
+- `line_wave_um::Vector{<:Real}`: List of nominal central wavelengths for each line in the fit, in microns
 - `line_names::Vector{Symbol}`: List of names for each line in the fit
+- `line_annotate::BitVector`: List of booleans determining whether or not to add an annotation for the given line
+- `line_latex::Vector{String}`: List of LaTeX-formatted line names to be used for the annotations
 - `screen::Bool`: The type of model used for extinction screening
 - `z::Real`: The redshift of the object being fit
 - `χ2red::Real`: The reduced χ^2 value of the fit
 - `name::String`: The name of the object being fit
 - `label::String`: A label for the individual spaxel being plotted, to be put in the file name
-- `backend::Symbol`: The backend to use to plot, either `:pyplot` or `:plotly`
+- `backend::Symbol=:pyplot`: The backend to use to plot, may be `:pyplot`, `:plotly`, or `:both`
+- `I_boot_min::Union{Vector{<:Real},Nothing}=nothing`: Optional vector giving the minimum model out of all bootstrap iterations
+- `I_boot_max::Union{Vector{<:Real},Nothing}=nothing`: Optional vector giving the maximum model out of all bootstrap iterations
+- `range_um::Union{Tuple,Nothing}=nothing`: Optional tuple specifying min/max wavelength values to truncate the x-axis of the plot to
+- `spline::Union{Vector{<:Real},Nothing}=nothing`: Optional vector giving the cubic spline interpolation of the continuum to plot
 """
 function plot_spaxel_fit(spectral_region::Symbol, λ_um::Vector{<:Real}, I::Vector{<:Real}, I_model::Vector{<:Real}, σ::Vector{<:Real}, mask_bad::BitVector, 
     mask_lines::BitVector, comps::Dict{String, Vector{T}}, n_dust_cont::Integer, n_power_law::Integer, n_dust_features::Integer, 
@@ -1642,7 +1710,7 @@ function plot_spaxel_fit(spectral_region::Symbol, λ_um::Vector{<:Real}, I::Vect
             norm = 1.0
         end
 
-        min_inten = sum((I ./ norm .* factor) .< -0.01) > 30 ? -2nanstd(I ./ norm .* factor) : -0.01
+        min_inten = ((sum((I ./ norm .* factor) .< -0.01) > 30) && (spectral_region == :OPT)) ? -2nanstd(I ./ norm .* factor) : -0.01
         max_inten = isnothing(range) ? 
                     1.3nanmaximum(I[.~mask_lines .& .~mask_bad] ./ norm .* factor[.~mask_lines .& .~mask_bad]) : 
                     1.1nanmaximum((I ./ norm .* factor)[range[1] .< λ .< range[2]])
@@ -1956,7 +2024,7 @@ end
 
 
 """
-    fit_spaxel(cube_fitter, spaxel; aperture=nothing, plot_spline=false)
+    fit_spaxel(cube_fitter, cube_data, spaxel; [use_ap])
 
 Wrapper function to perform a full fit of a single spaxel, calling `continuum_fit_spaxel` and `line_fit_spaxel` and
 concatenating the best-fit parameters. The outputs are also saved to files so the fit need not be repeated in the case
@@ -1964,9 +2032,9 @@ of a crash.
 
 # Arguments
 - `cube_fitter::CubeFitter`: The CubeFitter object containing the data, parameters, and options for the fit
+- `cube_data::NamedTuple`: Contains the wavelength, intensity, and error vectors that will be fit, as well as the solid angle vector
 - `spaxel::CartesianIndex`: The coordinates of the spaxel to be fit
-- `aperture=nothing`: If specified, perform a fit to the integrated spectrum within the aperture. Must be an `Aperture` object
-from the `photutils` python package (using PyCall).
+- `use_ap::Bool=false`: Flag determining whether or not one is fitting an integrated spectrum within an aperture
 """
 function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::CartesianIndex; use_ap::Bool=false)
 

@@ -4,7 +4,7 @@ const ascii_lowercase = "abcdefghijklmnopqrstuvwxyz"
 
 
 """
-    assign_outputs(out_params, out_errs, cube_fitter, cube_data, spaxels, z)
+    assign_outputs(out_params, out_errs, cube_fitter, cube_data, spaxels, z[, aperture])
 
 Create ParamMaps objects for the parameter values and errors, and a CubeModel object for the full model, and
 fill them with the maximum likelihood values and errors given by out_params and out_errs over each spaxel in
@@ -17,6 +17,7 @@ assign_outputs(out_params::Array{<:Real}, out_errs::Array{<:Real}, cube_fitter::
         assign_outputs_opt(out_params, out_errs, cube_fitter, cube_data, spaxels, z, aperture)
 
 
+# MIR implementation of the assign_outputs function
 function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, cube_fitter::CubeFitter,
     cube_data::NamedTuple, spaxels::CartesianIndices, z::Real, aperture::Bool=false)
 
@@ -386,6 +387,7 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
 end
 
 
+# Optical implementation of the assign_outputs function
 function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, cube_fitter::CubeFitter,
     cube_data::NamedTuple, spaxels::CartesianIndices, z::Real, aperture::Bool=false)
 
@@ -458,7 +460,9 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
 
         # Fe II emission
         if cube_fitter.fit_opt_na_feii
-            param_maps.feii[:na_amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ] * N / (1+z)) : -Inf
+            λ0_na_feii = 1e4 * cube_data.λ[argmax(convolve_losvd(cube_fitter.feii_templates_fft[:, 1], cube_fitter.vsyst_feii, 
+                out_params[index, pᵢ+1], out_params[index, pᵢ+2], cube_fitter.velscale, length(cube_data.λ), temp_fft=true, npad_in=cube_fitter.npad_feii))]
+            param_maps.feii[:na_amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ] * N * λ0_na_feii^2/(C_KMS * 1e13) / (1+z)) : -Inf
             param_errs[1].feii[:na_amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
             param_errs[2].feii[:na_amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
             param_maps.feii[:na_vel][index] = out_params[index, pᵢ+1]
@@ -470,7 +474,9 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             pᵢ += 3
         end
         if cube_fitter.fit_opt_br_feii
-            param_maps.feii[:br_amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ] * N / (1+z)) : -Inf
+            λ0_br_feii = 1e4 * cube_data.λ[argmax(convolve_losvd(cube_fitter.feii_templates_fft[:, 2], cube_fitter.vsyst_feii,
+                out_params[index, pᵢ+1], out_params[index, pᵢ+2], cube_fitter.velscale, length(cube_data.λ), temp_fft=true, npad_in=cube_fitter.npad_feii))]
+            param_maps.feii[:br_amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ] * N * λ0_br_feii^2/(C_KMS * 1e13) / (1+z)) : -Inf
             param_errs[1].feii[:br_amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
             param_errs[2].feii[:br_amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
             param_maps.feii[:br_vel][index] = out_params[index, pᵢ+1]
@@ -484,7 +490,8 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
 
         # Power laws
         for j ∈ 1:cube_fitter.n_power_law
-            param_maps.power_law[j][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ] * N / (1+z)) : -Inf
+            λ0_pl = 5100.0
+            param_maps.power_law[j][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ] * N * λ0_pl^2/(C_KMS * 1e13) / (1+z)) : -Inf
             param_errs[1].power_law[j][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
             param_errs[2].power_law[j][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
             param_maps.power_law[:index][index] = out_params[index, pᵢ+1]
@@ -724,8 +731,8 @@ end
 
 
 """
-    plot_parameter_map(data, name, name_i, Ω, z, cosmo; snr_filter=snr_filter, snr_thresh=snr_thresh,
-        cmap=cmap)
+    plot_parameter_map(data, name_i, save_path, Ω, z, psf_fwhm, cosmo, python_wcs; 
+        [snr_filter, snr_thresh, cmap, line_latex])
 
 Plotting function for 2D parameter maps which are output by `fit_cube!`
 
@@ -738,10 +745,11 @@ Plotting function for 2D parameter maps which are output by `fit_cube!`
 - `psf_fwhm::Float64`: The FWHM of the point-spread function in arcseconds (used to add a circular patch with this size)
 - `cosmo::Cosmology.AbstractCosmology`: The cosmology to use to calculate distance for the physical scalebar
 - `python_wcs::PyObject`: The astropy WCS object used to project the maps onto RA/Dec space
-- `snr_filter::Matrix{Float64}=Matrix{Float64}(undef,0,0)`: A 2D array of S/N values to
+- `snr_filter::Union{Nothing,Matrix{Float64}}=nothing`: A 2D array of S/N values to
     be used to filter out certain spaxels from being plotted - must be the same size as `data` to filter
 - `snr_thresh::Float64=3.`: The S/N threshold below which to cut out any spaxels using the values in snr_filter
 - `cmap::Symbol=:cubehelix`: The colormap used in the plot, defaults to the cubehelix map
+- `line_latex::Union{String,Nothing}=nothing`: LaTeX-formatted label for the emission line to be added to the top-right corner.
 """
 function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::String, Ω::Float64, z::Float64, psf_fwhm::Float64,
     cosmo::Cosmology.AbstractCosmology, python_wcs::Union{PyObject,Nothing}; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, 
@@ -960,7 +968,7 @@ end
 
 
 """
-    plot_parameter_maps(param_maps; snr_thresh=snr_thresh)
+    plot_parameter_maps(cube_fitter, param_maps; [snr_thresh])
 
 Wrapper function for `plot_parameter_map`, iterating through all the parameters in a `CubeFitter`'s `ParamMaps` object
 and creating 2D maps of them.
@@ -976,6 +984,7 @@ plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr_thresh::
     plot_opt_parameter_maps(cube_fitter, param_maps; snr_thresh=snr_thresh)
 
 
+# MIR implementation of plot_parameter_maps
 function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr_thresh::Real=3.)
 
     # Iterate over model parameters and make 2D maps
@@ -1241,6 +1250,7 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
 end
 
 
+# Optical implementation of plot_parameter_maps
 function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr_thresh::Real=3.)
 
     # Iterate over model parameters and make 2D maps
@@ -1438,7 +1448,7 @@ end
 
 
 """
-    make_movie(cube_fitter, cube_model; cmap=cmap)
+    make_movie(cube_fitter, cube_model; [cmap])
 
 A function for making mp4 movie files of the cube data and model! This is mostly just for fun
 and not really useful scientifically...but they're pretty to watch!
@@ -1516,7 +1526,7 @@ end
 
 
 """
-    write_fits(cube_fitter, cube_model, param_maps, param_errs)
+    write_fits(cube_fitter, cube_data, cube_model, param_maps, param_errs; [aperture])
 
 Save the best fit results for the cube into two FITS files: one for the full 3D intensity model of the cube, split up by
 individual model components, and one for 2D parameter maps of the best-fit parameters for each spaxel in the cube.
@@ -1528,6 +1538,7 @@ write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel
     write_fits_opt(cube_fitter, cube_data, cube_model, param_maps, param_errs; aperture=aperture)
 
 
+# MIR implementation of the write_fits function
 function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel, param_maps::ParamMaps, 
     param_errs::Vector{<:ParamMaps}; aperture::Union{Vector{PyObject},Nothing}=nothing)
 
@@ -1819,6 +1830,7 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
 end
 
 
+# Optical implementation of the write_fits function
 function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel, param_maps::ParamMaps, 
     param_errs::Vector{<:ParamMaps}; aperture::Union{Vector{PyObject},Nothing}=nothing)
 

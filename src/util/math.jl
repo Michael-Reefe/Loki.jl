@@ -425,8 +425,6 @@ end
 
 Return the Blackbody function Bν (per unit FREQUENCY) in MJy/sr,
 given a wavelength in μm and a temperature in Kelvins.
-
-Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 """
 @inline function Blackbody_ν(λ::Real, Temp::Real)
     Bν_1/λ^3 / (exp(Bν_2/(λ*Temp))-1)
@@ -478,8 +476,6 @@ end
     Drude(x, A, μ, FWHM)
 
 Calculate a Drude profile at location `x`, with amplitude `A`, central value `μ`, and full-width at half-max `FWHM`
-
-Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 """
 @inline function Drude(x::Real, A::Real, μ::Real, FWHM::Real)
     A * (FWHM/μ)^2 / ((x/μ - μ/x)^2 + (FWHM/μ)^2)
@@ -510,7 +506,8 @@ to produce templates according to the fitted stellar kinematics. Uses the Fourie
 the templates and the LOSVD to quickly calculate the convolution.
 
 Adapted and simplified from the pPXF and BADASS python codes.
-Cappellari (2017) http://adsabs.harvard.edu/abs/2017MNRAS.466..798C
+Cappellari (2017): http://adsabs.harvard.edu/abs/2017MNRAS.466..798C
+Sexton et al. (2021): https://ui.adsabs.harvard.edu/abs/2021MNRAS.500.2871S/abstract 
 """
 function convolve_losvd(_templates::AbstractArray{T}, vsyst::Real, v::Real, σ::Real, velscale::Real, npix::Integer;
     temp_fft::Bool=false, npad_in::Integer=0) where {T<:Number}
@@ -632,7 +629,7 @@ end
 """
     attenuation_cardelli(λ, E_BV, Rv)
 
-Adapted from BADASS (Sexton et al. 2016). Original docstring below:
+Adapted from BADASS (Sexton et al. 2021). Original docstring below:
 
 Deredden a flux vector using the CCM 1989 parameterization 
 Returns an array of the unreddened flux
@@ -852,6 +849,11 @@ function τ_kvt(λ::Real, β::Real)
 end
 
 
+"""
+    τ_ct(λ)
+
+Calculate the extinction profile based on Chiar & Tielens (2005)
+"""
 function τ_ct(λ::Vector{<:Real})
 
     mx = argmax(CT_prof[1])
@@ -868,6 +870,11 @@ function τ_ct(λ::Vector{<:Real})
 end
 
 
+"""
+    τ_ohm(λ)
+
+Calculate the extinction profile based on Ossenkopf, Henning, & Mathis (1992)
+"""
 function τ_ohm(λ::Vector{<:Real})
 
     ext = OHM_interp(λ)
@@ -924,9 +931,10 @@ end
 
 
 """
-    Extinction(ext, τ_97; screen)
+    Extinction(ext, τ_97; [screen])
 
-Calculate the overall extinction factor
+Calculate the extinction factor given the normalized curve `ext` and the optical depth
+at 9.7 microns, `τ_97`, either assuming a screen or mixed geometry.
 """
 function extinction(ext::Real, τ_97::Real; screen::Bool=false)
     if screen
@@ -1114,8 +1122,8 @@ end
 
 
 """
-    model_continuum(λ, params, n_dust_cont, n_power_law, extinction_curve, extinction_screen, fit_sil_emission;
-        return_components=return_components)
+    model_continuum(λ, params, N, n_dust_cont, n_power_law, dust_prof, n_abs_feat, extinction_curve, extinction_screen, 
+        fit_sil_emission, use_pah_templates, return_components)
 
 Create a model of the continuum (including stellar+dust continuum, PAH features, and extinction, excluding emission lines)
 at the given wavelengths `λ`, given the parameter vector `params`.
@@ -1126,13 +1134,16 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 # Arguments
 - `λ::Vector{<:AbstractFloat}`: Wavelength vector of the spectrum to be fit
 - `params::Vector{<:AbstractFloat}`: Parameter vector. 
+- `N::Real`: The normalization.
 - `n_dust_cont::Integer`: Number of dust continuum profiles to be fit
 - `n_power_law::Integer`: Number of power laws to be fit
-- `n_dust_feat::Integer`: Number of PAH dust features to be fit
+- `dust_prof::Vector{Symbol}`: Vector giving the profiles to fit for each dust feature (either :Drude or :PearsonIV)
+- `n_abs_feat::Integer`: Number of absorption features to be fit
 - `extinction_curve::String`: The type of extinction curve to use, "kvt" or "d+"
 - `extinction_screen::Bool`: Whether or not to use a screen model for the extinction curve
 - `fit_sil_emission::Bool`: Whether or not to fit silicate emission with a hot dust continuum component
-- `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
+- `use_pah_templates::Bool`: Whether or not to use PAH templates to model the PAH emission
+- `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
 function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
@@ -1334,7 +1345,36 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
 
 end
 
-# Optical fitting version of the function
+
+"""
+    model_continuum(λ, params, N, velscale, vsyst_ssp, vsyst_feii, npad_feii, n_ssps, ssp_λ, ssp_templates,
+        feii_templates_fft, n_power_law, fit_uv_bump, fit_covering_frac, fit_opt_na_feii, fit_opt_br_feii,
+        extinction_curve, return_components)
+
+Create a model of the continuum (including stellar+dust continuum, PAH features, and extinction, excluding emission lines)
+at the given wavelengths `λ`, given the parameter vector `params`.
+
+# Arguments
+- `λ::Vector{<:AbstractFloat}`: Wavelength vector of the spectrum to be fit
+- `params::Vector{<:AbstractFloat}`: Parameter vector. 
+- `N::Real`: The normalization.
+- `velscale::Real`: The constant velocity scale between pixels, assuming the wavelength vector is logarithmically binned, in km/s/pix.
+- `vsyst_ssp::Real`: The systemic velocity offset between the input wavelength grid and the SSP template wavelength grid
+- `vsyst_feii::Real`: The systemic velocity offset between the input wavelength grid and the Fe II template wavelength grid
+- `npad_feii::Integer`: The length of the Fe II wavelength grid (NOT the length of the Fourier transformed templates)
+- `n_ssps::Integer`: The number of simple stellar populations to be fit
+- `ssp_λ::Vector{<:Real}`: The SSP template wavelength grid
+- `ssp_templates::Union{Vector{Spline2D},Matrix{<:Real}}`: The SSP templates
+- `feii_templates_fft::Matrix{<:Complex}`: The Fourier transform of the Fe II templates
+- `n_power_law::Integer`: The number of power laws to be fit
+- `fit_uv_bump::Bool`: Whether or not to fit the UV bump in the attenuation model (only applies for "calzetti")
+- `fit_covering_frac::Bool`: Whether or not to fit a covering fraction in the attenuation model (only applies for "calzetti")
+- `fit_opt_na_feii::Bool`: Whether or not to fit narrow Fe II emission
+- `fit_opt_br_feii::Bool`: Whether or not to fit broad Fe II emission
+- `extinction_curve::String`: The name of the extinction curve to use, either "ccm" or "calzetti"
+- `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in 
+    addition to the overall fit
+"""
 function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, velscale::Real, vsyst_ssp::Real, vsyst_feii::Real, 
     npad_feii::Integer, n_ssps::Integer, ssp_λ::Vector{<:Real}, ssp_templates::Union{Vector{Spline2D},Matrix{<:Real}}, 
     feii_templates_fft::Matrix{<:Complex}, n_power_law::Integer, fit_uv_bump::Bool, fit_covering_frac::Bool, fit_opt_na_feii::Bool, 
@@ -1428,6 +1468,7 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, ve
 end
 
 
+# Multiple versions for more efficiency
 function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, velscale::Real, vsyst_ssp::Real, vsyst_feii::Real, 
     npad_feii::Integer, n_ssps::Integer, ssp_λ::Vector{<:Real}, ssp_templates::Union{Vector{Spline2D},Matrix{<:Real}}, 
     feii_templates_fft::Matrix{<:Complex}, n_power_law::Integer, fit_uv_bump::Bool, fit_covering_frac::Bool, fit_opt_na_feii::Bool, 
@@ -1512,6 +1553,19 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, ve
 end
 
 
+"""
+    test_line_snr(λ0, half_window_size, λ, I)
+
+Perform a quick test to estimate an emission line's signal-to-noise ratio just based on the
+maximum of the spectrum within a given window over the RMS of the surrounding region. Some 
+processing is done to remove outliers (convolution) and any linear trends in the continuum.
+
+# Arguments {T<:Real}
+- `λ0::Real`: The central wavelength of the line to be tested in microns
+- `half_window_size::Real`: Half the size of the window in microns
+- `λ::Vector{T}`: The wavelength vector
+- `I::vector{T}`: The intensity vector
+"""
 function test_line_snr(λ0::Real, half_window_size::Real, λ::Vector{T}, I::Vector{T}) where {T<:Real}
 
     # Line testing region
@@ -1548,14 +1602,16 @@ end
 
 
 """
-    model_pah_residuals(λ, params, n_dust_feat, return_components)
+    model_pah_residuals(λ, params, dust_prof, ext_curve, return_components)
+
 Create a model of the PAH features at the given wavelengths `λ`, given the parameter vector `params`.
 Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 (with modifications)
+
 # Arguments
 - `λ::Vector{<:AbstractFloat}`: Wavelength vector of the spectrum to be fit
 - `params::Vector{<:AbstractFloat}`: Parameter vector. Parameters should be ordered as: `(amp, center, fwhm) for each PAH profile`
-- `n_dust_feat::Integer`: The number of PAH features that are being fit
+- `dust_prof::Vector{Symbol}`: The profiles of each PAH feature being fit (either :Drude or :PearsonIV)
 - `ext_curve::Vector{<:AbstractFloat}`: The extinction curve that was fit using model_continuum
 - `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in
     addition to the overall fit
@@ -1644,28 +1700,26 @@ end
 
 
 """
-    model_line_residuals(λ, params, n_lines, n_kin_tied, kin_tied_key, line_tied, line_profiles,
-        n_acomp_kin_tied, acomp_kin_tied_key, line_acomp_tied, line_acomp_profiles, line_restwave,
-        flexible_wavesol, tie_voigt_mixing, ext_curve; return_components=return_components) 
+    model_line_residuals(λ, params, n_lines, n_comps, lines, flexible_wavesol, ext_curve, lsf,
+        return_components) 
 
 Create a model of the emission lines at the given wavelengths `λ`, given the parameter vector `params`.
 
 Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 (with modifications)
 
-# Arguments
-- `λ::Vector{<:AbstractFloat}`: Wavelength vector of the spectrum to be fit
-- `params::Vector{<:AbstractFloat}`: Parameter vector. Parameters should be ordered as: 
-    `[tied velocity offsets, tied acomp velocity offsets, tied voigt mixing, 
-    (amp[, voff], FWHM[, h3, h4, η], [acomp_amp, acomp_voff, acomp_FWHM, acomp_h3, acomp_h4, acomp_η] for each line)]`
-- `n_lines::Integer`: Number of lines being fit
+# Arguments {S<:Integer}
+- `λ::Vector{<:Real}`: Wavelength vector of the spectrum to be fit
+- `params::Vector{<:Real}`: Parameter vector.
+- `n_lines::S`: Number of lines being fit
+- `n_comps::S`: Maximum number of profiles to be fit to any given line
 - `lines::TransitionLines`: Object containing information about each transition line being fit.
 - `flexible_wavesol::Bool`: Whether or not to allow small variations in tied velocity offsets, to account for a poor
-    wavelength solution in the data
-- `ext_curve::Vector{<:AbstractFloat}`: The extinction curve fit with model_continuum
+wavelength solution in the data
+- `ext_curve::Vector{<:Real}`: The extinction curve fit with model_continuum
 - `lsf::Function`: A function giving the FWHM of the line-spread function in km/s as a function of rest-frame wavelength in microns.
 - `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
-    addition to the overall fit
+addition to the overall fit
 """
 function model_line_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, n_lines::S, n_comps::S, lines::TransitionLines, 
     flexible_wavesol::Bool, ext_curve::Vector{<:Real}, lsf::Function, return_components::Bool) where {S<:Integer}
@@ -1849,12 +1903,12 @@ end
 
 
 """
-    calculate_extra_parameters(λ, I, σ, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen,
-        fit_sil_emission, n_lines, n_acomps, n_cops, lines, flexible_wavesol, lsf, popt_c, popt_l, 
-        perr_c, perr_l, extinction, mask_lines, continuum, Ω)
+    calculate_extra_parameters(λ, I, N, comps, n_dust_cont, n_power_law, n_dust_feat, dust_profiles,
+        n_abs_feat, fit_sil_emission, n_lines, n_acomps, n_comps, lines, flexible_wavesol, lsf, popt_c,
+        popt_l, perr_c, perr_l, extinction, mask_lines, continuum, area_sr[, propagate_err])
 
 Calculate extra parameters that are not fit, but are nevertheless important to know, for a given spaxel.
-Currently this includes the integrated intensity and signal to noise ratios of dust features and emission lines.
+Currently this includes the integrated intensity, equivalent width, and signal to noise ratios of dust features and emission lines.
 """
 function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, comps::Dict, n_dust_cont::Integer,
     n_power_law::Integer, n_dust_feat::Integer, dust_profiles::Vector{Symbol}, n_abs_feat::Integer, fit_sil_emission::Bool, 
@@ -2074,6 +2128,14 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
 end
 
 
+"""
+    calculate_extra_parameters(λ, I, N, comps, comps, n_ssps, n_power_law, fit_opt_na_feii,
+        fit_opt_br_feii, n_lines, n_acomps, n_comps, lines, flexible_wavesol, lsf, popt_l, perr_l,
+        extinction, mask_lines, continuum, area_sr[, propagate_err])
+
+Calculate extra parameters that are not fit, but are nevertheless important to know, for a given spaxel.
+Currently this includes the integrated intensity, equivalent width, and signal to noise ratios of dust features and emission lines.
+"""
 function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, comps::Dict, n_ssps::Integer,
     n_power_law::Integer, fit_opt_na_feii::Bool, fit_opt_br_feii::Bool, n_lines::Integer, n_acomps::Integer, n_comps::Integer, 
     lines::TransitionLines, flexible_wavesol::Bool, lsf::Function, popt_l::Vector{T}, perr_l::Vector{T}, extinction::Vector{T}, 
@@ -2274,7 +2336,7 @@ end
 
 """
     calculate_eqw(λ, profile, comps, line, n_dust_cont, n_power_law, n_abs_feat, n_dust_feat,
-        fit_sil_emission)
+        fit_sil_emission, amp, amp_err, peak, peak_err, fwhm, fwhm_err; <keyword arguments>)
 
 Calculate the equivalent width (in microns) of a spectral feature, i.e. a PAH or emission line. Calculates the
 integral of the ratio of the feature profile to the underlying continuum.
@@ -2371,6 +2433,13 @@ function calculate_eqw(λ::Vector{T}, profile::Symbol, comps::Dict, line::Bool,
 end
 
 
+"""
+    calculate_eqw(λ, profile, comps, n_ssps, n_power_law, fit_opt_na_feii, fit_opt_br_feii,
+        amp, amp_err, peak, peak_err, fwhm, fwhm_err; <keyword arguments>)
+
+Calculate the equivalent width (in microns) of a spectral feature, i.e. a PAH or emission line. Calculates the
+integral of the ratio of the feature profile to the underlying continuum.
+"""
 function calculate_eqw(λ::Vector{T}, profile::Symbol, comps::Dict, n_ssps::Integer, 
     n_power_law::Integer, fit_opt_na_feii::Bool, fit_opt_br_feii::Bool, amp::T, amp_err::T, 
     peak::T, peak_err::T, fwhm::T, fwhm_err::T; 

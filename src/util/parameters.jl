@@ -101,7 +101,7 @@ end
 abstract type Continuum end
 
 """
-    MIRContinuum(T_s, T_dc, τ_97, τ_ice, τ_ch, β, T_hot, Cf_hot, τ_warm, τ_cold)
+    MIRContinuum(T_s, T_dc, α, τ_97, τ_ice, τ_ch, β, T_hot, Cf_hot, τ_warm, τ_cold, sil_peak)
 
 A container for various MIR continuum modeling parameters.
 """
@@ -125,7 +125,9 @@ end
 
 
 """
-    OpticalContinuum(ssp_ages, ssp_metallicities, stellar_vel, stellar_vdisp)
+    OpticalContinuum(ssp_ages, ssp_metallicities, stel_vel, stel_vdisp,
+        na_feii_vel, na_feii_vdisp, br_feii_vel, br_feii_vdisp, α, E_BV,
+        E_BV_factor, δ_uv, frac)
 
 A container for various optical continuum modeling parameters.
 """
@@ -158,7 +160,7 @@ end
 
 
 """
-    DustFeatures(names, profiles, mean, fwhm)
+    DustFeatures(names, profiles, mean, fwhm, index, cutoff, complexes, _local)
 
 A container for the modeling parameters relating to PAH dust features
 and absorption features.
@@ -178,7 +180,8 @@ end
 
 
 """
-    TransitionLines(names, λ₀, profiles, tied, voff, fwhm, h3, h4, η)
+    TransitionLines(names, latex, annotate, λ₀, profiles, tied_amp, tied_voff, tied_fwhm,
+        acomp_amp, voff, fwhm, h3, h4, η, combined)
 
 A container for ancillary information and modeling parameters relating to transition lines.
 """
@@ -212,7 +215,7 @@ end
 
 
 """
-    TiedKinematics
+    TiedKinematics(key_amp, amp, key_voff, voff, key_fwhm, fwhm)
 
 A container for tied amplitude and kinematic parameter information.
 """

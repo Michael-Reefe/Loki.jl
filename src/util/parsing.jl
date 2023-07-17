@@ -740,19 +740,19 @@ function parse_lines()
 
                         # Check if amp should be tied
                         tie_acomp_amp_group = false
-                        if haskey(lines, "tie_acomp_amp_" * group)
+                        if haskey(lines, "tie_acomp_$(j)_amp_" * group)
                             tie_acomp_amp_group = true
                         end
 
                         # Check if voff should be tied
                         tie_acomp_voff_group = true
-                        if haskey(lines, "tie_acomp_voff_" * group)
-                            tie_acomp_voff_group = lines["tie_acomp_voff_" * group]
+                        if haskey(lines, "tie_acomp_$(j)_voff_" * group)
+                            tie_acomp_voff_group = lines["tie_acomp_$(j)_voff_" * group]
                         end
                         # Check if fwhm should be tied
                         tie_acomp_fwhm_group = true
-                        if haskey(lines, "tie_acomp_fwhm_" * group)
-                            tie_acomp_fwhm_group = lines["tie_acomp_fwhm_" * group]
+                        if haskey(lines, "tie_acomp_$(j)_fwhm_" * group)
+                            tie_acomp_fwhm_group = lines["tie_acomp_$(j)_fwhm_" * group]
                         end
 
                         if !isnothing(acomp_profiles[line][j]) && tie_acomp_amp_group
@@ -845,6 +845,7 @@ function parse_lines()
     ss = sortperm(cent_vals)
 
     # Check for any combined lines
+    combined = []
     if haskey(lines, "combined_maps")
         combined = lines["combined_maps"]
         combined = [[Symbol(ln) for ln in c] for c in combined]

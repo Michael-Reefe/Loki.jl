@@ -689,23 +689,23 @@ locked = false
 # https://iopscience.iop.org/article/10.1088/0067-0049/182/2/628/pdf
 
 # Spectral leak artifact of the JWST pipeline at ~12.22 microns
-# [absorption_features."abs_leak_12.22"]
-# local = true
+[absorption_features."abs_leak_12.22"]
+local = true
 
-# [absorption_features."abs_leak_12.22".tau]
-# val = 0.1
-# plim = [0.0, 0.2]
-# locked = false
+[absorption_features."abs_leak_12.22".tau]
+val = 0.1
+plim = [0.0, 0.2]
+locked = false
 
-# [absorption_features."abs_leak_12.22".wave]
-# val = 12.22
-# plim = [-0.1, 0.1]
-# locked = true
+[absorption_features."abs_leak_12.22".wave]
+val = 12.22
+plim = [-0.1, 0.1]
+locked = true
 
-# [absorption_features."abs_leak_12.22".fwhm]
-# val = 0.133
-# plim = [0.4, 1.4]
-# locked = true
+[absorption_features."abs_leak_12.22".fwhm]
+val = 0.133
+plim = [0.4, 1.4]
+locked = true
 
 # [absorption_features."abs_C2H2_13.7".wave]
 # val = 13.69
@@ -779,7 +779,7 @@ locked = false
 
 # Peak location of 10 um silicate emission feature
 [hot_dust.peak]
-# val = 10.421
-val = 10.0178
+val = 10.421
+# val = 10.0178
 plim = [10.0, 10.8]
 locked = true

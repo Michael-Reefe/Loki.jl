@@ -36,6 +36,7 @@ An object for holding 3D IFU spectroscopy data.
 - `spectral_region::Symbol`: which spectral region does the DataCube cover. Must be either :MIR for mid-infrared or :OPT for optical.
 - `rest_frame::Bool=false`: whether or not the DataCube wavelength vector is in the rest-frame
 - `masked::Bool=false`: whether or not the DataCube has been masked
+- `vacuum_wave::Bool=true`: whether or not the wavelength vector is in vacuum wavelengths; if false, it is assumed to be air wavelengths
 """
 mutable struct DataCube
 
@@ -422,6 +423,24 @@ end
 ######################################### APERTURE PHOTOMETRY ###############################################
 
 
+"""
+    make_aperture(cube, type, ra, dec, params...; [auto_centroid, scale_psf, box_size])
+
+Create an aperture using python's photutils library.
+
+# Arguments
+- `cube::DataCube`: The DataCube struct to create the aperture for
+- `type::Symbol`: Must be one of :Circular, :Elliptical, or :Rectangular
+- `ra::String`: Right ascension in sexagesimal hours
+- `dec::String`: Declination in sexagesimal degrees
+- `params...`: Varying number of parameters for the aperture depending on `type`.
+    For circular apertures, the only parameter is the radius in arcseconds.
+    For elliptical apertures, the parameters are the semimajor and semiminor axes in arcseconds, and the position angle in degrees
+    For rectangular apertures, the parameters are the width and height in arcseconds, and the position angle in degrees
+- `auto_centroid::Bool=false`: if true, adjusts the center (ra,dec) to the closest peak in brightness 
+- `scale_psf::Bool=false`: if true, creates a vector of apertures that scale up in radius at the same rate that the PSF scales up
+- `box_size::Integer=11`: if `auto_centroid` is true, this gives the box size to search for a local peak in brightness, in pixels
+"""
 function make_aperture(cube::DataCube, type::Symbol, ra::String, dec::String, params...; auto_centroid=false,
     scale_psf::Bool=false, box_size::Integer=11)
 
@@ -516,7 +535,8 @@ A plotting utility function for 2D maps of the raw intensity / error
     If nothing, sums the data along the wavelength axis.
 - `z::Union{Real,Nothing}=nothing`: The redshift of the source, used to calculate 
     the distance and thus the spatial scale in kpc.
-- `marker::Union{Tuple{<:Real,<:Real},Nothing}=nothing`: Position in (x,y) coordinates to place a marker.
+- `cosmo::Union{AbstractCosmology,Nothing}=nothing`: Cosmology object for calculating physical distance scales
+- `aperture::Union{PyObject,Nothing}=nothing`: Aperture object that may be plotted to show its location/size
 
 See also [`DataCube`](@ref), [`plot_1d`](@ref)
 """
@@ -669,8 +689,7 @@ end
 
 A plotting utility function for 1D spectra of individual spaxels or the full cube.
 
-# Arguments
-`S<:Integer`
+# Arguments {S<:Integer}
 - `data::DataCube`: The DataCube object to plot data from
 - `fname::String`: The file name of the plot to be saved
 - `intensity::Bool=true`: If true, plot the intensity
@@ -775,8 +794,11 @@ A struct for holding DataCube objects in different channels for the same observa
 - `δ::Real=NaN`: the declination of the source, in decimal degrees
 - `instrument::String="Generic Instrument"`: the instrument name, i.e. "MIRI"
 - `detector::String="Generic Detector"`: the detector name, i.e. "MIRIFULONG"
+- `spectral_region::Symbol`: Either :MIR for mid-infrared data or :OPT for optical data
 - `rest_frame::Bool=false`: whether or not the individual DataCubes have been converted to the rest frame
 - `masked::Bool=false`: whether or not the individual DataCubes have been masked
+- `vacuum_wave::Bool=true`: whether or not the wavelengths are specified in vacuum wavelengths; if false, they are assumed
+to be in air wavelengths
 
 See also [`DataCube`](@ref)
 """
