@@ -458,7 +458,7 @@ locked = true
 ```
 
 This specifies two SSPs with ages of 8 Gyr and 2 Myr and metallicities of 0.0. The ages are specified in Gyr and
-the metallicities are in [M/H] ($\log_{10}(Z/Z_\odot)$). The formatting for the "val", "plim", and "locked" entries
+the metallicities are in [M/H], AKA $\log_{10}(Z/Z_\odot)$. The formatting for the "val", "plim", and "locked" entries
 follows the same conventions as the MIR parameters, where "val" is the starting value, "plim" are the lower/upper limits,
 and "locked" is a boolean specifying whether or not the parameter should be fixed during fitting.
 
@@ -986,13 +986,13 @@ The units of outputs for different quantities are listed here. When relevant, ou
 - Mixing ratios: unitless
 - Signal-to-noise ratios: unitless
 - Simple Stellar Population masses: $\log_{10}(M/M_\odot)$ (note: because SSPs are given in units of $L_\odot/M_\odot/{\rm \mathring{A}}$, this quantity is dependent on your chosen cosmology and scales inversely with the luminosity distance squared, i.e. $h^2$. This is also dependent on the IMF used for the stellar populations, which in this code is the Salpeter function.)
-- Stellar velocity and dispersion: km/s
+- Stellar velocity and dispersion: ${\rm km}\ {\rm s}^{-1}$
 - Power law amplitudes: $\log_{10}(I/{\rm erg}\ {\rm s}^{-1}\ {\rm cm}^{-2}\ {\rm Hz}^{-1}\ {\rm sr}^{-1})$
 - Power law indices: unitless
 - Fe II amplitudes: $\log_{10}(I/{\rm erg}\ {\rm s}^{-1}\ {\rm cm}^{-2}\ {\rm Hz}^{-1}\ {\rm sr}^{-1})$
-- Fe II velocities and dispersions: km/s
-- E(B-V): magnitudes
-- E(B-V) factor, UV slope, and covering fraction: unitless
+- Fe II velocities and dispersions: ${\rm km}\ {\rm s}^{-1}$
+- $E(B-V)$: magnitudes
+- $E(B-V)$ gas-to-stellar conversion factor, UV slope, and covering fraction are all unitless
 
 ---
 
