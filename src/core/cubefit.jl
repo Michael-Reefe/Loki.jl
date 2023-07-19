@@ -550,6 +550,9 @@ specific emission lines of interest).
 ## Basic fitting options
 - `extinction_curve::String`: The type of extinction curve being used, i.e. `"kvt"` or `"d+"`
 - `extinction_screen::Bool`: Whether or not the extinction is modeled as a screen
+- `extinction_map::Union{Matrix{T},Nothing}`: An optional map of estimated extinction values. For MIR spectra, this is interpreted 
+as tau_9.7 values, whereas for optical spectra it is interpreted as E(B-V) values. The fits will be locked to the value at the 
+corresponding spaxel.
 - `fit_sil_emission::Bool`: Whether or not to fit MIR hot silicate dust emission
 - `fit_opt_na_feii::Bool`: Whether or not to fit optical narrow Fe II emission
 - `fit_opt_br_feii::Bool`: Whether or not to fit optical broad Fe II emission
@@ -654,6 +657,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
 
     extinction_curve::String
     extinction_screen::Bool
+    extinction_map::Union{Matrix{T},Nothing}
     fit_sil_emission::Bool
     fit_opt_na_feii::Bool
     fit_opt_br_feii::Bool
@@ -790,6 +794,12 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
 
         # Alias
         λ = cube.λ
+        # Get potential extinction map
+        extinction_map = nothing
+        if haskey(out, :extinction_map)
+            extinction_map = out[extinction_map]
+            @assert size(extinction_map) == size(cube.I)[1:2] "The extinction map must match the shape of the first two dimensions of the intensity map!"
+        end
 
         if spectral_region == :MIR
 
@@ -1081,7 +1091,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
         ctype = isnothing(feii_templates_fft) ? ComplexF64 : eltype(feii_templates_fft)
         new{typeof(z), typeof(n_lines), ctype}(cube, z, name, spectral_region, out[:user_mask], out[:plot_spaxels], out[:plot_maps], out[:plot_range], 
             out[:parallel], out[:save_fits], out[:save_full_model], out[:overwrite], out[:track_memory], out[:track_convergence], out[:make_movies], 
-            out[:extinction_curve], out[:extinction_screen], out[:fit_sil_emission], out[:fit_opt_na_feii], out[:fit_opt_br_feii], out[:fit_all_samin], 
+            out[:extinction_curve], out[:extinction_screen], extinction_map, out[:fit_sil_emission], out[:fit_opt_na_feii], out[:fit_opt_br_feii], out[:fit_all_samin], 
             out[:use_pah_templates], pah_template_map, out[:fit_joint], out[:fit_uv_bump], out[:fit_covering_frac], continuum, n_dust_cont, n_power_law, n_dust_features, 
             n_abs_features, dust_features, abs_features, abs_taus, n_ssps, ssp_λ, ssp_templates, feii_templates_fft, velscale, vsyst_ssp, vsyst_feii, npad_feii, n_lines, 
             n_acomps, n_comps, lines, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, out[:cosmology], 
@@ -1183,6 +1193,11 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, init::Bool; split::B
     ab_lock = vcat([[tau.locked, mi.locked, fi.locked] for (tau, mi, fi) ∈ zip(abs_taus, abs_features.mean, abs_features.fwhm)]...)
     ext_plim = [continuum.τ_97.limits, continuum.τ_ice.limits, continuum.τ_ch.limits, continuum.β.limits]
     ext_lock = [continuum.τ_97.locked, continuum.τ_ice.locked, continuum.τ_ch.locked, continuum.β.locked]
+    # Lock tau_9.7 if an extinction map has been provided
+    if !isnothing(cube_fitter.extinction_map) && !init
+        ext_lock[1] = true
+    end
+
     hd_plim = cube_fitter.fit_sil_emission ? [amp_dc_plim, continuum.T_hot.limits, continuum.Cf_hot.limits, 
         continuum.τ_warm.limits, continuum.τ_cold.limits, continuum.sil_peak.limits] : []
     hd_lock = cube_fitter.fit_sil_emission ? [false, continuum.T_hot.locked, continuum.Cf_hot.locked,
@@ -1245,6 +1260,10 @@ function get_opt_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, 
     if (Hβ_snr < 3) || (Hγ_snr < 2)
         atten_locked = [true, true]
     end
+    # Lock E(B-V) if an extinction map has been provided
+    if !isnothing(cube_fitter.extinction_map) && !init
+        atten_locked = [true, true]
+    end
 
     if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
         push!(atten_plim, continuum.δ_uv.limits)
@@ -1264,19 +1283,20 @@ end
 
 
 """
-    get_continuum_initial_values(cube_fitter, λ, I, N, init; split)
+    get_continuum_initial_values(cube_fitter, spaxel, λ, I, N, init; split)
 
 Get the vector of starting values for the continuum fit for a given CubeFitter object. Again, the
 vector may be split up by the 2 continuum fitting steps.
 """
-get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, 
+get_continuum_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, 
     init::Bool; split::Bool=false) = cube_fitter.spectral_region == :MIR ? 
-    get_mir_continuum_initial_values(cube_fitter, λ, I, N, init, split=split) :
-    get_opt_continuum_initial_values(cube_fitter, λ, I, N, init)
+    get_mir_continuum_initial_values(cube_fitter, spaxel, λ, I, N, init, split=split) :
+    get_opt_continuum_initial_values(cube_fitter, spaxel, λ, I, N, init)
 
 
 # MIR implementation of the get_continuum_initial_values function
-function get_mir_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, init::Bool; split::Bool=false)
+function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
+    N::Real, init::Bool; split::Bool=false)
 
     # Check if the cube fitter has initial fit parameters 
     if !init
@@ -1322,6 +1342,11 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
 
         # Set optical depth based on the initial guess or the initial fit (whichever is larger)
         p₀[pᵢ] = max(cube_fitter.continuum.τ_97.value, p₀[pᵢ])
+        # Override if an extinction_map was provided
+        if !isnothing(cube_fitter.extinction_map)
+            p₀[pᵢ] = cube_fitter.extinction_map[spaxel]
+        end
+
         pᵢ += 4
         # Do not adjust absorption feature amplitudes since they are multiplicative
         pᵢ += 3*cube_fitter.n_abs_feat
@@ -1429,7 +1454,8 @@ end
 
 
 # Optical implementation of the get_continuum_initial_values function
-function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, init::Bool)
+function get_opt_continuum_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
+    N::Real, init::Bool)
 
     continuum = cube_fitter.continuum
 
@@ -1489,6 +1515,12 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:
             p₀[pᵢ] = 0.
             p₀[pᵢ+1] = continuum.E_BV_factor.value
         end
+        # Override E(B-V) if an extinction map has been provided
+        if !isnothing(cube_fitter.extinction_map)
+            p₀[pᵢ] = cube_fitter.extinction_map[spaxel]
+            p₀[pᵢ+1] = continuum.E_BV_factor.value
+        end
+
         if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
             pᵢ += 1
         end

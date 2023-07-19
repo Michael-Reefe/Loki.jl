@@ -684,28 +684,27 @@ plim = [0.4, 1.1]
 locked = false
 
 # Absorption features (also modeled with Drude profiles)
-# Caution: it's seems to be better to estimate and lock these parameters rather than fitting for them
-# since this HCO+ feature is right on top of some PAH features that tend to want to cancel each other out.
-# https://iopscience.iop.org/article/10.1088/0067-0049/182/2/628/pdf
 
 # Spectral leak artifact of the JWST pipeline at ~12.22 microns
-[absorption_features."abs_leak_12.22"]
-local = true
+# UPDATE: This has been fixed as of JWST pipeline version 1.11+
 
-[absorption_features."abs_leak_12.22".tau]
-val = 0.1
-plim = [0.0, 0.2]
-locked = false
+# [absorption_features."abs_leak_12.22"]
+# local = true
 
-[absorption_features."abs_leak_12.22".wave]
-val = 12.22
-plim = [-0.1, 0.1]
-locked = true
+# [absorption_features."abs_leak_12.22".tau]
+# val = 0.1
+# plim = [0.0, 0.2]
+# locked = false
 
-[absorption_features."abs_leak_12.22".fwhm]
-val = 0.133
-plim = [0.4, 1.4]
-locked = true
+# [absorption_features."abs_leak_12.22".wave]
+# val = 12.22
+# plim = [-0.1, 0.1]
+# locked = true
+
+# [absorption_features."abs_leak_12.22".fwhm]
+# val = 0.133
+# plim = [0.4, 1.4]
+# locked = true
 
 # [absorption_features."abs_C2H2_13.7".wave]
 # val = 13.69
@@ -779,7 +778,7 @@ locked = false
 
 # Peak location of 10 um silicate emission feature
 [hot_dust.peak]
-val = 10.421
-# val = 10.0178
+# val = 10.421
+val = 10.0178
 plim = [10.0, 10.8]
 locked = true

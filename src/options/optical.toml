@@ -19,7 +19,7 @@ locked = true
 
 # The old population should have a lower metallicity and vice versa
 [[stellar_population_metallicities]]
-val = 0.0
+val = -0.4
 plim = [-2.3, 0.0]
 locked = true
 [[stellar_population_metallicities]]

@@ -1031,6 +1031,7 @@ interpolate_nans!(obs.channels[0], obs.z)
 cube_fitter = CubeFitter(obs.channels[0], obs.z, name; parallel=true, plot_spaxels=:pyplot, plot_maps=true, 
     save_fits=true)
 ```
+- Additionally, there is also an `extinction_map` keyword argument where one may input a 2D map of extinction values. I.e. for MIR spectra, these will be interpreted as $\tau_{9.7}$ values, whereas for optical spectra they will be interpreted as $E(B-V)$ values. In either case, these maps will lock the extinction values to the given values in the map corresponding to each spaxel. This is useful if, for example, one wishes to fit a small part of the spectrum where it would otherwise be difficult to constrain the extinction with the other continuum parameters.
 6. If fitting each spaxel individually, simply call the "fit_cube!" function on the CubeFitter object
 ```julia
 fit_cube!(cube_fitter)

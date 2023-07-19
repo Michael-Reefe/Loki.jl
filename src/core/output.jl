@@ -819,7 +819,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     elseif occursin("cutoff", name_i)
         bunit = L"$\nu$"
     elseif occursin("mass", name_i)
-        bunit = L"$\log_{10}(M / h^2M_{\odot})$"
+        bunit = cosmo.h ≈ 1.0 ? L"$\log_{10}(Mh^2 / M_{\odot})$" : L"$\log_{10}(M / M_{\odot})$"
     elseif occursin("age", name_i)
         bunit = L"$t$ (Gyr)"
     elseif occursin("metallicity", name_i)
@@ -851,10 +851,10 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         @debug "Performing SNR filtering, $(sum(isfinite.(filtered)))/$(length(filtered)) passed"
     end
     # filter out insane/unphysical equivalent widths (due to ~0 continuum level)
-    if occursin("eqw", String(name_i))
+    if occursin("eqw", name_i)
         filtered[filtered .> 100] .= NaN
     end
-    if occursin("voff", String(name_i))
+    if occursin("voff", name_i)
         # Perform a 5-sigma clip to remove outliers
         f_avg = nanmean(filtered)
         f_std = nanstd(filtered)
@@ -867,14 +867,14 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     vmin = nanquantile(filtered, 0.01)
     vmax = nanquantile(filtered, 0.99)
     # override vmin/vmax for mixing parameter
-    if occursin("mixing", String(name_i))
+    if occursin("mixing", name_i)
         vmin = 0.
         vmax = 1.
     end
     nan_color = "k"
     text_color = "w"
     # if taking a voff, make sure vmin/vmax are symmetric and change the colormap to coolwarm
-    if occursin("voff", String(name_i)) || occursin("index", String(name_i)) || occursin("vel", String(name_i))
+    if occursin("voff", name_i) || occursin("index", name_i) || occursin("vel", name_i)
         vabs = max(abs(vmin), abs(vmax))
         vmin = -vabs
         vmax = vabs
@@ -884,13 +884,13 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
             # text_color = "k"
         end
     end
-    if occursin("chi2", String(name_i))
+    if occursin("chi2", name_i)
         vmin = 0
         # Hard upper limit on the reduced chi^2 map to show the structure
         vmax = min(nanmaximum(filtered), 30)
     end
     # default cmap is magma for FWHMs and equivalent widths
-    if (occursin("fwhm", String(name_i)) || occursin("eqw", String(name_i))) || occursin("vdisp", String(name_i)) && cmap == py_colormap.cubehelix
+    if (occursin("fwhm", name_i) || occursin("eqw", name_i)) || occursin("vdisp", name_i) && cmap == py_colormap.cubehelix
         cmap = py_colormap.magma
     end
 
@@ -905,7 +905,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
 
     cdata = ax.imshow(filtered', origin=:lower, cmap=cmap, vmin=vmin, vmax=vmax+small)
     # ax.axis(:off)
-    ax.tick_params(which="both", axis="both", direction="in")
+    ax.tick_params(which="both", axis="both", direction="in", color=text_color)
     ax.set_xlabel(isnothing(python_wcs) ? L"$x$ (spaxels)" : "R.A.")
     ax.set_ylabel(isnothing(python_wcs) ? L"$y$ (spaxels)" : "Dec.")
 
@@ -1692,9 +1692,9 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
             for parameter ∈ keys(param_data.stellar_continuum)
                 data = param_data.stellar_continuum[parameter]
                 name_i = join(["stellar_continuum", parameter], "_")
-                if occursin("amp", String(name_i))
+                if occursin("amp", name_i)
                     bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
-                elseif occursin("temp", String(name_i))
+                elseif occursin("temp", name_i)
                     bunit = "Kelvin"
                 end
                 write(f, data; name=name_i)
@@ -1706,9 +1706,9 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 for parameter ∈ keys(param_data.dust_continuum[i])
                     data = param_data.dust_continuum[i][parameter]
                     name_i = join(["dust_continuum", i, parameter], "_")
-                    if occursin("amp", String(name_i))
+                    if occursin("amp", name_i)
                         bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
-                    elseif occursin("temp", String(name_i))
+                    elseif occursin("temp", name_i)
                         bunit = "Kelvin"
                     end
                     write(f, data; name=name_i)
@@ -1721,9 +1721,9 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 for parameter ∈ keys(param_data.power_law[l])
                     data = param_data.power_law[l][parameter]
                     name_i = join(["power_law", l, parameter], "_")
-                    if occursin("amp", String(name_i))
+                    if occursin("amp", name_i)
                         bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
-                    elseif occursin("index", String(name_i))
+                    elseif occursin("index", name_i)
                         bunit = "unitless"
                     end
                     write(f, data; name=name_i)
@@ -1736,13 +1736,13 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 for parameter ∈ keys(param_data.hot_dust)
                     data = param_data.hot_dust[parameter]
                     name_i = join(["hot_dust", parameter], "_")
-                    if occursin("amp", String(name_i))
+                    if occursin("amp", name_i)
                         bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
-                    elseif occursin("temp", String(name_i))
+                    elseif occursin("temp", name_i)
                         bunit = "Kelvin"
-                    elseif occursin("frac", String(name_i)) || occursin("tau", String(name_i))
+                    elseif occursin("frac", name_i) || occursin("tau", name_i)
                         bunit = "unitless"
-                    elseif occursin("peak", String(name_i))
+                    elseif occursin("peak", name_i)
                         bunit = "um"
                     end
                     write(f, data; name=name_i)
@@ -1755,13 +1755,13 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 for parameter ∈ keys(param_data.dust_features[df])
                     data = param_data.dust_features[df][parameter]
                     name_i = join(["dust_features", df, parameter], "_")
-                    if occursin("amp", String(name_i))
+                    if occursin("amp", name_i)
                         bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
-                    elseif occursin("fwhm", String(name_i)) || occursin("mean", String(name_i)) || occursin("eqw", String(name_i))
+                    elseif occursin("fwhm", name_i) || occursin("mean", name_i) || occursin("eqw", name_i)
                         bunit = "um"
-                    elseif occursin("flux", String(name_i))
+                    elseif occursin("flux", name_i)
                         bunit = "log10(F / erg s^-1 cm^-2)"
-                    elseif occursin("SNR", String(name_i)) || occursin("index", String(name_i)) || occursin("cutoff", String(name_i))
+                    elseif occursin("SNR", name_i) || occursin("index", name_i) || occursin("cutoff", name_i)
                         bunit = "unitless"
                     end
                     write(f, data; name=name_i)
@@ -1774,9 +1774,9 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 for parameter ∈ keys(param_data.abs_features[ab])
                     data = param_data.abs_features[ab][parameter]
                     name_i = join(["abs_features", ab, parameter], "_")
-                    if occursin("tau", String(name_i))
+                    if occursin("tau", name_i)
                         bunit = "unitless"
-                    elseif occursin("fwhm", String(name_i)) || occursin("mean", String(name_i)) || occursin("eqw", String(name_i))
+                    elseif occursin("fwhm", name_i) || occursin("mean", name_i) || occursin("eqw", name_i)
                         bunit = "um"
                     end
                     write(f, data; name=name_i)
@@ -1798,16 +1798,16 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 for parameter ∈ keys(param_data.lines[line])
                     data = param_data.lines[line][parameter]
                     name_i = join(["lines", line, parameter], "_")
-                    if occursin("amp", String(name_i))
+                    if occursin("amp", name_i)
                         bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
-                    elseif occursin("fwhm", String(name_i)) || occursin("voff", String(name_i))
+                    elseif occursin("fwhm", name_i) || occursin("voff", name_i)
                         bunit = "km/s"
-                    elseif occursin("flux", String(name_i))
+                    elseif occursin("flux", name_i)
                         bunit = "log10(I / erg s^-1 cm^-2)"
-                    elseif occursin("eqw", String(name_i))
+                    elseif occursin("eqw", name_i)
                         bunit = "um"
-                    elseif occursin("SNR", String(name_i)) || occursin("h3", String(name_i)) || 
-                        occursin("h4", String(name_i)) || occursin("mixing", String(name_i))
+                    elseif occursin("SNR", name_i) || occursin("h3", name_i) || 
+                        occursin("h4", name_i) || occursin("mixing", name_i)
                         bunit = "unitless"
                     end
                     write(f, data; name=name_i)
@@ -1984,11 +1984,11 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 for parameter ∈ keys(param_data.stellar_populations[i])
                     data = param_data.stellar_populations[i][parameter]
                     name_i = join(["stellar_populations", i, parameter], "_")
-                    if occursin("mass", String(name_i))
+                    if occursin("mass", name_i)
                         bunit = "log10(M/Msun)"
-                    elseif occursin("age", String(name_i))
+                    elseif occursin("age", name_i)
                         bunit = "Gyr"
-                    elseif occursin("metallicity", String(name_i))
+                    elseif occursin("metallicity", name_i)
                         bunit = "[M/H]"
                     end
                     write(f, data; name=name_i)
@@ -2009,7 +2009,7 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
             for parameter ∈ keys(param_data.attenuation)
                 data = param_data.attenuation[parameter]
                 name_i = join(["attenuation", parameter], "_")
-                if occursin("E_BV", String(name_i))
+                if occursin("E_BV", name_i)
                     bunit = "mag"
                 else
                     bunit = "unitless"
@@ -2023,7 +2023,7 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 for parameter ∈ keys(param_data.feii)
                     data = param_data.feii[parameter]
                     name_i = join(["feii", parameter], "_")
-                    if occursin("amp", String(name_i))
+                    if occursin("amp", name_i)
                         bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
                     else
                         bunit = "km/s"
@@ -2038,7 +2038,7 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 for parameter ∈ keys(param_data.power_law[j])
                     data = param_data.power_law[j][parameter]
                     name_i = join(["power_law", j, parameter], "_")
-                    if occursin("amp", String(name_i))
+                    if occursin("amp", name_i)
                         bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
                     else
                         bunit = "unitless"
@@ -2053,16 +2053,16 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 for parameter ∈ keys(param_data.lines[line])
                     data = param_data.lines[line][parameter]
                     name_i = join(["lines", line, parameter], "_")
-                    if occursin("amp", String(name_i))
+                    if occursin("amp", name_i)
                         bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
-                    elseif occursin("fwhm", String(name_i)) || occursin("voff", String(name_i))
+                    elseif occursin("fwhm", name_i) || occursin("voff", name_i)
                         bunit = "km/s"
-                    elseif occursin("flux", String(name_i))
+                    elseif occursin("flux", name_i)
                         bunit = "log10(I / erg s^-1 cm^-2)"
-                    elseif occursin("eqw", String(name_i))
+                    elseif occursin("eqw", name_i)
                         bunit = "um"
-                    elseif occursin("SNR", String(name_i)) || occursin("h3", String(name_i)) || 
-                        occursin("h4", String(name_i)) || occursin("mixing", String(name_i))
+                    elseif occursin("SNR", name_i) || occursin("h3", name_i) || 
+                        occursin("h4", name_i) || occursin("mixing", name_i)
                         bunit = "unitless"
                     end
                     write(f, data; name=name_i)

@@ -225,7 +225,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
 
     # Split up the initial parameter vector into the components that we need for each fitting step
     if !bootstrap_iter
-        pars_0 = get_continuum_initial_values(cube_fitter, λ_spax, I_spax, N, init || use_ap)
+        pars_0 = get_continuum_initial_values(cube_fitter, spaxel, λ_spax, I_spax, N, init || use_ap)
     else
         pars_0 = p1_boots
     end
@@ -427,7 +427,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
 
     # Split up the initial parameter vector into the components that we need for each fitting step
     if !bootstrap_iter
-        pars_1, pars_2 = get_continuum_initial_values(cube_fitter, λ_spax, I_spax, N, init || use_ap, split=true)
+        pars_1, pars_2 = get_continuum_initial_values(cube_fitter, spaxel, λ_spax, I_spax, N, init || use_ap, split=true)
     else
         pars_1 = vcat(p1_boots[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+3*cube_fitter.n_abs_feat+
             (cube_fitter.fit_sil_emission ? 6 : 0))], p1_boots[end-1:end])
@@ -1165,7 +1165,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
 
     # Split up the initial parameter vector into the components that we need for each fitting step
     if !bootstrap_iter
-        pars_0_cont = get_continuum_initial_values(cube_fitter, λ_spax, I_spax, N, init || use_ap)
+        pars_0_cont = get_continuum_initial_values(cube_fitter, spaxel, λ_spax, I_spax, N, init || use_ap)
     else
         pars_0_cont = p1_boots_cont
     end
@@ -1710,7 +1710,7 @@ function plot_spaxel_fit(spectral_region::Symbol, λ_um::Vector{<:Real}, I::Vect
             norm = 1.0
         end
 
-        min_inten = ((sum((I ./ norm .* factor) .< -0.01) > 30) && (spectral_region == :OPT)) ? -2nanstd(I ./ norm .* factor) : -0.01
+        min_inten = ((sum((I ./ norm .* factor) .< -0.01) > (length(λ)/10)) && (spectral_region == :OPT)) ? -2nanstd(I ./ norm .* factor) : -0.01
         max_inten = isnothing(range) ? 
                     1.3nanmaximum(I[.~mask_lines .& .~mask_bad] ./ norm .* factor[.~mask_lines .& .~mask_bad]) : 
                     1.1nanmaximum((I ./ norm .* factor)[range[1] .< λ .< range[2]])
@@ -2475,6 +2475,7 @@ function fit_cube!(cube_fitter::CubeFitter)
     cp(joinpath(@__DIR__, "..", "options", "options.toml"), joinpath("output_$(cube_fitter.name)", "general_options.archive.toml"), force=true)
     cp(joinpath(@__DIR__, "..", "options", "dust.toml"), joinpath("output_$(cube_fitter.name)", "dust_options.archive.toml"), force=true)
     cp(joinpath(@__DIR__, "..", "options", "lines.toml"), joinpath("output_$(cube_fitter.name)", "lines_options.archive.toml"), force=true)
+    cp(joinpath(@__DIR__, "..", "options", "optical.toml"), joinpath("output_$(cube_fitter.name)", "optical_options.archive.toml"), force=true)
 
     if cube_fitter.make_movies
         @info "===> Writing MP4 movies... (this may take a while) <==="
@@ -2597,6 +2598,7 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Vector{PyObject})
     cp(joinpath(@__DIR__, "..", "options", "options.toml"), joinpath("output_$(cube_fitter.name)", "general_options.archive.toml"), force=true)
     cp(joinpath(@__DIR__, "..", "options", "dust.toml"), joinpath("output_$(cube_fitter.name)", "dust_options.archive.toml"), force=true)
     cp(joinpath(@__DIR__, "..", "options", "lines.toml"), joinpath("output_$(cube_fitter.name)", "lines_options.archive.toml"), force=true)
+    cp(joinpath(@__DIR__, "..", "options", "optical.toml"), joinpath("output_$(cube_fitter.name)", "optical_options.archive.toml"), force=true)
 
     if cube_fitter.make_movies
         @info "===> Writing MP4 movies... (this may take a while) <==="

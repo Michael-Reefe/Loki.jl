@@ -55,7 +55,7 @@ save_full_model = true
 # Donnan et al. (2022) extinction profile.
 # optical options: may be either "calzetti" for the Calzetti et al. (2000) starburst galaxy curve,
 # or "ccm" for the Cardelli, Clayton, & Mathis (1989) Milky Way curve.
-extinction_curve = "kvt"
+extinction_curve = "ccm"
 
 # extinction_screen: Controls whether extinction is modeled as e^-tau (true) or
 # (1 - e^-tau) / tau (false), following PAHFIT.
@@ -77,7 +77,7 @@ use_pah_templates = false
 # subtracted during the line fitting. If true, the continuum and lines are fit simultaneously. This option
 # is incompatible with the use_pah_templates option (only one may be true at a time).
 # Note: It is recommended to use FALSE for fitting MIR data, and TRUE for fitting optical data.
-fit_joint = false
+fit_joint = true
 
 # whether or not to use simulated annealing on ALL spaxels (if false, only uses it for the initial fit
 # to the sum of all spaxels, and subsequent individual-spaxel fits are only done with a local Lev-Mar fit,
@@ -90,12 +90,12 @@ fit_uv_bump = false
 # whether or not to fit a dust covering fraction for the calzetti attenuation curve
 fit_covering_frac = false
 
-user_mask = []
-# user_mask = [[0.42992, 0.43091], [0.47545, 0.47995]]
+# user_mask = []
+user_mask = [[0.42992, 0.43091], [0.47545, 0.47995]]
 
 # which lines should be tested for additional components
-# line_test_lines = [["OIII_05008", "OIII_04960"]]
-line_test_lines = []
+# line_test_lines = []
+line_test_lines = [["OIII_05008", "OIII_04960"]]
 
 # a threshold value on the chi^2 ratio (1 - chi^2_line/chi^2_noline) to determine how significant additional line 
 # components must be in order to include them in a fit

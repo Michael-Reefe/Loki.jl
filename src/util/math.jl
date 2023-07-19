@@ -78,6 +78,12 @@ const IceCHTemp = read_ice_ch_temps()
 const Ice_interp = Spline1D(IceCHTemp[1], IceCHTemp[2]; k=3)
 const CH_interp = Spline1D(IceCHTemp[3], IceCHTemp[4]; k=3)
 
+# Polynomials for calculating the CCM extinction curve
+const CCM_optPoly_a = Polynomial([1.0, 0.104, -0.609, 0.701, 1.137, -1.718, -0.827, 1.647, -0.505])
+const CCM_optPoly_b = Polynomial([0.0, 1.952, 2.908, -3.989, -7.985, 11.102, 5.491, -10.805, 3.347])
+const CCM_fuvPoly_a = Polynomial([-1.703, -0.628, 0.137, -0.070])
+const CCM_fuvPoly_b = Polynomial([13.670, 4.257, -0.420, 0.374])
+
 ########################################### UTILITY FUNCTIONS ###############################################
 
 
@@ -627,33 +633,28 @@ end
 
 
 """
-    attenuation_cardelli(λ, E_BV, Rv)
+    attenuation_cardelli(λ, E_BV[, Rv])
 
-Adapted from BADASS (Sexton et al. 2021). Original docstring below:
+Calculate the attenuation factor for a given wavelength range `λ` with a 
+reddening of `E_BV` and selective extinction ratio `Rv`, using the
+Cardelli et al. (1989) galactic extinction curve.
 
-Deredden a flux vector using the CCM 1989 parameterization 
-Returns an array of the unreddened flux
+This function has been adapted from BADASS (Sexton et al. 2021), which
+in turn has been adapted from the IDL Astrolib library.
 
-INPUTS:
-wave - array of wavelengths (in Angstroms)
-dec - calibrated flux array, same number of elements as wave
-ebv - colour excess E(B-V) float. If a negative ebv is supplied
-      fluxes will be reddened rather than dereddened	 
+# Arguments
+- `λ::Vector{<:Real}`: The wavelength vector in microns
+- `E_BV::Real`: The color excess E(B-V) in magnitudes
+- `Rv::Real=3.1`: The ratio of total selective extinction R(V) = A(V)/E(B-V)
 
-OPTIONAL INPUT:
-r_v - float specifying the ratio of total selective
-      extinction R(V) = A(V)/E(B-V). If not specified,
-      then r_v = 3.1
-        
-OUTPUTS:
-funred - unreddened calibrated flux array, same number of 
-         elements as wave
-         
-NOTES:
+# Returns
+- `Vector{<:Real}`: The extinction factor, 10^(-0.4*A(V)*(a(λ)+b(λ)/R(V)))
+
+Notes from the original docstring have been pasted below:
+
 1. This function was converted from the IDL Astrolib procedure
    last updated in April 1998. All notes from that function
    (provided below) are relevant to this function 
-   
 2. (From IDL:) The CCM curve shows good agreement with the Savage & Mathis (1979)
    ultraviolet curve shortward of 1400 A, but is probably
    preferable between 1200 and 1400 A.
@@ -668,12 +669,8 @@ NOTES:
    curve (3.3 -- 8.0 um-1).	But since their revised curve does
    not connect smoothly with longer and shorter wavelengths, it is
    not included here.
-
 7. For the optical/NIR transformation, the coefficients from 
    O'Donnell (1994) are used
-
->>> ccm_unred([1000, 2000, 3000], [1, 1, 1], 2 ) 
-array([9.7976e+012, 1.12064e+07, 32287.1])
 """
 function attenuation_cardelli(λ::Vector{<:Real}, E_BV::Real, Rv::Real=3.10)
     # inverse wavelength (microns)
@@ -696,8 +693,8 @@ function attenuation_cardelli(λ::Vector{<:Real}, E_BV::Real, Rv::Real=3.10)
     # Optical/NIR
     good = 1.1 .≤ x .< 3.3
     y = x .- 1.82
-    a[good] = Polynomial([1.0, 0.104, -0.609, 0.701, 1.137, -1.718, -0.827, 1.647, -0.505]).(y[good])
-    b[good] = Polynomial([0.0, 1.952, 2.908, -3.989, -7.985, 11.102, 5.491, -10.805, 3.347]).(y[good])
+    a[good] = CCM_optPoly_a.(y[good])
+    b[good] = CCM_optPoly_b.(y[good])
 
     # Mid-UV
     good = 3.3 .≤ x .< 8.0
@@ -717,8 +714,8 @@ function attenuation_cardelli(λ::Vector{<:Real}, E_BV::Real, Rv::Real=3.10)
     # Far-UV
     good = 8.0 .≤ x .≤ 11.0
     y = x .- 8.0
-    a[good] = Polynomial([-1.703, -0.628, 0.137, -0.070]).(y[good])
-    b[good] = Polynomial([13.670, 4.257, -0.420, 0.374]).(y[good])
+    a[good] = CCM_fuvPoly_a.(y[good])
+    b[good] = CCM_fuvPoly_b.(y[good])
 
     # Calculate the extintion
     Av = Rv .* E_BV
@@ -1215,9 +1212,9 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
     end
 
     if use_pah_templates
-        pah3 = Smith3_interp.(λ)
+        pah3 = Smith3_interp(λ)
         contin .+= params[pᵢ] .* maximum(1 ./ comps["extinction"]) .* pah3 ./ maximum(pah3) .* comps["extinction"]
-        pah4 = Smith4_interp.(λ)
+        pah4 = Smith4_interp(λ)
         contin .+= params[pᵢ+1] .* maximum(1 ./ comps["extinction"]) .* pah4 ./ maximum(pah4) .* comps["extinction"]
     else
         for (j, prof) ∈ enumerate(dust_prof)
@@ -1308,9 +1305,9 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
     end
 
     if use_pah_templates
-        pah3 = Smith3_interp.(λ)
+        pah3 = Smith3_interp(λ)
         contin .+= params[pᵢ] .* maximum(1 ./ ext) .* pah3 ./ maximum(pah3) .* ext
-        pah4 = Smith4_interp.(λ)
+        pah4 = Smith4_interp(λ)
         contin .+= params[pᵢ+1] .* maximum(1 ./ ext) .* pah4 ./ maximum(pah4) .* ext
     else
         if all(dust_prof .== :Drude)
@@ -1393,7 +1390,7 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, ve
         if ssp_templates isa Vector{Spline2D}
             temp = [ssp_templates[j](params[pᵢ+1], params[pᵢ+2]) for j in eachindex(ssp_λ)]
         else
-            temp = ssp_templates[:,i]
+            temp = @view ssp_templates[:,i]
         end
         ssps[:, i] = params[pᵢ] .* temp ./ median(temp)
         pᵢ += 3
@@ -1486,7 +1483,7 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, ve
         if ssp_templates isa Vector{Spline2D}
             temp = [ssp_templates[j](params[pᵢ+1], params[pᵢ+2]) for j in eachindex(ssp_λ)]
         else
-            temp = ssp_templates[:,i]
+            temp = @view ssp_templates[:,i]
         end
         ssps[:, i] = params[pᵢ] .* temp ./ median(temp)
         pᵢ += 3
@@ -1497,7 +1494,7 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, ve
     pᵢ += 2
 
     # Combine the convolved stellar templates together with the weights
-    for i in 1:n_ssps
+    @views for i in 1:n_ssps
         contin .+= conv_ssps[:, i]
     end
 
@@ -1532,13 +1529,13 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, ve
     if fit_opt_na_feii
         conv_na_feii = convolve_losvd(feii_templates_fft[:, 1], vsyst_feii, params[pᵢ+1], params[pᵢ+2], velscale, length(λ), 
             temp_fft=true, npad_in=npad_feii)
-        contin .+= params[pᵢ] .* conv_na_feii[:, 1] .* att_gas
+        @views contin .+= params[pᵢ] .* conv_na_feii[:, 1] .* att_gas
         pᵢ += 3
     end
     if fit_opt_br_feii
         conv_br_feii = convolve_losvd(feii_templates_fft[:, 2], vsyst_feii, params[pᵢ+1], params[pᵢ+2], velscale, length(λ),
             temp_fft=true, npad_in=npad_feii)
-        contin .+= params[pᵢ] .* conv_br_feii[:, 1] .* att_gas
+        @views contin .+= params[pᵢ] .* conv_br_feii[:, 1] .* att_gas
         pᵢ += 3
     end
 
