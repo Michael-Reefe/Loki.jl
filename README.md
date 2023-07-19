@@ -9,6 +9,7 @@
 * [Installation](#ii-installation)
     - [Julia Requirements](#julia-requirements)
     - [Python Requirements](#python-requirements)
+    - [LaTeX](#latex)
 * [Usage](#iii-usage)
     - [General Code Options](#i-general-code-options)
     - [MIR Continuum and PAH Options](#ii-mir-continuum-and-pah-options)
@@ -150,6 +151,10 @@ And that's it! If you chose the option to link to a new, self-contained conda en
 - [photutils](https://photutils.readthedocs.io/en/stable/)
 - [lineid_plot](https://github.com/phn/lineid_plot)
 - [fsps](https://github.com/dfm/python-fsps) (only required for optical spectra fitting)
+
+### LaTeX
+
+Finally, LOKI assumes you have an installation of LaTeX that can be used with matplotlib to generate nicely formatted axis labels and annotations.  Common LaTeX distributions include [TeX Live](https://www.tug.org/texlive/) and [MiKTeX](https://miktex.org/about). Whichever you choose, you should also make sure that you have the siunitx package installed, since some of LOKI's plotting functionality makes use of it. It's fairly standard and it comes with both of the aforementioned distributions by default.
 
 ---
 
@@ -832,7 +837,7 @@ The plotly-generated plot is similar to the matplotlib-generated one, but not co
 If one specifies a `plot_range` argument in the CubeFitter, a `zoomed_plots` folder will also be created with 1D spectra of each zoomed-in region that one specifies. These can be useful for examining the fits of certain emission lines in more detail.
 
 ### v. Parameter Maps
-If performing a full fit to each spaxel in a cube, 2D parameter maps for each model parameter will be generated in the `param_maps` directory (sorted into sub-directories based on the types of parameters) showing the spatial distribution of the parameter over the galaxy. The R.A. and Dec. axes are labeled and a physical scale bar showing the conversion to pc/kpc/Mpc is shown in the bottom-left corner of each plot. A circle the size of the FWHM of the point-spread function (PSF) is also shown in the upper-right corner of each plot. Finally, the color bar is shown in the right of each plot. Some examples for NGC 7469 are shown below.
+If performing a full fit to each spaxel in a cube, 2D parameter maps for each model parameter will be generated in the `param_maps` directory (sorted into sub-directories based on the types of parameters) showing the spatial distribution of the parameter over the galaxy. Physical scale bars showing the spatial extend in both arcseconds and pc/kpc/Mpc are shown in the bottom-left corner of each plot. A circle the size of the FWHM of the point-spread function (PSF) is also shown in the bottom-right corner of each plot. Finally, the color bar is shown in the right of each plot. The function that's used to generate these plots, `plot_parameter_map`, is highly flexible and can be used on existing figure/axes objects with the `modify_ax=(fig, ax)` keyword argument. The color scale can also be manually set with the `colorscale_limits=(vmin, vmax)` argument. The function was created this way with the intention of allowing the user flexibility to re-plot desired quantities after making adjustments and/or making a grid of subplots. However, by default, each quantity is plotted individually. Some examples for NGC 7469 are shown below.
 
 \*Note that all parameter maps shown below are purely for demonstrational purposes
 

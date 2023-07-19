@@ -750,10 +750,18 @@ Plotting function for 2D parameter maps which are output by `fit_cube!`
 - `snr_thresh::Float64=3.`: The S/N threshold below which to cut out any spaxels using the values in snr_filter
 - `cmap::Symbol=:cubehelix`: The colormap used in the plot, defaults to the cubehelix map
 - `line_latex::Union{String,Nothing}=nothing`: LaTeX-formatted label for the emission line to be added to the top-right corner.
+- `disable_axes::Bool=true`: If true, the x/y or RA/Dec axes are turned off, and instead an angular label is added to the scale bar.
+- `disable_colorbar::Bool=false`: If true, turns off the color scale.
+- `modify_ax::Union{Tuple{PyObject,PyObject},Nothing}=nothing`: If one wishes to apply this plotting routine on a pre-existing axis object,
+input the figure and axis objects here as a tuple, and the modified axis object will be returned.
+- `colorscale_limits::Union{Tuple{<:Real,<:Real},Nothing}=nothing`: If specified, gives lower and upper limits for the color scale. Otherwise,
+they will be determined automatically from the data.
 """
 function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::String, Ω::Float64, z::Float64, psf_fwhm::Float64,
     cosmo::Cosmology.AbstractCosmology, python_wcs::Union{PyObject,Nothing}; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, 
-    snr_thresh::Float64=3., cmap::PyObject=py_colormap.cubehelix, line_latex::Union{String,Nothing}=nothing)
+    snr_thresh::Float64=3., cmap::PyObject=py_colormap.cubehelix, line_latex::Union{String,Nothing}=nothing, disable_axes::Bool=true,
+    disable_colorbar::Bool=false, modify_ax::Union{Tuple{PyObject,PyObject},Nothing}=nothing, 
+    colorscale_limits::Union{Tuple{<:Real,<:Real},Nothing}=nothing)
 
     # I know this is ugly but I couldn't figure out a better way to do it lmao
     if occursin("amp", name_i)
@@ -861,8 +869,12 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         filtered[abs.(filtered .- f_avg) .> 5f_std] .= NaN
     end
 
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection=python_wcs) 
+    if isnothing(modify_ax)
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection=python_wcs) 
+    else
+        fig, ax = modify_ax
+    end
     # Need to filter out any NaNs in order to use quantile
     vmin = nanquantile(filtered, 0.01)
     vmax = nanquantile(filtered, 0.99)
@@ -903,11 +915,17 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     # Set NaN color to either black or white
     cmap.set_bad(color=nan_color)
 
-    cdata = ax.imshow(filtered', origin=:lower, cmap=cmap, vmin=vmin, vmax=vmax+small)
-    # ax.axis(:off)
+    if isnothing(colorscale_limits)
+        cdata = ax.imshow(filtered', origin=:lower, cmap=cmap, vmin=vmin, vmax=vmax+small)
+    else
+        cdata = ax.imshow(filtered', origin=:lower, cmap=cmap, vmin=colorscale_limits[1], vmax=colorscale_limits[2])
+    end
     ax.tick_params(which="both", axis="both", direction="in", color=text_color)
     ax.set_xlabel(isnothing(python_wcs) ? L"$x$ (spaxels)" : "R.A.")
     ax.set_ylabel(isnothing(python_wcs) ? L"$y$ (spaxels)" : "Dec.")
+    if disable_axes
+        ax.axis(:off)
+    end
 
     # Angular and physical scalebars
     pix_as = sqrt(Ω) * 180/π * 3600
@@ -917,11 +935,13 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     dA = angular_diameter_dist(u"pc", cosmo, z)
     # Remove units
     dA = uconvert(NoUnits, dA/u"pc")
-    l = dA * π/180 / 3600  # l = d * theta (1")
+    # l = d * theta (") where theta is chosen as 1/4 the horizontal extent of the image
+    l = dA * (size(data, 1) * pix_as / 4) * π/180 / 3600  
     # Round to a nice even number
     l = Int(round(l, sigdigits=1))
      # new angular size for this scale
     θ = l / dA
+    θ_as = round(θ * 180/π * 3600, digits=1)  # should be close to the original theta, by definition
     n_pix = 1/sqrt(Ω) * θ   # number of pixels = (pixels per radian) * radians
     unit = "pc"
     # convert to kpc if l is more than 1000 pc
@@ -935,33 +955,43 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         l = Int(l / 10^9)
         unit = "Gpc"
     end
-    if cosmo.h ≈ 1.0
-        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, L"%$l$h^{-1}$ %$unit", "lower left", pad=1, color=text_color, 
-            frameon=false, size_vertical=0.4, label_top=false)
-    else
-        scalebar = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, L"%$l %$unit", "lower left", pad=1, color=text_color,
-            frameon=false, size_vertical=0.4, label_top=false)
+    scalebar_text = cosmo.h ≈ 1.0 ? L"%$l$h^{-1}$ %$unit" : L"%$l %$unit"
+    scalebar_1 = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, scalebar_text, "upper center", pad=0, borderpad=0, 
+        color=text_color, frameon=false, size_vertical=0.1, label_top=false, bbox_to_anchor=(0.17, 0.1), bbox_transform=ax.transAxes)
+    ax.add_artist(scalebar_1)
+    if disable_axes
+        scalebar_text = L"$\ang[angle-symbol-over-decimal]{;;%$θ_as}$"
+        if θ_as > 60
+            θ_as = round(θ_as/60, digits=1)  # convert to arcminutes
+            scalebar_text = L"$\ang[angle-symbol-over-decimal]{;%$θ_as;}$"
+        end
+        scalebar_2 = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, scalebar_text, "lower center", pad=0, borderpad=0, 
+            color=text_color, frameon=false, size_vertical=0.1, label_top=true, bbox_to_anchor=(0.17, 0.1), bbox_transform=ax.transAxes)
+        ax.add_artist(scalebar_2)
     end
-    ax.add_artist(scalebar)
 
     # Add circle for the PSF FWHM
     r = psf_fwhm / pix_as / 2
-    psf = plt.Circle(size(data) .* (0.95, 0.05) .+ (-r, r), r, color=text_color)
+    psf = plt.Circle(size(data) .* (0.93, 0.05) .+ (-r, r), r, color=text_color)
     ax.add_patch(psf)
-    ax.annotate("PSF", size(data) .* (0.95, 0.05) .+ (-r, 2.5r + 1.75), ha=:center, va=:center, color=text_color)
+    ax.annotate("PSF", size(data) .* (0.93, 0.05) .+ (-r, 2.5r + 1.75), ha=:center, va=:center, color=text_color)
 
     # Add line label, if applicable
     if !isnothing(line_latex)
         ax.annotate(line_latex, size(data) .* 0.95, ha=:right, va=:top, fontsize=16, color=text_color)
     end
-
-    fig.colorbar(cdata, ax=ax, label=bunit)
+    if !disable_colorbar
+        fig.colorbar(cdata, ax=ax, label=bunit)
+    end
 
     # Make directories
     if !isdir(dirname(save_path))
         mkpath(dirname(save_path))
     end
     plt.savefig(save_path, dpi=300, bbox_inches=:tight)
+    if !isnothing(modify_ax)
+        return fig, ax
+    end
     plt.close()
 
 end

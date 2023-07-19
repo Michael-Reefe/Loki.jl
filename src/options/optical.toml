@@ -76,9 +76,9 @@ locked = false
 
 # E(B-V) Reddening factor for the gas
 [attenuation.E_BV]
-val = 0.10
+val = 0.0
 plim = [0.0, 1.0]
-locked = false
+locked = true
 
 # Factor to convert E(B-V) from gas to starlight,
 # typically locked to 0.44

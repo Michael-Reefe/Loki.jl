@@ -65,7 +65,7 @@ kinematic_group_Balmer = [
     "HI_H_"
 ]
 # Case B recombination amplitude ratios
-tie_amp_Balmer = [0.105, 0.158, 0.256, 0.466, 1.0, 2.87]
+# tie_amp_Balmer = [0.105, 0.158, 0.256, 0.466, 1.0, 2.87]
 
 # Lines to make combined flux/eqw maps for
 combined_maps = [["OII_03727", "OII_03729"]]
