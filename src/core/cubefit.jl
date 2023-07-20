@@ -797,7 +797,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
         # Get potential extinction map
         extinction_map = nothing
         if haskey(out, :extinction_map)
-            extinction_map = out[extinction_map]
+            extinction_map = out[:extinction_map]
             @assert size(extinction_map) == size(cube.I)[1:2] "The extinction map must match the shape of the first two dimensions of the intensity map!"
         end
 
@@ -1344,6 +1344,7 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         p₀[pᵢ] = max(cube_fitter.continuum.τ_97.value, p₀[pᵢ])
         # Override if an extinction_map was provided
         if !isnothing(cube_fitter.extinction_map)
+            @debug "Using the provided τ_9.7 values from the extinction_map and rescaling starting point"
             p₀[pᵢ] = cube_fitter.extinction_map[spaxel]
         end
 
@@ -1476,19 +1477,28 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         # normalized to any particular N (at least for the blackbody components).
         scale = max(nanmedian(I), 1e-10) * N0 / nanmedian(I_init)
 
-        # Start with a small reddening despite the initial fit
-        # pₑ = 1 + 3cube_fitter.n_ssps + 2
-        # ebv_orig = p₀[pₑ]
-        # ebv_factor = p₀[pₑ+1]
-        # p₀[pₑ] = min(p₀[pₑ], continuum.E_BV.value)
-        # # Rescale to keep the continuum at a good starting point
-        # if cube_fitter.extinction_curve == "ccm"
-        #     scale *= median(attenuation_cardelli(λ, p₀[pₑ]*ebv_factor) ./ attenuation_cardelli(λ, ebv_orig*ebv_factor))
-        # elseif cube_fitter.extinction_curve == "calzetti"
-        #     scale *= median(attenuation_calzetti(λ, p₀[pₑ]*ebv_factor) ./ attenuation_calzetti(λ, ebv_orig*ebv_factor))
-        # else
-        #     error("Unrecognized extinction curve $(cube_fitter.extinction_curve)")
-        # end
+        if !isnothing(cube_fitter.extinction_map)
+            pₑ = 1 + 3cube_fitter.n_ssps + 2
+            ebv_orig = p₀[pₑ]
+            ebv_factor = p₀[pₑ+1]
+
+            @debug "Using the provided E(B-V) values from the extinction_map and rescaling starting point"
+            ebv_new = cube_fitter.extinction_map[spaxel]
+            ebv_factor_new = continuum.E_BV_factor.value
+
+            # Rescale to keep the continuum at a good starting point
+            if cube_fitter.extinction_curve == "ccm"
+                scale /= median(attenuation_cardelli(λ, ebv_new*ebv_factor_new) ./ attenuation_cardelli(λ, ebv_orig*ebv_factor))
+            elseif cube_fitter.extinction_curve == "calzetti"
+                scale /= median(attenuation_calzetti(λ, ebv_new*ebv_factor_new) ./ attenuation_calzetti(λ, ebv_orig*ebv_factor))
+            else
+                error("Unrecognized extinction curve $(cube_fitter.extinction_curve)")
+            end
+
+            # Set the new values
+            p₀[pₑ] = ebv_new
+            p₀[pₑ+1] = ebv_factor_new
+        end
 
         # SSP amplitudes
         pᵢ = 1
@@ -1510,14 +1520,9 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         Hβ_snr = test_line_snr(0.4862691, 0.0060, λ, I)
         Hγ_snr = test_line_snr(0.4341691, 0.0080, λ, I)
         # if the SNR is less than 3, we cannot constrain E(B-V), so lock it to 0
-        if (Hβ_snr < 3) || (Hγ_snr < 2)
+        if ((Hβ_snr < 3) || (Hγ_snr < 2)) && isnothing(cube_fitter.extinction_map)
             @debug "Locking E(B-V) to 0 due to insufficient H-beta emission"
             p₀[pᵢ] = 0.
-            p₀[pᵢ+1] = continuum.E_BV_factor.value
-        end
-        # Override E(B-V) if an extinction map has been provided
-        if !isnothing(cube_fitter.extinction_map)
-            p₀[pᵢ] = cube_fitter.extinction_map[spaxel]
             p₀[pᵢ+1] = continuum.E_BV_factor.value
         end
 

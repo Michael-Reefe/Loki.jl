@@ -756,12 +756,14 @@ Plotting function for 2D parameter maps which are output by `fit_cube!`
 input the figure and axis objects here as a tuple, and the modified axis object will be returned.
 - `colorscale_limits::Union{Tuple{<:Real,<:Real},Nothing}=nothing`: If specified, gives lower and upper limits for the color scale. Otherwise,
 they will be determined automatically from the data.
+- `custom_bunit::Union{LaTeXString,Nothing}=nothing`: If provided, overwrites the colorbar axis label. Otherwise the label is determined
+automtically using the `name_i` parameter.
 """
 function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::String, Ω::Float64, z::Float64, psf_fwhm::Float64,
     cosmo::Cosmology.AbstractCosmology, python_wcs::Union{PyObject,Nothing}; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, 
     snr_thresh::Float64=3., cmap::PyObject=py_colormap.cubehelix, line_latex::Union{String,Nothing}=nothing, disable_axes::Bool=true,
     disable_colorbar::Bool=false, modify_ax::Union{Tuple{PyObject,PyObject},Nothing}=nothing, 
-    colorscale_limits::Union{Tuple{<:Real,<:Real},Nothing}=nothing)
+    colorscale_limits::Union{Tuple{<:Real,<:Real},Nothing}=nothing, custom_bunit::Union{LaTeXString,Nothing}=nothing)
 
     # I know this is ugly but I couldn't figure out a better way to do it lmao
     if occursin("amp", name_i)
@@ -846,6 +848,10 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         bunit = L"$E(B-V)_{\rm gas}$"
     elseif occursin("delta_UV", name_i)
         bunit = L"$\delta$"
+    end
+    # Overwrite with input if provided
+    if !isnothing(custom_bunit)
+        bunit = custom_bunit
     end
 
     @debug "Plotting 2D map of $name_i with units $bunit"

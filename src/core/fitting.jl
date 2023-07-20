@@ -1385,7 +1385,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
 
     # Force skip SAMIN fitting if the extinction has been locked to 0
     override = false
-    if (cube_fitter.spectral_region == :OPT) && iszero(pars_0_cont[1 + 3cube_fitter.n_ssps + 2]) && lock_cont[1 + 3cube_fitter.n_ssps + 2]
+    if (cube_fitter.spectral_region == :OPT) && iszero(pars_0_cont[1 + 3cube_fitter.n_ssps + 2]) && lock_cont[1 + 3cube_fitter.n_ssps + 2] && !init
         override = true
     end
 

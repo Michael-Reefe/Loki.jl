@@ -83,7 +83,7 @@ n_acomps = 1
 acomp_amp_plim = [[0.0, 1.0]]
 acomp_voff_plim = [[-1000.0, 1000.0]]    # additive factor with the main line voff -> i.e. the additional component
                                          # is allowed to have a voff up to +/-500 km/s from the main component 
-acomp_fwhm_plim = [[1.0, 5.0]]           # multiplicative factor with the main line FWHM -> i.e. the additional component
+acomp_fwhm_plim = [[1.1, 5.0]]           # multiplicative factor with the main line FWHM -> i.e. the additional component
                                          # is allowed to have a FWHM from 1-5x the main component (it must be wider)
 
 # Uncertainty in the wavelength solution of the data
