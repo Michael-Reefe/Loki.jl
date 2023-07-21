@@ -460,7 +460,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
 
         # Fe II emission
         if cube_fitter.fit_opt_na_feii
-            λ0_na_feii = 1e4 * cube_data.λ[argmax(convolve_losvd(cube_fitter.feii_templates_fft[:, 1], cube_fitter.vsyst_feii, 
+            λ0_na_feii = 1e4 * (1+z) * cube_data.λ[argmax(convolve_losvd(cube_fitter.feii_templates_fft[:, 1], cube_fitter.vsyst_feii, 
                 out_params[index, pᵢ+1], out_params[index, pᵢ+2], cube_fitter.velscale, length(cube_data.λ), temp_fft=true, npad_in=cube_fitter.npad_feii))]
             param_maps.feii[:na_amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ] * N * λ0_na_feii^2/(C_KMS * 1e13) / (1+z)) : -Inf
             param_errs[1].feii[:na_amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
@@ -474,7 +474,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             pᵢ += 3
         end
         if cube_fitter.fit_opt_br_feii
-            λ0_br_feii = 1e4 * cube_data.λ[argmax(convolve_losvd(cube_fitter.feii_templates_fft[:, 2], cube_fitter.vsyst_feii,
+            λ0_br_feii = 1e4 * (1+z) * cube_data.λ[argmax(convolve_losvd(cube_fitter.feii_templates_fft[:, 2], cube_fitter.vsyst_feii,
                 out_params[index, pᵢ+1], out_params[index, pᵢ+2], cube_fitter.velscale, length(cube_data.λ), temp_fft=true, npad_in=cube_fitter.npad_feii))]
             param_maps.feii[:br_amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ] * N * λ0_br_feii^2/(C_KMS * 1e13) / (1+z)) : -Inf
             param_errs[1].feii[:br_amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
@@ -490,7 +490,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
 
         # Power laws
         for j ∈ 1:cube_fitter.n_power_law
-            λ0_pl = 5100.0
+            λ0_pl = 5100.0 * (1+z)
             param_maps.power_law[j][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ] * N * λ0_pl^2/(C_KMS * 1e13) / (1+z)) : -Inf
             param_errs[1].power_law[j][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
             param_errs[2].power_law[j][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
@@ -628,7 +628,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
                 if !isnothing(cube_fitter.lines.profiles[k, j])
 
                     ln = Symbol(cube_fitter.lines.names[k], "_$(j)")
-                    λ0 = cube_fitter.lines.λ₀[k] * (1 + param_maps.lines[ln][:voff][index]/C_KMS) * 1e4
+                    λ0 = cube_fitter.lines.λ₀[k] * (1 + param_maps.lines[ln][:voff][index]/C_KMS) * 1e4 * (1+z)
 
                     # Convert amplitudes to the correct units, then take the log
                     amp_norm = param_maps.lines[ln][:amp][index]
