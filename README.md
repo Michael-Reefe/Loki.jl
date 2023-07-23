@@ -623,10 +623,10 @@ The user may define arbitrary "kinematic groups" named with the prefix "kinemati
 Kinematic groups can also be defined for the additional line components by prefixing the group with "acomp\_[N]\_kinematic_group_" where N is the number of the additional component (starting at 1) and using the keys "tie_acomp\_[N]\_voff_[name]", "tie_acomp\_[N]\_fwhm_[name]`", and "tie_acomp\_[N]\_amp_[name]".
 
 ```toml
-flexible_wavesol = true
-wavesol_unc = 30 
+flexible_wavesol = false
+wavesol_unc = 30.0 
 ```
-These options allow some flexibility in the relative velocity offsets of lines that are tied together. By default, lines with tied kinematics must have exactly the same velocity offset, but allowing `flexible_wavesol` to be `true` will allow some small variation in the velocity offsets of lines that are tied together, with the maximum allowed variation in km/s given by `wavesol_unc`. These options are intended for use if one believes the wavelength solution of the spectrum may not be accurate enough to tie certain lines together otherwise.
+These options allow some flexibility in the relative velocity offsets of lines that are tied together. By default, lines with tied kinematics must have exactly the same velocity offset, but allowing `flexible_wavesol` to be `true` will allow some small variation in the velocity offsets of lines that are "tied" together, with the maximum allowed variation in km/s given by `wavesol_unc`. These options are intended for use if one believes the wavelength solution of the spectrum may not be accurate enough to tie certain lines together otherwise, as was the case with early versions of the JWST pipeline (these issues have since been resolved so there should be no problems with keeping the `flexible_wavesol` option disabled for MIRI data).
 
 **Rest Wavelengths:**
 

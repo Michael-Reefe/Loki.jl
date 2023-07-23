@@ -214,16 +214,16 @@ val = 0.126
 plim = [0.4, 1.4]
 locked = false
 
-[dust_features."PAH_7.52"]
+[dust_features."PAH_7.53"]
 complex = "7.7"
 
-[dust_features."PAH_7.52".wave]
-val = 7.52
+[dust_features."PAH_7.53".wave]
+val = 7.53
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_7.52".fwhm]
-val = 0.126
+[dust_features."PAH_7.53".fwhm]
+val = 0.136
 plim = [0.4, 1.4]
 locked = false
 
@@ -778,7 +778,7 @@ locked = false
 
 # Peak location of 10 um silicate emission feature
 [hot_dust.peak]
-# val = 10.421
-val = 10.0178
+val = 10.421
+# val = 10.0178
 plim = [10.0, 10.8]
 locked = true

@@ -944,7 +944,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
                                     cube_fitter.flexible_wavesol, ext_curve_norm, lsf_interp_func), 
                                 σnorm)
         x_tol = 1e-5
-        f_tol = abs(fit_func(λnorm, p₀, 0) - fit_func(λnorm, clamp.(p₀ .- x_tol, lower_bounds, upper_bounds), 0)) / n_free
+        f_tol = abs(fit_func(λnorm, p₀, 0) - fit_func(λnorm, clamp.(p₀ .- x_tol, lower_bounds, upper_bounds), 0))
 
         # Replace infinite upper limits with finite ones so SAMIN can calculate convergence
         lb_samin = lbfree_tied
@@ -1051,14 +1051,14 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     for i in 1:cube_fitter.n_lines
         for j in 1:cube_fitter.n_comps
             if !isnothing(cube_fitter.lines.profiles[i, j])
-                # If the primary line component is not detected, set the voff and fwhm to 0
-                if iszero(popt[pᵢ]) && isone(j)
+                # If any line component is not detected, set the voff and fwhm to 0
+                if iszero(popt[pᵢ])
                     popt[pᵢ+1] = 0. # voff
-                    if !isnothing(cube_fitter.lines.tied_voff[i, j]) && cube_fitter.flexible_wavesol
+                    if !isnothing(cube_fitter.lines.tied_voff[i, j]) && isone(j) && cube_fitter.flexible_wavesol
                         popt[pᵢ+2] = 0. # individual voff
                         popt[pᵢ+3] = 0. # fwhm
                     else
-                        popt[pᵢ+2] = 0. # fwhm
+                        popt[pᵢ+2] = isone(j) ? 0. : lower_bounds[pᵢ+2] # fwhm
                     end
                 end
                 # Check if using a flexible_wavesol tied voff -> if so there is an extra voff parameter
@@ -1398,7 +1398,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         # before refining the fit later with a LevMar local minimum routine
         fit_func = p -> -ln_likelihood(I_spax, fit_joint(λ_spax, p, n=0), σ_spax)
         x_tol = 1e-5
-        f_tol = abs(fit_func(p₀) - fit_func(clamp.(p₀ .- x_tol, lower_bounds, upper_bounds))) / (n_free_cont + n_free_lines)
+        f_tol = abs(fit_func(p₀) - fit_func(clamp.(p₀ .- x_tol, lower_bounds, upper_bounds)))
 
         # Replace infinite upper limits with finite ones so SAMIN can calculate convergence
         lb_samin = lower_bounds
