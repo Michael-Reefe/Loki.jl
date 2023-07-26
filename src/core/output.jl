@@ -121,12 +121,9 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             pᵢ += 6
         end
 
-        # Extinction normalization factor for the PAH/line amplitudes
-        max_ext = out_params[index, size(out_params, 3)]
-
         # Dust feature log(amplitude), mean, FWHM
         for (k, df) ∈ enumerate(cube_fitter.dust_features.names)
-            param_maps.dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z)*max_ext*N)-17 : -Inf
+            param_maps.dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z)*N)-17 : -Inf
             param_errs[1].dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
             param_errs[2].dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
             param_maps.dust_features[df][:mean][index] = out_params[index, pᵢ+1] * (1+z)
@@ -287,7 +284,7 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
                     # Convert amplitudes to the correct units, then take the log
                     amp_norm = param_maps.lines[ln][:amp][index]
                     amp_norm_err = [param_errs[1].lines[ln][:amp][index], param_errs[2].lines[ln][:amp][index]]
-                    param_maps.lines[ln][:amp][index] = amp_norm > 0 ? log10(amp_norm * max_ext * N * (1+z))-17 : -Inf
+                    param_maps.lines[ln][:amp][index] = amp_norm > 0 ? log10(amp_norm * N * (1+z))-17 : -Inf
                     param_errs[1].lines[ln][:amp][index] = amp_norm > 0 ? amp_norm_err[1] / (log(10) * amp_norm) : NaN
                     param_errs[2].lines[ln][:amp][index] = amp_norm > 0 ? amp_norm_err[2] / (log(10) * amp_norm) : NaN
 
@@ -312,33 +309,34 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
 
         if cube_fitter.save_full_model
             # Set 3D model cube outputs, shifted back to the observed frame
-            cube_model.model[index, :] .= I_model .* (1 .+ z)
-            cube_model.stellar[index, :] .= comps["stellar"] .* (1 .+ z)
+            # Remember the wavelength axis is the first axis here to increase efficiency
+            cube_model.model[:, index] .= I_model .* (1 .+ z)
+            cube_model.stellar[:, index] .= comps["stellar"] .* (1 .+ z)
             for i ∈ 1:cube_fitter.n_dust_cont
-                cube_model.dust_continuum[index, :, i] .= comps["dust_cont_$i"] .* (1 .+ z)
+                cube_model.dust_continuum[:, index, i] .= comps["dust_cont_$i"] .* (1 .+ z)
             end
             for l ∈ 1:cube_fitter.n_power_law
-                cube_model.power_law[index, :, l] .= comps["power_law_$l"] .* (1 .+ z)
+                cube_model.power_law[:, index, l] .= comps["power_law_$l"] .* (1 .+ z)
             end
             for j ∈ 1:cube_fitter.n_dust_feat
-                cube_model.dust_features[index, :, j] .= comps["dust_feat_$j"] .* (1 .+ z)
+                cube_model.dust_features[:, index, j] .= comps["dust_feat_$j"] .* (1 .+ z)
             end
             for m ∈ 1:cube_fitter.n_abs_feat
-                cube_model.abs_features[index, :, m] .= comps["abs_feat_$m"]
+                cube_model.abs_features[:, index, m] .= comps["abs_feat_$m"]
             end
             if cube_fitter.fit_sil_emission
-                cube_model.hot_dust[index, :] .= comps["hot_dust"] .* (1 .+ z)
+                cube_model.hot_dust[:, index] .= comps["hot_dust"] .* (1 .+ z)
             end
             for j ∈ 1:cube_fitter.n_comps
                 for k ∈ 1:cube_fitter.n_lines
                     if !isnothing(cube_fitter.lines.profiles[k, j])
-                        cube_model.lines[index, :, k] .+= comps["line_$(k)_$(j)"] .* (1 .+ z)
+                        cube_model.lines[:, index, k] .+= comps["line_$(k)_$(j)"] .* (1 .+ z)
                     end
                 end
             end
-            cube_model.extinction[index, :] .= comps["extinction"]
-            cube_model.abs_ice[index, :] .= comps["abs_ice"]
-            cube_model.abs_ch[index, :] .= comps["abs_ch"]
+            cube_model.extinction[:, index] .= comps["extinction"]
+            cube_model.abs_ice[:, index] .= comps["abs_ice"]
+            cube_model.abs_ch[:, index] .= comps["abs_ch"]
         end
 
         next!(prog)
@@ -618,11 +616,6 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             
         end
 
-        # Extinction normalization factor for line amplitudes
-        # "CartesianIndex and arrays of CartesianIndex are not compatible with the end keyword to represent the last index
-        # of a dimension. Do not use end in indexing expressions that may contain either CartesianIndex or arrays thereof"
-        max_ext = out_params[index, size(out_params, 3)]
-
         for k ∈ 1:cube_fitter.n_lines
             for j ∈ 1:cube_fitter.n_comps
                 if !isnothing(cube_fitter.lines.profiles[k, j])
@@ -634,7 +627,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
                     amp_norm = param_maps.lines[ln][:amp][index]
                     amp_norm_err = [param_errs[1].lines[ln][:amp][index], param_errs[2].lines[ln][:amp][index]]
                     # Convert amplitude to erg/s/cm^2/Hz/sr to match with the MIR 
-                    param_maps.lines[ln][:amp][index] = amp_norm > 0 ? log10(amp_norm * max_ext * N * λ0^2/(C_KMS * 1e13) / (1+z)) : -Inf
+                    param_maps.lines[ln][:amp][index] = amp_norm > 0 ? log10(amp_norm * N * λ0^2/(C_KMS * 1e13) / (1+z)) : -Inf
                     param_errs[1].lines[ln][:amp][index] = amp_norm > 0 ? amp_norm_err[1] / (log(10) * amp_norm) : NaN
                     param_errs[2].lines[ln][:amp][index] = amp_norm > 0 ? amp_norm_err[2] / (log(10) * amp_norm) : NaN
 
@@ -659,26 +652,27 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
 
         if cube_fitter.save_full_model
             # Set 3D model cube outputs, shifted back to the observed frame
-            cube_model.model[index, :] .= I_model ./ (1 .+ z)
+            # Remember the wavelength axis is the first axis here to increase efficiency
+            cube_model.model[:, index] .= I_model ./ (1 .+ z)
             for i ∈ 1:cube_fitter.n_ssps
-                cube_model.stellar[index, :, i] .= comps["SSP_$i"] ./ (1 .+ z)
+                cube_model.stellar[:, index, i] .= comps["SSP_$i"] ./ (1 .+ z)
             end
-            cube_model.attenuation_stars[index, :] .= comps["attenuation_stars"]
-            cube_model.attenuation_gas[index, :] .= comps["attenuation_gas"]
+            cube_model.attenuation_stars[:, index] .= comps["attenuation_stars"]
+            cube_model.attenuation_gas[:, index] .= comps["attenuation_gas"]
             if cube_fitter.fit_opt_na_feii
-                cube_model.na_feii[index, :] .= comps["na_feii"]
+                cube_model.na_feii[:, index] .= comps["na_feii"]
             end
             if cube_fitter.fit_opt_br_feii
-                cube_model.br_feii[index, :] .= comps["br_feii"]
+                cube_model.br_feii[:, index] .= comps["br_feii"]
             end
             for l ∈ 1:cube_fitter.n_power_law
-                cube_model.power_law[index, :] .= comps["power_law_$l"]
+                cube_model.power_law[:, index] .= comps["power_law_$l"]
             end
 
             for j ∈ 1:cube_fitter.n_comps
                 for k ∈ 1:cube_fitter.n_lines
                     if !isnothing(cube_fitter.lines.profiles[k, j])
-                        cube_model.lines[index, :, k] .+= comps["line_$(k)_$(j)"] ./ (1 .+ z)
+                        cube_model.lines[:, index, k] .+= comps["line_$(k)_$(j)"] ./ (1 .+ z)
                     end
                 end
             end
@@ -1653,32 +1647,33 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
         FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_full_model.fits"), "w") do f
 
             @debug "Writing 3D model FITS HDUs"
+            # Permute the wavelength axis here back to the third axis to be consistent with conventions
 
             write(f, Vector{Int}(); header=hdr)                                                         # Primary HDU (empty)
             write(f, Float32.(cube_data.I .* (1 .+ cube_fitter.z)); name="DATA")                        # Raw data 
             write(f, Float32.(cube_data.σ .* (1 .+ cube_fitter.z)); name="ERROR")                       # Error in the raw data
-            write(f, cube_model.model; name="MODEL")                                                    # Full intensity model
-            write(f, cube_model.stellar; name="STELLAR_CONTINUUM")                                      # Stellar continuum model
+            write(f, permutedims(cube_model.model, (2,3,1)); name="MODEL")                              # Full intensity model
+            write(f, permutedims(cube_model.stellar, (2,3,1)); name="STELLAR_CONTINUUM")                # Stellar continuum model
             for i ∈ 1:size(cube_model.dust_continuum, 4)
-                write(f, cube_model.dust_continuum[:, :, :, i]; name="DUST_CONTINUUM_$i")               # Dust continua
+                write(f, permutedims(cube_model.dust_continuum[:, :, :, i], (2,3,1)); name="DUST_CONTINUUM_$i")   # Dust continua
             end
             for l ∈ 1:size(cube_model.power_law, 4)                                                     # Power laws
-                write(f, cube_model.power_law[:, :, :, l]; name="POWER_LAW_$l")
+                write(f, permutedims(cube_model.power_law[:, :, :, l], (2,3,1)); name="POWER_LAW_$l")
             end
             for (j, df) ∈ enumerate(cube_fitter.dust_features.names)
-                write(f, cube_model.dust_features[:, :, :, j]; name="$df")                              # Dust feature profiles
+                write(f, permutedims(cube_model.dust_features[:, :, :, j], (2,3,1)); name="$df")        # Dust feature profiles
             end
             for (m, ab) ∈ enumerate(cube_fitter.abs_features.names)                                     
-                write(f, cube_model.abs_features[:, :, :, m]; name="$ab")                               # Absorption feature profiles
+                write(f, permutedims(cube_model.abs_features[:, :, :, m], (2,3,1)); name="$ab")         # Absorption feature profiles
             end
             for (k, line) ∈ enumerate(cube_fitter.lines.names)
-                write(f, cube_model.lines[:, :, :, k]; name="$line")                                    # Emission line profiles
+                write(f, permutedims(cube_model.lines[:, :, :, k], (2,3,1)); name="$line")              # Emission line profiles
             end
-            write(f, cube_model.extinction; name="EXTINCTION")                                          # Extinction model
-            write(f, cube_model.abs_ice; name="ABS_ICE")                                                # Ice Absorption model
-            write(f, cube_model.abs_ch; name="ABS_CH")                                                  # CH Absorption model
+            write(f, permutedims(cube_model.extinction, (2,3,1)); name="EXTINCTION")                    # Extinction model
+            write(f, permutedims(cube_model.abs_ice, (2,3,1)); name="ABS_ICE")                          # Ice Absorption model
+            write(f, permutedims(cube_model.abs_ch, (2,3,1)); name="ABS_CH")                            # CH Absorption model
             if cube_fitter.fit_sil_emission
-                write(f, cube_model.hot_dust; name="HOT_DUST")                                          # Hot dust model
+                write(f, permutedims(cube_model.hot_dust, (2,3,1)); name="HOT_DUST")                    # Hot dust model
             end
             
             write(f, ["wave"], [cube_data.λ .* (1 .+ cube_fitter.z)],                                   # wavelength vector
@@ -1958,28 +1953,29 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
         FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_full_model.fits"), "w") do f
 
             @debug "Writing 3D model FITS HDUs"
+            # Permute the wavelength axis here back to the third axis to be consistent with conventions
 
             write(f, Vector{Int}(); header=hdr)                                                         # Primary HDU (empty)
             write(f, Float32.(cube_data.I ./ (1 .+ cube_fitter.z)); name="DATA")                        # Raw data 
             write(f, Float32.(cube_data.σ ./ (1 .+ cube_fitter.z)); name="ERROR")                       # Error in the raw data
-            write(f, cube_model.model; name="MODEL")                                                    # Full intensity model
+            write(f, permutedims(cube_model.model, (2,3,1)); name="MODEL")                              # Full intensity model
             for i ∈ 1:size(cube_model.stellar, 4)
-                write(f, cube_model.stellar[:, :, :, i]; name="STELLAR_POPULATION_$i")                  # Stellar population models
+                write(f, permutedims(cube_model.stellar[:, :, :, i], (2,3,1)); name="STELLAR_POPULATION_$i")   # Stellar population models
             end
             if cube_fitter.fit_opt_na_feii
-                write(f, cube_model.na_feii; name="NA_FEII")                                            # Narrow Fe II emission
+                write(f, permutedims(cube_model.na_feii, (2,3,1)); name="NA_FEII")                      # Narrow Fe II emission
             end
             if cube_fitter.fit_opt_br_feii
-                write(f, cube_model.br_feii; name="BR_FEII")                                            # Broad Fe II emission
+                write(f, permutedims(cube_model.br_feii, (2,3,1)); name="BR_FEII")                      # Broad Fe II emission
             end
             for j in 1:size(cube_model.power_law, 4)
-                write(f, cube_model.power_law[:, :, :, j]; name="POWER_LAW_$j")                         # Power laws
+                write(f, permutedims(cube_model.power_law[:, :, :, j], (2,3,1)); name="POWER_LAW_$j")   # Power laws
             end
             for (k, line) ∈ enumerate(cube_fitter.lines.names)
-                write(f, cube_model.lines[:, :, :, k]; name="$line")                                    # Emission line profiles
+                write(f, permutedims(cube_model.lines[:, :, :, k], (2,3,1)); name="$line")              # Emission line profiles
             end
-            write(f, cube_model.attenuation_stars; name="ATTENUATION_STARS")                            # Starlight attenuation model
-            write(f, cube_model.attenuation_gas; name="ATTENUATION_GAS")                                # Gas attenuation model
+            write(f, permutedims(cube_model.attenuation_stars, (2,3,1)); name="ATTENUATION_STARS")      # Starlight attenuation model
+            write(f, permutedims(cube_model.attenuation_gas, (2,3,1)); name="ATTENUATION_GAS")          # Gas attenuation model
             write(f, ["wave"], [cube_data.λ .* (1 .+ cube_fitter.z)],                                   # wavelength vector
                 hdutype=TableHDU, name="WAVELENGTH", units=Dict(:wave => "um"))
 

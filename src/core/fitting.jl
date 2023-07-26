@@ -155,7 +155,7 @@ end
 
 
 """
-    continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, mask_bad, N, area_sr; 
+    continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, mask_bad, N; 
         [init, use_ap, bootstrap_iter, p1_boots])
 
 Fit the continuum of a given spaxel in the DataCube, masking out the emission lines, using the 
@@ -174,7 +174,6 @@ http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 - `mask_lines::BitVector`: The mask giving the locations of emission lines
 - `mask_bad::BitVector`: The mask giving the locations of bad pixels
 - `N::Real`: The normalization
-- `area_sr::Vector{<:Real}`: The 1D solid angle vector 
 - `init::Bool=false`: Flag for the initial fit which fits the sum of all spaxels, to get an estimation for
     the initial parameter vector for individual spaxel fits
 - `use_ap::Bool=false`: Flag for fitting an integrated spectrum within an aperture
@@ -183,7 +182,7 @@ http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 for the initial non-bootstrapped fit of the spectrum.
 """
 function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
-    σ::Vector{<:Real}, mask_lines::BitVector, mask_bad::BitVector, N::Real, area_sr::Vector{<:Real}; init::Bool=false, use_ap::Bool=false, 
+    σ::Vector{<:Real}, mask_lines::BitVector, mask_bad::BitVector, N::Real; init::Bool=false, use_ap::Bool=false, 
     bootstrap_iter::Bool=false, p1_boots::Union{Vector{<:Real},Nothing}=nothing) 
 
     @debug """\n
@@ -207,7 +206,6 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     λ_spax = λ_spax[.~mask_bad]
     I_spax = I_spax[.~mask_bad]
     σ_spax = σ_spax[.~mask_bad]
-    area_sr_spax = area_sr[.~mask_bad]
 
     if !isnothing(cube_fitter.user_mask)
         # Mask out additional regions
@@ -216,7 +214,6 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
             λ_spax = λ_spax[.~region]
             I_spax = I_spax[.~region]
             σ_spax = σ_spax[.~region]
-            area_sr_spax = area_sr_spax[.~region]
         end
     end
 
@@ -308,8 +305,9 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         jit_hi = (ub .- pfree) ./ 20  # defined to be positive
         # handle infinite upper bounds
         jit_hi[.~isfinite.(jit_hi)] .= .-jit_lo[.~isfinite.(jit_hi)]
+        jit = dropdims(minimum(abs, [jit_lo jit_hi], dims=2), dims=2)
         # sample from a uniform distribution
-        jitter = [jh > jl ? rand(Uniform(jl, jh)) : 0.0 for (jl,jh) in zip(jit_lo, jit_hi)]
+        jitter = [j > 0 ? rand(Uniform(-j, j)) : 0.0 for j in jit]
         # redo the fit with the slightly jittered starting parameters
         @debug "Jittered starting parameters: $(pfree .+ jitter)"
         res = cmpfit(λ_spax, I_spax, σ_spax, fit_cont, pfree .+ jitter, parinfo=parinfo, config=config)
@@ -377,11 +375,11 @@ end
 
 
 function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
-    σ::Vector{<:Real}, mask_lines::BitVector, mask_bad::BitVector, N::Real, area_sr::Vector{<:Real}, split_flag::Bool; 
+    σ::Vector{<:Real}, mask_lines::BitVector, mask_bad::BitVector, N::Real, split_flag::Bool; 
     init::Bool=false, use_ap::Bool=false, bootstrap_iter::Bool=false, p1_boots::Union{Vector{<:Real},Nothing}=nothing) 
 
     if (!split_flag) || (cube_fitter.spectral_region != :MIR)
-        return continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, mask_bad, N, area_sr; init=init, use_ap=use_ap,
+        return continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, mask_bad, N; init=init, use_ap=use_ap,
             bootstrap_iter=bootstrap_iter, p1_boots=p1_boots)
     end
 
@@ -409,7 +407,6 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     λ_spax = λ_spax[.~mask_bad]
     I_spax = I_spax[.~mask_bad]
     σ_spax = σ_spax[.~mask_bad]
-    area_sr_spax = area_sr[.~mask_bad]
 
     if !isnothing(cube_fitter.user_mask)
         # Mask out additional regions
@@ -418,7 +415,6 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
             λ_spax = λ_spax[.~region]
             I_spax = I_spax[.~region]
             σ_spax = σ_spax[.~region]
-            area_sr_spax = area_sr_spax[.~region]
         end
     end
 
@@ -487,8 +483,9 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         jit_hi = (ub_1 .- p1free) ./ 20  # defined to be positive
         # handle infinite upper bounds
         jit_hi[.~isfinite.(jit_hi)] .= .-jit_lo[.~isfinite.(jit_hi)]
+        jit = dropdims(minimum(abs, [jit_lo jit_hi], dims=2), dims=2)
         # sample from a uniform distribution
-        jitter = [jh > jl ? rand(Uniform(jl, jh)) : 0.0 for (jl,jh) in zip(jit_lo, jit_hi)]
+        jitter = [j > 0 ? rand(Uniform(-j, j)) : 0.0 for j in jit]
         # redo the fit with the slightly jittered starting parameters
         @debug "Jittered starting parameters: $(p1free .+ jitter)"
         res_1 = cmpfit(λ_spax, I_spax, σ_spax, fit_step1, p1free .+ jitter, parinfo=parinfo_1, config=config)
@@ -552,8 +549,9 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         jit_hi = (ub_2 .- p2free) ./ 20  # defined to be positive
         # handle infinite upper bounds
         jit_hi[.~isfinite.(jit_hi)] .= .-jit_lo[.~isfinite.(jit_hi)]
+        jit = dropdims(minimum(abs, [jit_lo jit_hi], dims=2), dims=2)
         # sample from a uniform distribution
-        jitter = [jh > jl ? rand(Uniform(jl, jh)) : 0.0 for (jl,jh) in zip(jit_lo, jit_hi)]
+        jitter = [j > 0 ? rand(Uniform(-j, j)) : 0.0 for j in jit]
         # redo the fit with the slightly jittered starting parameters
         @debug "Jittered starting parameters: $(p2free .+ jitter)"
         res_2 = cmpfit(λ_spax, I_spax.-I_cont, σ_spax, fit_step2, p2free .+ jitter, parinfo=parinfo_2, config=config)
@@ -844,7 +842,7 @@ See Smith, Draine, et al. 2007; http://tir.astro.utoledo.edu/jdsmith/research/pa
 for the initial non-bootstrapped fit of the spectrum.
 """
 function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real},
-    σ::Vector{<:Real}, mask_lines::BitVector, mask_bad::BitVector, continuum::Vector{<:Real}, ext_curve::Vector{<:Real}, 
+    σ::Vector{<:Real}, mask_bad::BitVector, continuum::Vector{<:Real}, ext_curve::Vector{<:Real}, 
     lsf_interp_func::Function, N::Real; init::Bool=false, use_ap::Bool=false, bootstrap_iter::Bool=false, 
     p1_boots::Union{Vector{<:Real},Nothing}=nothing)
 
@@ -873,7 +871,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
         end
     end
 
-    plimits, param_lock, param_names, tied_pairs, tied_indices = get_line_plimits(cube_fitter, init || use_ap)
+    plimits, param_lock, param_names, tied_pairs, tied_indices = get_line_plimits(cube_fitter, init || use_ap, ext_curve_norm)
     p₀ = get_line_initial_values(cube_fitter, init || use_ap)
     lower_bounds = [pl[1] for pl in plimits]
     upper_bounds = [pl[2] for pl in plimits]
@@ -997,8 +995,9 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
         jit_hi = (ubfree_tied .- p₁) ./ 20  # defined to be positive
         # handle infinite upper bounds
         jit_hi[.~isfinite.(jit_hi)] .= .-jit_lo[.~isfinite.(jit_hi)]
+        jit = dropdims(minimum(abs, [jit_lo jit_hi], dims=2), dims=2)
         # sample from a uniform distribution
-        jitter = [jh > jl ? rand(Uniform(jl, jh)) : 0.0 for (jl,jh) in zip(jit_lo, jit_hi)]
+        jitter = [j > 0 ? rand(Uniform(-j, j)) : 0.0 for j in jit]
         # redo the fit with the slightly jittered starting parameters
         @debug "Jittered starting parameters: $(p₁ .+ jitter)"
         res = cmpfit(λnorm, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func_2), p₁ .+ jitter, parinfo=parinfo, config=config)
@@ -1046,33 +1045,34 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     I_model, comps = model_line_residuals(λ, popt, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
         cube_fitter.flexible_wavesol, ext_curve, lsf_interp_func, true)
     
-    
-    pᵢ = 1
-    for i in 1:cube_fitter.n_lines
-        for j in 1:cube_fitter.n_comps
-            if !isnothing(cube_fitter.lines.profiles[i, j])
-                # If any line component is not detected, set the voff and fwhm to 0
-                if iszero(popt[pᵢ])
-                    popt[pᵢ+1] = 0. # voff
-                    if !isnothing(cube_fitter.lines.tied_voff[i, j]) && isone(j) && cube_fitter.flexible_wavesol
+    if init
+        pᵢ = 1
+        for i in 1:cube_fitter.n_lines
+            for j in 1:cube_fitter.n_comps
+                if !isnothing(cube_fitter.lines.profiles[i, j])
+                    # If any line component is not detected, set the voff and fwhm to 0 (if it isn't tied)
+                    if iszero(popt[pᵢ]) && isnothing(cube_fitter.lines.tied_voff[i, j])
+                        popt[pᵢ+1] = 0. # voff
+                        if isnothing(cube_fitter.lines.tied_fwhm[i, j])
+                            popt[pᵢ+2] = lower_bounds[pᵢ+2] # fwhm
+                        end
+                    end 
+                    if iszero(popt[pᵢ]) && !isnothing(cube_fitter.lines.tied_voff[i, j]) && isone(j) && cube_fitter.flexible_wavesol
                         popt[pᵢ+2] = 0. # individual voff
-                        popt[pᵢ+3] = 0. # fwhm
-                    else
-                        popt[pᵢ+2] = isone(j) ? 0. : lower_bounds[pᵢ+2] # fwhm
                     end
+                    # Check if using a flexible_wavesol tied voff -> if so there is an extra voff parameter
+                    if !isnothing(cube_fitter.lines.tied_voff[i, j]) && cube_fitter.flexible_wavesol && isone(j)
+                        pc = 4
+                    else
+                        pc = 3
+                    end
+                    if cube_fitter.lines.profiles[i, j] == :GaussHermite
+                        pc += 2
+                    elseif cube_fitter.lines.profiles[i, j] == :Voigt
+                        pc += 1
+                    end
+                    pᵢ += pc
                 end
-                # Check if using a flexible_wavesol tied voff -> if so there is an extra voff parameter
-                if !isnothing(cube_fitter.lines.tied_voff[i, j]) && cube_fitter.flexible_wavesol && isone(j)
-                    pc = 4
-                else
-                    pc = 3
-                end
-                if cube_fitter.lines.profiles[i, j] == :GaussHermite
-                    pc += 2
-                elseif cube_fitter.lines.profiles[i, j] == :Voigt
-                    pc += 1
-                end
-                pᵢ += pc
             end
         end
     end
@@ -1123,7 +1123,7 @@ for the initial non-bootstrapped fit of the continuum.
 - `p1_boots_line::Union{Vector{<:Real},Nothing}=nothing`: Same as `p1_boots_cont`, but for the line parameters.
 """
 function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
-    σ::Vector{<:Real}, mask_lines::BitVector, mask_bad::BitVector, I_spline::Vector{<:Real}, N::Real, area_sr::Vector{<:Real}, 
+    σ::Vector{<:Real}, mask_bad::BitVector, I_spline::Vector{<:Real}, N::Real, area_sr::Vector{<:Real}, 
     lsf_interp_func::Function; init::Bool=false, use_ap::Bool=false, bootstrap_iter::Bool=false, 
     p1_boots_cont::Union{Vector{<:Real},Nothing}=nothing, p1_boots_line::Union{Vector{<:Real},Nothing}=nothing) 
 
@@ -1146,7 +1146,6 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     I_spax = I_spax[.~mask_bad]
     I_spline_spax = I_spline_spax[.~mask_bad]
     σ_spax = σ_spax[.~mask_bad]
-    area_sr_spax = area_sr[.~mask_bad]
 
     if !isnothing(cube_fitter.user_mask)
         # Mask out additional regions
@@ -1156,7 +1155,6 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
             I_spax = I_spax[.~region]
             I_spline_spax = I_spline_spax[.~region]
             σ_spax = σ_spax[.~region]
-            area_sr_spax = area_sr_spax[.~region]
         end
     end
 
@@ -1442,8 +1440,9 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         jit_hi = (upper_bounds .- p₁) ./ 20  # defined to be positive
         # handle infinite upper bounds
         jit_hi[.~isfinite.(jit_hi)] .= .-jit_lo[.~isfinite.(jit_hi)]
+        jit = dropdims(minimum(abs, [jit_lo jit_hi], dims=2), dims=2)
         # sample from a uniform distribution
-        jitter = [jh > jl ? rand(Uniform(jl, jh)) : 0.0 for (jl,jh) in zip(jit_lo, jit_hi)]
+        jitter = [j > 0 ? rand(Uniform(-j, j)) : 0.0 for j in jit]
         # redo the fit with the slightly jittered starting parameters
         @debug "Jittered starting parameters: $(p₁ .+ jitter)"
         res = cmpfit(λ_spax, I_spax, σ_spax, fit_joint, p₁ .+ jitter, parinfo=parinfo, config=config)
@@ -1955,13 +1954,13 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # Fit the spaxel
     ext_key = cube_fitter.spectral_region == :MIR ? "extinction" : "attenuation_gas"
     if !cube_fitter.fit_joint
-        popt_c, I_cont, comps_cont, n_free_c, perr_c, pahtemp = continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, mask_bad, norm, area_sr, 
+        popt_c, I_cont, comps_cont, n_free_c, perr_c, pahtemp = continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, mask_bad, norm, 
             cube_fitter.use_pah_templates && pah_template_spaxel, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_cont)
-        popt_l, I_line, comps_line, n_free_l, perr_l = line_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, mask_bad, I_cont, comps_cont[ext_key], 
+        popt_l, I_line, comps_line, n_free_l, perr_l = line_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_bad, I_cont, comps_cont[ext_key], 
             lsf_interp_func, norm, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_l)
     else
         popt_c, popt_l, I_cont, I_line, comps_cont, comps_line, n_free_c, n_free_l, perr_c, perr_l, pahtemp = all_fit_spaxel(cube_fitter,
-            spaxel, λ, I, σ, mask_lines, mask_bad, I_spline, norm, area_sr, lsf_interp_func, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots_cont=p1_boots_cont,
+            spaxel, λ, I, σ, mask_bad, I_spline, norm, area_sr, lsf_interp_func, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots_cont=p1_boots_cont,
             p1_boots_line=p1_boots_l)
     end
 
@@ -2004,17 +2003,15 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
                 cube_fitter.fit_sil_emission, cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, cube_fitter.lines, 
                 cube_fitter.flexible_wavesol, lsf_interp_func, popt_c, popt_l, perr_c, perr_l, comps[ext_key], mask_lines, 
                 I_spline, area_sr, !bootstrap_iter)
-            max_ext = maximum(1 ./ comps[ext_key])  # save the maximum extinction factor for calculating line amplitudes later
-            p_out = [popt_c; popt_l; p_dust; p_lines; χ2; dof; max_ext]
-            p_err = [perr_c; perr_l; p_dust_err; p_lines_err; 0.; 0.; 0.]
+            p_out = [popt_c; popt_l; p_dust; p_lines; χ2; dof]
+            p_err = [perr_c; perr_l; p_dust_err; p_lines_err; 0.; 0.]
         else
             p_lines, p_lines_err = calculate_extra_parameters(λ, I, norm, comps, cube_fitter.n_ssps, cube_fitter.n_power_law,
                 cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, 
                 cube_fitter.lines, cube_fitter.flexible_wavesol, lsf_interp_func, popt_l, perr_l, comps[ext_key], mask_lines, I_spline, 
                 area_sr, !bootstrap_iter)
-            max_ext = maximum(1 ./ comps[ext_key])  # save the maximum extinction factor for calculating line amplitudes later
-            p_out = [popt_c; popt_l; p_lines; χ2; dof; max_ext]
-            p_err = [perr_c; perr_l; p_lines_err; 0.; 0.; 0.]
+            p_out = [popt_c; popt_l; p_lines; χ2; dof]
+            p_err = [perr_c; perr_l; p_lines_err; 0.; 0.]
         end
         
         return p_out, p_err, popt_c, popt_l, perr_c, perr_l, I_model, comps, χ2, dof, pahtemp
@@ -2249,6 +2246,9 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
             p_out, p_err
         end
 
+        # Perform garbage collection
+        GC.gc()
+
         return p_out, p_err
 
     end
@@ -2395,9 +2395,9 @@ function fit_cube!(cube_fitter::CubeFitter)
     # Prepare output array
     @info "===> Preparing output data structures... <==="
     out_params = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
-        cube_fitter.n_params_extra + 3) .* NaN
+        cube_fitter.n_params_extra + 2) .* NaN
     out_errs = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
-        cube_fitter.n_params_extra + 3, 2) .* NaN
+        cube_fitter.n_params_extra + 2, 2) .* NaN
     # "cube_data" object holds the primary wavelength, intensity, and errors
     # this is just a convenience object since these may be different when fitting an integrated spectrum
     # within an aperture
@@ -2524,9 +2524,9 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Vector{PyObject})
     # Prepare output array
     @info "===> Preparing output data structures... <==="
     out_params = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
-        cube_fitter.n_params_extra + 3) .* NaN
+        cube_fitter.n_params_extra + 2) .* NaN
     out_errs = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
-        cube_fitter.n_params_extra + 3, 2) .* NaN
+        cube_fitter.n_params_extra + 2, 2) .* NaN
 
     # If using an aperture, overwrite the cube_data object with the quantities within
     # the aperture, which are calculated here.

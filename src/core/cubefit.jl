@@ -435,29 +435,31 @@ function cubemodel_empty(shape::Tuple, n_dust_cont::Integer, n_power_law::Intege
 
     # Make sure the floattype given is actually a type of float
     @assert floattype <: AbstractFloat "floattype must be a type of AbstractFloat (Float32 or Float64)!"
+    # Swap the wavelength axis to be the FIRST axis since it is accessed most often and thus should be continuous in memory
+    shape2 = (shape[end], shape[1:end-1]...)
 
     # Initialize the arrays for each part of the full 3D model
-    model = zeros(floattype, shape...)
+    model = zeros(floattype, shape2...)
     @debug "model cube"
-    stellar = zeros(floattype, shape...)
+    stellar = zeros(floattype, shape2...)
     @debug "stellar continuum comp cube"
-    dust_continuum = zeros(floattype, shape..., n_dust_cont)
+    dust_continuum = zeros(floattype, shape2..., n_dust_cont)
     @debug "dust continuum comp cubes"
-    power_law = zeros(floattype, shape..., n_power_law)
+    power_law = zeros(floattype, shape2..., n_power_law)
     @debug "power law comp cubes"
-    dust_features = zeros(floattype, shape..., length(df_names))
+    dust_features = zeros(floattype, shape2..., length(df_names))
     @debug "dust features comp cubes"
-    abs_features = zeros(floattype, shape..., length(ab_names))
+    abs_features = zeros(floattype, shape2..., length(ab_names))
     @debug "absorption features comp cubes"
-    extinction = zeros(floattype, shape...)
+    extinction = zeros(floattype, shape2...)
     @debug "extinction comp cube"
-    abs_ice = zeros(floattype, shape...)
+    abs_ice = zeros(floattype, shape2...)
     @debug "abs_ice comp cube"
-    abs_ch = zeros(floattype, shape...)
+    abs_ch = zeros(floattype, shape2...)
     @debug "abs_ch comp cube"
-    hot_dust = zeros(floattype, shape...)
+    hot_dust = zeros(floattype, shape2...)
     @debug "hot dust comp cube"
-    lines = zeros(floattype, shape..., length(line_names))
+    lines = zeros(floattype, shape2..., length(line_names))
     @debug "lines comp cubes"
 
     MIRCubeModel(model, stellar, dust_continuum, power_law, dust_features, abs_features, 
@@ -488,23 +490,25 @@ function cubemodel_empty(shape::Tuple, n_ssps::Integer, n_power_law::Integer, li
     """
 
     @assert floattype <: AbstractFloat "floattype must be a type of AbstractFloat (Float32 or Float64)!"
+    # Swap the wavelength axis to be the FIRST axis since it is accessed most often and thus should be continuous in memory
+    shape2 = (shape[end], shape[1:end-1]...)
 
     # Initialize the arrays for each part of the full 3D model
-    model = zeros(floattype, shape...)
+    model = zeros(floattype, shape2...)
     @debug "model cube"
-    stellar = zeros(floattype, shape..., n_ssps)
+    stellar = zeros(floattype, shape2..., n_ssps)
     @debug "stellar population comp cubes"
-    na_feii = zeros(floattype, shape...)
+    na_feii = zeros(floattype, shape2...)
     @debug "narrow Fe II emission comp cube"
-    br_feii = zeros(floattype, shape...)
+    br_feii = zeros(floattype, shape2...)
     @debug "broad Fe II emission comp cube"
-    power_law = zeros(floattype, shape..., n_power_law)
+    power_law = zeros(floattype, shape2..., n_power_law)
     @debug "power law comp cubes"
-    attenuation_stars = zeros(floattype, shape...)
+    attenuation_stars = zeros(floattype, shape2...)
     @debug "attenuation_stars comp cube"
-    attenuation_gas = zeros(floattype, shape...)
+    attenuation_gas = zeros(floattype, shape2...)
     @debug "attenuation_gas comp cube"
-    lines = zeros(floattype, shape..., length(line_names))
+    lines = zeros(floattype, shape2..., length(line_names))
     @debug "lines comp cubes"
 
     OpticalCubeModel(model, stellar, na_feii, br_feii, power_law, attenuation_stars, attenuation_gas, lines)
@@ -1169,7 +1173,7 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, init::Bool; split::B
     continuum = cube_fitter.continuum
 
     amp_dc_plim = (0., Inf)
-    amp_df_plim = (0., 1.)
+    amp_df_plim = (0., clamp(1 / exp(-continuum.τ_97.limits[2]), 1., Inf))
 
     stellar_plim = [amp_dc_plim, continuum.T_s.limits]
     stellar_lock = [false, continuum.T_s.locked]
@@ -1309,16 +1313,16 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
 
         # pull out optical depth that was pre-fit
         # τ_97_0 = cube_fitter.τ_guess[parse(Int, cube_fitter.cube.channel)][spaxel]
-        max_τ = cube_fitter.continuum.τ_97.limits[2]
+        # max_τ = cube_fitter.continuum.τ_97.limits[2]
 
         # scale all flux amplitudes by the difference in medians between the spaxel and the summed spaxels
         # (should be close to 1 since the sum is already normalized by the number of spaxels included anyways)
         I_init = sumdim(cube_fitter.cube.I, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
-        N0 = Float64(abs(maximum(I_init[isfinite.(I_init)])))
-        N0 = N0 ≠ 0. ? N0 : 1.
+        # N0 = Float64(abs(maximum(I_init[isfinite.(I_init)])))
+        # N0 = N0 ≠ 0. ? N0 : 1.
         scale = max(nanmedian(I), 1e-10) * N / nanmedian(I_init)
         # Normalized amplitudes need a different scaling factor that is independent of the normalization
-        scale_N0 = scale * N0 / N
+        # scale_N0 = scale * N0 / N
         # max_amp = 1 / exp(-max_τ)
 
         # Dont rescale PAH templates
@@ -1876,14 +1880,27 @@ end
 
 
 """
-    get_line_plimits(cube_fitter, init)
+    get_line_plimits(cube_fitter, init[, ext_curve])
 
 Get the line limits vector for a given CubeFitter object. Also returns boolean locked values and
 names of each parameter as strings.
 """
-function get_line_plimits(cube_fitter::CubeFitter, init::Bool)
+function get_line_plimits(cube_fitter::CubeFitter, init::Bool, ext_curve::Union{Vector{<:Real},Nothing}=nothing)
 
-    amp_plim = (0., 1.)
+    if !isnothing(ext_curve)
+        amp_plim = (0., clamp(1 ./ maximum(ext_curve), 1., Inf))
+    else
+        if cube_fitter.spectral_region == :MIR
+            max_amp = 1 / exp(-cube_fitter.continuum.τ_97.limits[2])
+        elseif cube_fitter.extinction_curve == "ccm"
+            max_amp = attenuation_cardelli(cube_fitter.cube.λ[1], cube_fitter.continuum.E_BV.limits[2])
+        elseif cube_fitter.extinction_curve == "calzetti"
+            max_amp = attenuation_calzetti(cube_fitter.cube.λ[1], cube_fitter.continuum.E_BV.limits[2],
+                δ=cube_fitter.fit_uv_bump ? cube_fitter.continuum.δ_uv : nothing, 
+                f_nodust=cube_fitter.fit_covering_frac ? cube_fitter.continuum.frac : nothing)
+        end 
+        amp_plim = (0., clamp(max_amp, 1., Inf))
+    end
     ln_plims = Vector{Tuple}()
     ln_lock = BitVector()
     ln_names = Vector{String}()

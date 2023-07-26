@@ -827,11 +827,11 @@ Located in the `spaxel_binaries` folder are CSV files which contain the best-fit
 ### iv. Spaxel Plots
 Located in the `spaxel_plots` folder are plots of the 1D spectra of each spaxel, including the data, model, each model component, and the residuals, either as PDFs or HTML files depending on the plotting backend. Example plots are shown below for the initial summed spaxel fit of NGC 7469:
 
-![NGC7469_pyplot](./figures/NGC_7469_initial_fit_pyplot.png)
+![NGC7469_pyplot](figures/NGC7469_initial_fit_pyplot.png)
 
 In the matplotlib-generated plot, the data is in black and the full model is in orange. The individual model components are also shown. The magenta dashed line is the stellar continuum, the gray solid lines are the dust continua, and the light green line is the warm silicate emission. The extinction curve is not visible in this spectrum, but it is plotted as a gray dotted line using the logarithmic vertical axis on the right-hand side of the plot. The summed-up, extincted continuum is the thick solid gray line. The PAHs are shown in light blue, and the emission lines are shown in purple. The residuals are shown in the bottom plot, along with the reduced $\chi^2$ of the fit in the legend.  The bottom axis of the plot shows the rest-frame wavelength, while the top axis labels prominent emission lines.
 
-![NGC7469_plotly](./figures/NGC_7469_initial_fit_plotly.png)
+![NGC7469_plotly](figures/NGC7469_initial_fit_plotly.png)
 The plotly-generated plot is similar to the matplotlib-generated one, but not completely the same. The matplotlib-generated plots are intended to be publication quality, whereas the plotly-generated plots are more for data inspection purposes since they are interactive. As such, there are minor differences in what is plotted (other than unimportant differences like color choices or line styles): in the matplotlib plots, the quantity plotted is $I_\nu / \lambda$ (specific intensity per unit frequency / wavelength) as a function of wavelength, whereas the plotly plots simply plot $I_\nu$ (specific intensity per unit frequency) as a function of wavelength. The plotly plots also show each individual Drude profile for the PAH features, whereas the matplotlib plots just show the summed PAH spectrum. The residuals are also omitted from the plotly plots.
 
 If one specifies a `plot_range` argument in the CubeFitter, a `zoomed_plots` folder will also be created with 1D spectra of each zoomed-in region that one specifies. These can be useful for examining the fits of certain emission lines in more detail.
@@ -842,40 +842,40 @@ If performing a full fit to each spaxel in a cube, 2D parameter maps for each mo
 \*Note that all parameter maps shown below are purely for demonstrational purposes
 
 Dust continuum amplitude for the $T = 90$ K component. Notice that the color scale is logarithmic for all amplitudes/fluxes:
-![NGC7469_dust_cont_5](./figures/NGC_7469_dust_cont_5_amp.png)
+![NGC7469_dust_cont_5](figures/NGC7469_dust_cont_5_amp.png)
 
 Optical depth at 9.7 μm:
-![NGC7469_optical_depth](./figures/NGC_7469_extinction_tau97.png)
+![NGC7469_optical_depth](figures/NGC7469_extinction_tau97.png)
 
 PAH 8.61 μm amplitude:
-![NGC7469_PAH_amp](./figures/NGC_7469_PAH_8.61_amp.png)
+![NGC7469_PAH_amp](figures/NGC7469_PAH_8.61_amp.png)
 
 PAH 8.61 μm total flux:
-![NGC7469_PAH_flux](./figures/NGC_7469_PAH_8.61_flux.png)
+![NGC7469_PAH_flux](figures/NGC7469_PAH_8.61_flux.png)
 
 PAH 8.61 μm peak wavelength. Notice here that the plotted wavelengths are measured in the observed frame, so they are a factor of $(1+z)$ larger than the rest-frame 8.61 μm. The redshift of NGC 7469 is $z = 0.016317$, which puts this PAH at 8.75 μm:
-![NGC7469_PAH_mean](./figures/NGC_7469_PAH_8.61_mean.png)
+![NGC7469_PAH_mean](figures/NGC7469_PAH_8.61_mean.png)
 
 PAH 8.61 μm FWHM. Once again notice that the observed FWHMs will be a factor of $(1+z)$ larger than the rest-frame FWHMs:
-![NGC7469_PAH_fwhm](./figures/NGC_7469_PAH_8.61_fwhm.png)
+![NGC7469_PAH_fwhm](figures/NGC7469_PAH_8.61_fwhm.png)
 
 PAH 8.61 μm equivalent width. Once again keep in mind the widths are reported in the observed frame:
-![NGC7469_PAH_eqw](./figures/NGC_7469_PAH_8.61_eqw.png)
+![NGC7469_PAH_eqw](figures/NGC7469_PAH_8.61_eqw.png)
 
 H<sub>2</sub> 0-0 S(3) amplitude:
-![NGC7469_H2_amp](./figures/NGC_7469_H200_S3_amp.png)
+![NGC7469_H2_amp](figures/NGC7469_H200_S3_amp.png)
 
 H<sub>2</sub> 0-0 S(3) flux:
-![NGC7469_H2_flux](./figures/NGC_7469_H200_S3_flux.png)
+![NGC7469_H2_flux](figures/NGC7469_H200_S3_flux.png)
 
 H<sub>2</sub> 0-0 S(3) velocity offset:
-![NGC7469_H2_voff](./figures/NGC_7469_H200_S3_voff.png)
+![NGC7469_H2_voff](figures/NGC7469_H200_S3_voff.png)
 
 H<sub>2</sub> 0-0 S(3) FWHM:
-![NGC7469_H2_fwhm](./figures/NGC_7469_H200_S3_fwhm.png)
+![NGC7469_H2_fwhm](figures/NGC7469_H200_S3_fwhm.png)
 
 H<sub>2</sub> 0-0 S(3) equivalent width:
-![NGC7469_H2_eqw](./figures/NGC_7469_H200_S3_eqw.png)
+![NGC7469_H2_eqw](figures/NGC7469_H200_S3_eqw.png)
 
 ### vi. Aperture Plots
 When fitting an integrated spectrum within an aperture, plots are generated at the beginning of the fitting procedure showing the locations/sizes/shapes of the apertures to confirm that they have been placed correctly.  An example is shown below for NGC 7469 where the black circle denotes the aperture:

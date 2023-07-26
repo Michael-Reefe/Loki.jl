@@ -1359,7 +1359,7 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
 
     # Define the interpolated cube as the zeroth channel (since this is not taken up by anything else)
     obs.channels[out_id] = DataCube(λ_out, I_out, σ_out, mask_out, Ω_out, obs.α, obs.δ, psf_fwhm_out, lsf_fwhm_out, wcs_optimal, 
-        "MULTIPLE", "MULTIPLE", obs.spectral_region, obs.rest_frame, obs.masked)
+        "MULTIPLE", "MULTIPLE", obs.spectral_region, obs.rest_frame, obs.masked, obs.vacuum_wave)
     
     # Delete all of the individual channels
     if scrub_output
