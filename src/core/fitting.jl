@@ -281,7 +281,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         ptot = zeros(Float64, length(pars_0))
         ptot[.~lock] .= pfree
         ptot[lock] .= pfix
-        model_continuum(x, ptot, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
+        model_mir_continuum(x, ptot, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
             cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission,
             false)
     end
@@ -289,7 +289,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         ptot = zeros(Float64, length(pars_0))
         ptot[.~lock] = pfree
         ptot[lock] .= pfix
-        model_continuum(x, ptot, N, cube_fitter.velscale, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
+        model_opt_continuum(x, ptot, N, cube_fitter.velscale, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
             cube_fitter.n_ssps, cube_fitter.ssp_λ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, 
             cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, 
             cube_fitter.extinction_curve)
@@ -335,10 +335,10 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
 
     # Create the full model, again only if not bootstrapping
     if cube_fitter.spectral_region == :MIR
-        I_model, comps = model_continuum(λ, popt, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
+        I_model, comps = model_mir_continuum(λ, popt, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
             cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, false, true)
     else
-        I_model, comps = model_continuum(λ, popt, N, cube_fitter.velscale, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
+        I_model, comps = model_opt_continuum(λ, popt, N, cube_fitter.velscale, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
             cube_fitter.n_ssps, cube_fitter.ssp_λ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, 
             cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve, true)
     end
@@ -467,10 +467,10 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         ptot[.~lock_1] .= pfree
         ptot[lock_1] .= p1fix
         if !return_comps
-            model_continuum(x, ptot, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
+            model_mir_continuum(x, ptot, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
                 cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, true)
         else
-            model_continuum(x, ptot, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
+            model_mir_continuum(x, ptot, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
                 cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, true, true)
         end
     end
@@ -587,7 +587,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # @debug "Continuum covariance matrix: \n $covar"
 
     # Create the full model, again only if not bootstrapping
-    I_model, comps = model_continuum(λ, popt, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
+    I_model, comps = model_mir_continuum(λ, popt, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
         cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, false, true)
 
     if init
@@ -1308,7 +1308,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         ext_curve = extinction.(ext_curve, ptot_cont[pₑ], screen=cube_fitter.extinction_screen)
 
         # Generate the models
-        Icont = model_continuum(x, ptot_cont, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
+        Icont = model_mir_continuum(x, ptot_cont, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
             cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission,
             false)
         Ilines = model_line_residuals(x, ptot_lines, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol,
@@ -1365,7 +1365,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         end
         
         # Generate the models
-        Icont = model_continuum(x, ptot_cont, N, cube_fitter.velscale, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
+        Icont = model_opt_continuum(x, ptot_cont, N, cube_fitter.velscale, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
             cube_fitter.n_ssps, cube_fitter.ssp_λ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, 
             cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve)
         Ilines = model_line_residuals(x, ptot_lines, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol,
@@ -1494,11 +1494,11 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
 
     # Create the full model
     if cube_fitter.spectral_region == :MIR
-        Icont, comps_cont = model_continuum(λ, popt_cont, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
+        Icont, comps_cont = model_mir_continuum(λ, popt_cont, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
             cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, false, true)
         ext_key = "extinction"
     else
-        Icont, comps_cont = model_continuum(λ, popt_cont, N, cube_fitter.velscale, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
+        Icont, comps_cont = model_opt_continuum(λ, popt_cont, N, cube_fitter.velscale, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
             cube_fitter.n_ssps, cube_fitter.ssp_λ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, 
             cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve, true)
         ext_key = "attenuation_gas"
@@ -2003,15 +2003,17 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
                 cube_fitter.fit_sil_emission, cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, cube_fitter.lines, 
                 cube_fitter.flexible_wavesol, lsf_interp_func, popt_c, popt_l, perr_c, perr_l, comps[ext_key], mask_lines, 
                 I_spline, area_sr, !bootstrap_iter)
-            p_out = [popt_c; popt_l; p_dust; p_lines; χ2; dof]
-            p_err = [perr_c; perr_l; p_dust_err; p_lines_err; 0.; 0.]
+            max_ext = maximum(1 ./ comps[ext_key])  # save the maximum extinction factor for calculating line amplitudes later
+            p_out = [popt_c; popt_l; p_dust; p_lines; χ2; dof; max_ext]
+            p_err = [perr_c; perr_l; p_dust_err; p_lines_err; 0.; 0.; 0.]
         else
             p_lines, p_lines_err = calculate_extra_parameters(λ, I, norm, comps, cube_fitter.n_ssps, cube_fitter.n_power_law,
                 cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, 
                 cube_fitter.lines, cube_fitter.flexible_wavesol, lsf_interp_func, popt_l, perr_l, comps[ext_key], mask_lines, I_spline, 
                 area_sr, !bootstrap_iter)
-            p_out = [popt_c; popt_l; p_lines; χ2; dof]
-            p_err = [perr_c; perr_l; p_lines_err; 0.; 0.]
+            max_ext = maximum(1 ./ comps[ext_key])  # save the maximum extinction factor for calculating line amplitudes later
+            p_out = [popt_c; popt_l; p_lines; χ2; dof; max_ext]
+            p_err = [perr_c; perr_l; p_lines_err; 0.; 0.; 0.]
         end
         
         return p_out, p_err, popt_c, popt_l, perr_c, perr_l, I_model, comps, χ2, dof, pahtemp
@@ -2164,12 +2166,12 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
 
                 # Replace the best-fit model with the 50th percentile model to be consistent with p_out
                 if cube_fitter.spectral_region == :MIR
-                    I_boot_cont, comps_boot_cont = model_continuum(λ, p_out[1:split1], norm, cube_fitter.n_dust_cont, cube_fitter.n_power_law, 
+                    I_boot_cont, comps_boot_cont = model_mir_continuum(λ, p_out[1:split1], norm, cube_fitter.n_dust_cont, cube_fitter.n_power_law, 
                         cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, 
                         cube_fitter.fit_sil_emission, false, true)
                     ext_key = "extinction"
                 else
-                    I_boot_cont, comps_boot_cont = model_continuum(λ, p_out[1:split1], norm, cube_fitter.velscale, cube_fitter.vsyst_ssp, 
+                    I_boot_cont, comps_boot_cont = model_opt_continuum(λ, p_out[1:split1], norm, cube_fitter.velscale, cube_fitter.vsyst_ssp, 
                         cube_fitter.vsyst_feii, cube_fitter.npad_feii, cube_fitter.n_ssps, cube_fitter.ssp_λ, cube_fitter.ssp_templates,
                          cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, 
                          cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve, true)
@@ -2245,9 +2247,6 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
 
             p_out, p_err
         end
-
-        # Perform garbage collection
-        GC.gc()
 
         return p_out, p_err
 
@@ -2395,9 +2394,9 @@ function fit_cube!(cube_fitter::CubeFitter)
     # Prepare output array
     @info "===> Preparing output data structures... <==="
     out_params = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
-        cube_fitter.n_params_extra + 2) .* NaN
+        cube_fitter.n_params_extra + 3) .* NaN
     out_errs = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
-        cube_fitter.n_params_extra + 2, 2) .* NaN
+        cube_fitter.n_params_extra + 3, 2) .* NaN
     # "cube_data" object holds the primary wavelength, intensity, and errors
     # this is just a convenience object since these may be different when fitting an integrated spectrum
     # within an aperture
@@ -2524,9 +2523,9 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Vector{PyObject})
     # Prepare output array
     @info "===> Preparing output data structures... <==="
     out_params = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
-        cube_fitter.n_params_extra + 2) .* NaN
+        cube_fitter.n_params_extra + 3) .* NaN
     out_errs = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
-        cube_fitter.n_params_extra + 2, 2) .* NaN
+        cube_fitter.n_params_extra + 3, 2) .* NaN
 
     # If using an aperture, overwrite the cube_data object with the quantities within
     # the aperture, which are calculated here.

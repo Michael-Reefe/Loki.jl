@@ -1173,7 +1173,8 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, init::Bool; split::B
     continuum = cube_fitter.continuum
 
     amp_dc_plim = (0., Inf)
-    amp_df_plim = (0., clamp(1 / exp(-continuum.τ_97.limits[2]), 1., Inf))
+    # amp_df_plim = (0., clamp(1 / exp(-continuum.τ_97.limits[2]), 1., Inf))
+    amp_df_plim = (0., 1.)
 
     stellar_plim = [amp_dc_plim, continuum.T_s.limits]
     stellar_lock = [false, continuum.T_s.locked]
@@ -1318,29 +1319,21 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         # scale all flux amplitudes by the difference in medians between the spaxel and the summed spaxels
         # (should be close to 1 since the sum is already normalized by the number of spaxels included anyways)
         I_init = sumdim(cube_fitter.cube.I, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
-        # N0 = Float64(abs(maximum(I_init[isfinite.(I_init)])))
-        # N0 = N0 ≠ 0. ? N0 : 1.
         scale = max(nanmedian(I), 1e-10) * N / nanmedian(I_init)
-        # Normalized amplitudes need a different scaling factor that is independent of the normalization
-        # scale_N0 = scale * N0 / N
         # max_amp = 1 / exp(-max_τ)
 
-        # Dont rescale PAH templates
-        # pah_frac .*= scale_N0
-
-        # Stellar amplitude
+        # Stellar amplitude (rescaled)
         p₀[1] *= scale
         pᵢ = 3
 
-        # Dust continuum amplitudes
+        # Dust continuum amplitudes (rescaled)
         for _ ∈ 1:cube_fitter.n_dust_cont
             p₀[pᵢ] *= scale
             pᵢ += 2
         end
 
-        # Power law amplitudes
+        # Power law amplitudes (NOT rescaled)
         for _ ∈ 1:cube_fitter.n_power_law
-            # p₀[pᵢ] *= scale_N0
             pᵢ += 2
         end
 
@@ -1352,22 +1345,17 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
             p₀[pᵢ] = cube_fitter.extinction_map[spaxel]
         end
 
-        pᵢ += 4
         # Do not adjust absorption feature amplitudes since they are multiplicative
-        pᵢ += 3*cube_fitter.n_abs_feat
+        pᵢ += 4 + 3*cube_fitter.n_abs_feat
 
+        # Hot dust amplitude (rescaled)
         if cube_fitter.fit_sil_emission
-            # Hot dust amplitude
             p₀[pᵢ] *= scale
-            # Warm / cold optical depths
-            # p₀[pᵢ+3] = τ_97_0
-            # p₀[pᵢ+4] = τ_97_0
             pᵢ += 6
         end
 
-        # Dust feature amplitudes
+        # Dust feature amplitudes (not rescaled)
         # for i ∈ 1:cube_fitter.n_dust_feat
-        #     # p₀[pᵢ] = clamp(p₀[pᵢ]*scale_N0, 0., 1.)
         #     pᵢ += 3
         #     if cube_fitter.dust_features.profiles[i] == :PearsonIV
         #         pᵢ += 2
@@ -1403,9 +1391,10 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         A_pl = [clamp(nanmedian(I), 0., Inf)/exp(-continuum.τ_97.value)/cube_fitter.n_power_law for αi ∈ continuum.α]
         
         # Hot dust amplitude
-        λ_hd = clamp(Wein(continuum.T_hot.value), minimum(λ), maximum(λ))
-        A_hd = clamp(cubic_spline(λ_hd) * N / silicate_emission([λ_hd], 1.0, continuum.T_hot.value,
-            continuum.Cf_hot.value, continuum.τ_warm.value, continuum.τ_cold.value, continuum.sil_peak.value)[1], 0., Inf) / 5
+        hd = silicate_emission(λ, 1.0, continuum.T_hot.value, continuum.Cf_hot.value, continuum.τ_warm.value, 
+            continuum.τ_cold.value, continuum.sil_peak.value)
+        mhd = argmax(hd)
+        A_hd = clamp(cubic_spline(λ[mhd]) * N / hd[mhd] / 5, 0., Inf)
 
         stellar_pars = [A_s, continuum.T_s.value]
         dc_pars = vcat([[Ai, Ti.value] for (Ai, Ti) ∈ zip(A_dc, continuum.T_dc)]...)
@@ -1636,6 +1625,8 @@ function get_continuum_parinfo(n_free::S, lb::Vector{T}, ub::Vector{T}) where {S
         parinfo[pᵢ].fixed = 0
         parinfo[pᵢ].limited = (1,1)
         parinfo[pᵢ].limits = (lb[pᵢ], ub[pᵢ])
+        # Set the relative step size for finite difference derivative calculations
+        parinfo[pᵢ].relstep = 1e-6
     end
 
     # Create a `config` structure
@@ -1658,16 +1649,19 @@ function get_continuum_parinfo(n_free_1::S, n_free_2::S, lb_1::Vector{T}, ub_1::
         parinfo_1[pᵢ].fixed = 0
         parinfo_1[pᵢ].limited = (1,1)
         parinfo_1[pᵢ].limits = (lb_1[pᵢ], ub_1[pᵢ])
+        parinfo_1[pᵢ].relstep = 1e-6
     end
 
     for pᵢ ∈ 1:n_free_2
         parinfo_2[pᵢ].fixed = 0
         parinfo_2[pᵢ].limited = (1,1)
         parinfo_2[pᵢ].limits = (lb_2[pᵢ], ub_2[pᵢ])
+        parinfo_2[pᵢ].relstep = 1e-6
     end
 
     # Create a `config` structure
     config = CMPFit.Config()
+    config.maxiter = 500
 
     parinfo_1, parinfo_2, config
 
@@ -1887,20 +1881,21 @@ names of each parameter as strings.
 """
 function get_line_plimits(cube_fitter::CubeFitter, init::Bool, ext_curve::Union{Vector{<:Real},Nothing}=nothing)
 
-    if !isnothing(ext_curve)
-        amp_plim = (0., clamp(1 ./ maximum(ext_curve), 1., Inf))
-    else
-        if cube_fitter.spectral_region == :MIR
-            max_amp = 1 / exp(-cube_fitter.continuum.τ_97.limits[2])
-        elseif cube_fitter.extinction_curve == "ccm"
-            max_amp = attenuation_cardelli(cube_fitter.cube.λ[1], cube_fitter.continuum.E_BV.limits[2])
-        elseif cube_fitter.extinction_curve == "calzetti"
-            max_amp = attenuation_calzetti(cube_fitter.cube.λ[1], cube_fitter.continuum.E_BV.limits[2],
-                δ=cube_fitter.fit_uv_bump ? cube_fitter.continuum.δ_uv : nothing, 
-                f_nodust=cube_fitter.fit_covering_frac ? cube_fitter.continuum.frac : nothing)
-        end 
-        amp_plim = (0., clamp(max_amp, 1., Inf))
-    end
+    # if !isnothing(ext_curve)
+    #     amp_plim = (0., clamp(1 ./ maximum(ext_curve), 1., Inf))
+    # else
+    #     if cube_fitter.spectral_region == :MIR
+    #         max_amp = 1 / exp(-cube_fitter.continuum.τ_97.limits[2])
+    #     elseif cube_fitter.extinction_curve == "ccm"
+    #         max_amp = attenuation_cardelli(cube_fitter.cube.λ[1], cube_fitter.continuum.E_BV.limits[2])
+    #     elseif cube_fitter.extinction_curve == "calzetti"
+    #         max_amp = attenuation_calzetti(cube_fitter.cube.λ[1], cube_fitter.continuum.E_BV.limits[2],
+    #             δ=cube_fitter.fit_uv_bump ? cube_fitter.continuum.δ_uv : nothing, 
+    #             f_nodust=cube_fitter.fit_covering_frac ? cube_fitter.continuum.frac : nothing)
+    #     end 
+    #     amp_plim = (0., clamp(max_amp, 1., Inf))
+    # end
+    amp_plim = (0., 1.)
     ln_plims = Vector{Tuple}()
     ln_lock = BitVector()
     ln_names = Vector{String}()
@@ -2148,6 +2143,7 @@ function get_line_parinfo(n_free, lb, ub)
         parinfo[pᵢ].fixed = 0
         parinfo[pᵢ].limited = (1,1)
         parinfo[pᵢ].limits = (lb[pᵢ], ub[pᵢ])
+        parinfo[pᵢ].relstep = 1e-6
     end
 
     # Create a `config` structure
