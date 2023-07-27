@@ -820,29 +820,32 @@ Calculate the mixed silicate extinction profile based on Kemper, Vriend, & Tiele
 Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 (with modifications)
 """
-function τ_kvt(λ::Real, β::Real)
+function τ_kvt(λ::Vector{<:Real}, β::Real)
 
     # Get limits of the values that we have datapoints for via the kvt_prof constant
     mx, mn = argmax(kvt_prof[:, 1]), argmin(kvt_prof[:, 1])
     λ_mx, λ_mn = kvt_prof[mx, 1], kvt_prof[mn, 1]
 
     # Interpolate based on the region of data 
-    if λ ≤ λ_mn
-        ext = kvt_prof[mn, 2] * exp(2.03 * (λ - λ_mn))
-    elseif λ_mn < λ < λ_mx
-        # ext = linear_interpolation(kvt_prof[:, 1], kvt_prof[:, 2])(λ)
-        ext = KVT_interp(λ)
-    elseif λ_mx < λ < λ_mx + 2
-        ext = KVT_interp_end(λ)
-    else
-        ext = 0.
+    ext = zeros(typeof(β), length(λ))
+    r1 = λ .≤ λ_mn
+    if sum(r1) > 0
+        ext[r1] .= @. kvt_prof[mn, 2] * exp(2.03 * (λ[r1] - λ_mn))
     end
-    ext = ext < 0 ? 0. : ext
+    r2 = λ_mn .< λ .< λ_mx
+    if sum(r2) > 0
+        ext[r2] .= KVT_interp(λ[r2])
+    end
+    r3 = λ_mx .< λ .< λ_mx+2
+    if sum(r3) > 0
+        ext[r3] .= KVT_interp_end(λ[r3])
+    end
+    ext[ext .< 0] .= 0.
 
     # Add a drude profile around 18 microns
-    ext += Drude(λ, 0.4, 18., 4.446)
+    ext .+= Drude.(λ, 0.4, 18., 4.446)
 
-    (1 - β) * ext + β * (9.7/λ)^1.7
+    @. (1 - β) * ext + β * (9.7/λ)^1.7
 end
 
 
@@ -1175,7 +1178,7 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
     if extinction_curve == "d+"
         ext_curve = τ_dp(λ, params[pᵢ+3])
     elseif extinction_curve == "kvt"
-        ext_curve = τ_kvt.(λ, params[pᵢ+3])
+        ext_curve = τ_kvt(λ, params[pᵢ+3])
     elseif extinction_curve == "ct"
         ext_curve = τ_ct(λ)
     elseif extinction_curve == "ohm"
@@ -1266,7 +1269,7 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
     if extinction_curve == "d+"
         ext_curve = τ_dp(λ, params[pᵢ+3])
     elseif extinction_curve == "kvt"
-        ext_curve = τ_kvt.(λ, params[pᵢ+3])
+        ext_curve = τ_kvt(λ, params[pᵢ+3])
     elseif extinction_curve == "ct"
         ext_curve = τ_ct(λ)
     elseif extinction_curve == "ohm"

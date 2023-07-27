@@ -1886,11 +1886,11 @@ function get_line_plimits(cube_fitter::CubeFitter, init::Bool, ext_curve::Union{
         if cube_fitter.spectral_region == :MIR
             max_amp = 1 / exp(-cube_fitter.continuum.τ_97.limits[2])
         elseif cube_fitter.extinction_curve == "ccm"
-            max_amp = attenuation_cardelli(cube_fitter.cube.λ[1], cube_fitter.continuum.E_BV.limits[2])
+            max_amp = attenuation_cardelli([cube_fitter.cube.λ[1]], cube_fitter.continuum.E_BV.limits[2])[1]
         elseif cube_fitter.extinction_curve == "calzetti"
-            max_amp = attenuation_calzetti(cube_fitter.cube.λ[1], cube_fitter.continuum.E_BV.limits[2],
+            max_amp = attenuation_calzetti([cube_fitter.cube.λ[1]], cube_fitter.continuum.E_BV.limits[2],
                 δ=cube_fitter.fit_uv_bump ? cube_fitter.continuum.δ_uv : nothing, 
-                f_nodust=cube_fitter.fit_covering_frac ? cube_fitter.continuum.frac : nothing)
+                f_nodust=cube_fitter.fit_covering_frac ? cube_fitter.continuum.frac : nothing)[1]
         end 
         amp_plim = (0., clamp(max_amp, 1., Inf))
     end

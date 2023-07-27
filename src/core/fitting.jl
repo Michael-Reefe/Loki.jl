@@ -1297,7 +1297,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         if cube_fitter.extinction_curve == "d+"
             ext_curve = τ_dp(λ, ptot_cont[pₑ+3])
         elseif cube_fitter.extinction_curve == "kvt"
-            ext_curve = τ_kvt.(λ, ptot_cont[pₑ+3])
+            ext_curve = τ_kvt(λ, ptot_cont[pₑ+3])
         elseif cube_fitter.extinction_curve == "ct"
             ext_curve = τ_ct(λ)
         elseif cube_fitter.extinction_curve == "ohm"
