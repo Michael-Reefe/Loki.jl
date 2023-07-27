@@ -1119,7 +1119,7 @@ end
 
 
 """
-    model_mir_continuum(λ, params, N, n_dust_cont, n_power_law, dust_prof, n_abs_feat, extinction_curve, extinction_screen, 
+    model_continuum(λ, params, N, n_dust_cont, n_power_law, dust_prof, n_abs_feat, extinction_curve, extinction_screen, 
         fit_sil_emission, use_pah_templates, return_components)
 
 Create a model of the continuum (including stellar+dust continuum, PAH features, and extinction, excluding emission lines)
@@ -1143,7 +1143,7 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
-function model_mir_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
+function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
     n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, use_pah_templates::Bool, 
     return_components::Bool)
 
@@ -1193,11 +1193,11 @@ function model_mir_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real
     pᵢ += 4
 
     # Other absorption features
-    abs_tot = ones(out_type, length(λ))
+    abs_tot = one(out_type)
     for k ∈ 1:n_abs_feat
         prof = Drude.(λ, 1.0, params[pᵢ+1:pᵢ+2]...)
         comps["abs_feat_$k"] = extinction.(prof, params[pᵢ], screen=true)
-        abs_tot .*= comps["abs_feat_$k"]
+        abs_tot = abs_tot .* comps["abs_feat_$k"]
         pᵢ += 3
     end
 
@@ -1213,20 +1213,16 @@ function model_mir_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real
 
     if use_pah_templates
         pah3 = Smith3_interp(λ)
-        contin .+= params[pᵢ] .* maximum(1 ./ comps["extinction"]) .* pah3  ./ maximum(pah3) .* comps["extinction"]
+        contin .+= params[pᵢ] .* pah3  ./ maximum(pah3) .* comps["extinction"]
         pah4 = Smith4_interp(λ)
-        contin .+= params[pᵢ+1] .* maximum(1 ./ comps["extinction"]) .* pah4 ./ maximum(pah4) .* comps["extinction"]
+        contin .+= params[pᵢ+1] .* pah4 ./ maximum(pah4) .* comps["extinction"]
     else
         for (j, prof) ∈ enumerate(dust_prof)
             if prof == :Drude
-                amp = params[pᵢ]
-                amp *= maximum(1 ./ comps["extinction"])
-                comps["dust_feat_$j"] = Drude.(λ, amp, params[pᵢ+1:pᵢ+2]...)
+                comps["dust_feat_$j"] = Drude.(λ, params[pᵢ:pᵢ+2]...)
                 pᵢ += 3
             elseif prof == :PearsonIV
-                amp = params[pᵢ]
-                amp *= maximum(1 ./ comps["extinction"])
-                comps["dust_feat_$j"] = PearsonIV.(λ, amp, params[pᵢ+1:pᵢ+4]...)
+                comps["dust_feat_$j"] = PearsonIV.(λ, params[pᵢ:pᵢ+4]...)
                 pᵢ += 5
             end
             contin .+= comps["dust_feat_$j"] .* comps["extinction"] 
@@ -1243,7 +1239,7 @@ end
 
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
-function model_mir_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
+function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
     n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, use_pah_templates::Bool)
 
     # Prepare outputs
@@ -1288,10 +1284,10 @@ function model_mir_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real
     pᵢ += 4
 
     # Other absorption features
-    abs_tot = ones(out_type, length(λ))
+    abs_tot = one(out_type)
     for k ∈ 1:n_abs_feat
         prof = Drude.(λ, 1.0, params[pᵢ+1:pᵢ+2]...)
-        abs_tot .*= extinction.(prof, params[pᵢ], screen=true)
+        abs_tot = abs_tot .* extinction.(prof, params[pᵢ], screen=true)
         pᵢ += 3
     end
     
@@ -1306,31 +1302,22 @@ function model_mir_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real
 
     if use_pah_templates
         pah3 = Smith3_interp(λ)
-        contin .+= params[pᵢ] .* maximum(1 ./ ext) .* pah3 ./ maximum(pah3) .* ext
+        contin .+= params[pᵢ] .* pah3 ./ maximum(pah3) .* ext
         pah4 = Smith4_interp(λ)
-        contin .+= params[pᵢ+1] .* maximum(1 ./ ext) .* pah4 ./ maximum(pah4) .* ext
+        contin .+= params[pᵢ+1] .* pah4 ./ maximum(pah4) .* ext
     else
         if all(dust_prof .== :Drude)
             for j ∈ 1:length(dust_prof) 
-                amp = params[pᵢ]
-                # Convert amplitude to a normalized amplitude relative to the extinction
-                amp *= maximum(1 ./ ext)
-                contin .+= Drude.(λ, amp, params[pᵢ+1:pᵢ+2]...) .* ext
+                contin .+= Drude.(λ, params[pᵢ:pᵢ+2]...) .* ext
                 pᵢ += 3
             end
         else
             for (j, prof) ∈ enumerate(dust_prof)
                 if prof == :Drude
-                    amp = params[pᵢ]
-                    # Convert amplitude to a normalized amplitude relative to the extinction
-                    amp *= maximum(1 ./ ext)
-                    df = Drude.(λ, amp, params[pᵢ+1:pᵢ+2]...)
+                    df = Drude.(λ, params[pᵢ:pᵢ+2]...)
                     pᵢ += 3
                 elseif prof == :PearsonIV
-                    amp = params[pᵢ]
-                    # Convert amplitude to a normalized amplitude relative to the extinction
-                    amp *= maximum(1 ./ ext)
-                    df = PearsonIV.(λ, amp, params[pᵢ+1:pᵢ+4]...)
+                    df = PearsonIV.(λ, params[pᵢ:pᵢ+4]...)
                     pᵢ += 5
                 end
                 contin .+= df .* ext
@@ -1344,7 +1331,7 @@ end
 
 
 """
-    model_opt_continuum(λ, params, N, velscale, vsyst_ssp, vsyst_feii, npad_feii, n_ssps, ssp_λ, ssp_templates,
+    model_continuum(λ, params, N, velscale, vsyst_ssp, vsyst_feii, npad_feii, n_ssps, ssp_λ, ssp_templates,
         feii_templates_fft, n_power_law, fit_uv_bump, fit_covering_frac, fit_opt_na_feii, fit_opt_br_feii,
         extinction_curve, return_components)
 
@@ -1372,7 +1359,7 @@ at the given wavelengths `λ`, given the parameter vector `params`.
 - `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
-function model_opt_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, velscale::Real, vsyst_ssp::Real, vsyst_feii::Real, 
+function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, velscale::Real, vsyst_ssp::Real, vsyst_feii::Real, 
     npad_feii::Integer, n_ssps::Integer, ssp_λ::Vector{<:Real}, ssp_templates::Union{Vector{Spline2D},Matrix{<:Real}}, 
     feii_templates_fft::Matrix{<:Complex}, n_power_law::Integer, fit_uv_bump::Bool, fit_covering_frac::Bool, fit_opt_na_feii::Bool, 
     fit_opt_br_feii::Bool, extinction_curve::String, return_components::Bool)   
@@ -1466,7 +1453,7 @@ end
 
 
 # Multiple versions for more efficiency
-function model_opt_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, velscale::Real, vsyst_ssp::Real, vsyst_feii::Real, 
+function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, velscale::Real, vsyst_ssp::Real, vsyst_feii::Real, 
     npad_feii::Integer, n_ssps::Integer, ssp_λ::Vector{<:Real}, ssp_templates::Union{Vector{Spline2D},Matrix{<:Real}}, 
     feii_templates_fft::Matrix{<:Complex}, n_power_law::Integer, fit_uv_bump::Bool, fit_covering_frac::Bool, fit_opt_na_feii::Bool, 
     fit_opt_br_feii::Bool, extinction_curve::String)   
@@ -1625,16 +1612,10 @@ function model_pah_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, dust_pr
     pᵢ = 1
     for (j, prof) ∈ enumerate(dust_prof)
         if prof == :Drude
-            amp = params[pᵢ]
-            # Convert amplitude to a normalized amplitude relative to the extinction
-            amp *= maximum(1 ./ ext_curve)
-            df = Drude.(λ, amp, params[pᵢ+1:pᵢ+2]...)
+            df = Drude.(λ, params[pᵢ:pᵢ+2]...)
             pᵢ += 3
         elseif prof == :PearsonIV
-            amp = params[pᵢ]
-            # Convert amplitude to a normalized amplitude relative to the extinction
-            amp *= maximum(1 ./ ext_curve)
-            df = PearsonIV.(λ, amp, params[pᵢ+1:pᵢ+4]...)
+            df = PearsonIV.(λ, params[pᵢ:pᵢ+4]...)
             pᵢ += 5
         end
         contin .+= df
@@ -1663,25 +1644,16 @@ function model_pah_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, dust_pr
     pᵢ = 1
     if all(dust_prof .== :Drude)
         for j ∈ 1:length(dust_prof) 
-            amp = params[pᵢ]
-            # Convert amplitude to a normalized amplitude relative to the extinction
-            amp *= maximum(1 ./ ext_curve)
-            contin .+= Drude.(λ, amp, params[pᵢ+1:pᵢ+2]...)
+            contin .+= Drude.(λ, params[pᵢ:pᵢ+2]...)
             pᵢ += 3
         end
     else
         for (j, prof) ∈ enumerate(dust_prof)
             if prof == :Drude
-                amp = params[pᵢ]
-                # Convert amplitude to a normalized amplitude relative to the extinction
-                amp *= maximum(1 ./ ext_curve)
-                df = Drude.(λ, amp, params[pᵢ+1:pᵢ+2]...)
+                df = Drude.(λ, params[pᵢ:pᵢ+2]...)
                 pᵢ += 3
             elseif prof == :PearsonIV
-                amp = params[pᵢ]
-                # Convert amplitude to a normalized amplitude relative to the extinction
-                amp *= maximum(1 ./ ext_curve)
-                df = PearsonIV.(λ, amp, params[pᵢ+1:pᵢ+4]...)
+                df = PearsonIV.(λ, params[pᵢ:pᵢ+4]...)
                 pᵢ += 5
             end
             contin .+= df
@@ -1777,8 +1749,6 @@ function model_line_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, n_line
                 mean_μm = Doppler_shift_λ(lines.λ₀[k], voff)
                 # Convert FWHM from km/s to μm
                 fwhm_μm = Doppler_shift_λ(lines.λ₀[k], fwhm/2) - Doppler_shift_λ(lines.λ₀[k], -fwhm/2)
-                # Convert amplitude to a normalized amplitude relative to the extinction
-                amp *= maximum(1 ./ ext_curve)
 
                 # Evaluate line profile
                 if lines.profiles[k, j] == :Gaussian
@@ -1870,8 +1840,6 @@ function model_line_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, n_line
                 mean_μm = Doppler_shift_λ(lines.λ₀[k], voff)
                 # Convert FWHM from km/s to μm
                 fwhm_μm = Doppler_shift_λ(lines.λ₀[k], fwhm/2) - Doppler_shift_λ(lines.λ₀[k], -fwhm/2)
-                # Convert amplitude to a normalized amplitude relative to the extinction
-                amp *= maximum(1 ./ ext_curve)
 
                 # Evaluate line profile
                 if lines.profiles[k, j] == :Gaussian
@@ -1924,7 +1892,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     # Initial parameter vector index where dust profiles start
     pᵢ = 3 + 2n_dust_cont + 2n_power_law + 4 + 3n_abs_feat + (fit_sil_emission ? 6 : 0)
     # Extinction normalization factor
-    max_ext = maximum(1 ./ extinction)
+    # max_ext = 1 / minimum(extinction)
 
     for ii ∈ 1:n_dust_feat
 
@@ -1932,8 +1900,8 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
         A, μ, fwhm = popt_c[pᵢ:pᵢ+2]
         A_err, μ_err, fwhm_err = perr_c[pᵢ:pᵢ+2]
         # Undo the normalization due to the extinction
-        A *= max_ext
-        A_err *= max_ext
+        # A *= max_ext
+        # A_err *= max_ext
         # Convert peak intensity to CGS units (erg s^-1 cm^-2 μm^-1 sr^-1)
         A_cgs = MJysr_to_cgs(A*N, μ)
         # Convert the error in the intensity to CGS units
@@ -2079,8 +2047,8 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                 fwhm_μm_err = propagate_err ? λ0 / C_KMS * fwhm_err : 0.
 
                 # Undo the normalization from the extinction
-                amp *= max_ext
-                amp_err *= max_ext
+                # amp *= max_ext
+                # amp_err *= max_ext
 
                 # Convert amplitude to erg s^-1 cm^-2 μm^-1 sr^-1, put back in the normalization
                 amp_cgs = MJysr_to_cgs(amp*N, mean_μm)
@@ -2142,7 +2110,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     @debug "Normalization: $N"
 
     # Max extinction factor
-    max_ext = maximum(1 ./ extinction)
+    # max_ext = 1 / minimum(extinction)
 
     # Loop through lines
     p_lines = zeros(3n_lines+3n_acomps)
@@ -2228,8 +2196,8 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                 fwhm_μm_err = propagate_err ? λ0 / C_KMS * fwhm_err : 0.
 
                 # Undo the normalization from the extinction
-                amp *= max_ext
-                amp_err *= max_ext
+                # amp *= max_ext
+                # amp_err *= max_ext
 
                 # Convert from erg s^-1 cm^-2 Ang^-1 sr^-1 to erg s^-1 cm^-2 μm^-1 sr^-1, putting back in the normalization
                 amp_cgs = amp * N * 1e4

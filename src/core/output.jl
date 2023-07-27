@@ -121,12 +121,9 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             pᵢ += 6
         end
 
-        # Extinction normalization factor for the PAH/line amplitudes
-        max_ext = out_params[index, size(out_params, 3)]
-
         # Dust feature log(amplitude), mean, FWHM
         for (k, df) ∈ enumerate(cube_fitter.dust_features.names)
-            param_maps.dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z)*max_ext*N)-17 : -Inf
+            param_maps.dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z)*N)-17 : -Inf
             param_errs[1].dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
             param_errs[2].dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
             param_maps.dust_features[df][:mean][index] = out_params[index, pᵢ+1] * (1+z)
@@ -149,7 +146,7 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
 
         if cube_fitter.save_full_model
             # End of continuum parameters: recreate the continuum model
-            I_cont, comps_c = model_mir_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], N, cube_fitter.n_dust_cont, cube_fitter.n_power_law,
+            I_cont, comps_c = model_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], N, cube_fitter.n_dust_cont, cube_fitter.n_power_law,
                 cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, 
                 cube_fitter.fit_sil_emission, false, true)
         end
@@ -287,7 +284,7 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
                     # Convert amplitudes to the correct units, then take the log
                     amp_norm = param_maps.lines[ln][:amp][index]
                     amp_norm_err = [param_errs[1].lines[ln][:amp][index], param_errs[2].lines[ln][:amp][index]]
-                    param_maps.lines[ln][:amp][index] = amp_norm > 0 ? log10(amp_norm * N * max_ext * (1+z))-17 : -Inf
+                    param_maps.lines[ln][:amp][index] = amp_norm > 0 ? log10(amp_norm * N * (1+z))-17 : -Inf
                     param_errs[1].lines[ln][:amp][index] = amp_norm > 0 ? amp_norm_err[1] / (log(10) * amp_norm) : NaN
                     param_errs[2].lines[ln][:amp][index] = amp_norm > 0 ? amp_norm_err[2] / (log(10) * amp_norm) : NaN
 
@@ -503,7 +500,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
 
         if cube_fitter.save_full_model
             # End of continuum parameters: recreate the continuum model
-            I_cont, comps_c = model_opt_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], N, cube_fitter.velscale, cube_fitter.vsyst_ssp,
+            I_cont, comps_c = model_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], N, cube_fitter.velscale, cube_fitter.vsyst_ssp,
                 cube_fitter.vsyst_feii, cube_fitter.npad_feii, cube_fitter.n_ssps, cube_fitter.ssp_λ, cube_fitter.ssp_templates, 
                 cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, 
                 cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve, true)
@@ -619,11 +616,6 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             
         end
 
-        # Extinction normalization factor for line amplitudes
-        # "CartesianIndex and arrays of CartesianIndex are not compatible with the end keyword to represent the last index
-        # of a dimension. Do not use end in indexing expressions that may contain either CartesianIndex or arrays thereof"
-        max_ext = out_params[index, size(out_params, 3)]
-
         for k ∈ 1:cube_fitter.n_lines
             for j ∈ 1:cube_fitter.n_comps
                 if !isnothing(cube_fitter.lines.profiles[k, j])
@@ -635,7 +627,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
                     amp_norm = param_maps.lines[ln][:amp][index]
                     amp_norm_err = [param_errs[1].lines[ln][:amp][index], param_errs[2].lines[ln][:amp][index]]
                     # Convert amplitude to erg/s/cm^2/Hz/sr to match with the MIR 
-                    param_maps.lines[ln][:amp][index] = amp_norm > 0 ? log10(amp_norm * max_ext * N * λ0^2/(C_KMS * 1e13) / (1+z)) : -Inf
+                    param_maps.lines[ln][:amp][index] = amp_norm > 0 ? log10(amp_norm * N * λ0^2/(C_KMS * 1e13) / (1+z)) : -Inf
                     param_errs[1].lines[ln][:amp][index] = amp_norm > 0 ? amp_norm_err[1] / (log(10) * amp_norm) : NaN
                     param_errs[2].lines[ln][:amp][index] = amp_norm > 0 ? amp_norm_err[2] / (log(10) * amp_norm) : NaN
 

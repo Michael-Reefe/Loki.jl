@@ -1173,8 +1173,7 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, init::Bool; split::B
     continuum = cube_fitter.continuum
 
     amp_dc_plim = (0., Inf)
-    # amp_df_plim = (0., clamp(1 / exp(-continuum.τ_97.limits[2]), 1., Inf))
-    amp_df_plim = (0., 1.)
+    amp_df_plim = (0., clamp(1 / exp(-continuum.τ_97.limits[2]), 1., Inf))
 
     stellar_plim = [amp_dc_plim, continuum.T_s.limits]
     stellar_lock = [false, continuum.T_s.locked]
@@ -1881,21 +1880,20 @@ names of each parameter as strings.
 """
 function get_line_plimits(cube_fitter::CubeFitter, init::Bool, ext_curve::Union{Vector{<:Real},Nothing}=nothing)
 
-    # if !isnothing(ext_curve)
-    #     amp_plim = (0., clamp(1 ./ maximum(ext_curve), 1., Inf))
-    # else
-    #     if cube_fitter.spectral_region == :MIR
-    #         max_amp = 1 / exp(-cube_fitter.continuum.τ_97.limits[2])
-    #     elseif cube_fitter.extinction_curve == "ccm"
-    #         max_amp = attenuation_cardelli(cube_fitter.cube.λ[1], cube_fitter.continuum.E_BV.limits[2])
-    #     elseif cube_fitter.extinction_curve == "calzetti"
-    #         max_amp = attenuation_calzetti(cube_fitter.cube.λ[1], cube_fitter.continuum.E_BV.limits[2],
-    #             δ=cube_fitter.fit_uv_bump ? cube_fitter.continuum.δ_uv : nothing, 
-    #             f_nodust=cube_fitter.fit_covering_frac ? cube_fitter.continuum.frac : nothing)
-    #     end 
-    #     amp_plim = (0., clamp(max_amp, 1., Inf))
-    # end
-    amp_plim = (0., 1.)
+    if !isnothing(ext_curve)
+        amp_plim = (0., clamp(1 / minimum(ext_curve), 1., Inf))
+    else
+        if cube_fitter.spectral_region == :MIR
+            max_amp = 1 / exp(-cube_fitter.continuum.τ_97.limits[2])
+        elseif cube_fitter.extinction_curve == "ccm"
+            max_amp = attenuation_cardelli(cube_fitter.cube.λ[1], cube_fitter.continuum.E_BV.limits[2])
+        elseif cube_fitter.extinction_curve == "calzetti"
+            max_amp = attenuation_calzetti(cube_fitter.cube.λ[1], cube_fitter.continuum.E_BV.limits[2],
+                δ=cube_fitter.fit_uv_bump ? cube_fitter.continuum.δ_uv : nothing, 
+                f_nodust=cube_fitter.fit_covering_frac ? cube_fitter.continuum.frac : nothing)
+        end 
+        amp_plim = (0., clamp(max_amp, 1., Inf))
+    end
     ln_plims = Vector{Tuple}()
     ln_lock = BitVector()
     ln_names = Vector{String}()
