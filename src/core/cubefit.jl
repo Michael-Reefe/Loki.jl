@@ -1289,8 +1289,8 @@ end
 """
     get_continuum_initial_values(cube_fitter, spaxel, λ, I, N, init; split)
 
-Get the vector of starting values for the continuum fit for a given CubeFitter object. Again, the
-vector may be split up by the 2 continuum fitting steps.
+Get the vectors of starting values and relative step sizes for the continuum fit for a given CubeFitter object. 
+Again, the vector may be split up by the 2 continuum fitting steps in the MIR case.
 """
 get_continuum_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, 
     init::Bool; split::Bool=false) = cube_fitter.spectral_region == :MIR ? 
@@ -1301,6 +1301,8 @@ get_continuum_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ
 # MIR implementation of the get_continuum_initial_values function
 function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
     N::Real, init::Bool; split::Bool=false)
+
+    continuum = cube_fitter.continuum
 
     # Check if the cube fitter has initial fit parameters 
     if !init
@@ -1363,8 +1365,6 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
 
     # Otherwise, we estimate the initial parameters based on the data
     else
-
-        continuum = cube_fitter.continuum
 
         @debug "Calculating initial starting points..."
         cubic_spline = Spline1D(λ, I, k=3)
@@ -1433,15 +1433,42 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         
     @debug "Continuum Starting Values: \n $p₀"
 
+    # Calculate relative step sizes for finite difference derivatives
+    dλ = (λ[end] - λ[1]) / length(λ)
+    deps = sqrt(eps())
+
+    stellar_dstep = [1e-6, 1e-4]
+    dc_dstep = vcat([[1e-6, 1e-4] for _ in continuum.T_dc]...)
+    pl_dstep = vcat([[deps, deps] for _ in continuum.α]...)
+    df_dstep = Float64[]
+    for n in 1:length(cube_fitter.dust_features.names)
+        append!(df_dstep, [deps, dλ/10/cube_fitter.dust_features.mean[n].value, dλ/1000/cube_fitter.dust_features.fwhm[n].value])
+        if cube_fitter.dust_features.profiles[n] == :PearsonIV
+            append!(df_dstep, [deps, deps])
+        end
+    end
+    ab_dstep = vcat([[deps, dλ/10/mi.value, dλ/1000/fi.value] for (mi, fi) in zip(cube_fitter.abs_features.mean, cube_fitter.abs_features.fwhm)]...)
+    if cube_fitter.fit_sil_emission
+        hd_dstep = [1e-6, 1e-4, deps, deps, deps, dλ/10/continuum.sil_peak.value]
+    else
+        hd_dstep = []
+    end
+    extinction_dstep = [deps, deps, deps, deps]
+    dstep = Vector{Float64}(vcat(stellar_dstep, dc_dstep, pl_dstep, extinction_dstep, ab_dstep, hd_dstep, df_dstep))
+
+    @debug "Continuum relative step sizes: \n $dstep"
+
     if !split
-        p₀
+        p₀, dstep
     else
         # Step 1: Stellar + Dust blackbodies, 2 new amplitudes for the PAH templates, and the extinction parameters
         pars_1 = vcat(p₀[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0))], pah_frac)
+        dstep_1 = vcat(dstep[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0))], [deps, deps])
         # Step 2: The PAH profile amplitudes, centers, and FWHMs
         pars_2 = p₀[(3+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0)):end]
+        dstep_2 = dstep[(3+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0)):end]
 
-        pars_1, pars_2
+        pars_1, pars_2, dstep_1, dstep_2
     end
 end
 
@@ -1585,7 +1612,7 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
             push!(atten_pars, continuum.δ_uv.value)
         end
-        if cube_fitter.fit_covering_frac
+        if cube_fitter.fit_covering_frac && cube_fitter.extinction_curve == "calzetti"
             push!(atten_pars, continuum.frac.value)
         end
 
@@ -1593,6 +1620,30 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         p₀ = Vector{Float64}(vcat(ssp_pars, stel_kin_pars, atten_pars, feii_pars, pl_pars))
 
     end
+
+    # Calculate relative step sizes for finite difference derivatives
+    deps = sqrt(eps())
+
+    ssp_dstep = vcat([[1e-6, 1e-3, deps] for _ in continuum.ssp_ages]...)
+    stel_kin_dstep = [1e-4, 1e-4]
+    feii_dstep = []
+    if cube_fitter.fit_opt_na_feii
+        append!(feii_dstep, [deps, 1e-4, 1e-4])
+    end
+    if cube_fitter.fit_opt_br_feii
+        append!(feii_dstep, [deps, 1e-4, 1e-4])
+    end
+    pl_dstep = vcat([[deps, deps] for _ in continuum.α]...)
+
+    atten_dstep = [deps, deps]
+    if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
+        push!(atten_dstep, deps)
+    end
+    if cube_fitter.fit_covering_frac && cube_fitter.extinction_curve == "calzetti"
+        push!(atten_dstep, deps)
+    end
+
+    dstep = Vector{Float64}(vcat(ssp_dstep, stel_kin_dstep, atten_dstep, feii_dstep, pl_dstep))
 
     @debug "Continuum Parameter labels: \n [" *
         join(["SSP_$(i)_mass, SSP_$(i)_age, SSP_$(i)_metallicity" for i in 1:cube_fitter.n_ssps], ", ") * 
@@ -1604,19 +1655,20 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         join(["power_law_$(j)_amp, power_law_$(j)_index, " for j in 1:cube_fitter.n_power_law], ", ") * "]"
         
     @debug "Continuum Starting Values: \n $p₀"
+    @debug "Continuum relative step sizes: \n $dstep"
 
-    p₀
+    p₀, dstep
 
 end
 
 
 """
-    get_continuum_parinfo(n_free, lb, ub)
+    get_continuum_parinfo(n_free, lb, ub, dp)
 
 Get the CMPFit parinfo and config objects for a given CubeFitter object, given the vector of initial valuels,
-limits, and boolean locked values.
+limits, and relative step sizes.
 """
-function get_continuum_parinfo(n_free::S, lb::Vector{T}, ub::Vector{T}) where {S<:Integer,T<:Real}
+function get_continuum_parinfo(n_free::S, lb::Vector{T}, ub::Vector{T}, dp::Vector{T}) where {S<:Integer,T<:Real}
 
     parinfo = CMPFit.Parinfo(n_free)
 
@@ -1625,7 +1677,7 @@ function get_continuum_parinfo(n_free::S, lb::Vector{T}, ub::Vector{T}) where {S
         parinfo[pᵢ].limited = (1,1)
         parinfo[pᵢ].limits = (lb[pᵢ], ub[pᵢ])
         # Set the relative step size for finite difference derivative calculations
-        parinfo[pᵢ].relstep = 1e-6
+        parinfo[pᵢ].relstep = dp[pᵢ]
     end
 
     # Create a `config` structure
@@ -1639,7 +1691,7 @@ end
 
 # Version for the split fitting if use_pah_templates is enabled
 function get_continuum_parinfo(n_free_1::S, n_free_2::S, lb_1::Vector{T}, ub_1::Vector{T}, 
-    lb_2::Vector{T}, ub_2::Vector{T}) where {S<:Integer,T<:Real}
+    lb_2::Vector{T}, ub_2::Vector{T}, dp_1::Vector{T}, dp_2::Vector{T}) where {S<:Integer,T<:Real}
 
     parinfo_1 = CMPFit.Parinfo(n_free_1)
     parinfo_2 = CMPFit.Parinfo(n_free_2)
@@ -1648,14 +1700,14 @@ function get_continuum_parinfo(n_free_1::S, n_free_2::S, lb_1::Vector{T}, ub_1::
         parinfo_1[pᵢ].fixed = 0
         parinfo_1[pᵢ].limited = (1,1)
         parinfo_1[pᵢ].limits = (lb_1[pᵢ], ub_1[pᵢ])
-        parinfo_1[pᵢ].relstep = 1e-6
+        parinfo_1[pᵢ].relstep = dp_1[pᵢ]
     end
 
     for pᵢ ∈ 1:n_free_2
         parinfo_2[pᵢ].fixed = 0
         parinfo_2[pᵢ].limited = (1,1)
         parinfo_2[pᵢ].limits = (lb_2[pᵢ], ub_2[pᵢ])
-        parinfo_2[pᵢ].relstep = 1e-6
+        parinfo_2[pᵢ].relstep = dp_2[pᵢ]
     end
 
     # Create a `config` structure
@@ -2051,7 +2103,7 @@ end
 """
     get_line_initial_values(cube_fitter, init)
 
-Get the vector of starting values for the line fit for a given CubeFitter object.
+Get the vector of starting values and relative step sizes for the line fit for a given CubeFitter object.
 """
 function get_line_initial_values(cube_fitter::CubeFitter, init::Bool)
 
@@ -2122,18 +2174,47 @@ function get_line_initial_values(cube_fitter::CubeFitter, init::Bool)
         end
     end
 
-    ln_pars
+    # Relative step size vector
+    deps = sqrt(eps())
+    ln_dstep = Float64[]
+    for i ∈ 1:cube_fitter.n_lines
+        for j ∈ 1:cube_fitter.n_comps
+            if !isnothing(cube_fitter.lines.profiles[i, j])
+
+                amp_dstep = deps
+                voff_dstep = 1e-4
+                fwhm_dstep = 1e-4
+
+                # Depending on flexible_wavesol option, we need to add 2 voffs
+                if !isnothing(cube_fitter.lines.tied_voff[i, j]) && cube_fitter.flexible_wavesol && isone(j)
+                    append!(ln_dstep, [amp_dstep, voff_dstep, voff_dstep, fwhm_dstep])
+                else
+                    append!(ln_dstep, [amp_dstep, voff_dstep, fwhm_dstep])
+                end
+
+                if cube_fitter.lines.profiles[i, j] == :GaussHermite
+                    # 2 extra parameters: h3 and h4
+                    append!(ln_dstep, [deps, deps])
+                elseif cube_fitter.lines.profiles[i, j] == :Voigt
+                    # 1 extra parameter: eta
+                    append!(ln_dstep, [deps])
+                end
+            end
+        end
+    end 
+
+    ln_pars, ln_dstep
 
 end
 
 
 """
-    get_line_parinfo(n_free, lb, ub)
+    get_line_parinfo(n_free, lb, ub, dp)
 
 Get the CMPFit parinfo and config objects for a given CubeFitter object, given the vector of initial values,
-limits, and boolean locked values.
+limits, and relative step sizes.
 """
-function get_line_parinfo(n_free, lb, ub)
+function get_line_parinfo(n_free, lb, ub, dp)
 
     # Convert parameter limits into CMPFit object
     parinfo = CMPFit.Parinfo(n_free)
@@ -2141,7 +2222,7 @@ function get_line_parinfo(n_free, lb, ub)
         parinfo[pᵢ].fixed = 0
         parinfo[pᵢ].limited = (1,1)
         parinfo[pᵢ].limits = (lb[pᵢ], ub[pᵢ])
-        parinfo[pᵢ].relstep = 1e-6
+        parinfo[pᵢ].relstep = dp[pᵢ]
     end
 
     # Create a `config` structure

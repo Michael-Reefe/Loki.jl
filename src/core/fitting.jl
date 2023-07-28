@@ -221,15 +221,15 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     plims, lock = get_continuum_plimits(cube_fitter, λ_spax, I_spax, init || use_ap)
 
     # Split up the initial parameter vector into the components that we need for each fitting step
-    if !bootstrap_iter
-        pars_0 = get_continuum_initial_values(cube_fitter, spaxel, λ_spax, I_spax, N, init || use_ap)
-    else
+    pars_0, dstep_0 = get_continuum_initial_values(cube_fitter, spaxel, λ_spax, I_spax, N, init || use_ap)
+    if bootstrap_iter
         pars_0 = p1_boots
     end
 
     # Sort parameters by those that are locked and those that are unlocked
     pfix = pars_0[lock]
     pfree = pars_0[.~lock]
+    dstep = dstep_0[.~lock]
 
     # Count free parameters
     n_free = sum(.~lock)
@@ -239,7 +239,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     ub = [pl[2] for pl in plims[.~lock]]
 
     # Convert parameter limits into CMPFit object
-    parinfo, config = get_continuum_parinfo(n_free, lb, ub)
+    parinfo, config = get_continuum_parinfo(n_free, lb, ub, dstep)
 
     @debug """\n
     ##########################################################################################################
@@ -422,9 +422,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     plims_1, plims_2, lock_1, lock_2 = get_continuum_plimits(cube_fitter, λ_spax, I_spax, init || use_ap, split=true)
 
     # Split up the initial parameter vector into the components that we need for each fitting step
-    if !bootstrap_iter
-        pars_1, pars_2 = get_continuum_initial_values(cube_fitter, spaxel, λ_spax, I_spax, N, init || use_ap, split=true)
-    else
+    pars_1, pars_2, dstep_1, dstep_2 = get_continuum_initial_values(cube_fitter, spaxel, λ_spax, I_spax, N, init || use_ap, split=true)
+    if bootstrap_iter
         pars_1 = vcat(p1_boots[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+3*cube_fitter.n_abs_feat+
             (cube_fitter.fit_sil_emission ? 6 : 0))], p1_boots[end-1:end])
         pars_2 = p1_boots[(3+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+3*cube_fitter.n_abs_feat+
@@ -434,8 +433,10 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # Sort parameters by those that are locked and those that are unlocked
     p1fix = pars_1[lock_1]
     p1free = pars_1[.~lock_1]
+    d1free = dstep_1[.~lock_1]
     p2fix = pars_2[lock_2]
     p2free = pars_2[.~lock_2]
+    d2free = dstep_2[.~lock_2]
 
     # Count free parameters
     n_free_1 = sum(.~lock_1)
@@ -448,7 +449,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     ub_2 = [pl[2] for pl in plims_2[.~lock_2]]
 
     # Convert parameter limits into CMPFit object
-    parinfo_1, parinfo_2, config = get_continuum_parinfo(n_free_1, n_free_2, lb_1, ub_1, lb_2, ub_2)
+    parinfo_1, parinfo_2, config = get_continuum_parinfo(n_free_1, n_free_2, lb_1, ub_1, lb_2, ub_2, d1free, d2free)
 
     @debug """\n
     ##########################################################################################################
@@ -872,7 +873,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     end
 
     plimits, param_lock, param_names, tied_pairs, tied_indices = get_line_plimits(cube_fitter, init || use_ap, ext_curve_norm)
-    p₀ = get_line_initial_values(cube_fitter, init || use_ap)
+    p₀, dstep = get_line_initial_values(cube_fitter, init || use_ap)
     lower_bounds = [pl[1] for pl in plimits]
     upper_bounds = [pl[2] for pl in plimits]
 
@@ -884,10 +885,12 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
 
     # Combine all of the tied parameters
     p_tied = copy(p₀)
+    dstep_tied = copy(dstep)
     plims_tied = copy(plimits)
     param_lock_tied = copy(param_lock)
     param_names_tied = copy(param_names)
     deleteat!(p_tied, tied_indices)
+    deleteat!(dstep_tied, tied_indices)
     deleteat!(plims_tied, tied_indices)
     deleteat!(param_lock_tied, tied_indices)
     deleteat!(param_names_tied, tied_indices)
@@ -895,6 +898,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     # Split up into free and locked parameters
     pfree_tied = p_tied[.~param_lock_tied]
     pfix_tied = p_tied[param_lock_tied]
+    dfree_tied = dstep_tied[.~param_lock_tied]
 
     # Count free parameters
     n_free = sum(.~param_lock_tied)
@@ -912,7 +916,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     @debug "Line Upper Limits: \n $(upper_bounds_tied))"
 
     # Get CMPFit parinfo object from bounds
-    parinfo, config = get_line_parinfo(n_free, lbfree_tied, ubfree_tied)
+    parinfo, config = get_line_parinfo(n_free, lbfree_tied, ubfree_tied, dfree_tied)
 
     # Wrapper function for fitting only the free, tied parameters
     function fit_step3(x, pfree_tied, func; n=0)
@@ -1162,15 +1166,15 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     plims_cont, lock_cont = get_continuum_plimits(cube_fitter, λ_spax, I_spax, init || use_ap)
 
     # Split up the initial parameter vector into the components that we need for each fitting step
-    if !bootstrap_iter
-        pars_0_cont = get_continuum_initial_values(cube_fitter, spaxel, λ_spax, I_spax, N, init || use_ap)
-    else
+    pars_0_cont, dstep_0_cont = get_continuum_initial_values(cube_fitter, spaxel, λ_spax, I_spax, N, init || use_ap)
+    if bootstrap_iter
         pars_0_cont = p1_boots_cont
     end
 
     # Sort parameters by those that are locked and those that are unlocked
     pfix_cont = pars_0_cont[lock_cont]
     pfree_cont = pars_0_cont[.~lock_cont]
+    dstep_cont = dstep_0_cont[.~lock_cont]
 
     # Count free parameters
     n_free_cont = sum(.~lock_cont)
@@ -1180,9 +1184,8 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     ub_cont = [pl[2] for pl in plims_cont[.~lock_cont]]
 
     plims_lines, lock_lines, names_lines, tied_pairs, tied_indices = get_line_plimits(cube_fitter, init || use_ap)
-    if !bootstrap_iter
-        pars_0_lines = get_line_initial_values(cube_fitter, init || use_ap)
-    else
+    pars_0_lines, dstep_0_lines = get_line_initial_values(cube_fitter, init || use_ap)
+    if bootstrap_iter
         pars_0_lines = p1_boots_line
     end
     lower_bounds_lines = [pl[1] for pl in plims_lines]
@@ -1196,10 +1199,12 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
 
     # Combine all of the tied parameters
     p_lines_tied = copy(pars_0_lines)
+    dstep_lines_tied = copy(dstep_0_lines)
     plims_lines_tied = copy(plims_lines)
     lock_lines_tied = copy(lock_lines)
     names_lines_tied = copy(names_lines)
     deleteat!(p_lines_tied, tied_indices)
+    deleteat!(dstep_lines_tied, tied_indices)
     deleteat!(plims_lines_tied, tied_indices)
     deleteat!(lock_lines_tied, tied_indices)
     deleteat!(names_lines_tied, tied_indices)
@@ -1207,6 +1212,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     # Split up into free and locked parameters
     pfree_lines_tied = p_lines_tied[.~lock_lines_tied]
     pfix_lines_tied = p_lines_tied[lock_lines_tied]
+    dfree_lines_tied = dstep_lines_tied[.~lock_lines_tied]
 
     # Count free parameters
     n_free_lines = sum(.~lock_lines_tied)
@@ -1380,6 +1386,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     p₀ = [pfree_cont; pfree_lines_tied]
     lower_bounds = [lb_cont; lbfree_lines_tied]
     upper_bounds = [ub_cont; ubfree_lines_tied]
+    dstep = [dstep_cont; dfree_lines_tied]
 
     # Force skip SAMIN fitting if the extinction has been locked to 0
     override = false
@@ -1429,7 +1436,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     end
 
     # Parinfo and config objects
-    parinfo, config = get_continuum_parinfo(n_free_cont+n_free_lines, lower_bounds, upper_bounds)
+    parinfo, config = get_continuum_parinfo(n_free_cont+n_free_lines, lower_bounds, upper_bounds, dstep)
 
     res = cmpfit(λ_spax, I_spax, σ_spax, fit_joint, p₁, parinfo=parinfo, config=config)
     n = 1
