@@ -98,14 +98,16 @@ function from_dict_fwhm(dict::Dict)::Parameter
 end
 
 
-"""
-    Continuum(T_s, T_dc, τ_97, τ_ice, τ_ch, β, T_hot, Cf_hot, τ_warm, τ_cold)
+abstract type Continuum end
 
-A container for various continuum modeling parameters.
 """
-struct Continuum
+    MIRContinuum(T_s, T_dc, α, τ_97, τ_ice, τ_ch, β, T_hot, Cf_hot, τ_warm, τ_cold, sil_peak)
 
-    # Continuum parameters
+A container for various MIR continuum modeling parameters.
+"""
+struct MIRContinuum <: Continuum
+
+    # MIR Continuum parameters
     T_s::Parameter
     T_dc::Vector{Parameter}
     α::Vector{Parameter}
@@ -123,7 +125,42 @@ end
 
 
 """
-    DustFeatures(names, profiles, mean, fwhm)
+    OpticalContinuum(ssp_ages, ssp_metallicities, stel_vel, stel_vdisp,
+        na_feii_vel, na_feii_vdisp, br_feii_vel, br_feii_vdisp, α, E_BV,
+        E_BV_factor, δ_uv, frac)
+
+A container for various optical continuum modeling parameters.
+"""
+struct OpticalContinuum <: Continuum
+
+    # Simple Stellar Population parameters
+    ssp_ages::Vector{Parameter}
+    ssp_metallicities::Vector{Parameter}
+
+    # Stellar kinematics
+    stel_vel::Parameter
+    stel_vdisp::Parameter
+
+    # Fe II kinematics
+    na_feii_vel::Parameter
+    na_feii_vdisp::Parameter
+    br_feii_vel::Parameter
+    br_feii_vdisp::Parameter
+    
+    # Power law indices
+    α::Vector{Parameter}
+
+    # Dust attenuation
+    E_BV::Parameter
+    E_BV_factor::Parameter
+    δ_uv::Parameter
+    frac::Parameter
+
+end
+
+
+"""
+    DustFeatures(names, profiles, mean, fwhm, index, cutoff, complexes, _local)
 
 A container for the modeling parameters relating to PAH dust features
 and absorption features.
@@ -143,7 +180,8 @@ end
 
 
 """
-    TransitionLines(names, λ₀, profiles, tied, voff, fwhm, h3, h4, η)
+    TransitionLines(names, latex, annotate, λ₀, profiles, tied_amp, tied_voff, tied_fwhm,
+        acomp_amp, voff, fwhm, h3, h4, η, combined)
 
 A container for ancillary information and modeling parameters relating to transition lines.
 """
@@ -158,6 +196,7 @@ struct TransitionLines
     # 1st axis: labels each transition line
     # 2nd axis: labels the components of each line
     profiles::Matrix{Union{Symbol,Nothing}}
+    tied_amp::Matrix{Union{Symbol,Nothing}}
     tied_voff::Matrix{Union{Symbol,Nothing}}
     tied_fwhm::Matrix{Union{Symbol,Nothing}}
 
@@ -169,17 +208,22 @@ struct TransitionLines
     h4::Matrix{Union{Parameter,Nothing}}
     η::Matrix{Union{Parameter,Nothing}}
 
+    # Combined lines (for map purposes)
+    combined::Vector{Vector{Symbol}}
+
 end
 
 
 """
-    TiedKinematics
+    TiedKinematics(key_amp, amp, key_voff, voff, key_fwhm, fwhm)
 
-A container for tied kinematic parameter information.
+A container for tied amplitude and kinematic parameter information.
 """
 struct TiedKinematics
 
     # Vectors of vectors, rather than Matrices, since the size of each element may be inhomogeneous 
+    key_amp::Vector{Vector{Symbol}}
+    amp::Vector{Vector{Dict{Symbol, <:Real}}}
     key_voff::Vector{Vector{Symbol}}
     voff::Vector{Vector{Parameter}}
     key_fwhm::Vector{Vector{Symbol}}

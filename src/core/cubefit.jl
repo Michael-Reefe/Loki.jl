@@ -5,9 +5,10 @@ fitting is performed with Loki.
 
 ############################## PARAMETER / MODEL STRUCTURES ####################################
 
+abstract type ParamMaps end
+
 """
-    ParamMaps(stellar_continuum, dust_continuum, dust_features, lines, tied_voffs, acomp_tied_voffs,
-        tied_voigt_mix, extinction, hot_dust, reduced_χ2)
+    MIRParamMaps
 
 A structure for holding 2D maps of fitting parameters generated after fitting a cube.  Each parameter
 that is fit (i.e. stellar continuum temperature, optical depth, line ampltidue, etc.) corresponds to one 
@@ -18,17 +19,18 @@ in the parameter map.
 - `stellar_continuum::Dict{Symbol, Array{Float64, 2}}`: The stellar continuum parameters: amplitude and temperature
 - `dust_continuum::Dict{Int, Dict{Symbol, Array{Float64, 2}}}`: The dust continuum parameters: amplitude and temperature for each
     dust continuum component
+- `power_law::Dict{Int, Dict{Symbol, Array{T, 2}}}`: Power law continuum parameters: amplitude and index for each component.
 - `dust_features::Dict{String, Dict{Symbol, Array{Float64, 2}}}`: The dust feature parameters: amplitude, central wavelength, and FWHM
     for each PAH feature
 - `extinction::Dict{Symbol, Array{Float64, 2}}`: Extinction parameters: optical depth at 9.7 μm and mixing ratio
 - `hot_dust::Dict{Symbol, Array{Float64, 2}}`: Hot dust parameters: amplitude, temperature, covering fraction, warm tau, and cold tau
 - `lines::Dict{Symbol, Dict{Symbol, Array{Float64, 2}}}`: The emission line parameters: amplitude, voff, FWHM, and any additional 
     line profile parameters for each line
-- `reduced_χ2::Array{Float64, 2}`: The reduced chi^2 value of each fit
+- `statistics::Array{Float64, 2}`: The reduced chi^2 value and degrees of freedom for each fit.
 
 See ['parammaps_empty`](@ref) for a default constructor function.
 """
-struct ParamMaps{T<:Real}
+struct MIRParamMaps{T<:Real} <: ParamMaps
 
     stellar_continuum::Dict{Symbol, Array{T, 2}}
     dust_continuum::Dict{Int, Dict{Symbol, Array{T, 2}}}
@@ -44,19 +46,64 @@ end
 
 
 """
-    parammaps_empty(shape, n_dust_cont, df_names, line_names, line_profiles,
+    OpticalParamMaps(stellar_populations, stellar_kinematics, lines, statistics)
+
+A structure for holding 2D maps of fitting parameters generated after fitting a cube.  Each parameter
+that is fit (i.e. stellar age, kinematics, Fe II emission, line amplitudes, etc.) corresponds to one 
+2D map with the value of that parameter, with each spaxel's fit value located at the corresponding location
+in the parameter map.
+
+# Fields
+- `stellar_populations::Dict{Int, Dict{Symbol, Array{T, 2}}}`: The stellar population parameters: mass, age, and metallicity.
+- `stellar_kinematics::Dict{Symbol, Array{T, 2}}`: The stellar line-of-sight velocity and velocity dispersion.
+- `feii::Dict{Symbol, Array{T, 2}}`: Narrow and/or broad Fe II emission parameters, including amplitude, velocity, and FWHM.
+- `power_law::Dict{Int, Dict{Symbol, Array{T, 2}}}`: Power law parameters, including amplitude and index.
+- `attenuation::Dict{Symbol, Array{T, 2}}`: Attenuation parameters, including E(B-V), E(B-V) factor, and optionally UV bump slope
+and dust covering fraction.
+- `lines::Dict{Symbol, Dict{Symbol, Array{T, 2}}}`: Emission line parameters, including amplitude, velocity, and FWHM, and any 
+additional line profile parameters for non-Gaussian profiles.
+- `statistics::Dict{Symbol, Array{T, 2}}`: Reduced chi^2 and degrees of freedom.
+
+See ['parammaps_empty`](@ref) for a default constructor function.
+"""
+struct OpticalParamMaps{T<:Real} <: ParamMaps
+
+    stellar_populations::Dict{Int, Dict{Symbol, Array{T, 2}}}
+    stellar_kinematics::Dict{Symbol, Array{T, 2}}
+    feii::Dict{Symbol, Array{T, 2}}
+    power_law::Dict{Int, Dict{Symbol, Array{T, 2}}}
+    attenuation::Dict{Symbol, Array{T, 2}}
+    lines::Dict{Symbol, Dict{Symbol, Array{T, 2}}}
+    statistics::Dict{Symbol, Array{T, 2}}
+
+end
+
+
+"""
+    parammaps_empty(shape, n_dust_cont, n_power_law, cf_dustfeat, ab_names, n_lines, n_comps, cf_lines,
         flexible_wavesol)
 
-A constructor function for making a default empty ParamMaps structure with all necessary fields for a given
+A constructor function for making a default empty MIRParamMaps structure with all necessary fields for a given
 fit of a DataCube.
+
+# Arguments {S<:Integer}
+- `shape::Tuple{S,S,S}`: Tuple specifying the 3D shape of the input data cube.
+- `n_dust_cont::S`: The number of dust continuum components in the fit.
+- `n_power_law::S`: The number of power law continuum components in the fit.
+- `cf_dustfeat::DustFeatures`: A DustFeatures object specifying all of the PAH emission in the fit.
+- `ab_names::Vector{String}`: The names of each absorption feature included in the fit.
+- `n_lines::S`: The number of emission lines in the fit.
+- `n_comps::S`: The maximum number of profiles that are being fit to a line.
+- `cf_lines::TransitionLines`: A TransitionLines object specifying all of the line emission in the fit.
+- `flexible_wavesol::Bool`: See the CubeFitter's `flexible_wavesol` parameter.
 """
-function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, n_power_law::Integer, cf_dustfeat::DustFeatures,
+function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::S, n_power_law::S, cf_dustfeat::DustFeatures,
     ab_names::Vector{String}, n_lines::S, n_comps::S, cf_lines::TransitionLines, 
-    flexible_wavesol::Bool)::ParamMaps where {S<:Integer}
+    flexible_wavesol::Bool)::MIRParamMaps where {S<:Integer}
 
     @debug """\n
-    Creating ParamMaps struct with shape $shape
-    ###########################################
+    Creating MIRParamMaps struct with shape $shape
+    ##############################################
     """
 
     # Initialize a default array of nans to be used as a placeholder for all the other arrays
@@ -169,31 +216,148 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::Integer, n_power_law:
     statistics[:dof] = copy(nan_arr)
     @debug "dof map"
 
-    ParamMaps{Float64}(stellar_continuum, dust_continuum, power_law, dust_features, abs_features, 
+    MIRParamMaps{Float64}(stellar_continuum, dust_continuum, power_law, dust_features, abs_features, 
         extinction, hot_dust, lines, statistics)
 end
 
 
 """
-    CubeModel(model, stellar, dust_continuum, dust_features, extinction, hot_dust, lines)
+    parammaps_empty(shape, n_ssps, n_power_law, n_lines, n_comps, cf_lines, flexible_wavesol)
+
+A constructor function for making a default empty OpticalParamMaps structure with all necessary fields for a given
+fit of a DataCube.
+
+# Arguments {S<:Integer}
+- `shape::Tuple{S,S,S}`: Tuple specifying the 3D shape of the input data cube.
+- `n_ssps::S`: The number of simple stellar populations in the fit.
+- `n_power_law::S`: The number of power law continuum components in the fit.
+- `n_lines::S`: The number of emission lines in the fit.
+- `n_comps::S`: The maximum number of profiles that are being fit to a line.
+- `cf_lines::TransitionLines`: A TransitionLines object specifying all of the line emission in the fit.
+- `flexible_wavesol::Bool`: See the CubeFitter's `flexible_wavesol` parameter.
+"""
+function parammaps_empty(shape::Tuple{S,S,S}, n_ssps::S, n_power_law::S, n_lines::S, n_comps::S, 
+    cf_lines::TransitionLines, flexible_wavesol::Bool)::OpticalParamMaps where {S<:Integer}
+
+    @debug """\n
+    Creating OpticalParamMaps struct with shape $shape
+    ##################################################
+    """
+
+    # Initialize a default array of nans to be used as a placeholder for all the other arrays
+    # until the actual fitting parameters are obtained
+    nan_arr = ones(shape[1:2]...) .* NaN
+
+    # Add stellar population fitting parameters
+    stellar_populations = Dict{Int, Dict{Symbol, Array{Float64, 2}}}()
+    for i ∈ 1:n_ssps
+        stellar_populations[i] = Dict{Symbol, Array{Float64, 2}}()
+        stellar_populations[i][:mass] = copy(nan_arr)
+        stellar_populations[i][:age] = copy(nan_arr)
+        stellar_populations[i][:metallicity] = copy(nan_arr)
+        @debug "stellar population $i maps with keys $(keys(stellar_populations[i]))"
+    end
+
+    # Add stellar kinematics
+    stellar_kinematics = Dict{Symbol, Array{Float64, 2}}()
+    stellar_kinematics[:vel] = copy(nan_arr)
+    stellar_kinematics[:vdisp] = copy(nan_arr)
+    @debug "stellar kinematics maps with keys $(keys(stellar_kinematics))"
+
+    # Add Fe II kinematics
+    feii = Dict{Symbol, Array{Float64, 2}}()
+    feii[:na_amp] = copy(nan_arr)
+    feii[:na_vel] = copy(nan_arr)
+    feii[:na_vdisp] = copy(nan_arr)
+    feii[:br_amp] = copy(nan_arr)
+    feii[:br_vel] = copy(nan_arr)
+    feii[:br_vdisp] = copy(nan_arr)
+    @debug "Fe II maps with keys $(keys(feii))"
+
+    # Add power laws
+    power_law = Dict{Int, Dict{Symbol, Array{Float64, 2}}}()
+    for i ∈ 1:n_power_law
+        power_law[i] = Dict{Symbol, Array{Float64, 2}}()
+        power_law[i][:amp] = copy(nan_arr)
+        power_law[i][:index] = copy(nan_arr)
+    end
+
+    # Add attenuation parameters
+    attenuation = Dict{Symbol, Array{Float64, 2}}()
+    attenuation[:E_BV] = copy(nan_arr)
+    attenuation[:E_BV_factor] = copy(nan_arr)
+    attenuation[:delta_UV] = copy(nan_arr)
+    attenuation[:frac] = copy(nan_arr)
+    @debug "attenuation maps with keys $(keys(attenuation))"
+
+    # Nested dictionary -> first layer keys are line names, second layer keys are parameter names, which contain 2D arrays
+    lines = Dict{Symbol, Dict{Symbol, Array{Float64, 2}}}()
+    for i ∈ 1:n_lines
+        for j ∈ 1:n_comps
+            if !isnothing(cf_lines.profiles[i, j])
+
+                line = Symbol(cf_lines.names[i], "_$(j)")
+                lines[line] = Dict{Symbol, Array{Float64, 2}}()
+
+                pnames = [:amp, :voff, :fwhm]
+                # Need extra voff parameter if using the flexible_wavesol keyword
+                if !isnothing(cf_lines.tied_voff[i, j]) && flexible_wavesol && isone(j)
+                    pnames = [:amp, :voff, :voff_indiv, :fwhm]
+                end
+                # Add 3rd and 4th order moments (skewness and kurtosis) for Gauss-Hermite profiles
+                if cf_lines.profiles[i, j] == :GaussHermite
+                    pnames = [pnames; :h3; :h4]
+                # Add mixing parameter for Voigt profiles, but only if NOT tying it
+                elseif cf_lines.profiles[i, j] == :Voigt
+                    pnames = [pnames; :mixing]
+                end
+                # Append parameters for flux, equivalent width, and signal-to-noise ratio, which are NOT fitting parameters, but are of interest
+                pnames = [pnames; :flux; :eqw; :SNR]
+                for pname ∈ pnames
+                    lines[line][pname] = copy(nan_arr)
+                end
+                @debug "line $line maps with keys $pnames"
+            end
+        end
+    end
+
+    statistics = Dict{Symbol, Array{Float64, 2}}()
+    # chi^2 statistics of the fits
+    statistics[:chi2] = copy(nan_arr)
+    @debug "chi^2 map"
+    statistics[:dof] = copy(nan_arr)
+    @debug "dof map"
+
+    OpticalParamMaps{Float64}(stellar_populations, stellar_kinematics, feii, power_law, attenuation, lines, statistics)
+end
+
+
+abstract type CubeModel end
+
+"""
+    MIRCubeModel(model, stellar, dust_continuum, dust_features, extinction, hot_dust, lines)
 
 A structure for holding 3D models of intensity, split up into model components, generated when fitting a cube.
 This will be the same shape as the input data, and preferably the same datatype too (i.e., JWST files have flux
 and error in Float32 format, so we should also output in Float32 format).  This is useful as a way to quickly
 compare the full model, or model components, to the data.
 
-# Fields
+# Fields {T<:Real}
 - `model::Array{T, 3}`: The full 3D model.
 - `stellar::Array{T, 3}`: The stellar component of the continuum.
 - `dust_continuum::Array{T, 4}`: The dust components of the continuum. The 4th axis runs over each individual dust component.
+- `power_law::Array{T, 4}`: The power law components of the continuum. The 4th axis runs over each individual power law.
 - `dust_features::Array{T, 4}`: The dust (PAH) feature profiles. The 4th axis runs over each individual dust profile.
+- `abs_features::Array{T, 4}`: The absorption feature profiles. The 4th axis runs over each individual absorption profile.
 - `extinction::Array{T, 3}`: The extinction profile.
+- `abs_ice::Array{T, 3}`: The water-ice absorption feature profile.
+- `abs_ch::Array{T, 3}`: The CH absorption feature profile.
 - `hot_dust::Array{T, 3}`: The hot dust emission profile
 - `lines::Array{T, 4}`: The line profiles. The 4th axis runs over each individual line.
 
 See [`cubemodel_empty`](@ref) for a default constructor method.
 """
-struct CubeModel{T<:Real}
+struct MIRCubeModel{T<:Real} <: CubeModel
 
     model::Array{T, 3}
     stellar::Array{T, 3}
@@ -211,137 +375,268 @@ end
 
 
 """
-    cubemodel_empty(shape, n_dust_cont, df_names, line_names; floattype=floattype)
+    OpticalCubeModel(model, stellar, lines)
 
-A constructor function for making a default empty CubeModel object with all the necessary fields for a given
+A structure for holding 3D models of intensity, split up into model components, generated when fitting a cube.
+This will be the same shape as the input data, and preferably the same datatype too (i.e., JWST files have flux
+and error in Float32 format, so we should also output in Float32 format).  This is useful as a way to quickly
+compare the full model, or model components, to the data.
+
+# Fields {T<:Real}
+- `model::Array{T, 3}`: The full 3D model.
+- `stellar::Array{T, 4}`: The simple stellar population components of the continuum. The 4th axis runs over each individual population.
+- `na_feii::Array{T, 3}`: The narrow Fe II emission component.
+- `br_feii::Array{T, 3}`: The broad Fe II emission component.
+- `power_law::Array{T, 4}`: The power law components of the continuum. The 4th axis runs over each individual power law.
+- `attenuation_stars::Array{T, 3}`: The dust attenuation on the stellar population.
+- `attenuation_gas::Array{T, 3}`: The dust attenuation on the gas, related to attenuation_stars by E(B-V)_stars = E(B-V)_factor * E(B-V)_gas
+- `lines::Array{T, 4}`: The line profiles. The 4th axis runs over each individual line.
+
+See [`cubemodel_empty`](@ref) for a default constructor method.
+"""
+struct OpticalCubeModel{T<:Real} <: CubeModel
+
+    model::Array{T, 3}
+    stellar::Array{T, 4}
+    na_feii::Array{T, 3}
+    br_feii::Array{T, 3}
+    power_law::Array{T, 4}
+    attenuation_stars::Array{T, 3}
+    attenuation_gas::Array{T, 3}
+    lines::Array{T, 4}
+
+end
+
+
+"""
+    cubemodel_empty(shape, n_dust_cont, n_power_law, df_names, ab_names, line_names[, floattype])
+
+A constructor function for making a default empty MIRCubeModel object with all the necessary fields for a given
 fit of a DataCube.
 
 # Arguments
-`S<:Integer`
-- `shape::Tuple{S,S,S}`: The dimensions of the DataCube being fit, formatted as a tuple of (nx, ny, nz)
+- `shape::Tuple`: The dimensions of the DataCube being fit, formatted as a tuple of (nx, ny, nz)
 - `n_dust_cont::Integer`: The number of dust continuum components in the fit (usually given by the number of temperatures 
     specified in the dust.toml file)
+- `n_power_law::Integer`: The number of power law continuum components in the fit.
 - `df_names::Vector{String}`: List of names of PAH features being fit, i.e. "PAH_12.62", ...
+- `ab_names::Vector{String}`: List of names of absorption features being fit, i.e. "abs_HCO+_12.1", ...
 - `line_names::Vector{Symbol}`: List of names of lines being fit, i.e. "NeVI_7652", ...
 - `floattype::DataType=Float32`: The type of float to use in the arrays. Should ideally be the same as the input data,
     which for JWST is Float32.
 """
 function cubemodel_empty(shape::Tuple, n_dust_cont::Integer, n_power_law::Integer, df_names::Vector{String}, 
-    ab_names::Vector{String}, line_names::Vector{Symbol}, floattype::DataType=Float32)::CubeModel
+    ab_names::Vector{String}, line_names::Vector{Symbol}, floattype::DataType=Float32)::MIRCubeModel
 
     @debug """\n
-    Creating CubeModel struct with shape $shape
-    ###########################################
+    Creating MIRCubeModel struct with shape $shape
+    ##############################################
     """
 
     # Make sure the floattype given is actually a type of float
     @assert floattype <: AbstractFloat "floattype must be a type of AbstractFloat (Float32 or Float64)!"
+    # Swap the wavelength axis to be the FIRST axis since it is accessed most often and thus should be continuous in memory
+    shape2 = (shape[end], shape[1:end-1]...)
 
     # Initialize the arrays for each part of the full 3D model
-    model = zeros(floattype, shape...)
+    model = zeros(floattype, shape2...)
     @debug "model cube"
-    stellar = zeros(floattype, shape...)
+    stellar = zeros(floattype, shape2...)
     @debug "stellar continuum comp cube"
-    dust_continuum = zeros(floattype, shape..., n_dust_cont)
+    dust_continuum = zeros(floattype, shape2..., n_dust_cont)
     @debug "dust continuum comp cubes"
-    power_law = zeros(floattype, shape..., n_power_law)
+    power_law = zeros(floattype, shape2..., n_power_law)
     @debug "power law comp cubes"
-    dust_features = zeros(floattype, shape..., length(df_names))
+    dust_features = zeros(floattype, shape2..., length(df_names))
     @debug "dust features comp cubes"
-    abs_features = zeros(floattype, shape..., length(ab_names))
+    abs_features = zeros(floattype, shape2..., length(ab_names))
     @debug "absorption features comp cubes"
-    extinction = zeros(floattype, shape...)
+    extinction = zeros(floattype, shape2...)
     @debug "extinction comp cube"
-    abs_ice = zeros(floattype, shape...)
+    abs_ice = zeros(floattype, shape2...)
     @debug "abs_ice comp cube"
-    abs_ch = zeros(floattype, shape...)
+    abs_ch = zeros(floattype, shape2...)
     @debug "abs_ch comp cube"
-    hot_dust = zeros(floattype, shape...)
+    hot_dust = zeros(floattype, shape2...)
     @debug "hot dust comp cube"
-    lines = zeros(floattype, shape..., length(line_names))
+    lines = zeros(floattype, shape2..., length(line_names))
     @debug "lines comp cubes"
 
-    CubeModel(model, stellar, dust_continuum, power_law, dust_features, abs_features, 
+    MIRCubeModel(model, stellar, dust_continuum, power_law, dust_features, abs_features, 
         extinction, abs_ice, abs_ch, hot_dust, lines)
 end
 
 
 """
-    CubeFitter(cube, z, name; plot_spaxels=plot_spaxels, plot_maps=plot_maps, save_fits=save_fits)
+    cubemodel_empty(shape, n_ssps, n_power_law, line_names[, floattype])
+
+A constructor function for making a default empty OpticalCubeModel object with all the necessary fields for a given
+fit of a DataCube.
+    
+# Arguments
+- `shape::Tuple`: The dimensions of the DataCube being fit, formatted as a tuple of (nx, ny, nz)
+- `n_ssps::Integer`: The number of simple stellar population continuum components in the fit.
+- `n_power_law::Integer`: The number of power law continuum components in the fit.
+- `line_names::Vector{Symbol}`: List of names of lines being fit, i.e. "NeVI_7652", ...
+- `floattype::DataType=Float32`: The type of float to use in the arrays. Should ideally be the same as the input data,
+which for JWST is Float32.
+"""
+function cubemodel_empty(shape::Tuple, n_ssps::Integer, n_power_law::Integer, line_names::Vector{Symbol}, 
+    floattype::DataType=Float32)::OpticalCubeModel
+
+    @debug """\n
+    Creating OpticalCubeModel struct with shape $shape
+    ##################################################
+    """
+
+    @assert floattype <: AbstractFloat "floattype must be a type of AbstractFloat (Float32 or Float64)!"
+    # Swap the wavelength axis to be the FIRST axis since it is accessed most often and thus should be continuous in memory
+    shape2 = (shape[end], shape[1:end-1]...)
+
+    # Initialize the arrays for each part of the full 3D model
+    model = zeros(floattype, shape2...)
+    @debug "model cube"
+    stellar = zeros(floattype, shape2..., n_ssps)
+    @debug "stellar population comp cubes"
+    na_feii = zeros(floattype, shape2...)
+    @debug "narrow Fe II emission comp cube"
+    br_feii = zeros(floattype, shape2...)
+    @debug "broad Fe II emission comp cube"
+    power_law = zeros(floattype, shape2..., n_power_law)
+    @debug "power law comp cubes"
+    attenuation_stars = zeros(floattype, shape2...)
+    @debug "attenuation_stars comp cube"
+    attenuation_gas = zeros(floattype, shape2...)
+    @debug "attenuation_gas comp cube"
+    lines = zeros(floattype, shape2..., length(line_names))
+    @debug "lines comp cubes"
+
+    OpticalCubeModel(model, stellar, na_feii, br_feii, power_law, attenuation_stars, attenuation_gas, lines)
+
+end
+
+
+"""
+    CubeFitter(cube, z, name; <keyword arguments>)
 
 This is the main structure used for fitting IFU cubes, containing all of the necessary data, metadata,
 fitting options, and associated functions for generating ParamMaps and CubeModel structures to handle the outputs 
 of all the fits.  This is essentially the "configuration object" that tells the rest of the fitting code how
 to run. The actual fitting functions (`fit_spaxel` and `fit_cube!`) require an instance of this structure.
 
-# Fields
-`T<:Real, S<:Integer`
+Other than `cube`, `z`, and `name`, all fields listed below will be populated by the defaults given in the 
+`config.toml`, `dust.toml`, `lines.toml`, and `optical.toml` configuration files, or by quantities derived from
+these options. For more detailed explanations on these options, please refer to the options files and the README file.
+
+# Fields {T<:Real, S<:Integer, C<:Complex}
+
+## Data
 - `cube::DataCube`: The main DataCube object containing the cube that is being fit
 - `z::Real`: The redshift of the target that is being fit
-- `plot_spaxels::Symbol=:pyplot`: A Symbol specifying the plotting backend to be used when plotting individual spaxel fits, can
-    be either `:pyplot` or `:plotly`
-- `plot_maps::Bool=true`: Whether or not to plot 2D maps of the best-fit parameters after the fitting is finished
-- `parallel::Bool=true`: Whether or not to fit multiple spaxels in parallel using multiprocessing
-- `save_fits::Bool=true`: Whether or not to save the final best-fit models and parameters as FITS files
-Read from the options files:
+- `name::String`: The name of the fitting run being performed.
+- `spectral_region::Symbol`: Either :MIR for mid-infrared, or :OPT for optical.
+
+## Basic configuration options
+- `user_mask::Union{Vector{<:Tuple},Nothing}`: An optional mask specifying areas of the spectrum to ignore during fitting.
+- `plot_spaxels::Symbol`: A Symbol specifying the plotting backend to be used when plotting individual spaxel fits, can
+    be either `:pyplot`, `:plotly`, or `:both`
+- `plot_maps::Bool`: Whether or not to plot 2D maps of the best-fit parameters after the fitting is finished
+- `plot_range::Union{Vector{<:Tuple},Nothing}`: An optional list of spectral regions to extract zoomed-in plots from (useful for plotting
+specific emission lines of interest).
+- `parallel::Bool`: Whether or not to fit multiple spaxels in parallel using multiprocessing
+- `save_fits::Bool`: Whether or not to save the final best-fit models and parameters as FITS files
+- `save_full_model::Bool`: Whether or not to save the full 3D best-fit model as a FITS file.
 - `overwrite::Bool`: Whether or not to overwrite old fits of spaxels when rerunning
 - `track_memory::Bool`: Whether or not to save diagnostic files showing memory usage of the program
 - `track_convergence::Bool`: Whether or not to save diagnostic files showing convergence of line fitting for each spaxel
 - `make_movies::Bool`: Whether or not to save mp4 files of the final model
-- `extinction_curve::String`: The type of extinction curve being used, either `"kvt"` or `"d+"`
+
+## Basic fitting options
+- `extinction_curve::String`: The type of extinction curve being used, i.e. `"kvt"` or `"d+"`
 - `extinction_screen::Bool`: Whether or not the extinction is modeled as a screen
-- `T_s::Parameter`: The stellar temperature parameter
-- `T_dc::Vector{Parameter}`: The dust continuum temperature parameters
-- `τ_97::Parameter`: The dust opacity at 9.7 um parameter
-- `τ_ice::Parameter`: The peak opacity from ice absorption (at around 6.9 um)
-- `τ_ch::Parameter`: The peak opacity from CH absorption (at around 6.9 um)
-- `β::Parameter`: The extinction profile mixing parameter
-- `T_hot::Parameter`: The hot dust temperature
-- `Cf_hot::Parameter`: The hot dust covering fraction
-- `τ_warm::Parameter`: The warm dust optical depth
-- `τ_cold::Parameter`: The cold dust optical depth
-- `n_dust_cont::Integer`: The number of dust continuum profiles
-- `df_names::Vector{String}`: The names of each PAH feature profile
-- `dust_features::Vector{Dict}`: All of the fitting parameters for each PAH feature
-- `n_lines::Integer`: The number of lines being fit
-- `line_names::Vector{Symbol}`: The names of each line being fit
-- `line_profiles::Vector{Symbol}`: The profiles of each line being fit
-- `line_acomp_profiles::Vector{Union{Nothing,Symbol}}`: Same as `line_profiles`, but for the additional components
-- `lines::Vector{TransitionLine}`: All of the fitting parameters for each line
-- `n_kin_tied::Integer`: The number of tied velocity offsets
-- `line_tied::Vector{Union{String,Nothing}}`: List of line tie keys which specify whether the voff of the given line should be
-    tied to other lines. The line tie key itself may be either `nothing` (untied), or a String specifying the group of lines
-    being tied, i.e. "H2"
-- `kin_tied_key::Vector{String}`: List of only the unique keys in line_tied (not including `nothing`)
-- `voff_tied::Vector{Parameter}`: The actual tied voff parameter objects, corresponding to the `kin_tied_key`
-- `fwhm_tied::Vector{Parameter}`: The actual tied fwhm parameter objects, corresponding to the `kin_tied_key`
-- `n_acomp_kin_tied::Integer`: Same as `n_kin_tied`, but for additional components
-- `line_acomp_tied::Vector{Union{String,Nothing}}`: Same as `line_tied`, but for additional components
-- `acomp_kin_tied_key::Vector{String}`: Same as `kin_tied_key`, but for additional components
-- `acomp_voff_tied::Vector{Parameter}`: Same as `voff_tied`, but for additional components
-- `acomp_fwhm_tied::Vector{Parameter}`: Same as `fwhm_tied`, but for additional components
+- `extinction_map::Union{Matrix{T},Nothing}`: An optional map of estimated extinction values. For MIR spectra, this is interpreted 
+as tau_9.7 values, whereas for optical spectra it is interpreted as E(B-V) values. The fits will be locked to the value at the 
+corresponding spaxel.
+- `fit_sil_emission::Bool`: Whether or not to fit MIR hot silicate dust emission
+- `fit_opt_na_feii::Bool`: Whether or not to fit optical narrow Fe II emission
+- `fit_opt_br_feii::Bool`: Whether or not to fit optical broad Fe II emission
+- `fit_all_samin::Bool`: Whether or not to fit all spaxels with simulated annealing
+- `use_pah_templates::Bool`: Whether or not to fit the continuum in two steps, where the first step uses PAH templates,
+and the second step fits the PAH residuals with the PAHFIT Drude model.
+- `pah_template_map::BitMatrix`: Map of booleans specifying individual spaxels to fit with PAH templates, if use_pah_templates
+is true. By default, if use_pah_templates is true, all spaxels will be fit with PAH templates.
+- `fit_joint::Bool`: If true, fit the continuum and lines simultaneously. If false, the lines will first be masked and the
+continuum will be fit, then the continuum is subtracted and the lines are fit to the residuals.
+- `fit_uv_bump::Bool`: Whether or not to fit the UV bump in the dust attenuation profile. Only applies if the extinction
+curve is "calzetti".
+- `fit_covering_frac::Bool`: Whether or not to fit a dust covering fraction in the attenuation profile. Only applies if the
+extinction curve is "calzetti".
+
+## Continuum parameters
+- `continuum::Continuum`: A Continuum structure holding information about various continuum fitting parameters.
+This object will obviously be different depending on if the spectral region is :MIR or :OPT.
+
+## MIR continuum parameters
+- `n_dust_cont::S`: The number of dust continuum components
+- `n_power_law::S`: The number of power law continuum components
+- `n_dust_feat::S`: The number of PAH features
+- `n_abs_feat::S`: The number of absorption features
+- `dust_features::Union{DustFeatures,Nothing}`: All of the fitting parameters for each PAH feature
+- `abs_features::Union{DustFeatures,Nothing}`: All of the fitting parameters for each absorption feature
+- `abs_taus::Union{Vector{Parameter},Nothing}`: A vector of amplitude parameters for the absorption features
+
+## Optical continuum parameters
+- `n_ssps::S`: The number of simple stellar population components
+- `ssp_λ::Union{Vector{T},Nothing}`: The wavelength grid for the simple stellar population templates
+- `ssp_templates::Union{Vector{Spline2D},Nothing}`: A vector of interpolating functions for the simple stellar populations
+at each point in the wavelength grid.
+- `feii_templates_fft::Union{Matrix{C},Nothing}`: A matrix of the Fourier transforms of the narrow and broad Fe II templates
+- `velscale::T`: The constant velocity scale of the wavelength grid, which assumes logarithmic spacing, in km/s/pixel.
+- `vsyst_ssp::T`: The systemic velocity offset between the input wavelength grid and the SSP template wavelength grid.
+- `vsyst_feii::T`: The systemic velocity offset between the input wavelength grid and the Fe II template wavelength grid.
+- `npad_feii::S`: The length of the Fe II templates (NOT the length of the Fourier transformed templates).
+
+## Line parameters
+- `n_lines::S`: The number of lines being fit
+- `n_acomps::S`: The summed total number of line profiles fit to all lines in the spectrum, including additional components.
+- `n_comps::S`: The maximum number of additional profiles that may be fit to any given line.
+- `lines::TransitionLines`: A TransitionLines struct containing parameters and tied information for the emission lines.
+
+## Tied Kinematics
+- `tied_kinematics::TiedKinematics`: A TiedKinematics struct containing information about which lines have tied velocities and FWHMs.
+
+## Tied voigt mixing
 - `tie_voigt_mixing::Bool`: Whether or not the Voigt mixing parameter is tied between all the lines with Voigt profiles
 - `voigt_mix_tied::Parameter`: The actual tied Voigt mixing parameter object, given `tie_voigt_mixing` is true
-- `n_params_cont::Integer`: The total number of free fitting parameters for the continuum fit (not including emission lines)
-- `n_params_lines::Integer`: The total number of free fitting parameters for the emission line fit (not including the continuum)
+
+## Number of parameters
+- `n_params_cont::S`: The total number of free fitting parameters for the continuum fit (not including emission lines)
+- `n_params_lines::S`: The total number of free fitting parameters for the emission line fit (not including the continuum)
+- `n_params_extra::S`: The total number of extra parameters calculated for each fit (includes things like line fluxes and equivalent widths)
+
+## General options
 - `cosmology::Cosmology.AbstractCosmology`: The Cosmology, used solely to create physical scale bars on the 2D parameter plots
-- `χ²_thresh::Real`: The threshold for reduced χ² values, below which the best fit parameters for a given
-    row will be set
 - `flexible_wavesol::Bool`: Whether or not to allow small variations in the velocity offsets even when tied, to account
     for a bad wavelength solution
-- `p_best_cont::Array{T}`: A rolling collection of best fit continuum parameters for the best fitting spaxels
-    along each row, for fits with a reduced χ² below χ²_thresh, which are used for the starting parameters in the following
-    fits for the given row
-- `p_best_line::Array{T}`: Same as `p_best_cont`, but for the line parameters
-- `χ²_best::SharedVector{T}`: The reduced χ² values associated with the `p_best_cont` and `p_best_line` values
-    in each row
-- `best_spaxel::SharedVector{Tuple{S,S}}`: The locations of the spaxels associated with the `p_best_cont` and `p_best_line`
-    values in each row
+- `n_bootstrap::S`: The number of bootstrapping iterations that should be performed for each fit.
+- `random_seed::S`: An optional number to use as a seed for the RNG utilized during bootstrapping, to ensure consistency between
+attempts.
+- `line_test_lines::Vector{Vector{Symbol}}`: A list of lines which should be tested for additional components. They may be grouped
+together (hence the vector-of-a-vector structure) such that lines in a group will all be given the maximum number of parameters that
+any one line passes the test for.
+- `line_test_threshold::T`: A threshold which must be met in the chi^2 ratio between a fit without an additional line profile and
+one with the additional profile, in order to include the additional profile in the final fit.
+- `plot_line_test::Bool`: Whether or not to plot the line test results.
 
-See [`ParamMaps`](@ref), [`parammaps_empty`](@ref), [`CubeModel`](@ref), [`cubemodel_empty`](@ref), 
+## Best fit parameters
+- `p_init_cont::Vector{T}`: The best-fit continuum parameters for the initial fit to the sum of all spaxels.
+- `p_init_line::Vector{T}`: Same as `p_init_cont`, but for the line parameters
+- `p_init_pahtemp::Vector{T}`: Same as `p_init_cont`, but for the PAH templates amplitudes
+
+See [`ParamMaps`](@ref), [`parammaps_empta`](@ref), [`CubeModel`](@ref), [`cubemodel_empty`](@ref), 
     [`fit_spaxel`](@ref), [`fit_cube!`](@ref)
 """
-struct CubeFitter{T<:Real,S<:Integer}
+struct CubeFitter{T<:Real,S<:Integer,C<:Complex} 
 
     # See explanations for each field in the docstring!
     
@@ -349,6 +644,7 @@ struct CubeFitter{T<:Real,S<:Integer}
     cube::DataCube
     z::T
     name::String
+    spectral_region::Symbol
 
     # Basic fitting options
     user_mask::Union{Vector{<:Tuple},Nothing}
@@ -362,24 +658,41 @@ struct CubeFitter{T<:Real,S<:Integer}
     track_memory::Bool
     track_convergence::Bool
     make_movies::Bool
+
     extinction_curve::String
     extinction_screen::Bool
+    extinction_map::Union{Matrix{T},Nothing}
     fit_sil_emission::Bool
+    fit_opt_na_feii::Bool
+    fit_opt_br_feii::Bool
     fit_all_samin::Bool
     use_pah_templates::Bool
     pah_template_map::BitMatrix
+    fit_joint::Bool
+    fit_uv_bump::Bool
+    fit_covering_frac::Bool
 
     # Continuum parameters
     continuum::Continuum
 
-    # Dust Feature parameters
+    # MIR continuum parameters
     n_dust_cont::S
-    n_power_law::S
+    n_power_law::S  # (also used for optical power laws)
     n_dust_feat::S
     n_abs_feat::S
-    dust_features::DustFeatures
-    abs_features::DustFeatures
-    abs_taus::Vector{Parameter}
+    dust_features::Union{DustFeatures,Nothing}
+    abs_features::Union{DustFeatures,Nothing}
+    abs_taus::Union{Vector{Parameter},Nothing}
+
+    # Optical continuum parameters
+    n_ssps::S
+    ssp_λ::Union{Vector{T},Nothing}
+    ssp_templates::Union{Vector{Spline2D},Nothing}
+    feii_templates_fft::Union{Matrix{C},Nothing}
+    velscale::T
+    vsyst_ssp::T
+    vsyst_feii::T
+    npad_feii::S
 
     # Line parameters
     n_lines::S
@@ -404,7 +717,7 @@ struct CubeFitter{T<:Real,S<:Integer}
     flexible_wavesol::Bool
     n_bootstrap::S
     random_seed::S
-    line_test_lines::Vector{Symbol}
+    line_test_lines::Vector{Vector{Symbol}}
     line_test_threshold::T
     plot_line_test::Bool
 
@@ -424,7 +737,7 @@ struct CubeFitter{T<:Real,S<:Integer}
         for key in keys(kwargs)
             out[key] = kwargs[key]
         end
-        out[:line_test_lines] = [Symbol(ln) for ln in out[:line_test_lines]]
+        out[:line_test_lines] = [[Symbol(ln) for ln in group] for group in out[:line_test_lines]]
         out[:plot_spaxels] = Symbol(out[:plot_spaxels])
         if !haskey(out, :plot_range)
             out[:plot_range] = nothing
@@ -445,7 +758,9 @@ struct CubeFitter{T<:Real,S<:Integer}
 
         # Prepare output directories
         @info "Preparing output directories"
+        spectral_region = cube.spectral_region
         name = replace(name, #= no spaces! =# " " => "_")
+        name = join([name, lowercase(string(spectral_region))], "_")
 
         # Top-level output directory
         if !isdir("output_$name")
@@ -480,86 +795,141 @@ struct CubeFitter{T<:Real,S<:Integer}
         Creating CubeFitter struct for $name at z=$z
         ############################################
         """
+
         # Alias
         λ = cube.λ
+        # Get potential extinction map
+        extinction_map = nothing
+        if haskey(out, :extinction_map)
+            extinction_map = out[:extinction_map]
+            @assert size(extinction_map) == size(cube.I)[1:2] "The extinction map must match the shape of the first two dimensions of the intensity map!"
+        end
 
-        continuum, dust_features, abs_features, abs_taus = parse_dust()
+        if spectral_region == :MIR
+
+            continuum, dust_features, abs_features, abs_taus = parse_dust()
+
+            # Adjust wavelengths/FWHMs for any local absorption features
+            for i in 1:length(abs_features.names)
+                if abs_features._local[i]
+                    abs_features.mean[i].value /= (1 + z)
+                    abs_features.mean[i].limits = (abs_features.mean[i].limits[1] / (1 + z),
+                                                abs_features.mean[i].limits[2] / (1 + z))
+                    abs_features.fwhm[i].value /= (1 + z)
+                    abs_features.fwhm[i].limits = (abs_features.fwhm[i].limits[1] / (1 + z),
+                                                abs_features.fwhm[i].limits[2] / (1 + z))
+                end
+            end
+
+            @debug "### Model will include 1 stellar continuum component ###" *
+                "\n### at T = $(continuum.T_s.value) K ###"
+
+            #### PREPARE OUTPUTS ####
+            n_dust_cont = length(continuum.T_dc)
+            msg = "### Model will include $n_dust_cont dust continuum components ###"
+            for T_dci ∈ continuum.T_dc
+                msg *= "\n### at T = $(T_dci.value) K ###"
+            end
+            @debug msg 
+
+            n_power_law = length(continuum.α)
+            msg = "### Model will include $n_power_law power law components ###"
+            for αi ∈ continuum.α
+                msg *= "\n### with alpha = $(αi.value) ###"
+            end
+            @debug msg
+
+            # Only use PAH features within +/-0.5 um of the region being fit (to include wide tails)
+            df_filt = [(minimum(λ)-0.5 < dust_features.mean[i].value < maximum(λ)+0.5) for i ∈ 1:length(dust_features.mean)]
+            if !isnothing(out[:user_mask])
+                for pair in out[:user_mask]
+                    df_filt .&= [~(pair[1] < dust_features.mean[i].value < pair[2]) for i ∈ 1:length(dust_features.mean)]
+                end
+            end
+            dust_features = DustFeatures(dust_features.names[df_filt], 
+                                        dust_features.profiles[df_filt],
+                                        dust_features.mean[df_filt],
+                                        dust_features.fwhm[df_filt],
+                                        dust_features.index[df_filt],
+                                        dust_features.cutoff[df_filt],
+                                        dust_features.complexes[df_filt],
+                                        dust_features._local[df_filt])
+            n_dust_features = length(dust_features.names)
+            msg = "### Model will include $n_dust_features dust feature (PAH) components ###"
+            for df_mn ∈ dust_features.mean
+                msg *= "\n### at lambda = $df_mn um ###"
+            end
+            @debug msg
+
+            # Only use absorption features within +/-0.5 um of the region being fit
+            ab_filt = [(minimum(λ)-0.5 < abs_features.mean[i].value < maximum(λ)+0.5) for i ∈ 1:length(abs_features.mean)]
+            if !isnothing(out[:user_mask])
+                for pair in out[:user_mask]
+                    ab_filt .&= [~(pair[1] < abs_features.mean[i].value < pair[2]) for i ∈ 1:length(abs_features.mean)]
+                end
+            end
+            abs_features = DustFeatures(abs_features.names[ab_filt],
+                                        abs_features.profiles[ab_filt],
+                                        abs_features.mean[ab_filt],
+                                        abs_features.fwhm[ab_filt],
+                                        abs_features.index[ab_filt],
+                                        abs_features.cutoff[ab_filt],
+                                        abs_features.complexes[ab_filt],
+                                        abs_features._local[ab_filt])
+            abs_taus = abs_taus[ab_filt]
+            n_abs_features = length(abs_features.names)
+            msg = "### Model will include $n_abs_features absorption feature components ###"
+            for ab_mn ∈ abs_features.mean
+                msg *= "\n### at lambda = $ab_mn um ###"
+            end
+            @debug msg
+
+            # Set defaults for the optical components that will not be fit
+            n_ssps = 0
+            ssp_λ = ssp_templates = feii_templates_fft = nothing
+            npad_feii = velscale = vsyst_ssp = vsyst_feii = 0
+
+        elseif spectral_region == :OPT
+
+            continuum = parse_optical()
+
+            # Create the simple stellar population templates with FSPS
+            ssp_λ, ages, metals, ssp_templates = generate_stellar_populations(λ, cube.lsf, z, out[:cosmology], name)
+            # Create a 2D linear interpolation over the ages/metallicities
+            ssp_templates = [Spline2D(ages, metals, ssp_templates[:, :, i], kx=1, ky=1) for i in eachindex(ssp_λ)]
+
+            # Load in the Fe II templates from Veron-Cetty et al. (2004)
+            npad_feii, feii_λ, na_feii_fft, br_feii_fft = generate_feii_templates(λ, cube.lsf)
+            # Create a matrix containing both templates
+            feii_templates_fft = [na_feii_fft br_feii_fft]
+
+            ### PREPARE OUTPUTS ###
+            n_ssps = length(continuum.ssp_ages)
+            msg = "### Model will include $n_ssps simple stellar population components ###"
+            for (age, z) ∈ zip(continuum.ssp_ages, continuum.ssp_metallicities)
+                msg *= "\n### at age = $(age.value) Gyr and [M/H] = $(z.value) ###"
+            end
+            @debug msg
+
+            n_power_law = length(continuum.α)
+            msg = "### Model will include $n_power_law power law components ###"
+            for pl ∈ continuum.α
+                msg *= "\n### with index = $(pl.value) ###"
+            end
+            @debug msg
+
+            # Calculate velocity scale and systemic velocity offset b/w templates and input
+            velscale = log(λ[2]/λ[1]) * C_KMS
+            vsyst_ssp = log(ssp_λ[1]/λ[1]) * C_KMS
+            vsyst_feii = log(feii_λ[1]/λ[1]) * C_KMS
+
+            # Set defaults for the MIR components that will not be fit
+            n_dust_cont = n_dust_features = n_abs_features = 0
+            dust_features = abs_features = abs_taus = nothing
+
+        end
+
         lines, tied_kinematics, flexible_wavesol, tie_voigt_mixing, voigt_mix_tied = parse_lines()
-
-        # Adjust wavelengths/FWHMs for any local absorption features
-        for i in 1:length(abs_features.names)
-            if abs_features._local[i]
-                abs_features.mean[i].value /= (1 + z)
-                abs_features.mean[i].limits = (abs_features.mean[i].limits[1] / (1 + z),
-                                               abs_features.mean[i].limits[2] / (1 + z))
-                abs_features.fwhm[i].value /= (1 + z)
-                abs_features.fwhm[i].limits = (abs_features.fwhm[i].limits[1] / (1 + z),
-                                               abs_features.fwhm[i].limits[2] / (1 + z))
-            end
-        end
-
-        @debug "### Model will include 1 stellar continuum component ###" *
-             "\n### at T = $(continuum.T_s.value) K ###"
-
-        #### PREPARE OUTPUTS ####
-        n_dust_cont = length(continuum.T_dc)
-        msg = "### Model will include $n_dust_cont dust continuum components ###"
-        for T_dci ∈ continuum.T_dc
-            msg *= "\n### at T = $(T_dci.value) K ###"
-        end
-        @debug msg 
-
-        n_power_law = length(continuum.α)
-        msg = "### Model will include $n_power_law power law components ###"
-        for αi ∈ continuum.α
-            msg *= "\n### with alpha = $(αi.value) ###"
-        end
-        @debug msg
-
-        # Only use PAH features within +/-0.5 um of the region being fit (to include wide tails)
-        df_filt = [(minimum(λ)-0.5 < dust_features.mean[i].value < maximum(λ)+0.5) for i ∈ 1:length(dust_features.mean)]
-        if !isnothing(out[:user_mask])
-            for pair in out[:user_mask]
-                df_filt .&= [~(pair[1] < dust_features.mean[i].value < pair[2]) for i ∈ 1:length(dust_features.mean)]
-            end
-        end
-        dust_features = DustFeatures(dust_features.names[df_filt], 
-                                     dust_features.profiles[df_filt],
-                                     dust_features.mean[df_filt],
-                                     dust_features.fwhm[df_filt],
-                                     dust_features.index[df_filt],
-                                     dust_features.cutoff[df_filt],
-                                     dust_features.complexes[df_filt],
-                                     dust_features._local[df_filt])
-        n_dust_features = length(dust_features.names)
-        msg = "### Model will include $n_dust_features dust feature (PAH) components ###"
-        for df_mn ∈ dust_features.mean
-            msg *= "\n### at lambda = $df_mn um ###"
-        end
-        @debug msg
-
-        # Only use absorption features within +/-0.5 um of the region being fit
-        ab_filt = [(minimum(λ)-0.5 < abs_features.mean[i].value < maximum(λ)+0.5) for i ∈ 1:length(abs_features.mean)]
-        if !isnothing(out[:user_mask])
-            for pair in out[:user_mask]
-                ab_filt .&= [~(pair[1] < abs_features.mean[i].value < pair[2]) for i ∈ 1:length(abs_features.mean)]
-            end
-        end
-        abs_features = DustFeatures(abs_features.names[ab_filt],
-                                    abs_features.profiles[ab_filt],
-                                    abs_features.mean[ab_filt],
-                                    abs_features.fwhm[ab_filt],
-                                    abs_features.index[ab_filt],
-                                    abs_features.cutoff[ab_filt],
-                                    abs_features.complexes[ab_filt],
-                                    abs_features._local[ab_filt])
-        abs_taus = abs_taus[ab_filt]
-        n_abs_features = length(abs_features.names)
-        msg = "### Model will include $n_abs_features absorption feature components ###"
-        for ab_mn ∈ abs_features.mean
-            msg *= "\n### at lambda = $ab_mn um ###"
-        end
-        @debug msg
 
         # Only use lines within the wavelength range being fit
         ln_filt = minimum(λ) .< lines.λ₀ .< maximum(λ)
@@ -570,9 +940,9 @@ struct CubeFitter{T<:Real,S<:Integer}
         end
         # Convert to a vectorized "TransitionLines" object
         lines = TransitionLines(lines.names[ln_filt], lines.latex[ln_filt], lines.annotate[ln_filt], lines.λ₀[ln_filt], 
-                                lines.profiles[ln_filt, :], lines.tied_voff[ln_filt, :], lines.tied_fwhm[ln_filt, :], 
+                                lines.profiles[ln_filt, :], lines.tied_amp[ln_filt, :], lines.tied_voff[ln_filt, :], lines.tied_fwhm[ln_filt, :], 
                                 lines.acomp_amp[ln_filt, :], lines.voff[ln_filt, :], lines.fwhm[ln_filt, :], lines.h3[ln_filt, :], 
-                                lines.h4[ln_filt, :], lines.η[ln_filt, :])
+                                lines.h4[ln_filt, :], lines.η[ln_filt, :], lines.combined)
         n_lines = length(lines.names)
         n_comps = size(lines.profiles, 2)
         n_acomps = sum(.!isnothing.(lines.profiles[:, 2:end]))
@@ -590,6 +960,31 @@ struct CubeFitter{T<:Real,S<:Integer}
         # Remove unnecessary rows/keys from the tied_kinematics object after the lines have been filtered
         @debug "TiedKinematics before filtering: $tied_kinematics"
         for j ∈ 1:n_comps
+            keep0 = Int64[]
+            for (k, key) ∈ enumerate(tied_kinematics.key_amp[j])
+                if any(lines.tied_amp[:, j] .== key)
+                    # Remove the unneeded elements
+                    append!(keep0, [k])
+                end
+            end
+            tied_kinematics.key_amp[j] = tied_kinematics.key_amp[j][keep0]
+            tied_kinematics.amp[j] = tied_kinematics.amp[j][keep0]
+            # Remove line ratios for lines that fall outside the fitting region
+            for i in eachindex(tied_kinematics.amp[j])
+                # Make a copy so we're not modifying the dictionary as we loop through it
+                acp = copy(tied_kinematics.amp[j][i])
+                for lk in keys(acp)
+                    if !(lk in lines.names)
+                        delete!(tied_kinematics.amp[j][i], lk)
+                    end
+                end
+                # Renormalize the ratios so the largest is 1.0
+                max_ratio = maximum(values(tied_kinematics.amp[j][i]))
+                for lk in keys(tied_kinematics.amp[j][i])
+                    tied_kinematics.amp[j][i][lk] /= max_ratio
+                end
+            end
+
             keep1 = Int64[]
             for (k, key) ∈ enumerate(tied_kinematics.key_voff[j])
                 if any(lines.tied_voff[:, j] .== key)
@@ -629,8 +1024,25 @@ struct CubeFitter{T<:Real,S<:Integer}
         end
 
         # Total number of parameters for the continuum and line fits
-        n_params_cont = (2+4) + 2n_dust_cont + 2n_power_law + 3n_abs_features + (out[:fit_sil_emission] ? 6 : 0)
-        n_params_cont += 3 * sum(dust_features.profiles .== :Drude) + 5 * sum(dust_features.profiles .== :PearsonIV)
+        if spectral_region == :MIR
+            n_params_cont = (2+4) + 2n_dust_cont + 2n_power_law + 3n_abs_features + (out[:fit_sil_emission] ? 6 : 0)
+            n_params_cont += 3 * sum(dust_features.profiles .== :Drude) + 5 * sum(dust_features.profiles .== :PearsonIV)
+        elseif spectral_region == :OPT
+            n_params_cont = 3n_ssps + 2 + 2 + 2n_power_law
+            if out[:fit_opt_na_feii]
+                n_params_cont += 3
+            end
+            if out[:fit_opt_br_feii]
+                n_params_cont += 3
+            end
+            if out[:fit_uv_bump]
+                n_params_cont += 1
+            end
+            if out[:fit_covering_frac]
+                n_params_cont += 1
+            end
+        end
+
         n_params_lines = 0
         for i ∈ 1:n_lines
             for j ∈ 1:n_comps
@@ -663,12 +1075,12 @@ struct CubeFitter{T<:Real,S<:Integer}
         p_init_pahtemp = zeros(2)
 
         if !(out[:use_pah_templates])
-            pah_template_map = falses(size(cube.Iν)[1:2])
+            pah_template_map = falses(size(cube.I)[1:2])
         else
             if haskey(kwargs, :pah_template_map)
                 pah_template_map = kwargs[:pah_template_map]
             else
-                pah_template_map = trues(size(cube.Iν)[1:2])
+                pah_template_map = trues(size(cube.I)[1:2])
             end
         end
 
@@ -680,64 +1092,80 @@ struct CubeFitter{T<:Real,S<:Integer}
             p_init_pahtemp = readdlm(joinpath("output_$name", "spaxel_binaries", "init_fit_pahtemp.csv"), ',', Float64, '\n')[:, 1]
         end
 
-        new{typeof(z), typeof(n_lines)}(cube, z, name, out[:user_mask], out[:plot_spaxels], out[:plot_maps], out[:plot_range], out[:parallel], 
-            out[:save_fits], out[:save_full_model], out[:overwrite], out[:track_memory], out[:track_convergence], out[:make_movies], 
-            out[:extinction_curve], out[:extinction_screen], out[:fit_sil_emission], out[:fit_all_samin], out[:use_pah_templates], pah_template_map, 
-            continuum, n_dust_cont, n_power_law, n_dust_features, n_abs_features, dust_features, abs_features, abs_taus, n_lines, n_acomps, n_comps, 
-            lines, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, out[:cosmology], flexible_wavesol, 
-            out[:n_bootstrap], out[:random_seed], out[:line_test_lines], out[:line_test_threshold], out[:plot_line_test], p_init_cont, 
-            p_init_line, p_init_pahtemp)
+        ctype = isnothing(feii_templates_fft) ? ComplexF64 : eltype(feii_templates_fft)
+        new{typeof(z), typeof(n_lines), ctype}(cube, z, name, spectral_region, out[:user_mask], out[:plot_spaxels], out[:plot_maps], out[:plot_range], 
+            out[:parallel], out[:save_fits], out[:save_full_model], out[:overwrite], out[:track_memory], out[:track_convergence], out[:make_movies], 
+            out[:extinction_curve], out[:extinction_screen], extinction_map, out[:fit_sil_emission], out[:fit_opt_na_feii], out[:fit_opt_br_feii], out[:fit_all_samin], 
+            out[:use_pah_templates], pah_template_map, out[:fit_joint], out[:fit_uv_bump], out[:fit_covering_frac], continuum, n_dust_cont, n_power_law, n_dust_features, 
+            n_abs_features, dust_features, abs_features, abs_taus, n_ssps, ssp_λ, ssp_templates, feii_templates_fft, velscale, vsyst_ssp, vsyst_feii, npad_feii, n_lines, 
+            n_acomps, n_comps, lines, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, out[:cosmology], 
+            flexible_wavesol, out[:n_bootstrap], out[:random_seed], out[:line_test_lines], out[:line_test_threshold], out[:plot_line_test], p_init_cont, p_init_line, 
+            p_init_pahtemp)
     end
 
 end
 
 
 """
-    generate_cubemodel(cube_fitter)
+    generate_cubemodel(cube_fitter[, aperture])
 
 Generate a CubeModel object corresponding to the options given by the CubeFitter object
 """
 function generate_cubemodel(cube_fitter::CubeFitter, aperture::Bool=false)
-    shape = aperture ? (1,1,size(cube_fitter.cube.Iν, 3)) : size(cube_fitter.cube.Iν)
+    shape = aperture ? (1,1,size(cube_fitter.cube.I, 3)) : size(cube_fitter.cube.I)
     # Full 3D intensity model array
     @debug "Generating full 3D cube models"
-    cubemodel_empty(shape, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.names,
-        cube_fitter.abs_features.names, cube_fitter.lines.names)
+    if cube_fitter.spectral_region == :MIR
+        arguments = [shape, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.names,
+        cube_fitter.abs_features.names, cube_fitter.lines.names]
+    elseif cube_fitter.spectral_region == :OPT
+        arguments = [shape, cube_fitter.n_ssps, cube_fitter.n_power_law, cube_fitter.lines.names]
+    end
+    cubemodel_empty(arguments...)
 end
 
 
 """
-    generate_parammaps(cube_fitter)
+    generate_parammaps(cube_fitter[, aperture])
 
-Generate two ParamMaps objects (for the values and errors) corrresponding to the options given
-by the CubeFitter object
+Generate three ParamMaps objects (for the values and upper/lower errors) corrresponding to the options given
+by the CubeFitter object.
 """
 function generate_parammaps(cube_fitter::CubeFitter, aperture::Bool=false)
-    shape = aperture ? (1,1,size(cube_fitter.cube.Iν, 3)) : size(cube_fitter.cube.Iν)
+    shape = aperture ? (1,1,size(cube_fitter.cube.I, 3)) : size(cube_fitter.cube.I)
     # 2D maps of fitting parameters
     @debug "Generating 2D parameter value & error maps"
-    param_maps = parammaps_empty(shape, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features, 
-                                 cube_fitter.abs_features.names, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
-                                 cube_fitter.flexible_wavesol)
+    if cube_fitter.spectral_region == :MIR
+        arguments = [shape, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features, 
+            cube_fitter.abs_features.names, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
+            cube_fitter.flexible_wavesol]
+    elseif cube_fitter.spectral_region == :OPT
+        arguments = [shape, cube_fitter.n_ssps, cube_fitter.n_power_law, cube_fitter.n_lines, cube_fitter.n_comps, 
+            cube_fitter.lines, cube_fitter.flexible_wavesol]
+    end
+    param_maps = parammaps_empty(arguments...)
     # 2D maps of fitting parameter +/- 1 sigma errors
-    param_errs_lo = parammaps_empty(shape, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features, 
-                                 cube_fitter.abs_features.names, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
-                                 cube_fitter.flexible_wavesol)
-    param_errs_up = parammaps_empty(shape, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features, 
-                                 cube_fitter.abs_features.names, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
-                                 cube_fitter.flexible_wavesol)
+    param_errs_lo = parammaps_empty(arguments...)
+    param_errs_up = parammaps_empty(arguments...)
     param_errs = [param_errs_lo, param_errs_up]
     param_maps, param_errs
 end
 
 
 """
-    get_continuum_plimits(cube_fitter, I)
+    get_continuum_plimits(cube_fitter, λ, I, init; split)
 
-Get the continuum limits vector for a given CubeFitter object, split up by the 2 continuum fitting steps.
+Get the continuum limits vector for a given CubeFitter object, possibly split up by the 2 continuum fitting steps.
 Also returns a boolean vector for which parameters are allowed to vary.
 """
-function get_continuum_plimits(cube_fitter::CubeFitter; split::Bool=false)
+get_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, init::Bool; 
+    split::Bool=false) = cube_fitter.spectral_region == :MIR ? 
+    get_mir_continuum_plimits(cube_fitter, init; split=split) : 
+    get_opt_continuum_plimits(cube_fitter, λ, I, init)
+
+
+# MIR implementation of the get_continuum_plimits function
+function get_mir_continuum_plimits(cube_fitter::CubeFitter, init::Bool; split::Bool=false)
 
     dust_features = cube_fitter.dust_features
     abs_features = cube_fitter.abs_features
@@ -769,6 +1197,11 @@ function get_continuum_plimits(cube_fitter::CubeFitter; split::Bool=false)
     ab_lock = vcat([[tau.locked, mi.locked, fi.locked] for (tau, mi, fi) ∈ zip(abs_taus, abs_features.mean, abs_features.fwhm)]...)
     ext_plim = [continuum.τ_97.limits, continuum.τ_ice.limits, continuum.τ_ch.limits, continuum.β.limits]
     ext_lock = [continuum.τ_97.locked, continuum.τ_ice.locked, continuum.τ_ch.locked, continuum.β.locked]
+    # Lock tau_9.7 if an extinction map has been provided
+    if !isnothing(cube_fitter.extinction_map) && !init
+        ext_lock[1] = true
+    end
+
     hd_plim = cube_fitter.fit_sil_emission ? [amp_dc_plim, continuum.T_hot.limits, continuum.Cf_hot.limits, 
         continuum.τ_warm.limits, continuum.τ_cold.limits, continuum.sil_peak.limits] : []
     hd_lock = cube_fitter.fit_sil_emission ? [false, continuum.T_hot.locked, continuum.Cf_hot.locked,
@@ -786,16 +1219,90 @@ function get_continuum_plimits(cube_fitter::CubeFitter; split::Bool=false)
         lock_2 = BitVector(df_lock)
         plims_1, plims_2, lock_1, lock_2
     end
+
+end
+
+
+# Optical implementation of the get_continuum_plimits function
+function get_opt_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, init::Bool)
+
+    continuum = cube_fitter.continuum
+
+    amp_ssp_plim = (0., Inf)
+    amp_pl_plim = (0., Inf)
+    ssp_plim = vcat([[amp_ssp_plim, ai.limits, zi.limits] for (ai, zi) in zip(continuum.ssp_ages, continuum.ssp_metallicities)]...)
+    if !init
+        ssp_locked = vcat([[false, true, true] for _ in 1:cube_fitter.n_ssps]...)
+    else
+        ssp_locked = vcat([[false, ai.locked, zi.locked] for (ai, zi) in zip(continuum.ssp_ages, continuum.ssp_metallicities)]...)
+    end
+
+    stel_kin_plim = [continuum.stel_vel.limits, continuum.stel_vdisp.limits]
+    stel_kin_locked = [continuum.stel_vel.locked, continuum.stel_vdisp.locked]
+
+    feii_plim = []
+    feii_locked = []
+    if cube_fitter.fit_opt_na_feii
+        append!(feii_plim, [amp_ssp_plim, continuum.na_feii_vel.limits, continuum.na_feii_vdisp.limits])
+        append!(feii_locked, [false, continuum.na_feii_vel.locked, continuum.na_feii_vdisp.locked])
+    end
+    if cube_fitter.fit_opt_br_feii
+        append!(feii_plim, [amp_ssp_plim, continuum.br_feii_vel.limits, continuum.br_feii_vdisp.limits])
+        append!(feii_locked, [false, continuum.br_feii_vel.locked, continuum.br_feii_vdisp.locked])
+    end
+    
+    pl_plim = vcat([[amp_pl_plim, αi.limits] for αi in continuum.α]...)
+    pl_locked = vcat([[false, αi.locked] for αi in continuum.α]...)
+
+    atten_plim = [continuum.E_BV.limits, continuum.E_BV_factor.limits]
+    atten_locked = [continuum.E_BV.locked, continuum.E_BV_factor.locked]
+
+    # test the SNR of the H-beta and H-gamma lines
+    Hβ_snr = test_line_snr(0.4862691, 0.0080, λ, I)
+    Hγ_snr = test_line_snr(0.4341691, 0.0080, λ, I)
+    # if the SNR is less than 3, we cannot constrain E(B-V)_gas, so lock it to 0
+    if (Hβ_snr < 3) || (Hγ_snr < 2)
+        atten_locked = [true, true]
+    end
+    # Lock E(B-V) if an extinction map has been provided
+    if !isnothing(cube_fitter.extinction_map) && !init
+        atten_locked = [true, true]
+    end
+
+    if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
+        push!(atten_plim, continuum.δ_uv.limits)
+        push!(atten_locked, continuum.δ_uv.locked)
+    end
+    if cube_fitter.fit_covering_frac && cube_fitter.extinction_curve == "calzetti"
+        push!(atten_plim, continuum.frac.limits)
+        push!(atten_locked, continuum.frac.locked)
+    end
+
+    plims = Vector{Tuple}(vcat(ssp_plim, stel_kin_plim, atten_plim, feii_plim, pl_plim))
+    lock = BitVector(vcat(ssp_locked, stel_kin_locked, atten_locked, feii_locked, pl_locked))
+
+    plims, lock
+
 end
 
 
 """
-    get_continuum_initial_values(cube_fitter, I, init)
+    get_continuum_initial_values(cube_fitter, spaxel, λ, I, N, init; split)
 
-Get the vector of starting values for the continuum fit for a given CubeFitter object. Again, the
-vector is split up by the 2 continuum fitting steps.
+Get the vectors of starting values and relative step sizes for the continuum fit for a given CubeFitter object. 
+Again, the vector may be split up by the 2 continuum fitting steps in the MIR case.
 """
-function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, init::Bool; split::Bool=false)
+get_continuum_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, 
+    init::Bool; split::Bool=false) = cube_fitter.spectral_region == :MIR ? 
+    get_mir_continuum_initial_values(cube_fitter, spaxel, λ, I, N, init, split=split) :
+    get_opt_continuum_initial_values(cube_fitter, spaxel, λ, I, N, init)
+
+
+# MIR implementation of the get_continuum_initial_values function
+function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
+    N::Real, init::Bool; split::Bool=false)
+
+    continuum = cube_fitter.continuum
 
     # Check if the cube fitter has initial fit parameters 
     if !init
@@ -808,60 +1315,56 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
 
         # pull out optical depth that was pre-fit
         # τ_97_0 = cube_fitter.τ_guess[parse(Int, cube_fitter.cube.channel)][spaxel]
-        max_τ = cube_fitter.continuum.τ_97.limits[2]
+        # max_τ = cube_fitter.continuum.τ_97.limits[2]
 
         # scale all flux amplitudes by the difference in medians between the spaxel and the summed spaxels
         # (should be close to 1 since the sum is already normalized by the number of spaxels included anyways)
-        scale = max(nanmedian(I), 1e-10) * N / nanmedian(sumdim(cube_fitter.cube.Iν, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2)))
-        max_amp = 1 / exp(-max_τ)
+        I_init = sumdim(cube_fitter.cube.I, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+        scale = max(nanmedian(I), 1e-10) * N / nanmedian(I_init)
+        # max_amp = 1 / exp(-max_τ)
 
-        # Rescale PAH templates
-        pah_frac .*= scale
-
-        # Stellar amplitude
+        # Stellar amplitude (rescaled)
         p₀[1] *= scale
         pᵢ = 3
 
-        # Dust continuum amplitudes
+        # Dust continuum amplitudes (rescaled)
         for _ ∈ 1:cube_fitter.n_dust_cont
             p₀[pᵢ] *= scale
             pᵢ += 2
         end
 
-        # Power law amplitudes
+        # Power law amplitudes (NOT rescaled)
         for _ ∈ 1:cube_fitter.n_power_law
-            p₀[pᵢ] = clamp(p₀[pᵢ]*scale, 0., max_amp)
             pᵢ += 2
         end
 
         # Set optical depth based on the initial guess or the initial fit (whichever is larger)
         p₀[pᵢ] = max(cube_fitter.continuum.τ_97.value, p₀[pᵢ])
-        pᵢ += 4
-        # Do not adjust absorption feature amplitudes since they are multiplicative
-        pᵢ += 3*cube_fitter.n_abs_feat
+        # Override if an extinction_map was provided
+        if !isnothing(cube_fitter.extinction_map)
+            @debug "Using the provided τ_9.7 values from the extinction_map and rescaling starting point"
+            p₀[pᵢ] = cube_fitter.extinction_map[spaxel]
+        end
 
+        # Do not adjust absorption feature amplitudes since they are multiplicative
+        pᵢ += 4 + 3*cube_fitter.n_abs_feat
+
+        # Hot dust amplitude (rescaled)
         if cube_fitter.fit_sil_emission
-            # Hot dust amplitude
             p₀[pᵢ] *= scale
-            # Warm / cold optical depths
-            # p₀[pᵢ+3] = τ_97_0
-            # p₀[pᵢ+4] = τ_97_0
             pᵢ += 6
         end
 
-        # Dust feature amplitudes
-        for i ∈ 1:cube_fitter.n_dust_feat
-            p₀[pᵢ] = clamp(p₀[pᵢ]*scale, 0., max_amp)
-            pᵢ += 3
-            if cube_fitter.dust_features.profiles[i] == :PearsonIV
-                pᵢ += 2
-            end
-        end
+        # Dust feature amplitudes (not rescaled)
+        # for i ∈ 1:cube_fitter.n_dust_feat
+        #     pᵢ += 3
+        #     if cube_fitter.dust_features.profiles[i] == :PearsonIV
+        #         pᵢ += 2
+        #     end
+        # end
 
     # Otherwise, we estimate the initial parameters based on the data
     else
-
-        continuum = cube_fitter.continuum
 
         @debug "Calculating initial starting points..."
         cubic_spline = Spline1D(λ, I, k=3)
@@ -887,9 +1390,10 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
         A_pl = [clamp(nanmedian(I), 0., Inf)/exp(-continuum.τ_97.value)/cube_fitter.n_power_law for αi ∈ continuum.α]
         
         # Hot dust amplitude
-        λ_hd = clamp(Wein(continuum.T_hot.value), minimum(λ), maximum(λ))
-        A_hd = clamp(cubic_spline(λ_hd) * N / silicate_emission([λ_hd], 1.0, continuum.T_hot.value,
-            continuum.Cf_hot.value, continuum.τ_warm.value, continuum.τ_cold.value, continuum.sil_peak.value)[1], 0., Inf) / 5
+        hd = silicate_emission(λ, 1.0, continuum.T_hot.value, continuum.Cf_hot.value, continuum.τ_warm.value, 
+            continuum.τ_cold.value, continuum.sil_peak.value)
+        mhd = argmax(hd)
+        A_hd = clamp(cubic_spline(λ[mhd]) * N / hd[mhd] / 5, 0., Inf)
 
         stellar_pars = [A_s, continuum.T_s.value]
         dc_pars = vcat([[Ai, Ti.value] for (Ai, Ti) ∈ zip(A_dc, continuum.T_dc)]...)
@@ -929,26 +1433,242 @@ function get_continuum_initial_values(cube_fitter::CubeFitter, λ::Vector{<:Real
         
     @debug "Continuum Starting Values: \n $p₀"
 
+    # Calculate relative step sizes for finite difference derivatives
+    dλ = (λ[end] - λ[1]) / length(λ)
+    deps = sqrt(eps())
+
+    stellar_dstep = [1e-6, 1e-4]
+    dc_dstep = vcat([[1e-6, 1e-4] for _ in continuum.T_dc]...)
+    pl_dstep = vcat([[deps, deps] for _ in continuum.α]...)
+    df_dstep = Float64[]
+    for n in 1:length(cube_fitter.dust_features.names)
+        append!(df_dstep, [deps, dλ/10/cube_fitter.dust_features.mean[n].value, dλ/1000/cube_fitter.dust_features.fwhm[n].value])
+        if cube_fitter.dust_features.profiles[n] == :PearsonIV
+            append!(df_dstep, [deps, deps])
+        end
+    end
+    ab_dstep = vcat([[deps, dλ/10/mi.value, dλ/1000/fi.value] for (mi, fi) in zip(cube_fitter.abs_features.mean, cube_fitter.abs_features.fwhm)]...)
+    if cube_fitter.fit_sil_emission
+        hd_dstep = [1e-6, 1e-4, deps, deps, deps, dλ/10/continuum.sil_peak.value]
+    else
+        hd_dstep = []
+    end
+    extinction_dstep = [deps, deps, deps, deps]
+    dstep = Vector{Float64}(vcat(stellar_dstep, dc_dstep, pl_dstep, extinction_dstep, ab_dstep, hd_dstep, df_dstep))
+
+    @debug "Continuum relative step sizes: \n $dstep"
+
     if !split
-        p₀
+        p₀, dstep
     else
         # Step 1: Stellar + Dust blackbodies, 2 new amplitudes for the PAH templates, and the extinction parameters
         pars_1 = vcat(p₀[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0))], pah_frac)
+        dstep_1 = vcat(dstep[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0))], [deps, deps])
         # Step 2: The PAH profile amplitudes, centers, and FWHMs
         pars_2 = p₀[(3+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0)):end]
+        dstep_2 = dstep[(3+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0)):end]
 
-        pars_1, pars_2
+        pars_1, pars_2, dstep_1, dstep_2
     end
 end
 
 
+# Optical implementation of the get_continuum_initial_values function
+function get_opt_continuum_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
+    N::Real, init::Bool)
+
+    continuum = cube_fitter.continuum
+
+    # Check if the cube fitter has initial fit parameters 
+    if !init
+
+        @debug "Using initial best fit continuum parameters..."
+
+        # Set the parameters to the best parameters
+        p₀ = copy(cube_fitter.p_init_cont)
+
+        # scale all flux amplitudes by the difference in medians between the spaxel and the summed spaxels
+        I_init = sumdim(cube_fitter.cube.I, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+        N0 = Float64(abs(maximum(I_init[isfinite.(I_init)])))
+        N0 = N0 ≠ 0. ? N0 : 1.
+        # Here we use the normalization from the initial combined intensity because the amplitudes we are rescaling
+        # are normalized with respect to N0, not N. This is different from the MIR case where the amplitudes are not
+        # normalized to any particular N (at least for the blackbody components).
+        scale = max(nanmedian(I), 1e-10) * N0 / nanmedian(I_init)
+
+        if !isnothing(cube_fitter.extinction_map)
+            pₑ = 1 + 3cube_fitter.n_ssps + 2
+            ebv_orig = p₀[pₑ]
+            ebv_factor = p₀[pₑ+1]
+
+            @debug "Using the provided E(B-V) values from the extinction_map and rescaling starting point"
+            ebv_new = cube_fitter.extinction_map[spaxel]
+            ebv_factor_new = continuum.E_BV_factor.value
+
+            # Rescale to keep the continuum at a good starting point
+            if cube_fitter.extinction_curve == "ccm"
+                scale /= median(attenuation_cardelli(λ, ebv_new*ebv_factor_new) ./ attenuation_cardelli(λ, ebv_orig*ebv_factor))
+            elseif cube_fitter.extinction_curve == "calzetti"
+                scale /= median(attenuation_calzetti(λ, ebv_new*ebv_factor_new) ./ attenuation_calzetti(λ, ebv_orig*ebv_factor))
+            else
+                error("Unrecognized extinction curve $(cube_fitter.extinction_curve)")
+            end
+
+            # Set the new values
+            p₀[pₑ] = ebv_new
+            p₀[pₑ+1] = ebv_factor_new
+        end
+
+        # SSP amplitudes
+        pᵢ = 1
+        for _ ∈ 1:cube_fitter.n_ssps
+            p₀[pᵢ] *= scale
+            pᵢ += 3
+        end
+
+        # If stellar velocities hit any limits, reset them to sensible starting values
+        if (p₀[pᵢ] == continuum.stel_vel.limits[1]) || (p₀[pᵢ] == continuum.stel_vel.limits[2])
+            p₀[pᵢ] = 0.
+        end
+        if (p₀[pᵢ+1] == continuum.stel_vdisp.limits[1]) || (p₀[pᵢ+1] == continuum.stel_vdisp.limits[2])
+            p₀[pᵢ+1] = 100.
+        end
+        pᵢ += 2
+
+        # test the SNR of the H-beta line
+        Hβ_snr = test_line_snr(0.4862691, 0.0060, λ, I)
+        Hγ_snr = test_line_snr(0.4341691, 0.0080, λ, I)
+        # if the SNR is less than 3, we cannot constrain E(B-V), so lock it to 0
+        if ((Hβ_snr < 3) || (Hγ_snr < 2)) && isnothing(cube_fitter.extinction_map)
+            @debug "Locking E(B-V) to 0 due to insufficient H-beta emission"
+            p₀[pᵢ] = 0.
+            p₀[pᵢ+1] = continuum.E_BV_factor.value
+        end
+
+        if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
+            pᵢ += 1
+        end
+        if cube_fitter.fit_covering_frac && cube_fitter.extinction_curve == "calzetti"
+            pᵢ += 1
+        end
+        pᵢ += 2
+
+        # Fe II amplitudes
+        if cube_fitter.fit_opt_na_feii
+            p₀[pᵢ] *= scale
+            pᵢ += 3
+        end
+        if cube_fitter.fit_opt_br_feii
+            p₀[pᵢ] *= scale
+            pᵢ += 3
+        end
+
+        # Power law amplitudes
+        for _ ∈ 1:cube_fitter.n_power_law
+            p₀[pᵢ] *= scale
+            pᵢ += 2
+        end
+
+
+    else
+
+        @debug "Calculating initial starting points..." 
+
+        if cube_fitter.extinction_curve == "ccm"
+            att = attenuation_cardelli([median(λ)], continuum.E_BV.value)[1]
+        elseif cube_fitter.extinction_curve == "calzetti"
+            att = attenuation_calzetti([median(λ)], continuum.E_BV.value)[1]
+        else
+            error("Uncrecognized extinction curve $(cube_fitter.extinction_curve)")
+        end
+
+        # SSP amplitudes
+        m_ssps = zeros(cube_fitter.n_ssps)
+        for i in 1:cube_fitter.n_ssps
+            m_ssps[i] = nanmedian(I) / att / cube_fitter.n_ssps
+        end
+
+        ssp_pars = vcat([[mi, ai.value, zi.value] for (mi, ai, zi) in zip(m_ssps, continuum.ssp_ages, continuum.ssp_metallicities)]...)
+
+        # Stellar kinematics
+        stel_kin_pars = [continuum.stel_vel.value, continuum.stel_vdisp.value]
+
+        # Fe II parameters
+        a_feii = 0.1 * nanmedian(I) / att
+        feii_pars = []
+        if cube_fitter.fit_opt_na_feii
+            append!(feii_pars, [a_feii, continuum.na_feii_vel.value, continuum.na_feii_vdisp.value])
+        end
+        if cube_fitter.fit_opt_br_feii
+            append!(feii_pars, [a_feii, continuum.br_feii_vel.value, continuum.br_feii_vdisp.value])
+        end
+        
+        # Power laws
+        a_pl = 0.5 * nanmedian(I) / att / cube_fitter.n_power_law
+        pl_pars = vcat([[a_pl, αi.value] for αi in continuum.α]...)
+
+        # Attenuation
+        atten_pars = [continuum.E_BV.value, continuum.E_BV_factor.value]
+        if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
+            push!(atten_pars, continuum.δ_uv.value)
+        end
+        if cube_fitter.fit_covering_frac && cube_fitter.extinction_curve == "calzetti"
+            push!(atten_pars, continuum.frac.value)
+        end
+
+        # Initial parameter vector
+        p₀ = Vector{Float64}(vcat(ssp_pars, stel_kin_pars, atten_pars, feii_pars, pl_pars))
+
+    end
+
+    # Calculate relative step sizes for finite difference derivatives
+    deps = sqrt(eps())
+
+    ssp_dstep = vcat([[1e-6, 1e-3, deps] for _ in continuum.ssp_ages]...)
+    stel_kin_dstep = [1e-4, 1e-4]
+    feii_dstep = []
+    if cube_fitter.fit_opt_na_feii
+        append!(feii_dstep, [deps, 1e-4, 1e-4])
+    end
+    if cube_fitter.fit_opt_br_feii
+        append!(feii_dstep, [deps, 1e-4, 1e-4])
+    end
+    pl_dstep = vcat([[deps, deps] for _ in continuum.α]...)
+
+    atten_dstep = [deps, deps]
+    if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
+        push!(atten_dstep, deps)
+    end
+    if cube_fitter.fit_covering_frac && cube_fitter.extinction_curve == "calzetti"
+        push!(atten_dstep, deps)
+    end
+
+    dstep = Vector{Float64}(vcat(ssp_dstep, stel_kin_dstep, atten_dstep, feii_dstep, pl_dstep))
+
+    @debug "Continuum Parameter labels: \n [" *
+        join(["SSP_$(i)_mass, SSP_$(i)_age, SSP_$(i)_metallicity" for i in 1:cube_fitter.n_ssps], ", ") * 
+        "stel_vel, stel_vdisp, " * 
+        "E_BV, E_BV_factor, " * (cube_fitter.fit_uv_bump ? "delta_uv, " : "") *
+        (cube_fitter.fit_covering_frac ? "covering_frac, " : "") * 
+        (cube_fitter.fit_opt_na_feii ? "na_feii_amp, na_feii_vel, na_feii_vdisp, " : "") *
+        (cube_fitter.fit_opt_br_feii ? "br_feii_amp, br_feii_vel, br_feii_vdisp, " : "") *
+        join(["power_law_$(j)_amp, power_law_$(j)_index, " for j in 1:cube_fitter.n_power_law], ", ") * "]"
+        
+    @debug "Continuum Starting Values: \n $p₀"
+    @debug "Continuum relative step sizes: \n $dstep"
+
+    p₀, dstep
+
+end
+
+
 """
-    get_continuum_parinfo(n_free, lb, ub)
+    get_continuum_parinfo(n_free, lb, ub, dp)
 
 Get the CMPFit parinfo and config objects for a given CubeFitter object, given the vector of initial valuels,
-limits, and boolean locked values.
+limits, and relative step sizes.
 """
-function get_continuum_parinfo(n_free::S, lb::Vector{T}, ub::Vector{T}) where {S<:Integer,T<:Real}
+function get_continuum_parinfo(n_free::S, lb::Vector{T}, ub::Vector{T}, dp::Vector{T}) where {S<:Integer,T<:Real}
 
     parinfo = CMPFit.Parinfo(n_free)
 
@@ -956,6 +1676,8 @@ function get_continuum_parinfo(n_free::S, lb::Vector{T}, ub::Vector{T}) where {S
         parinfo[pᵢ].fixed = 0
         parinfo[pᵢ].limited = (1,1)
         parinfo[pᵢ].limits = (lb[pᵢ], ub[pᵢ])
+        # Set the relative step size for finite difference derivative calculations
+        parinfo[pᵢ].relstep = dp[pᵢ]
     end
 
     # Create a `config` structure
@@ -969,7 +1691,7 @@ end
 
 # Version for the split fitting if use_pah_templates is enabled
 function get_continuum_parinfo(n_free_1::S, n_free_2::S, lb_1::Vector{T}, ub_1::Vector{T}, 
-    lb_2::Vector{T}, ub_2::Vector{T}) where {S<:Integer,T<:Real}
+    lb_2::Vector{T}, ub_2::Vector{T}, dp_1::Vector{T}, dp_2::Vector{T}) where {S<:Integer,T<:Real}
 
     parinfo_1 = CMPFit.Parinfo(n_free_1)
     parinfo_2 = CMPFit.Parinfo(n_free_2)
@@ -978,16 +1700,19 @@ function get_continuum_parinfo(n_free_1::S, n_free_2::S, lb_1::Vector{T}, ub_1::
         parinfo_1[pᵢ].fixed = 0
         parinfo_1[pᵢ].limited = (1,1)
         parinfo_1[pᵢ].limits = (lb_1[pᵢ], ub_1[pᵢ])
+        parinfo_1[pᵢ].relstep = dp_1[pᵢ]
     end
 
     for pᵢ ∈ 1:n_free_2
         parinfo_2[pᵢ].fixed = 0
         parinfo_2[pᵢ].limited = (1,1)
         parinfo_2[pᵢ].limits = (lb_2[pᵢ], ub_2[pᵢ])
+        parinfo_2[pᵢ].relstep = dp_2[pᵢ]
     end
 
     # Create a `config` structure
     config = CMPFit.Config()
+    config.maxiter = 500
 
     parinfo_1, parinfo_2, config
 
@@ -995,11 +1720,18 @@ end
 
 
 """
-    pretty_print_continuum_results(cube_fitter, popt, perr)
+    pretty_print_continuum_results(cube_fitter, popt, perr, I)
 
 Print out a nicely formatted summary of the continuum fit results for a given CubeFitter object.
 """
-function pretty_print_continuum_results(cube_fitter::CubeFitter, popt::Vector{<:Real}, perr::Vector{<:Real},
+pretty_print_continuum_results(cube_fitter::CubeFitter, popt::Vector{<:Real}, perr::Vector{<:Real},
+    I::Vector{<:Real}) = cube_fitter.spectral_region == :MIR ? 
+        pretty_print_mir_continuum_results(cube_fitter, popt, perr, I) :
+        pretty_print_opt_continuum_results(cube_fitter, popt, perr, I)
+
+
+# MIR implementation of the pretty_print_continuum_results function
+function pretty_print_mir_continuum_results(cube_fitter::CubeFitter, popt::Vector{<:Real}, perr::Vector{<:Real},
     I::Vector{<:Real})
 
     continuum = cube_fitter.continuum
@@ -1104,23 +1836,127 @@ function pretty_print_continuum_results(cube_fitter::CubeFitter, popt::Vector{<:
 end
 
 
+# Optical implementation of the pretty_print_continuum_results function
+function pretty_print_opt_continuum_results(cube_fitter::CubeFitter, popt::Vector{<:Real}, perr::Vector{<:Real},
+    I::Vector{<:Real})
+
+    continuum = cube_fitter.continuum
+
+    msg = "######################################################################\n"
+    msg *= "################# SPAXEL FIT RESULTS -- CONTINUUM ####################\n"
+    msg *= "######################################################################\n"
+    msg *= "\n#> STELLAR POPULATIONS <#\n"
+    pᵢ = 1
+    for i ∈ 1:cube_fitter.n_ssps
+        msg *= "SSP_$(i)_amp: \t\t\t $(@sprintf "%.3e" popt[pᵢ]) +/- $(@sprintf "%.3e" perr[pᵢ]) [x norm] \t Limits: (0, Inf)\n"
+        msg *= "SSP_$(i)_age: \t\t\t $(@sprintf "%.3f" popt[pᵢ+1]) +/- $(@sprintf "%.3f" perr[pᵢ+1]) Gyr \t Limits: " *
+            "($(@sprintf "%.3f" continuum.ssp_ages[i].limits[1]), $(@sprintf "%.3f" continuum.ssp_ages[i].limits[2]))" *
+            (continuum.ssp_ages[i].locked ? " (fixed)" : "") * "\n"
+        msg *= "SSP_$(i)_metallicity: \t\t $(@sprintf "%.2f" popt[pᵢ+2]) +/- $(@sprintf "%.2f" perr[pᵢ+2]) [M/H] \t Limits: " *
+            "($(@sprintf "%.2f" continuum.ssp_metallicities[i].limits[1]), $(@sprintf "%.2f" continuum.ssp_metallicities[i].limits[2]))" *
+            (continuum.ssp_metallicities[i].locked ? " (fixed)" : "") * "\n"
+        pᵢ += 3
+        msg *= "\n"
+    end
+    msg *= "\n#> STELLAR KINEMATICS <#\n"
+    msg *= "stel_vel: \t\t\t\t $(@sprintf "%.0f" popt[pᵢ]) +/- $(@sprintf "%.0f" perr[pᵢ]) km/s \t Limits: " *
+        "($(@sprintf "%.0f" continuum.stel_vel.limits[1]), $(@sprintf "%.0f" continuum.stel_vel.limits[2]))" * 
+        (continuum.stel_vel.locked ? " (fixed)" : "") * "\n"
+    msg *= "stel_vdisp: \t\t\t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) km/s \t Limits: " *
+        "($(@sprintf "%.0f" continuum.stel_vdisp.limits[1]), $(@sprintf "%.0f" continuum.stel_vdisp.limits[2]))" * 
+        (continuum.stel_vdisp.locked ? " (fixed)" : "") * "\n"
+    pᵢ += 2
+    msg *= "\n#> ATTENUATION <#\n"
+    msg *= "E_BV: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ]) +/- $(@sprintf "%.2f" perr[pᵢ]) [-] \t Limits: " *
+        "($(@sprintf "%.2f" continuum.E_BV.limits[1]), $(@sprintf "%.2f" continuum.E_BV.limits[2]))" * 
+        (continuum.E_BV.locked ? " (fixed)" : "") * "\n"
+    msg *= "E_BV_factor: \t\t\t $(@sprintf "%.2f" popt[pᵢ+1]) +/- $(@sprintf "%.2f" perr[pᵢ+1]) [-] \t Limits: " *
+        "($(@sprintf "%.2f" continuum.E_BV_factor.limits[1]), $(@sprintf "%.2f" continuum.E_BV_factor.limits[2]))" *
+        (continuum.E_BV_factor.locked ? " (fixed)" : "") * "\n"
+    pᵢ += 2
+    if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
+        msg *= "δ_UV: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ]) +/- $(@sprintf "%.2f" perr[pᵢ]) [-] \t Limits: " *
+            "($(@sprintf "%.2f" continuum.δ_uv.limits[1]), $(@sprintf "%.2f" continuum.δ_uv.limits[2]))" * 
+            (continuum.δ_uv.locked ? " (fixed)" : "") * "\n"
+        pᵢ += 1
+    end
+    if cube_fitter.fit_covering_frac && cube_fitter.extinction_curve == "calzetti"
+        msg *= "frac: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ]) +/- $(@sprintf "%.2f" perr[pᵢ]) [-] \t Limits: " *
+            "($(@sprintf "%.2f" continuum.frac.limits[1]), $(@sprintf "%.2f" continuum.frac.limits[2]))" * 
+            (continuum.frac.locked ? " (fixed)" : "") * "\n"
+        pᵢ += 1
+    end
+    msg *= "\n#> FE II EMISSION <#\n"
+    if cube_fitter.fit_opt_na_feii
+        msg *= "na_feii_amp: \t\t\t $(@sprintf "%.3e" popt[pᵢ]) +/- $(@sprintf "%.3e" perr[pᵢ]) [x norm] \t Limits: (0, Inf)\n"
+        msg *= "na_feii_vel: \t\t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) km/s \t Limits: " *
+            "($(@sprintf "%.0f" continuum.na_feii_vel.limits[1]), $(@sprintf "%.0f" continuum.na_feii_vel.limits[2]))" * 
+            (continuum.na_feii_vel.locked ? " (fixed)" : "") * "\n"
+        msg *= "na_feii_vdisp: \t\t\t $(@sprintf "%.0f" popt[pᵢ+2]) +/- $(@sprintf "%.0f" perr[pᵢ+2]) km/s \t Limits: " *
+            "($(@sprintf "%.0f" continuum.na_feii_vdisp.limits[1]), $(@sprintf "%.0f" continuum.na_feii_vdisp.limits[2]))" * 
+            (continuum.na_feii_vel.locked ? " (fixed)" : "") * "\n"
+        pᵢ += 3
+    end
+    if cube_fitter.fit_opt_br_feii
+        msg *= "br_feii_amp: \t\t\t $(@sprintf "%.3e" popt[pᵢ]) +/- $(@sprintf "%.3e" perr[pᵢ]) [x norm] \t Limits: (0, Inf)\n"
+        msg *= "br_feii_vel: \t\t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) km/s \t Limits: " *
+            "($(@sprintf "%.0f" continuum.br_feii_vel.limits[1]), $(@sprintf "%.0f" continuum.br_feii_vel.limits[2]))" * 
+            (continuum.br_feii_vel.locked ? " (fixed)" : "") * "\n"
+        msg *= "br_feii_vdisp: \t\t\t $(@sprintf "%.0f" popt[pᵢ+2]) +/- $(@sprintf "%.0f" perr[pᵢ+2]) km/s \t Limits: " *
+            "($(@sprintf "%.0f" continuum.br_feii_vdisp.limits[1]), $(@sprintf "%.0f" continuum.br_feii_vdisp.limits[2]))" * 
+            (continuum.br_feii_vel.locked ? " (fixed)" : "") * "\n"
+        pᵢ += 3
+    end
+    msg *= "\n#> POWER LAWS <#\n"
+    for j ∈ 1:cube_fitter.n_power_law
+        msg *= "PL_$(j)_amp: \t\t\t\t $(@sprintf "%.3e" popt[pᵢ]) +/- $(@sprintf "%.3e" perr[pᵢ]) [x norm] \t Limits: (0, Inf)\n"
+        msg *= "PL_$(j)_index: \t\t\t\t $(@sprintf "%.3f" popt[pᵢ+1]) +/- $(@sprintf "%.3f" perr[pᵢ+1]) [-] \t Limits: " *
+            "($(@sprintf "%.3f" continuum.α[j].limits[1]), $(@sprintf "%.3f" continuum.α[j].limits[2]))" *
+            (continuum.α[j].locked ? " (fixed)" : "") * "\n"
+        pᵢ += 2
+    end
+    msg *= "\n"
+    msg *= "######################################################################"
+    @debug msg
+
+    msg 
+
+end
+
+
 """
-    get_line_plimits(cube_fitter)
+    get_line_plimits(cube_fitter, init[, ext_curve])
 
 Get the line limits vector for a given CubeFitter object. Also returns boolean locked values and
 names of each parameter as strings.
 """
-function get_line_plimits(cube_fitter::CubeFitter, ext_curve::Vector{<:Real}, init::Bool)
+function get_line_plimits(cube_fitter::CubeFitter, init::Bool, ext_curve::Union{Vector{<:Real},Nothing}=nothing)
 
-    # Set up the limits vector
-    amp_plim = (0., clamp(maximum(1 ./ ext_curve), 1., Inf))
+    if !isnothing(ext_curve)
+        amp_plim = (0., clamp(1 / minimum(ext_curve), 1., Inf))
+    else
+        if cube_fitter.spectral_region == :MIR
+            max_amp = 1 / exp(-cube_fitter.continuum.τ_97.limits[2])
+        elseif cube_fitter.extinction_curve == "ccm"
+            max_amp = attenuation_cardelli([cube_fitter.cube.λ[1]], cube_fitter.continuum.E_BV.limits[2])[1]
+        elseif cube_fitter.extinction_curve == "calzetti"
+            max_amp = attenuation_calzetti([cube_fitter.cube.λ[1]], cube_fitter.continuum.E_BV.limits[2],
+                δ=cube_fitter.fit_uv_bump ? cube_fitter.continuum.δ_uv : nothing, 
+                f_nodust=cube_fitter.fit_covering_frac ? cube_fitter.continuum.frac : nothing)[1]
+        end 
+        amp_plim = (0., clamp(max_amp, 1., Inf))
+    end
     ln_plims = Vector{Tuple}()
     ln_lock = BitVector()
     ln_names = Vector{String}()
     
+    amp_tied = []
+    amp_ratios = []
     voff_tied = []
     fwhm_tied = []
     for j ∈ 1:cube_fitter.n_comps
+        append!(amp_tied, [[[] for _ in cube_fitter.tied_kinematics.key_amp[j]]])
+        append!(amp_ratios, [[[] for _ in cube_fitter.tied_kinematics.key_amp[j]]])
         append!(voff_tied, [[[] for _ in cube_fitter.tied_kinematics.key_voff[j]]])
         append!(fwhm_tied, [[[] for _ in cube_fitter.tied_kinematics.key_fwhm[j]]])
     end
@@ -1132,13 +1968,19 @@ function get_line_plimits(cube_fitter::CubeFitter, ext_curve::Vector{<:Real}, in
         for j ∈ 1:cube_fitter.n_comps
             if !isnothing(cube_fitter.lines.profiles[i, j])
 
-                amp_ln_plim = isone(j) ? amp_plim : cube_fitter.lines.acomp_amp[i, j-1].limits
                 # name
                 ln_name = string(cube_fitter.lines.names[i]) * "_$(j)"
+                amp_ln_plim = isone(j) ? amp_plim : cube_fitter.lines.acomp_amp[i, j-1].limits
 
-                # get the right voff and fwhm parameters based on if theyre tied or not
-                vt = ft = false
-                kv = kf = nothing
+                # get the right amp, voff, and fwhm parameters based on if theyre tied or not
+                at = vt = ft = false
+                ka = kv = kf = nothing
+                if !isnothing(cube_fitter.lines.tied_amp[i, j])
+                    key_amp = cube_fitter.lines.tied_amp[i, j]
+                    ka = findfirst(cube_fitter.tied_kinematics.key_amp[j] .== key_amp)
+                    at = true
+                end
+
                 if isnothing(cube_fitter.lines.tied_voff[i, j])
                     voff_ln_plim = cube_fitter.lines.voff[i, j].limits
                     voff_ln_locked = cube_fitter.lines.voff[i, j].locked
@@ -1162,6 +2004,11 @@ function get_line_plimits(cube_fitter::CubeFitter, ext_curve::Vector{<:Real}, in
                     fwhm_ln_locked = cube_fitter.tied_kinematics.fwhm[j][kf].locked
                     fwhm_ln_name = "$(key_fwhm)_$(j)_fwhm"
                     ft = true
+                end
+
+                if at
+                    append!(amp_tied[j][ka], [ind])
+                    append!(amp_ratios[j][ka], [cube_fitter.tied_kinematics.amp[j][ka][cube_fitter.lines.names[i]]])
                 end
 
                 # Depending on flexible_wavesol, we need to add 2 voffs instead of 1 voff
@@ -1214,7 +2061,13 @@ function get_line_plimits(cube_fitter::CubeFitter, ext_curve::Vector{<:Real}, in
 
     # Combine all "tied" vectors
     tied = []
+    tied_amp_inds = []
+    tied_amp_ratios = []
     for j ∈ 1:cube_fitter.n_comps
+        for k ∈ 1:length(cube_fitter.tied_kinematics.key_amp[j])
+            append!(tied_amp_inds, [tuple(amp_tied[j][k]...)])
+            append!(tied_amp_ratios, [tuple(amp_ratios[j][k]...)])
+        end
         for k ∈ 1:length(cube_fitter.tied_kinematics.key_voff[j])
             append!(tied, [tuple(voff_tied[j][k]...)])
         end
@@ -1231,6 +2084,13 @@ function get_line_plimits(cube_fitter::CubeFitter, ext_curve::Vector{<:Real}, in
             append!(tied_pairs, [(group[1],group[j],1.0) for j in 2:length(group)])
         end
     end
+    for groupind in eachindex(tied_amp_inds)
+        group = tied_amp_inds[groupind]
+        ratio = tied_amp_ratios[groupind]
+        if length(group) > 1
+            append!(tied_pairs, [(group[1],group[j],ratio[j]/ratio[1]) for j in 2:length(group)])
+        end
+    end
 
     # Convert the paired tuples into indices for each tied parameter
     tied_indices = sort([tp[2] for tp in tied_pairs])
@@ -1243,7 +2103,7 @@ end
 """
     get_line_initial_values(cube_fitter, init)
 
-Get the vector of starting values for the line fit for a given CubeFitter object.
+Get the vector of starting values and relative step sizes for the line fit for a given CubeFitter object.
 """
 function get_line_initial_values(cube_fitter::CubeFitter, init::Bool)
 
@@ -1269,6 +2129,11 @@ function get_line_initial_values(cube_fitter::CubeFitter, init::Bool)
                 if !isnothing(cube_fitter.lines.profiles[i, j])
 
                     amp_ln = isone(j) ? A_ln[i] : cube_fitter.lines.acomp_amp[i, j-1].value
+                    if !isnothing(cube_fitter.lines.tied_amp[i, j])
+                        key_amp = cube_fitter.lines.tied_amp[i, j]
+                        ka = findfirst(cube_fitter.tied_kinematics.key_amp[j] .== key_amp)
+                        amp_ln *= cube_fitter.tied_kinematics.amp[j][ka][cube_fitter.lines.names[i]]
+                    end
                     if isnothing(cube_fitter.lines.tied_voff[i, j])
                         voff_ln = cube_fitter.lines.voff[i, j].value
                     else
@@ -1309,18 +2174,47 @@ function get_line_initial_values(cube_fitter::CubeFitter, init::Bool)
         end
     end
 
-    ln_pars
+    # Relative step size vector
+    deps = sqrt(eps())
+    ln_dstep = Float64[]
+    for i ∈ 1:cube_fitter.n_lines
+        for j ∈ 1:cube_fitter.n_comps
+            if !isnothing(cube_fitter.lines.profiles[i, j])
+
+                amp_dstep = deps
+                voff_dstep = 1e-4
+                fwhm_dstep = 1e-4
+
+                # Depending on flexible_wavesol option, we need to add 2 voffs
+                if !isnothing(cube_fitter.lines.tied_voff[i, j]) && cube_fitter.flexible_wavesol && isone(j)
+                    append!(ln_dstep, [amp_dstep, voff_dstep, voff_dstep, fwhm_dstep])
+                else
+                    append!(ln_dstep, [amp_dstep, voff_dstep, fwhm_dstep])
+                end
+
+                if cube_fitter.lines.profiles[i, j] == :GaussHermite
+                    # 2 extra parameters: h3 and h4
+                    append!(ln_dstep, [deps, deps])
+                elseif cube_fitter.lines.profiles[i, j] == :Voigt
+                    # 1 extra parameter: eta
+                    append!(ln_dstep, [deps])
+                end
+            end
+        end
+    end 
+
+    ln_pars, ln_dstep
 
 end
 
 
 """
-    get_line_parinfo(n_free, lb, ub)
+    get_line_parinfo(n_free, lb, ub, dp)
 
 Get the CMPFit parinfo and config objects for a given CubeFitter object, given the vector of initial values,
-limits, and boolean locked values.
+limits, and relative step sizes.
 """
-function get_line_parinfo(n_free, lb, ub)
+function get_line_parinfo(n_free, lb, ub, dp)
 
     # Convert parameter limits into CMPFit object
     parinfo = CMPFit.Parinfo(n_free)
@@ -1328,6 +2222,7 @@ function get_line_parinfo(n_free, lb, ub)
         parinfo[pᵢ].fixed = 0
         parinfo[pᵢ].limited = (1,1)
         parinfo[pᵢ].limits = (lb[pᵢ], ub[pᵢ])
+        parinfo[pᵢ].relstep = dp[pᵢ]
     end
 
     # Create a `config` structure
@@ -1338,7 +2233,7 @@ end
 
 
 """
-    pretty_print_line_results(cube_fitter, popt, perr, prof_ln, acomp_prof_ln)
+    pretty_print_line_results(cube_fitter, popt, perr)
 
 Print out a nicely formatted summary of the line fit results for a given CubeFitter object.
 """

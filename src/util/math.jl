@@ -20,7 +20,7 @@ const Bν_1::Float64 = 2h_ERGS/(C_KMS*1e5)^2 * 1e23 / 1e6 * (C_KMS*1e9)^3
 const Bν_2::Float64 = h_ERGS*(C_KMS*1e5) / kB_ERGK * 1e4
 
 # Wein's law constant of proportionality in μm*K
-const b_Wein::Float64 = 2897.771955        
+const b_Wein::Float64 = 2897.771955   
 
 # Saved Kemper, Vriend, & Tielens (2004) extinction profile
 const kvt_prof::Matrix{Float64} =  [8.0  0.06;
@@ -77,6 +77,12 @@ const Smith4_interp = Spline1D(SmithTemps[3], SmithTemps[4]; k=3)
 const IceCHTemp = read_ice_ch_temps()
 const Ice_interp = Spline1D(IceCHTemp[1], IceCHTemp[2]; k=3)
 const CH_interp = Spline1D(IceCHTemp[3], IceCHTemp[4]; k=3)
+
+# Polynomials for calculating the CCM extinction curve
+const CCM_optPoly_a = Polynomial([1.0, 0.104, -0.609, 0.701, 1.137, -1.718, -0.827, 1.647, -0.505])
+const CCM_optPoly_b = Polynomial([0.0, 1.952, 2.908, -3.989, -7.985, 11.102, 5.491, -10.805, 3.347])
+const CCM_fuvPoly_a = Polynomial([-1.703, -0.628, 0.137, -0.070])
+const CCM_fuvPoly_b = Polynomial([13.670, 4.257, -0.420, 0.374])
 
 ########################################### UTILITY FUNCTIONS ###############################################
 
@@ -198,6 +204,60 @@ julia> Doppler_width_λ(0, 10)
 ```
 """
 @inline Doppler_width_λ(Δv, λ₀) = Δv / C_KMS * λ₀
+
+
+"""
+    air_to_vacuum(λair)
+
+Convert an air wavelength to a vacuum wavelength, correcting for the index of refraction of air.
+Only converts wavelengths > 2000 angstroms.
+
+Reference: FIREFLY code, Kyle B. Westfall, https://www.icg.port.ac.uk/firefly/
+"""
+function air_to_vacuum(λair::Real)
+    # Do not modify < 2000 angstroms
+    if λair < 0.2
+        return λair
+    end
+    λvac = λair
+    for _ in 1:3
+        # wavenumber squared
+        s² = (1/λvac)^2
+        n = 1.0 + 5.792105e-2/(238.0185 - s²) + 1.67917e-3/(57.362 - s²)
+        λvac = λair * n
+    end
+    λvac
+end
+
+
+"""
+    convolveGaussian1D(flux, σ)
+
+Convolve a spectrum by a Gaussian with different sigma for every pixel.
+Extension of scipy.ndimage.gaussian_filter1d originally written by Michele Cappellari for pPXF.
+"""
+function convolveGaussian1D(flux::Vector{<:Real}, σ::Vector{<:Real})
+    # Impose a minimum width of 0.01 pixels
+    σ_conv = clamp.(σ, 0.01, Inf)
+
+    # Kernel size
+    p = ceil(Int, maximum(3σ_conv))
+    m = 2p+1
+    x2 = range(-p, p, length=m).^2
+    # Fill in the kernel with shifted copies of the data
+    n = length(flux)
+    kernel = zeros(m, n)
+    for j in 1:m
+        kernel[j, 1+p:end-p] = flux[j:n-m+j]
+    end
+    # Normalized gaussian component
+    gauss = exp.(.-x2 ./ (2 .* repeat(reshape(σ_conv, (1,length(σ_conv))), outer=(length(x2),1)).^2))
+    gauss ./= sum(gauss, dims=1)
+
+    conv_flux = sumdim(kernel .* gauss, 1)
+
+    conv_flux, p
+end
 
 
 """
@@ -371,8 +431,6 @@ end
 
 Return the Blackbody function Bν (per unit FREQUENCY) in MJy/sr,
 given a wavelength in μm and a temperature in Kelvins.
-
-Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 """
 @inline function Blackbody_ν(λ::Real, Temp::Real)
     Bν_1/λ^3 / (exp(Bν_2/(λ*Temp))-1)
@@ -396,8 +454,8 @@ end
 Simple power law function where the flux is proportional to the wavelength to the power alpha,
 normalized at 9.7 um.
 """
-@inline function power_law(λ::Real, α::Real)
-    (λ/9.7)^α
+@inline function power_law(λ::Real, α::Real, ref_λ::Real=9.7)
+    (λ/ref_λ)^α
 end
 
 
@@ -424,8 +482,6 @@ end
     Drude(x, A, μ, FWHM)
 
 Calculate a Drude profile at location `x`, with amplitude `A`, central value `μ`, and full-width at half-max `FWHM`
-
-Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 """
 @inline function Drude(x::Real, A::Real, μ::Real, FWHM::Real)
     A * (FWHM/μ)^2 / ((x/μ - μ/x)^2 + (FWHM/μ)^2)
@@ -443,6 +499,228 @@ See Pearson (1895), and https://iopscience.iop.org/article/10.3847/1538-4365/ac4
 function PearsonIV(x::Real, A::Real, μ::Real, a::Real, m::Real, ν::Real)
     n = (1 + (-ν/(2m))^2)^-m * exp(-ν * atan(-ν/(2m)))
     A/n * (1 + ((x - μ)/a)^2)^-m * exp(-ν * atan((x - μ)/a))
+end
+
+########################################## STELLAR POP FUNCTIONS #########################################
+
+
+"""
+    convolve_losvd(templates, vsyst, v, σ, npix)
+
+Convolve a set of stellar population templates with a line-of-sight velocity distribution (LOSVD)
+to produce templates according to the fitted stellar kinematics. Uses the Fourier Transforms of 
+the templates and the LOSVD to quickly calculate the convolution.
+
+Adapted and simplified from the pPXF and BADASS python codes.
+Cappellari (2017): http://adsabs.harvard.edu/abs/2017MNRAS.466..798C
+Sexton et al. (2021): https://ui.adsabs.harvard.edu/abs/2021MNRAS.500.2871S/abstract 
+"""
+function convolve_losvd(_templates::AbstractArray{T}, vsyst::Real, v::Real, σ::Real, velscale::Real, npix::Integer;
+    temp_fft::Bool=false, npad_in::Integer=0) where {T<:Number}
+
+    if temp_fft
+        @assert npad_in > 0 "npad_in must be specified for inputs that are already FFT'ed!"
+    end
+
+    # Normalize velocities to pixel units
+    vsysts = vsyst / velscale
+    vs = v / velscale
+    σs = σ / velscale
+
+    templates = copy(_templates)
+    if ndims(_templates) == 1
+        templates = reshape(_templates, (length(templates), 1))
+    end
+
+    # Check if the templates are already FFT'ed
+    if !temp_fft
+        # Pad with 0s up to a factor of small primes to increase efficiency 
+        s = size(templates)
+        npad = nextprod([2,3,5], s[1])
+        temps = zeros(typeof(v), npad, s[2])
+        for j in axes(templates, 2)
+            temps[1:s[1], j] = templates[:, j]
+        end
+        # Calculate the Fourier transform of the templates
+        temp_rfft = rfft(temps, 1)
+    else
+        npad = npad_in
+        temp_rfft = templates
+    end
+
+    # Calculate the Fourier transform of the LOSVD
+    nl = size(temp_rfft, 1)
+    lvd_rfft = losvd_rfft(vsysts, vs, σs, nl, σ_diff=0., factor=1.)
+
+    # Calculate the inverse Fourier transform of the resultant distribution
+    conv_temp = irfft(temp_rfft .* lvd_rfft, npad, 1)
+
+    # Take only enough pixels to match the length of the input spectrum
+    conv_temp[1:npix, :]
+
+end
+
+
+"""
+    losvd_rfft(vsyst, v, σ, nl, σ_diff=0., factor=1.)
+
+Analytic Fourier Transform (of real input) of the Gauss-Hermite LOSVD.
+Equation (38) of Cappellari M., 2017, MNRAS, 466, 798
+http://adsabs.harvard.edu/abs/2017MNRAS.466..798C
+
+Adapted and simplified from the pPXF and BADASS python codes.
+Only supports 2 moments (v and σ) and 1-sided fitting.
+"""
+function losvd_rfft(vsyst::Real, v::Real, σ::Real, nl::Integer; σ_diff::Real=0., factor::Real=1.)
+
+    # Prepare quantities
+    a = (vsyst + v)/σ
+    b = σ_diff/σ
+    ω = isfinite(σ) ? range(0., π*σ*factor, nl) : ones(typeof(v), nl) .* NaN  # handle cases where the spaxel isn't fit 
+    # Calculate Fourier transform
+    lvd_rfft = @. exp(1im*a*ω - 0.5*(1-b^2)*ω^2)
+    # Take complex conjugate
+    conj(lvd_rfft)
+
+end
+
+
+"""
+    attenuation_calzetti(λ, E_BV, δ=nothing, f_nodust=nothing, uv_bump=nothing)
+
+Adapted from pPXF (Cappellari 2017), original docstring below:
+
+Combines the attenuation curves from    
+`Kriek & Conroy (2013) <https://ui.adsabs.harvard.edu/abs/2013ApJ...775L..16K>`_
+hereafter KC13, 
+`Calzetti et al. (2000) <http://ui.adsabs.harvard.edu/abs/2000ApJ...533..682C>`_
+hereafter C+00,
+`Noll et al. (2009) <https://ui.adsabs.harvard.edu/abs/2009A%26A...499...69N>`_,
+and `Lower et al. (2022) <https://ui.adsabs.harvard.edu/abs/2022ApJ...931...14L>`_.
+
+When ``delta = uv_bump = f_nodust = None`` this function returns the C+00 
+reddening curve. When ``uv_bump = f_nodust = None`` this function uses the 
+``delta - uv_bump`` relation by KC13. The parametrization of the UV bump 
+comes from Noll+09. The modelling of the attenuated fraction follows Lower+22.
+
+"""
+function attenuation_calzetti(λ::Vector{<:Real}, E_BV::Real; δ::Union{Real,Nothing}=nothing,
+    f_nodust::Union{Real,Nothing}=nothing, uv_bump::Union{Real,Nothing}=nothing, Rv::Real=4.05)
+
+    # C+00 equations (3)-(4) but extrapolate for lam < 0.12 or lam > 2.2
+    k₁ = @. Rv + ifelse(λ > 0.63, 2.76536/λ - 4.93776, ((0.029249/λ - 0.526482)/λ + 4.01243)/λ - 5.7328)
+    
+    if isnothing(δ) && isnothing(uv_bump)
+        aλ = E_BV .* k₁
+    else
+        if isnothing(uv_bump)
+            uv_bump = 0.85 - 1.9*δ  # eq.(3) KC13
+        end
+        λ0 = 0.2175                  # Peak wavelength of UV bump in micron
+        δλ = 0.035                   # Width of UV bump in micron
+        dλ = @. uv_bump*(λ*δλ)^2 / ((λ^2 - λ0^2)^2 + (λ*δλ)^2)    # eq.(2) KC13
+        λv = 0.55                    # Effective V-band wavelength in micron
+        aλ = @. E_BV*(k₁ + dλ)*(λ/λv)^δ      
+    end
+    
+    frac = @. 10^(-0.4 * clamp(aλ, 0., Inf))
+    if !isnothing(f_nodust)
+        frac = @. f_nodust + (1 - f_nodust)*frac
+    end
+
+    frac
+end
+
+
+"""
+    attenuation_cardelli(λ, E_BV[, Rv])
+
+Calculate the attenuation factor for a given wavelength range `λ` with a 
+reddening of `E_BV` and selective extinction ratio `Rv`, using the
+Cardelli et al. (1989) galactic extinction curve.
+
+This function has been adapted from BADASS (Sexton et al. 2021), which
+in turn has been adapted from the IDL Astrolib library.
+
+# Arguments
+- `λ::Vector{<:Real}`: The wavelength vector in microns
+- `E_BV::Real`: The color excess E(B-V) in magnitudes
+- `Rv::Real=3.1`: The ratio of total selective extinction R(V) = A(V)/E(B-V)
+
+# Returns
+- `Vector{<:Real}`: The extinction factor, 10^(-0.4*A(V)*(a(λ)+b(λ)/R(V)))
+
+Notes from the original docstring have been pasted below:
+
+1. This function was converted from the IDL Astrolib procedure
+   last updated in April 1998. All notes from that function
+   (provided below) are relevant to this function 
+2. (From IDL:) The CCM curve shows good agreement with the Savage & Mathis (1979)
+   ultraviolet curve shortward of 1400 A, but is probably
+   preferable between 1200 and 1400 A.
+3. (From IDL:) Many sightlines with peculiar ultraviolet interstellar extinction 
+   can be represented with a CCM curve, if the proper value of 
+   R(V) is supplied.
+4. (From IDL:) Curve is extrapolated between 912 and 1000 A as suggested by
+   Longo et al. (1989, ApJ, 339,474)
+5. (From IDL:) Use the 4 parameter calling sequence if you wish to save the 
+   original flux vector.
+6. (From IDL:) Valencic et al. (2004, ApJ, 616, 912) revise the ultraviolet CCM
+   curve (3.3 -- 8.0 um-1).	But since their revised curve does
+   not connect smoothly with longer and shorter wavelengths, it is
+   not included here.
+7. For the optical/NIR transformation, the coefficients from 
+   O'Donnell (1994) are used
+"""
+function attenuation_cardelli(λ::Vector{<:Real}, E_BV::Real, Rv::Real=3.10)
+    # inverse wavelength (microns)
+    x = 1.0 ./ λ
+
+    # Correction invalid for any x > 11
+    if any(x .> 11.0)
+        @warn "Input wavelength vector has values outside the allowable range of 1/λ < 11. Returning ones."
+        return ones(length(x))
+    end
+
+    a = zeros(length(x))
+    b = zeros(length(x))
+
+    # Infrared
+    good = 0.3 .< x .< 1.1
+    a[good] = @. 0.574x[good]^1.61
+    b[good] = @. -0.527x[good]^1.61
+
+    # Optical/NIR
+    good = 1.1 .≤ x .< 3.3
+    y = x .- 1.82
+    a[good] = CCM_optPoly_a.(y[good])
+    b[good] = CCM_optPoly_b.(y[good])
+
+    # Mid-UV
+    good = 3.3 .≤ x .< 8.0
+    Fa = zeros(sum(good))
+    Fb = zeros(sum(good))
+
+    good1 = x .> 5.9
+    if sum(good1) > 0
+        y = x .- 5.9
+        Fa[good1] = @. -0.04473y[good1]^2 - 0.009779y[good1]^3
+        Fb[good1] = @. 0.2130y[good1]^2 + 0.1207y[good1]^3
+    end
+
+    a[good] = @. 1.752 - 0.316x[good] - 0.104/((x[good] - 4.67)^2 + 0.341) + Fa
+    b[good] = @. -3.090 + 1.825x[good] + 1.206/((x[good] - 4.62)^2 + 0.263) + Fb
+
+    # Far-UV
+    good = 8.0 .≤ x .≤ 11.0
+    y = x .- 8.0
+    a[good] = CCM_fuvPoly_a.(y[good])
+    b[good] = CCM_fuvPoly_b.(y[good])
+
+    # Calculate the extintion
+    Av = Rv .* E_BV
+    aλ = Av .* (a .+ b./Rv)
+    @. 10^(-0.4 * aλ)
 end
 
 
@@ -542,32 +820,40 @@ Calculate the mixed silicate extinction profile based on Kemper, Vriend, & Tiele
 Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 (with modifications)
 """
-function τ_kvt(λ::Real, β::Real)
+function τ_kvt(λ::Vector{<:Real}, β::Real)
 
     # Get limits of the values that we have datapoints for via the kvt_prof constant
     mx, mn = argmax(kvt_prof[:, 1]), argmin(kvt_prof[:, 1])
     λ_mx, λ_mn = kvt_prof[mx, 1], kvt_prof[mn, 1]
 
     # Interpolate based on the region of data 
-    if λ ≤ λ_mn
-        ext = kvt_prof[mn, 2] * exp(2.03 * (λ - λ_mn))
-    elseif λ_mn < λ < λ_mx
-        # ext = linear_interpolation(kvt_prof[:, 1], kvt_prof[:, 2])(λ)
-        ext = KVT_interp(λ)
-    elseif λ_mx < λ < λ_mx + 2
-        ext = KVT_interp_end(λ)
-    else
-        ext = 0.
+    ext = zeros(typeof(β), length(λ))
+    r1 = λ .≤ λ_mn
+    if sum(r1) > 0
+        ext[r1] .= @. kvt_prof[mn, 2] * exp(2.03 * (λ[r1] - λ_mn))
     end
-    ext = ext < 0 ? 0. : ext
+    r2 = λ_mn .< λ .< λ_mx
+    if sum(r2) > 0
+        ext[r2] .= KVT_interp(λ[r2])
+    end
+    r3 = λ_mx .< λ .< λ_mx+2
+    if sum(r3) > 0
+        ext[r3] .= KVT_interp_end(λ[r3])
+    end
+    ext[ext .< 0] .= 0.
 
     # Add a drude profile around 18 microns
-    ext += Drude(λ, 0.4, 18., 4.446)
+    ext .+= Drude.(λ, 0.4, 18., 4.446)
 
-    (1 - β) * ext + β * (9.7/λ)^1.7
+    @. (1 - β) * ext + β * (9.7/λ)^1.7
 end
 
 
+"""
+    τ_ct(λ)
+
+Calculate the extinction profile based on Chiar & Tielens (2005)
+"""
 function τ_ct(λ::Vector{<:Real})
 
     mx = argmax(CT_prof[1])
@@ -584,6 +870,11 @@ function τ_ct(λ::Vector{<:Real})
 end
 
 
+"""
+    τ_ohm(λ)
+
+Calculate the extinction profile based on Ossenkopf, Henning, & Mathis (1992)
+"""
 function τ_ohm(λ::Vector{<:Real})
 
     ext = OHM_interp(λ)
@@ -640,9 +931,10 @@ end
 
 
 """
-    Extinction(ext, τ_97; screen)
+    Extinction(ext, τ_97; [screen])
 
-Calculate the overall extinction factor
+Calculate the extinction factor given the normalized curve `ext` and the optical depth
+at 9.7 microns, `τ_97`, either assuming a screen or mixed geometry.
 """
 function extinction(ext::Real, τ_97::Real; screen::Bool=false)
     if screen
@@ -673,6 +965,35 @@ function make_bins(array::AbstractArray)
     widths[1:end-1] = edges[2:end-1] - edges[1:end-2]
     # Return the edges and widths
     edges, widths
+end
+
+
+
+"""
+    get_logarithmic_λ(λlim, n, logscale=nothing, oversample=1)
+
+Calculate a logarithmically spaced wavelength grid with limits of (λlim[1], λlim[2]) with a number of samples
+either given by a scaling factor `logscale` between points, or an `oversample` factor based on the input number of points `n`.
+"""
+function get_logarithmic_λ(λlim::Vector{<:Real}, n::Integer; logscale::Union{Real,Nothing}=nothing, oversample::Integer=1)
+    @assert length(λlim) == 2 "λlim must have exactly 2 elements"
+    @assert λlim[2] > λlim[1] "λlim must satisfty λlim[2] > λlim[1]"
+    m = n * oversample
+
+    dλ = diff(λlim)[1] / (n - 1)              # assume constant dlam
+    lnlim = log.(λlim ./ dλ .+ [-0.5, 0.5])   # all in units of dlam
+
+    if isnothing(logscale)
+        logscale = diff(lnlim)/m
+    else
+        m = floor(Int, diff(lnlim)[1]/logscale)
+        lnlim[2] = lnlim[1] + m*logscale
+    end
+    new_borders = exp.(range(lnlim..., length=m+1))
+    lnλ = .√(new_borders[2:end] .* new_borders[1:end-1]) .* dλ  # geometric mean
+
+    # return logarithmically spaced wavelength vector according to either logscale or oversample
+    lnλ
 end
 
 
@@ -724,7 +1045,7 @@ function resample_conserving_flux(new_wave::AbstractVector, old_wave::AbstractVe
                 new_mask[.., j] .= 1
             end
             if (j == 1 || j == size(new_wave, 1)) && !warned
-                @warn "\nSpectres: new_wave contains values outside the range " *
+                @debug "\nSpectres: new_wave contains values outside the range " *
                       "in old_wave, new_fluxes and new_errs will be filled " *
                       "with the value set in the 'fill' keyword argument. \n"
                 warned = true
@@ -801,8 +1122,8 @@ end
 
 
 """
-    model_continuum(λ, params, n_dust_cont, n_power_law, extinction_curve, extinction_screen, fit_sil_emission;
-        return_components=return_components)
+    model_continuum(λ, params, N, n_dust_cont, n_power_law, dust_prof, n_abs_feat, extinction_curve, extinction_screen, 
+        fit_sil_emission, use_pah_templates, return_components)
 
 Create a model of the continuum (including stellar+dust continuum, PAH features, and extinction, excluding emission lines)
 at the given wavelengths `λ`, given the parameter vector `params`.
@@ -813,22 +1134,26 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 # Arguments
 - `λ::Vector{<:AbstractFloat}`: Wavelength vector of the spectrum to be fit
 - `params::Vector{<:AbstractFloat}`: Parameter vector. 
+- `N::Real`: The normalization.
 - `n_dust_cont::Integer`: Number of dust continuum profiles to be fit
 - `n_power_law::Integer`: Number of power laws to be fit
-- `n_dust_feat::Integer`: Number of PAH dust features to be fit
+- `dust_prof::Vector{Symbol}`: Vector giving the profiles to fit for each dust feature (either :Drude or :PearsonIV)
+- `n_abs_feat::Integer`: Number of absorption features to be fit
 - `extinction_curve::String`: The type of extinction curve to use, "kvt" or "d+"
 - `extinction_screen::Bool`: Whether or not to use a screen model for the extinction curve
 - `fit_sil_emission::Bool`: Whether or not to fit silicate emission with a hot dust continuum component
-- `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
+- `use_pah_templates::Bool`: Whether or not to use PAH templates to model the PAH emission
+- `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
-function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
+function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
     n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, use_pah_templates::Bool, 
-    return_components::Bool) where {T<:Real}
+    return_components::Bool)
 
     # Prepare outputs
-    comps = Dict{String, Vector{Float64}}()
-    contin = zeros(Float64, length(λ))
+    out_type = eltype(params)
+    comps = Dict{String, Vector{out_type}}()
+    contin = zeros(out_type, length(λ))
 
     # Stellar blackbody continuum (usually at 5000 K)
     comps["stellar"] = params[1] .* Blackbody_ν.(λ, params[2]) ./ N
@@ -853,7 +1178,7 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
     if extinction_curve == "d+"
         ext_curve = τ_dp(λ, params[pᵢ+3])
     elseif extinction_curve == "kvt"
-        ext_curve = τ_kvt.(λ, params[pᵢ+3])
+        ext_curve = τ_kvt(λ, params[pᵢ+3])
     elseif extinction_curve == "ct"
         ext_curve = τ_ct(λ)
     elseif extinction_curve == "ohm"
@@ -871,11 +1196,11 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
     pᵢ += 4
 
     # Other absorption features
-    abs_tot = ones(Float64, length(λ))
+    abs_tot = one(out_type)
     for k ∈ 1:n_abs_feat
         prof = Drude.(λ, 1.0, params[pᵢ+1:pᵢ+2]...)
         comps["abs_feat_$k"] = extinction.(prof, params[pᵢ], screen=true)
-        abs_tot .*= comps["abs_feat_$k"]
+        abs_tot = abs_tot .* comps["abs_feat_$k"]
         pᵢ += 3
     end
 
@@ -890,9 +1215,9 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
     end
 
     if use_pah_templates
-        pah3 = Smith3_interp.(λ)
-        contin .+= params[pᵢ] .* pah3 ./ maximum(pah3) .* comps["extinction"]
-        pah4 = Smith4_interp.(λ)
+        pah3 = Smith3_interp(λ)
+        contin .+= params[pᵢ] .* pah3  ./ maximum(pah3) .* comps["extinction"]
+        pah4 = Smith4_interp(λ)
         contin .+= params[pᵢ+1] .* pah4 ./ maximum(pah4) .* comps["extinction"]
     else
         for (j, prof) ∈ enumerate(dust_prof)
@@ -917,11 +1242,12 @@ end
 
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
-function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
-    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, use_pah_templates::Bool) where {T<:Real}
+function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
+    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, use_pah_templates::Bool)
 
     # Prepare outputs
-    contin = zeros(Float64, length(λ))
+    out_type = eltype(params)
+    contin = zeros(out_type, length(λ))
 
     # Stellar blackbody continuum (usually at 5000 K)
     contin .+= params[1] .* Blackbody_ν.(λ, params[2]) ./ N
@@ -943,7 +1269,7 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
     if extinction_curve == "d+"
         ext_curve = τ_dp(λ, params[pᵢ+3])
     elseif extinction_curve == "kvt"
-        ext_curve = τ_kvt.(λ, params[pᵢ+3])
+        ext_curve = τ_kvt(λ, params[pᵢ+3])
     elseif extinction_curve == "ct"
         ext_curve = τ_ct(λ)
     elseif extinction_curve == "ohm"
@@ -961,10 +1287,10 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
     pᵢ += 4
 
     # Other absorption features
-    abs_tot = ones(Float64, length(λ))
+    abs_tot = one(out_type)
     for k ∈ 1:n_abs_feat
         prof = Drude.(λ, 1.0, params[pᵢ+1:pᵢ+2]...)
-        abs_tot .*= extinction.(prof, params[pᵢ], screen=true)
+        abs_tot = abs_tot .* extinction.(prof, params[pᵢ], screen=true)
         pᵢ += 3
     end
     
@@ -978,9 +1304,9 @@ function model_continuum(λ::Vector{T}, params::Vector{T}, N::Real, n_dust_cont:
     end
 
     if use_pah_templates
-        pah3 = Smith3_interp.(λ)
+        pah3 = Smith3_interp(λ)
         contin .+= params[pᵢ] .* pah3 ./ maximum(pah3) .* ext
-        pah4 = Smith4_interp.(λ)
+        pah4 = Smith4_interp(λ)
         contin .+= params[pᵢ+1] .* pah4 ./ maximum(pah4) .* ext
     else
         if all(dust_prof .== :Drude)
@@ -1008,24 +1334,282 @@ end
 
 
 """
-    model_pah_residuals(λ, params, n_dust_feat, return_components)
+    model_continuum(λ, params, N, velscale, vsyst_ssp, vsyst_feii, npad_feii, n_ssps, ssp_λ, ssp_templates,
+        feii_templates_fft, n_power_law, fit_uv_bump, fit_covering_frac, fit_opt_na_feii, fit_opt_br_feii,
+        extinction_curve, return_components)
+
+Create a model of the continuum (including stellar+dust continuum, PAH features, and extinction, excluding emission lines)
+at the given wavelengths `λ`, given the parameter vector `params`.
+
+# Arguments
+- `λ::Vector{<:AbstractFloat}`: Wavelength vector of the spectrum to be fit
+- `params::Vector{<:AbstractFloat}`: Parameter vector. 
+- `N::Real`: The normalization.
+- `velscale::Real`: The constant velocity scale between pixels, assuming the wavelength vector is logarithmically binned, in km/s/pix.
+- `vsyst_ssp::Real`: The systemic velocity offset between the input wavelength grid and the SSP template wavelength grid
+- `vsyst_feii::Real`: The systemic velocity offset between the input wavelength grid and the Fe II template wavelength grid
+- `npad_feii::Integer`: The length of the Fe II wavelength grid (NOT the length of the Fourier transformed templates)
+- `n_ssps::Integer`: The number of simple stellar populations to be fit
+- `ssp_λ::Vector{<:Real}`: The SSP template wavelength grid
+- `ssp_templates::Union{Vector{Spline2D},Matrix{<:Real}}`: The SSP templates
+- `feii_templates_fft::Matrix{<:Complex}`: The Fourier transform of the Fe II templates
+- `n_power_law::Integer`: The number of power laws to be fit
+- `fit_uv_bump::Bool`: Whether or not to fit the UV bump in the attenuation model (only applies for "calzetti")
+- `fit_covering_frac::Bool`: Whether or not to fit a covering fraction in the attenuation model (only applies for "calzetti")
+- `fit_opt_na_feii::Bool`: Whether or not to fit narrow Fe II emission
+- `fit_opt_br_feii::Bool`: Whether or not to fit broad Fe II emission
+- `extinction_curve::String`: The name of the extinction curve to use, either "ccm" or "calzetti"
+- `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in 
+    addition to the overall fit
+"""
+function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, velscale::Real, vsyst_ssp::Real, vsyst_feii::Real, 
+    npad_feii::Integer, n_ssps::Integer, ssp_λ::Vector{<:Real}, ssp_templates::Union{Vector{Spline2D},Matrix{<:Real}}, 
+    feii_templates_fft::Matrix{<:Complex}, n_power_law::Integer, fit_uv_bump::Bool, fit_covering_frac::Bool, fit_opt_na_feii::Bool, 
+    fit_opt_br_feii::Bool, extinction_curve::String, return_components::Bool)   
+
+    # Prepare outputs
+    out_type = eltype(params)
+    comps = Dict{String, Vector{out_type}}()
+    contin = zeros(out_type, length(λ))
+    pᵢ = 1
+
+    ssps = zeros(out_type, length(ssp_λ), n_ssps)
+    # Interpolate the SSPs to the right ages/metallicities (this is slow)
+    for i in 1:n_ssps
+        # normalize the templates by their median so that the amplitude is properly separated from the age and metallicity during fitting
+        if ssp_templates isa Vector{Spline2D}
+            temp = [ssp_templates[j](params[pᵢ+1], params[pᵢ+2]) for j in eachindex(ssp_λ)]
+        else
+            temp = @view ssp_templates[:,i]
+        end
+        ssps[:, i] = params[pᵢ] .* temp ./ median(temp)
+        pᵢ += 3
+    end
+
+    # Convolve with a line-of-sight velocity distribution (LOSVD) according to the stellar velocity and dispersion
+    conv_ssps = convolve_losvd(ssps, vsyst_ssp, params[pᵢ], params[pᵢ+1], velscale, length(λ))
+    pᵢ += 2
+
+    # Combine the convolved stellar templates together with the weights
+    for i in 1:n_ssps
+        comps["SSP_$i"] = conv_ssps[:, i]
+        contin .+= comps["SSP_$i"]
+    end
+
+    # Apply attenuation law
+    E_BV = params[pᵢ]
+    E_BV_factor = params[pᵢ+1]
+    δ = f_nodust = nothing
+    if fit_uv_bump && fit_covering_frac
+        δ = params[pᵢ+2]
+        f_nodust = params[pᵢ+3]
+        pᵢ += 2
+    elseif fit_uv_bump && extinction_curve == "calzetti"
+        δ = params[pᵢ+2]
+        pᵢ += 1
+    elseif fit_covering_frac && extinction_curve == "calzetti"
+        f_nodust = params[pᵢ+2]
+        pᵢ += 1
+    end
+    pᵢ += 2
+    if extinction_curve == "ccm"
+        comps["attenuation_stars"] = attenuation_cardelli(λ, E_BV * E_BV_factor)
+        comps["attenuation_gas"] = attenuation_cardelli(λ, E_BV)
+    elseif extinction_curve == "calzetti"
+        comps["attenuation_stars"] = attenuation_calzetti(λ, E_BV * E_BV_factor, δ=δ, f_nodust=f_nodust)
+        comps["attenuation_gas"] = attenuation_calzetti(λ, E_BV, δ=δ, f_nodust=f_nodust)
+    else
+        error("Unrecognized extinctino curve $extinction_curve")
+    end
+    contin .*= comps["attenuation_stars"]
+
+    # Fe II emission
+    if fit_opt_na_feii
+        conv_na_feii = convolve_losvd(feii_templates_fft[:, 1], vsyst_feii, params[pᵢ+1], params[pᵢ+2], velscale, length(λ), 
+            temp_fft=true, npad_in=npad_feii)
+        comps["na_feii"] = params[pᵢ] .* conv_na_feii[:, 1]
+        contin .+= comps["na_feii"] .* comps["attenuation_gas"]
+        pᵢ += 3
+    end
+    if fit_opt_br_feii
+        conv_br_feii = convolve_losvd(feii_templates_fft[:, 2], vsyst_feii, params[pᵢ+1], params[pᵢ+2], velscale, length(λ),
+            temp_fft=true, npad_in=npad_feii)
+        comps["br_feii"] = params[pᵢ] .* conv_br_feii[:, 1]
+        contin .+= comps["br_feii"] .* comps["attenuation_gas"]
+        pᵢ += 3
+    end
+
+    # Power laws
+    for j ∈ 1:n_power_law
+        # Reference wavelength at 5100 angstroms for the amplitude
+        comps["power_law_$j"] = params[pᵢ] .* power_law.(λ, params[pᵢ+1], 0.5100)
+        contin .+= comps["power_law_$j"]
+        pᵢ += 2
+    end
+
+    if return_components
+        return contin, comps
+    end
+    contin
+
+end
+
+
+# Multiple versions for more efficiency
+function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, velscale::Real, vsyst_ssp::Real, vsyst_feii::Real, 
+    npad_feii::Integer, n_ssps::Integer, ssp_λ::Vector{<:Real}, ssp_templates::Union{Vector{Spline2D},Matrix{<:Real}}, 
+    feii_templates_fft::Matrix{<:Complex}, n_power_law::Integer, fit_uv_bump::Bool, fit_covering_frac::Bool, fit_opt_na_feii::Bool, 
+    fit_opt_br_feii::Bool, extinction_curve::String)   
+
+    # Prepare outputs
+    out_type = eltype(params)
+    contin = zeros(out_type, length(λ))
+    pᵢ = 1
+
+    ssps = zeros(out_type, length(ssp_λ), n_ssps)
+    # Interpolate the SSPs to the right ages/metallicities (this is slow)
+    for i in 1:n_ssps
+        # normalize the templates by their median so that the amplitude is properly separated from the age and metallicity during fitting
+        if ssp_templates isa Vector{Spline2D}
+            temp = [ssp_templates[j](params[pᵢ+1], params[pᵢ+2]) for j in eachindex(ssp_λ)]
+        else
+            temp = @view ssp_templates[:,i]
+        end
+        ssps[:, i] = params[pᵢ] .* temp ./ median(temp)
+        pᵢ += 3
+    end
+
+    # Convolve with a line-of-sight velocity distribution (LOSVD) according to the stellar velocity and dispersion
+    conv_ssps = convolve_losvd(ssps, vsyst_ssp, params[pᵢ], params[pᵢ+1], velscale, length(λ))
+    pᵢ += 2
+
+    # Combine the convolved stellar templates together with the weights
+    @views for i in 1:n_ssps
+        contin .+= conv_ssps[:, i]
+    end
+
+    # Apply attenuation law
+    E_BV = params[pᵢ]
+    E_BV_factor = params[pᵢ+1]
+    δ = f_nodust = nothing
+    if fit_uv_bump && fit_covering_frac
+        δ = params[pᵢ+2]
+        f_nodust = params[pᵢ+3]
+        pᵢ += 2
+    elseif fit_uv_bump && extinction_curve == "calzetti"
+        δ = params[pᵢ+2]
+        pᵢ += 1
+    elseif fit_covering_frac && extinction_curve == "calzetti"
+        f_nodust = params[pᵢ+2]
+        pᵢ += 1
+    end
+    pᵢ += 2
+    if extinction_curve == "ccm"
+        att_stars = attenuation_cardelli(λ, E_BV * E_BV_factor)
+        att_gas = attenuation_cardelli(λ, E_BV)
+    elseif extinction_curve == "calzetti"
+        att_stars = attenuation_calzetti(λ, E_BV * E_BV_factor, δ=δ, f_nodust=f_nodust)
+        att_gas = attenuation_calzetti(λ, E_BV, δ=δ, f_nodust=f_nodust)
+    else
+        error("Unrecognized extinctino curve $extinction_curve")
+    end
+    contin .*= att_stars
+
+    # Fe II emission
+    if fit_opt_na_feii
+        conv_na_feii = convolve_losvd(feii_templates_fft[:, 1], vsyst_feii, params[pᵢ+1], params[pᵢ+2], velscale, length(λ), 
+            temp_fft=true, npad_in=npad_feii)
+        @views contin .+= params[pᵢ] .* conv_na_feii[:, 1] .* att_gas
+        pᵢ += 3
+    end
+    if fit_opt_br_feii
+        conv_br_feii = convolve_losvd(feii_templates_fft[:, 2], vsyst_feii, params[pᵢ+1], params[pᵢ+2], velscale, length(λ),
+            temp_fft=true, npad_in=npad_feii)
+        @views contin .+= params[pᵢ] .* conv_br_feii[:, 1] .* att_gas
+        pᵢ += 3
+    end
+
+    # Power laws
+    for _ ∈ 1:n_power_law
+        # Reference wavelength at 5100 angstroms for the amplitude
+        contin .+= params[pᵢ] .* power_law.(λ, params[pᵢ+1], 0.5100)
+        pᵢ += 2
+    end
+
+    contin
+end
+
+
+"""
+    test_line_snr(λ0, half_window_size, λ, I)
+
+Perform a quick test to estimate an emission line's signal-to-noise ratio just based on the
+maximum of the spectrum within a given window over the RMS of the surrounding region. Some 
+processing is done to remove outliers (convolution) and any linear trends in the continuum.
+
+# Arguments {T<:Real}
+- `λ0::Real`: The central wavelength of the line to be tested in microns
+- `half_window_size::Real`: Half the size of the window in microns
+- `λ::Vector{T}`: The wavelength vector
+- `I::vector{T}`: The intensity vector
+"""
+function test_line_snr(λ0::Real, half_window_size::Real, λ::Vector{T}, I::Vector{T}) where {T<:Real}
+
+    # Line testing region
+    region = (λ0 - half_window_size) .< λ .< (λ0 + half_window_size)
+    @assert sum(region) > 40 "The spectrum does not cover the line in question sufficiently!"
+
+    # Subtract linear trend
+    m = (mean(I[region][end-19:end]) - mean(I[region][1:20])) / (λ[region][end-9] - λ[region][10])
+    Ilin = mean(I[region][1:20]) .+ m.*(λ[region] .- λ[region][10])
+    λsub = λ[region]
+    Isub = I[region] .- Ilin
+
+    # Smooth with a width of 3 pixels
+    Iconv, _ = convolveGaussian1D([zeros(9); Isub; zeros(9)], 3 .* ones(length(Isub)+18))
+
+    # Maximum within the center of the region of the SMOOTHED spectrum
+    central = (λ0 - half_window_size/3) .< λsub .< (λ0 + half_window_size/3)
+    # RMS to the left/right of the region of the UNSMOOTHED spectrum
+    sides = ((λ0 - half_window_size) .< λsub .< (λ0 - half_window_size/3)) .| ((λ0 + half_window_size/3) .< λsub .< (λ0 + half_window_size))
+    rms = nanstd(Isub[sides])
+
+    # Sigma clipping
+    mask = abs.(Isub[central] .- Iconv[10:end-9][central]) .> 3rms
+    amp = nanmaximum(Iconv[10:end-9][central][.~mask])
+
+    # Sigma clipping
+    mask = abs.(Isub[sides] .- Iconv[10:end-9][sides]) .> 3rms
+    rms = nanstd(Isub[sides][.~mask])
+
+    # Rough estimate of the signal-to-noise ratio of the line
+    amp/rms
+
+end
+
+
+"""
+    model_pah_residuals(λ, params, dust_prof, ext_curve, return_components)
+
 Create a model of the PAH features at the given wavelengths `λ`, given the parameter vector `params`.
 Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 (with modifications)
+
 # Arguments
 - `λ::Vector{<:AbstractFloat}`: Wavelength vector of the spectrum to be fit
 - `params::Vector{<:AbstractFloat}`: Parameter vector. Parameters should be ordered as: `(amp, center, fwhm) for each PAH profile`
-- `n_dust_feat::Integer`: The number of PAH features that are being fit
-- `ext_curve::Vector{<:AbstractFloat}`: The extinction curve that was fit using model_continuum
+- `dust_prof::Vector{Symbol}`: The profiles of each PAH feature being fit (either :Drude or :PearsonIV)
+- `ext_curve::Vector{<:AbstractFloat}`: The extinction curve that was fit using model_{mir|opt}_continuum
 - `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in
     addition to the overall fit
 """
-function model_pah_residuals(λ::Vector{T}, params::Vector{T}, dust_prof::Vector{Symbol}, ext_curve::Vector{T}, 
-    return_components::Bool) where {T<:Real}
+function model_pah_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, dust_prof::Vector{Symbol}, ext_curve::Vector{<:Real}, 
+    return_components::Bool) 
 
     # Prepare outputs
-    comps = Dict{String, Vector{Float64}}()
-    contin = zeros(Float64, length(λ))
+    out_type = eltype(params)
+    comps = Dict{String, Vector{out_type}}()
+    contin = zeros(out_type, length(λ))
 
     # Add dust features with drude profiles
     pᵢ = 1
@@ -1053,10 +1637,11 @@ end
 
 
 # Multiple dispatch for more efficiency
-function model_pah_residuals(λ::Vector{T}, params::Vector{T}, dust_prof::Vector{Symbol}, ext_curve::Vector{T}) where {T<:Real}
+function model_pah_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, dust_prof::Vector{Symbol}, ext_curve::Vector{<:Real})
 
     # Prepare outputs
-    contin = zeros(Float64, length(λ))
+    out_type = eltype(params)
+    contin = zeros(out_type, length(λ))
 
     # Add dust features with drude profiles
     pᵢ = 1
@@ -1087,35 +1672,34 @@ end
 
 
 """
-    model_line_residuals(λ, params, n_lines, n_kin_tied, kin_tied_key, line_tied, line_profiles,
-        n_acomp_kin_tied, acomp_kin_tied_key, line_acomp_tied, line_acomp_profiles, line_restwave,
-        flexible_wavesol, tie_voigt_mixing, ext_curve; return_components=return_components) 
+    model_line_residuals(λ, params, n_lines, n_comps, lines, flexible_wavesol, ext_curve, lsf,
+        return_components) 
 
 Create a model of the emission lines at the given wavelengths `λ`, given the parameter vector `params`.
 
 Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 (with modifications)
 
-# Arguments
-- `λ::Vector{<:AbstractFloat}`: Wavelength vector of the spectrum to be fit
-- `params::Vector{<:AbstractFloat}`: Parameter vector. Parameters should be ordered as: 
-    `[tied velocity offsets, tied acomp velocity offsets, tied voigt mixing, 
-    (amp[, voff], FWHM[, h3, h4, η], [acomp_amp, acomp_voff, acomp_FWHM, acomp_h3, acomp_h4, acomp_η] for each line)]`
-- `n_lines::Integer`: Number of lines being fit
+# Arguments {S<:Integer}
+- `λ::Vector{<:Real}`: Wavelength vector of the spectrum to be fit
+- `params::Vector{<:Real}`: Parameter vector.
+- `n_lines::S`: Number of lines being fit
+- `n_comps::S`: Maximum number of profiles to be fit to any given line
 - `lines::TransitionLines`: Object containing information about each transition line being fit.
 - `flexible_wavesol::Bool`: Whether or not to allow small variations in tied velocity offsets, to account for a poor
-    wavelength solution in the data
-- `ext_curve::Vector{<:AbstractFloat}`: The extinction curve fit with model_continuum
+wavelength solution in the data
+- `ext_curve::Vector{<:Real}`: The extinction curve fit with model_{mir|opt}_continuum
 - `lsf::Function`: A function giving the FWHM of the line-spread function in km/s as a function of rest-frame wavelength in microns.
 - `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
-    addition to the overall fit
+addition to the overall fit
 """
-function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_comps::S, lines::TransitionLines, 
-    flexible_wavesol::Bool, ext_curve::Vector{T}, lsf::Function, return_components::Bool) where {T<:Real,S<:Integer}
+function model_line_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, n_lines::S, n_comps::S, lines::TransitionLines, 
+    flexible_wavesol::Bool, ext_curve::Vector{<:Real}, lsf::Function, return_components::Bool) where {S<:Integer}
 
     # Prepare outputs
-    comps = Dict{String, Vector{Float64}}()
-    contin = zeros(Float64, length(λ))
+    out_type = eltype(params)
+    comps = Dict{String, Vector{out_type}}()
+    contin = zeros(out_type, length(λ))
 
     pᵢ = 1
     # Add emission lines
@@ -1201,11 +1785,12 @@ end
 
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
-function model_line_residuals(λ::Vector{T}, params::Vector{T}, n_lines::S, n_comps::S, lines::TransitionLines, 
-    flexible_wavesol::Bool, ext_curve::Vector{T}, lsf::Function) where {T<:Real,S<:Integer}
+function model_line_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, n_lines::S, n_comps::S, lines::TransitionLines, 
+    flexible_wavesol::Bool, ext_curve::Vector{<:Real}, lsf::Function) where {S<:Integer}
 
     # Prepare outputs
-    contin = zeros(Float64, length(λ))
+    out_type = eltype(params)
+    contin = zeros(out_type, length(λ))
 
     pᵢ = 1
     # Add emission lines
@@ -1284,12 +1869,12 @@ end
 
 
 """
-    calculate_extra_parameters(λ, I, σ, n_dust_cont, n_dust_feat, extinction_curve, extinction_screen,
-        fit_sil_emission, n_lines, n_acomps, n_cops, lines, flexible_wavesol, lsf, popt_c, popt_l, 
-        perr_c, perr_l, extinction, mask_lines, continuum, Ω)
+    calculate_extra_parameters(λ, I, N, comps, n_dust_cont, n_power_law, n_dust_feat, dust_profiles,
+        n_abs_feat, fit_sil_emission, n_lines, n_acomps, n_comps, lines, flexible_wavesol, lsf, popt_c,
+        popt_l, perr_c, perr_l, extinction, mask_lines, continuum, area_sr[, propagate_err])
 
 Calculate extra parameters that are not fit, but are nevertheless important to know, for a given spaxel.
-Currently this includes the integrated intensity and signal to noise ratios of dust features and emission lines.
+Currently this includes the integrated intensity, equivalent width, and signal to noise ratios of dust features and emission lines.
 """
 function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, comps::Dict, n_dust_cont::Integer,
     n_power_law::Integer, n_dust_feat::Integer, dust_profiles::Vector{Symbol}, n_abs_feat::Integer, fit_sil_emission::Bool, 
@@ -1309,12 +1894,17 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     pₒ = 1
     # Initial parameter vector index where dust profiles start
     pᵢ = 3 + 2n_dust_cont + 2n_power_law + 4 + 3n_abs_feat + (fit_sil_emission ? 6 : 0)
+    # Extinction normalization factor
+    # max_ext = 1 / minimum(extinction)
 
     for ii ∈ 1:n_dust_feat
 
         # unpack the parameters
         A, μ, fwhm = popt_c[pᵢ:pᵢ+2]
         A_err, μ_err, fwhm_err = perr_c[pᵢ:pᵢ+2]
+        # Undo the normalization due to the extinction
+        # A *= max_ext
+        # A_err *= max_ext
         # Convert peak intensity to CGS units (erg s^-1 cm^-2 μm^-1 sr^-1)
         A_cgs = MJysr_to_cgs(A*N, μ)
         # Convert the error in the intensity to CGS units
@@ -1374,6 +1964,156 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
 
         pₒ += 3
     end
+
+    # Loop through lines
+    p_lines = zeros(3n_lines+3n_acomps)
+    p_lines_err = zeros(3n_lines+3n_acomps)
+    pₒ = pᵢ = 1
+    for (k, λ0) ∈ enumerate(lines.λ₀)
+        amp_1 = amp_1_err = voff_1 = voff_1_err = fwhm_1 = fwhm_1_err = nothing
+        for j ∈ 1:n_comps
+            if !isnothing(lines.profiles[k, j])
+
+                # (\/ pretty much the same as the model_line_residuals function, but calculating the integrated intensities)
+                amp = popt_l[pᵢ]
+                amp_err = propagate_err ? perr_l[pᵢ] : 0.
+
+                voff = popt_l[pᵢ+1]
+                voff_err = propagate_err ? perr_l[pᵢ+1] : 0.
+                # fill values with nothings for profiles that may / may not have them
+                h3 = h3_err = h4 = h4_err = η = η_err = nothing
+
+                if !isnothing(lines.tied_voff[k, j]) && flexible_wavesol && isone(j)
+                    voff += popt_l[pᵢ+2]
+                    voff_err = propagate_err ? hypot(voff_err, perr_l[pᵢ+2]) : 0.
+                    fwhm = popt_l[pᵢ+3]
+                    fwhm_err = propagate_err ? perr_l[pᵢ+3] : 0.
+                    pᵢ += 4
+                else
+                    fwhm = popt_l[pᵢ+2]
+                    fwhm_err = propagate_err ? perr_l[pᵢ+2] : 0.
+                    pᵢ += 3
+                end
+
+                if lines.profiles[k, j] == :GaussHermite
+                    # Get additional h3, h4 components
+                    h3 = popt_l[pᵢ]
+                    h3_err = propagate_err ? perr_l[pᵢ] : 0.
+                    h4 = popt_l[pᵢ+1]
+                    h4_err = propagate_err ? perr_l[pᵢ+1] : 0.
+                    pᵢ += 2
+                elseif lines.profiles[k, j] == :Voigt
+                    # Get additional mixing component, either from the tied position or the 
+                    # individual position
+                    η = popt_l[pᵢ]
+                    η_err = propagate_err ? perr_l[pᵢ] : 0.
+                    pᵢ += 1
+                end
+
+                # Save the j = 1 parameters for reference 
+                if isone(j)
+                    amp_1 = amp
+                    amp_1_err = amp_err
+                    voff_1 = voff
+                    voff_1_err = voff_err
+                    fwhm_1 = fwhm
+                    fwhm_1_err = fwhm_err
+                # For the additional components, we parametrize them this way to essentially give them soft constraints
+                # relative to the primary component
+                else
+                    amp_err = propagate_err ? hypot(amp_1_err*amp, amp_err*amp_1) : 0.
+                    amp *= amp_1
+                    
+                    voff_err = propagate_err ? hypot(voff_err, voff_1_err) : 0.
+                    voff += voff_1
+
+                    fwhm_err = propagate_err ? hypot(fwhm_1_err*fwhm, fwhm_err*fwhm_1) : 0.
+                    fwhm *= fwhm_1
+                end
+
+                # Broaden the FWHM by the instrumental FWHM at the location of the line
+                fwhm_inst = lsf(λ0)
+                fwhm_err = propagate_err ? fwhm / hypot(fwhm, fwhm_inst) * fwhm_err : 0.
+                fwhm = hypot(fwhm, fwhm_inst)
+
+                # Convert voff in km/s to mean wavelength in μm
+                mean_μm = Doppler_shift_λ(λ0, voff)
+                mean_μm_err = propagate_err ? λ0 / C_KMS * voff_err : 0.
+                # WARNING:
+                # Probably should set to 0 if using flexible tied voffs since they are highly degenerate and result in massive errors
+                # if !isnothing(cube_fitter.line_tied[k]) && cube_fitter.flexible_wavesol
+                #     mean_μm_err = 0.
+                # end
+
+                # Convert FWHM from km/s to μm
+                fwhm_μm = Doppler_shift_λ(λ0, fwhm/2) - Doppler_shift_λ(λ0, -fwhm/2)
+                fwhm_μm_err = propagate_err ? λ0 / C_KMS * fwhm_err : 0.
+
+                # Undo the normalization from the extinction
+                # amp *= max_ext
+                # amp_err *= max_ext
+
+                # Convert amplitude to erg s^-1 cm^-2 μm^-1 sr^-1, put back in the normalization
+                amp_cgs = MJysr_to_cgs(amp*N, mean_μm)
+                amp_cgs_err = propagate_err ? MJysr_to_cgs_err(amp*N, amp_err*N, mean_μm, mean_μm_err) : 0.
+
+                # Get the index of the central wavelength
+                cent_ind = argmin(abs.(λ .- mean_μm))
+
+                # Integrate over the solid angle
+                amp_cgs *= area_sr[cent_ind]
+                if propagate_err
+                    amp_cgs_err *= area_sr[cent_ind]
+                end
+
+                # Get the extinction factor at the line center
+                ext = extinction[cent_ind]
+
+                # Calculate line flux using the helper function
+                p_lines[pₒ], p_lines_err[pₒ] = calculate_flux(lines.profiles[k, j], amp_cgs, amp_cgs_err, mean_μm, mean_μm_err,
+                    fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err, propagate_err=propagate_err)
+                
+                # Calculate equivalent width using the helper function
+                p_lines[pₒ+1], p_lines_err[pₒ+1] = calculate_eqw(λ, lines.profiles[k, j], comps, true, n_dust_cont, n_power_law, n_abs_feat,
+                    n_dust_feat, fit_sil_emission, amp*N, amp_err*N, mean_μm, mean_μm_err, fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, 
+                    h4=h4, h4_err=h4_err, η=η, η_err=η_err, propagate_err=propagate_err)
+
+                # SNR
+                p_lines[pₒ+2] = amp*N*ext / std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)])
+                
+                @debug "Line with ($amp_cgs, $mean_μm, $fwhm_μm) and errors ($amp_cgs_err, $mean_μm_err, $fwhm_μm_err)"
+                @debug "Flux=$(p_lines[pₒ]) +/- $(p_lines_err[pₒ]), EQW=$(p_lines[pₒ+1]) +/- $(p_lines_err[pₒ+1]), SNR=$(p_lines[pₒ+2])"
+
+                # Advance the output vector index by 3
+                pₒ += 3
+            end
+        end
+    end
+
+    p_dust, p_lines, p_dust_err, p_lines_err
+end
+
+
+"""
+    calculate_extra_parameters(λ, I, N, comps, comps, n_ssps, n_power_law, fit_opt_na_feii,
+        fit_opt_br_feii, n_lines, n_acomps, n_comps, lines, flexible_wavesol, lsf, popt_l, perr_l,
+        extinction, mask_lines, continuum, area_sr[, propagate_err])
+
+Calculate extra parameters that are not fit, but are nevertheless important to know, for a given spaxel.
+Currently this includes the integrated intensity, equivalent width, and signal to noise ratios of dust features and emission lines.
+"""
+function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, comps::Dict, n_ssps::Integer,
+    n_power_law::Integer, fit_opt_na_feii::Bool, fit_opt_br_feii::Bool, n_lines::Integer, n_acomps::Integer, n_comps::Integer, 
+    lines::TransitionLines, flexible_wavesol::Bool, lsf::Function, popt_l::Vector{T}, perr_l::Vector{T}, extinction::Vector{T}, 
+    mask_lines::BitVector, continuum::Vector{T}, area_sr::Vector{T}, propagate_err::Bool=true) where {T<:Real}
+
+    @debug "Calculating extra parameters"
+
+    # Normalization
+    @debug "Normalization: $N"
+
+    # Max extinction factor
+    # max_ext = 1 / minimum(extinction)
 
     # Loop through lines
     p_lines = zeros(3n_lines+3n_acomps)
@@ -1458,9 +2198,13 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                 fwhm_μm = Doppler_shift_λ(λ0, fwhm/2) - Doppler_shift_λ(λ0, -fwhm/2)
                 fwhm_μm_err = propagate_err ? λ0 / C_KMS * fwhm_err : 0.
 
-                # Convert amplitude to erg s^-1 cm^-2 μm^-1 sr^-1, put back in the normalization
-                amp_cgs = MJysr_to_cgs(amp*N, mean_μm)
-                amp_cgs_err = propagate_err ? MJysr_to_cgs_err(amp*N, amp_err*N, mean_μm, mean_μm_err) : 0.
+                # Undo the normalization from the extinction
+                # amp *= max_ext
+                # amp_err *= max_ext
+
+                # Convert from erg s^-1 cm^-2 Ang^-1 sr^-1 to erg s^-1 cm^-2 μm^-1 sr^-1, putting back in the normalization
+                amp_cgs = amp * N * 1e4
+                amp_cgs_err = propagate_err ? amp_err * N * 1e4 : 0.
 
                 # Get the index of the central wavelength
                 cent_ind = argmin(abs.(λ .- mean_μm))
@@ -1479,9 +2223,9 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                     fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err, propagate_err=propagate_err)
                 
                 # Calculate equivalent width using the helper function
-                p_lines[pₒ+1], p_lines_err[pₒ+1] = calculate_eqw(λ, lines.profiles[k, j], comps, true, n_dust_cont, n_power_law, n_abs_feat,
-                    n_dust_feat, fit_sil_emission, amp*N, amp_err*N, mean_μm, mean_μm_err, fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, 
-                    h4=h4, h4_err=h4_err, η=η, η_err=η_err, propagate_err=propagate_err)
+                p_lines[pₒ+1], p_lines_err[pₒ+1] = calculate_eqw(λ, lines.profiles[k, j], comps, n_ssps, n_power_law, fit_opt_na_feii,
+                    fit_opt_br_feii, amp*N, amp_err*N, mean_μm, mean_μm_err, fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, 
+                    η=η, η_err=η_err, propagate_err=propagate_err)
 
                 # SNR
                 p_lines[pₒ+2] = amp*N*ext / std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)])
@@ -1495,7 +2239,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
         end
     end
 
-    p_dust, p_lines, p_dust_err, p_lines_err
+    p_lines, p_lines_err
 end
 
 
@@ -1558,7 +2302,7 @@ end
 
 """
     calculate_eqw(λ, profile, comps, line, n_dust_cont, n_power_law, n_abs_feat, n_dust_feat,
-        fit_sil_emission)
+        fit_sil_emission, amp, amp_err, peak, peak_err, fwhm, fwhm_err; <keyword arguments>)
 
 Calculate the equivalent width (in microns) of a spectral feature, i.e. a PAH or emission line. Calculates the
 integral of the ratio of the feature profile to the underlying continuum.
@@ -1645,6 +2389,83 @@ function calculate_eqw(λ::Vector{T}, profile::Symbol, comps::Dict, line::Bool,
     if propagate_err
         feature_err[:,1] .*= comps["extinction"]
         feature_err[:,2] .*= comps["extinction"]
+        err_lo = eqw - NumericalIntegration.integrate(λ, feature_err[:,1] ./ contin, Trapezoidal())
+        err_up = NumericalIntegration.integrate(λ, feature_err[:,2] ./ contin, Trapezoidal()) - eqw
+        err = (err_up + err_lo) / 2
+    end
+
+    eqw, err
+
+end
+
+
+"""
+    calculate_eqw(λ, profile, comps, n_ssps, n_power_law, fit_opt_na_feii, fit_opt_br_feii,
+        amp, amp_err, peak, peak_err, fwhm, fwhm_err; <keyword arguments>)
+
+Calculate the equivalent width (in microns) of a spectral feature, i.e. a PAH or emission line. Calculates the
+integral of the ratio of the feature profile to the underlying continuum.
+"""
+function calculate_eqw(λ::Vector{T}, profile::Symbol, comps::Dict, n_ssps::Integer, 
+    n_power_law::Integer, fit_opt_na_feii::Bool, fit_opt_br_feii::Bool, amp::T, amp_err::T, 
+    peak::T, peak_err::T, fwhm::T, fwhm_err::T; 
+    h3::Union{T,Nothing}=nothing, h3_err::Union{T,Nothing}=nothing, 
+    h4::Union{T,Nothing}=nothing, h4_err::Union{T,Nothing}=nothing, 
+    η::Union{T,Nothing}=nothing, η_err::Union{T,Nothing}=nothing, 
+    propagate_err::Bool=true) where {T<:Real}
+
+    contin = zeros(length(λ))
+    for i ∈ 1:n_ssps
+        contin .+= comps["SSP_$i"]
+    end
+    contin .*= comps["attenuation_stars"]
+    if fit_opt_na_feii
+        contin .+= comps["na_feii"] .* comps["attenuation_gas"]
+    end
+    if fit_opt_br_feii
+        contin .+= comps["br_feii"] .* comps["attenuation_gas"]
+    end
+    for j ∈ 1:n_power_law
+        contin .+= comps["power_law_$j"]
+    end
+
+    # Integrate the flux ratio to get equivalent width
+    if profile == :Gaussian
+        feature = Gaussian.(λ, amp, peak, fwhm)
+        if propagate_err
+            feature_err = hcat(Gaussian.(λ, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps())),
+                           Gaussian.(λ, amp+amp_err, peak, fwhm+fwhm_err))
+        end
+    elseif profile == :Lorentzian
+        feature = Lorentzian.(λ, amp, peak, fwhm)
+        if propagate_err
+            feature_err = hcat(Lorentzian.(λ, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps())),
+                           Lorentzian.(λ, amp+amp_err, peak, fwhm+fwhm_err))
+        end
+    elseif profile == :GaussHermite
+        feature = GaussHermite.(λ, amp, peak, fwhm, h3, h4)
+        if propagate_err
+            feature_err = hcat(GaussHermite.(λ, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), h3-h3_err, h4-h4_err),
+                           GaussHermite.(λ, amp+amp_err, peak, fwhm+fwhm_err, h3+h3_err, h4+h4_err))
+        end
+    elseif profile == :Voigt
+        feature = Voigt.(λ, amp, peak, fwhm, η)
+        if propagate_err
+            feature_err = hcat(Voigt.(λ, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), max(η-η_err, 0.)),
+                           Voigt.(λ, amp+amp_err, peak, fwhm+fwhm_err, min(η+η_err, 1.)))
+        end
+    else
+        error("Unrecognized line profile $profile")
+    end
+    # Continuum is extincted, so make sure the feature is too
+    feature .*= comps["attenuation_gas"]
+
+    # May blow up for spaxels where the continuum is close to 0
+    eqw = NumericalIntegration.integrate(λ, feature ./ contin, Trapezoidal())
+    err = 0.
+    if propagate_err
+        feature_err[:,1] .*= comps["attenuation_gas"]
+        feature_err[:,2] .*= comps["attenuation_gas"]
         err_lo = eqw - NumericalIntegration.integrate(λ, feature_err[:,1] ./ contin, Trapezoidal())
         err_up = NumericalIntegration.integrate(λ, feature_err[:,2] ./ contin, Trapezoidal()) - eqw
         err = (err_up + err_lo) / 2

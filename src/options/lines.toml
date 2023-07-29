@@ -7,47 +7,60 @@ tie_voigt_mixing = true     # tie the Voigt mixing ratios of all lines
 # Kinematics groups: for each group, every line in the group will have a tied voff and fwhm, just specify which
 #                    lines you want in each group
 
-# kinematic_group_H2 = [
-#     "H200_"
-# ]
+# Tie molecular Hydrogen lines
+kinematic_group_H2 = [
+    "H200_"
+]
 
-# kinematic_group_HI = [
-#    "HI_"
+# kinematic_group_Balmer = [
+#     "HI_H_"
 # ]
+# # Case B recombination amplitude ratios
+# tie_amp_Balmer = [0.105, 0.158, 0.256, 0.466, 1.0, 2.87]
 
-# kinematic_group_low = [
-#     "ArII_",
-#     "ArIII_",
-#     "FeII_",
-#     "ClII_",
-#     "FeIII_",
-#     "HeII_",
-#     "NeII_",
-#     "NiII_",
-#     "PIII_",
-#     "SIII_"
-# ]
+# # Tie ALL recombination lines together
+kinematic_group_HI = [
+    "HI_"
+]
 
-# kinematic_group_med = [
-#     "ArV_",
-#     "NaIII_",
-#     "NeIII_",
-#     "OIV_",
-#     "SIV_"
-# ]
+# Ionized species with doublets and/or multiple lines within the fitting region
+kinematic_group_OIII = [
+    "OIII_"
+]
+acomp_1_kinematic_group_OIII = [
+    "OIII_"
+]
+kinematic_group_OII = [
+    "OII_"
+]
+kinematic_group_SII = [
+    "SII_"
+]
+kinematic_group_FeII = [
+    "FeII_"
+]
+kinematic_group_FeVII = [
+    "FeVII_"
+]
+kinematic_group_NeIII = [
+    "NeIII_"
+]
+kinematic_group_NeV = [
+    "NeV_"
+]
+acomp_1_kinematic_group_NeV = [
+    "NeV_"
+]
+kinematic_group_MgV = [
+    "MgV_"
+]
 
-# kinematic_group_high = [
-#     "FeVII_",
-#     "FeVIII_",
-#     "MgV_",
-#     "MgVII_",
-#     "NeV_",
-#     "NeVI_",
-# ]
+# # Lines to make combined flux/eqw maps for
+combined_maps = [["OII_03727", "OII_03729"]]
 
 # Line voff and FWHM limits
 voff_plim = [-500.0, 500.0]              # -500 to 500 km/s from the rest wavelength
-fwhm_plim = [0.0, 500.0]                 # 0 to 500 km/s FWHM velocity of the line -- this is the *intrinsic* FWHM,
+fwhm_plim = [0.0, 1000.0]                # 0 to 1000 km/s FWHM velocity of the line -- this is the *intrinsic* FWHM,
                                          #    i.e. the FWHM after the instrumental FWHM has been subtracted in quadrature
 h3_plim = [-0.5, 0.5]                    # skewness (3rd moment): limits (-0.5, 0.5), to remain mostly gaussian
 h4_plim = [-0.5, 0.5]                    # kurtosis (4th moment): limits (-0.5, 0.5), to remain mostly gaussian
@@ -56,28 +69,245 @@ eta_plim = [0.0, 1.0]                    # mixing parameter for Voigt profiles: 
 # Additional line components
 n_acomps = 1
 acomp_amp_plim = [[0.0, 1.0]]
-acomp_voff_plim = [[-500.0, 500.0]]      # additive factor with the main line voff -> i.e. the additional component
-                                         # is allowed to have a voff up to +/-500 km/s from the main component 
+acomp_voff_plim = [[-1000.0, 1000.0]]    # additive factor with the main line voff -> i.e. the additional component
+                                         # is allowed to have a voff up to +/-1000 km/s from the main component 
 acomp_fwhm_plim = [[1.0, 5.0]]           # multiplicative factor with the main line FWHM -> i.e. the additional component
                                          # is allowed to have a FWHM from 1-5x the main component (it must be wider)
 
 # Uncertainty in the wavelength solution of the data
-flexible_wavesol = true                  # allow tied voffs to vary slightly based on wavelength solution uncertainty
-wavesol_unc = 30                         # wavelength solution uncertainties in each of the 4 MIRI channels (<30 km/s)
-
-# [channels]
-# 1 = [4.9, 7.65]
-# 2 = [7.51, 11.71]
-# 3 = [11.55, 18.02]
-# 4 = [17.71, 28.1]
+flexible_wavesol = false                 # allow tied voffs to vary slightly based on wavelength solution uncertainty
+wavesol_unc = 30.0                       # wavelength solution uncertainties in each of the 4 MIRI channels (<30 km/s)
 
 # Central wavelengths of each line that should be included in the model, in microns
 # Line wavelengths should be *vacuum* wavelengths, not air wavelengths
 
-# Sources:
+# Optical Sources:
+#   Good general line list for common galaxy emission lines: http://astronomy.nmsu.edu/drewski/tableofemissionlines.html
+#    * note: this source has lines in AIR wavelengths for lines above 2000 angstroms, so they must be converted to vacuum wavelengths.
+
+# MIR Sources:
 #   Good infrared line lists for HI, H2 and common ions: https://www.mpe.mpg.de/ir/ISO/linelists/
 #   Good infrared line lists for HI and H2: https://www.not.iac.es/instruments/notcam/ReferenceInfo/
 #   NIST: https://physics.nist.gov/PhysRefData/ASD/lines_form.html 
+
+
+##################################### OPTICAL LINES ################################################
+
+# Balmer Series (Hydrogen, n -> 2) lines
+[lines.HI_H_alpha]
+wave = 0.6564632
+latex = "H$\\alpha$"
+annotate = true
+
+[lines.HI_H_beta]
+wave = 0.4862691
+latex = "H$\\beta$"
+annotate = true
+
+[lines.HI_H_gamma]
+wave = 0.4341691
+latex = "H$\\gamma$"
+annotate = true
+
+[lines.HI_H_delta]
+wave = 0.4102900
+latex = "H$\\delta$"
+annotate = true
+
+[lines.HI_H_epsilon]
+wave = 0.3971202
+latex = "H$\\varepsilon$"
+annotate = false
+
+[lines.HI_H_zeta]
+wave = 0.3890166
+latex = "H$\\zeta$"
+annotate = false
+
+# Helium lines
+[lines.HeI_03889]
+wave = 0.3889749
+latex = "He I"
+annotate = true
+
+[lines.HeII_04687]
+wave = 0.4687021
+latex = "He II"
+annotate = true
+
+# [lines.HeI_05877]
+# wave = 0.5877253
+# latex = "He I"
+# annotate = true
+
+# [lines.HeI_07067]
+# wave = 0.7067144
+# latex = "He I"
+# annotate = true
+
+# Neon lines
+
+# [Ne V] doublet
+[lines.NeV_03346]
+wave = 0.3346783
+latex = "[Ne V]"
+annotate = true
+
+[lines.NeV_03426]
+wave = 0.3426863
+latex = "[Ne V]"
+annotate = true
+
+[lines.NeIII_03869]
+wave = 0.3869856
+latex = "[Ne III]"
+annotate = true
+
+[lines.NeIII_03967]
+wave = 0.3968593
+latex = "[Ne III]"
+annotate = true
+
+# Oxygen lines
+
+[lines.OIII_03445]
+wave = 0.3445039
+latex = "O III"
+annotate = true
+
+# [O II] doublet
+[lines.OII_03727]
+wave = 0.3727092
+latex = "[O II]"
+annotate = true
+
+[lines.OII_03729]
+wave = 0.3729875
+latex = "[O II]"
+annotate = true
+
+[lines.OIII_04364]
+wave = 0.4364436
+latex = "[O III]"
+annotate = true
+
+# [O III] doublet
+[lines.OIII_04960]
+wave = 0.4960295
+latex = "[O III]"
+annotate = true
+
+[lines.OIII_05008]
+wave = 0.5008240
+latex = "[O III]"
+annotate = true
+
+[lines.OI_06302]
+wave = 0.6302046
+latex = "[O I]"
+annotate = true
+
+[lines.OI_06366]
+wave = 0.6365535
+latex = "[O I]"
+annotate = true
+
+[lines.OII_07322]
+wave = 0.7322007
+latex = "[O II]"
+annotate = true
+
+[lines.OII_07333]
+wave = 0.7332750
+latex = "[O II]"
+annotate = true
+
+# Iron lines
+# [lines.FeXIV_05304]
+# wave = 0.5304335
+# latex = "[Fe XIV]"
+# annotate = true
+
+# [lines.FeVI_05639]
+# wave = 0.5639165
+# latex = "[Fe VI]"
+# annotate = true
+
+# [lines.FeVI_05679]
+# wave = 0.5678575
+# latex = "[Fe VI]"
+# annotate = true
+
+# [lines.FeVII_05722]
+# wave = 0.5722287
+# latex = "[Fe VII]"
+# annotate = true
+
+# [lines.FeVII_06088]
+# wave = 0.6088685
+# latex = "[Fe VII]"
+# annotate = true
+
+[lines.FeX_06374]
+wave = 0.6376272
+latex = "[Fe X]"
+annotate = true
+
+[lines.FeXI_07894]
+wave = 0.7893971
+latex = "[Fe XI]"
+annotate = true
+
+# Sulfur lines
+[lines.SII_04069]
+wave = 0.4069749
+latex = "[S II]"
+annotate = false
+
+[lines.SII_04077]
+wave = 0.4077500
+latex = "[S II]"
+annotate = false
+
+[lines.SIII_06314]
+wave = 0.6313806
+latex = "[S III]"
+annotate = true
+
+[lines.SII_06718]
+wave = 0.6718294
+latex = "[S II]"
+annotate = true
+
+[lines.SII_06733]
+wave = 0.6732668
+latex = "[S II]"
+annotate = true
+
+# Nitrogen lines
+[lines.NII_06550]
+wave = 0.6549859
+latex = "[N II]"
+annotate = true
+
+[lines.NII_06585]
+wave = 0.6585279
+latex = "[N II]"
+annotate = true
+
+# Argon lines
+[lines.ArIII_07138]
+wave = 0.7137757
+latex = "[Ar III]"
+annotate = true
+
+# Nickel lines
+[lines.NiIII_07892]
+wave = 0.7892071
+latex = "[Ni III]"
+annotate = true
+
+####################################### MIR LINES ##################################################
 
 # Brackett Series (Hydrogen, n -> 4) Lines
 [lines.HI_Br_alpha]
@@ -653,12 +883,15 @@ default = "Voigt"
 # acomps: specify which, if any, lines to add an additional component, and what type
 # of profile it should be. Can add an arbitrary number of additional components.
 [acomps]
-NeVI_7652 = ["Voigt"]
-NeII_12813 = ["Voigt"]
-NeIII_15555 = ["Voigt"]
-NeV_14322 = ["Voigt"]
-ArIII_8991 = ["Voigt"]
-SIV_10511 = ["Voigt"]
+# OIII_04960 = ["Voigt"]
+# OIII_05008 = ["Voigt"]
+
+# NeVI_7652 = ["Voigt"]
+# NeII_12813 = ["Voigt"]
+# NeIII_15555 = ["Voigt"]
+# NeV_14322 = ["Voigt"]
+# ArIII_8991 = ["Voigt"]
+# SIV_10511 = ["Voigt"]
 
 
 # optional: add [parameters] key to specify individual line priors that 

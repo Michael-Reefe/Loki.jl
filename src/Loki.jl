@@ -16,6 +16,8 @@ using Dierckx
 using LinearAlgebra
 using EllipsisNotation
 using SpecialFunctions
+using FFTW
+using Polynomials
 
 # Optimization packages
 using Optim
@@ -47,6 +49,7 @@ using Dates
 using InteractiveUtils
 using ColorSchemes
 using LaTeXStrings
+using Pipe: @pipe
 
 # PyCall needed for some matplotlib modules
 using PyCall
@@ -58,6 +61,7 @@ const py_warnings::PyObject = PyNULL()
 const plt::PyObject = PyNULL()
 const py_anchored_artists::PyObject = PyNULL()
 const py_ticker::PyObject = PyNULL()
+const py_colormap::PyObject = PyNULL()
 const py_animation::PyObject = PyNULL()
 
 # Astropy modules
@@ -68,6 +72,9 @@ const py_photutils::PyObject = PyNULL()
 const py_reproject::PyObject = PyNULL()
 const py_mosaicking::PyObject = PyNULL()
 const py_lineidplot::PyObject = PyNULL()
+
+# FSPS Library
+const py_fsps::PyObject = PyNULL()
 
 # Some constants for setting matplotlib font sizes
 const SMALL::UInt8 = 12
@@ -93,6 +100,8 @@ function __init__()
     copy!(py_anchored_artists, pyimport_conda("mpl_toolkits.axes_grid1.anchored_artists", "matplotlib"))
     # ticker --> used for formatting axis ticks and tick labels
     copy!(py_ticker, pyimport_conda("matplotlib.ticker", "matplotlib"))
+    # cm --> used for formatting matplotlib colormaps
+    copy!(py_colormap, pyimport_conda("matplotlib.cm", "matplotlib"))
     # animation --> used for making mp4 movie files (optional)
     copy!(py_animation, pyimport_conda("matplotlib.animation", "matplotlib"))
     # python package for adjusting matplotlib text so it doesn't overlap
@@ -109,6 +118,12 @@ function __init__()
     # Warnings
     copy!(py_warnings, pyimport_conda("warnings", "warnings"))
 
+    try
+        copy!(py_fsps, pyimport_conda("fsps", "fsps"))
+    catch
+        @warn "Could not find the Python FSPS Library! Optical spectra modeling will not be possible."
+    end
+
     # Matplotlib settings to make plots look pretty :)
     plt.switch_backend("Agg")                  # agg backend just saves to file, no GUI display
     plt.rc("font", size=MED)                   # controls default text sizes
@@ -118,7 +133,8 @@ function __init__()
     plt.rc("ytick", labelsize=SMALL)           # fontsize of the y tick labels
     plt.rc("legend", fontsize=SMALL)           # legend fontsize
     plt.rc("figure", titlesize=BIG)            # fontsize of the figure title
-    plt.rc("text", usetex=true)                # use LaTeX for things like axis offsets
+    plt.rc("text", usetex=true)                # use LaTeX for things like axis labels
+    plt.rc("text.latex", preamble="\\usepackage{siunitx}")   # use the siunitx LaTeX package
     plt.rc("font", family="Times New Roman")   # use Times New Roman font
 
     # Filter annoying FITS fixed warnings from astropy
@@ -147,6 +163,8 @@ export DataCube,   # DataCube struct
        from_fits, 
        to_rest_frame!, 
        apply_mask!, 
+       to_vacuum_wavelength!,
+       log_rebin!,
        correct!, 
        interpolate_nans!, 
        plot_2d, 
@@ -160,8 +178,7 @@ export DataCube,   # DataCube struct
        save_fits,
        adjust_wcs_alignment!, 
        reproject_channels!, 
-       cube_rebin!, 
-       psf_kernel, 
+       # psf_kernel, 
        convolve_psf!,
 
        # Parameter structs
@@ -195,9 +212,25 @@ export DataCube,   # DataCube struct
        fit_spaxel,
        fit_stack!,
        fit_cube!,
+       plot_parameter_map,
        plot_parameter_maps,
        make_movie,
-       write_fits
+       write_fits,
+
+       # Utility functions that the user may wish to take advantage of
+       frebin,
+       fshift,
+       make_python_wcs,
+       attenuation_calzetti,
+       attenuation_cardelli,  # (AKA ccm_unred)
+       resample_conserving_flux,
+       air_to_vacuum,
+       extend,
+       sumdim,
+       Doppler_shift_v,
+       Doppler_shift_λ,
+       Doppler_width_v,
+       Doppler_width_λ
 
 # Include all of the files that we need to create the module
 

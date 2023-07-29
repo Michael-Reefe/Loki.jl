@@ -1,5 +1,5 @@
 # dust.toml: This file contains options pertaining to fitting the 
-# continuum model of spectra, including stellar & dust components.
+# MIR continuum model of spectra, including stellar & dust components.
 
 # Each value has a "val" key which specifies the starting value,
 # "plim" specifies the lower and upper limits on the parameter, and
@@ -214,16 +214,16 @@ val = 0.126
 plim = [0.4, 1.4]
 locked = false
 
-[dust_features."PAH_7.52"]
+[dust_features."PAH_7.53"]
 complex = "7.7"
 
-[dust_features."PAH_7.52".wave]
-val = 7.52
+[dust_features."PAH_7.53".wave]
+val = 7.53
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_7.52".fwhm]
-val = 0.126
+[dust_features."PAH_7.53".fwhm]
+val = 0.136
 plim = [0.4, 1.4]
 locked = false
 
@@ -684,11 +684,10 @@ plim = [0.4, 1.1]
 locked = false
 
 # Absorption features (also modeled with Drude profiles)
-# Caution: it's seems to be better to estimate and lock these parameters rather than fitting for them
-# since this HCO+ feature is right on top of some PAH features that tend to want to cancel each other out.
-# https://iopscience.iop.org/article/10.1088/0067-0049/182/2/628/pdf
 
 # Spectral leak artifact of the JWST pipeline at ~12.22 microns
+# UPDATE: This has been fixed as of JWST pipeline version 1.11+
+
 # [absorption_features."abs_leak_12.22"]
 # local = true
 

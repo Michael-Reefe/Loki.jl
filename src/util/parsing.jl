@@ -101,9 +101,10 @@ function parse_options()
 
     # Read in the options file
     options = TOML.parsefile(joinpath(@__DIR__, "..", "options", "options.toml"))
-    keylist1 = ["n_bootstrap", "extinction_curve", "extinction_screen", "fit_sil_emission", "fit_all_samin", "use_pah_templates", 
-                "parallel", "plot_spaxels", "plot_maps", "save_fits", "overwrite", "track_memory", "track_convergence", 
-                "save_full_model", "line_test_lines", "line_test_threshold", "plot_line_test", "make_movies", "cosmology"]
+    keylist1 = ["n_bootstrap", "extinction_curve", "extinction_screen", "fit_sil_emission", "fit_opt_na_feii", "fit_opt_br_feii", 
+                "fit_all_samin", "use_pah_templates", "fit_joint", "fit_uv_bump", "fit_covering_frac", "parallel", "plot_spaxels", 
+                "plot_maps", "save_fits", "overwrite", "track_memory", "track_convergence", "save_full_model", "line_test_lines", 
+                "line_test_threshold", "plot_line_test", "make_movies", "cosmology"]
     keylist2 = ["h", "omega_m", "omega_K", "omega_r"]
 
     # Loop through the keys that should be in the file and confirm that they are there
@@ -323,9 +324,116 @@ function parse_dust()
     @debug msg
 
     # Create continuum object
-    continuum = Continuum(T_s, T_dc, α, τ_97, τ_ice, τ_ch, β, T_hot, Cf, τ_warm, τ_cold, sil_peak)
+    continuum = MIRContinuum(T_s, T_dc, α, τ_97, τ_ice, τ_ch, β, T_hot, Cf, τ_warm, τ_cold, sil_peak)
 
     continuum, dust_features, abs_features, abs_taus
+end
+
+
+"""
+    parse_optical()
+
+Read in the optical.toml configuration file, checking that it is formatted correctly,
+and convert it into a julia dictionary with Parameter objects for optical fitting parameters.
+This deals with the optical continuum options.
+"""
+function parse_optical()
+
+    @debug """\n
+    Parsing optical file
+    #######################################################
+    """
+
+    # Read in the dust file
+    optical = TOML.parsefile(joinpath(@__DIR__, "..", "options", "optical.toml"))
+    keylist1 = ["attenuation", "stellar_population_ages", "stellar_population_metallicities", "stellar_kinematics", 
+        "na_feii_kinematics", "br_feii_kinematics"]
+    keylist2 = ["E_BV", "E_BV_factor", "uv_slope", "frac"]
+    keylist3 = ["vel", "vdisp"]
+    keylist4 = ["val", "plim", "locked"]
+
+    for key ∈ keylist1
+        @assert haskey(optical, key) "Missing option $key in optical file!"
+    end
+    for key ∈ keylist2
+        @assert haskey(optical["attenuation"], key) "Missing option $key in attenuation options!"
+    end
+    for key ∈ keylist3
+        @assert haskey(optical["stellar_kinematics"], key) "Missing option $key in stellar_kinematics options!"
+        @assert haskey(optical["na_feii_kinematics"], key) "Missing option $key in na_feii_kinematics options!"
+        @assert haskey(optical["br_feii_kinematics"], key) "Missing option $key in br_feii_kinematics options!"
+    end
+    for key4 ∈ keylist4
+        for key1 ∈ keylist1
+            for i in eachindex(optical[key1])
+                @assert haskey(optical[key1][i], key4) "Missing option $key4 in $key1 options!"
+            end
+        end
+        for key2 ∈ keylist2
+            @assert haskey(optical["attenuation"][key2], key4) "Missing option $key4 in $key2 options!"
+        end
+        for key3 ∈ keylist3
+            @assert haskey(optical["stellar_kinematics"][key3], key4) "Missing option $key4 in $key3 options!"
+        end
+    end
+
+    msg = "Stellar populations:"
+    ssp_ages = Parameter[]
+    ssp_metallicities = Parameter[]
+    for (age, metal) ∈ zip(optical["stellar_population_ages"], optical["stellar_population_metallicities"])
+        a = from_dict(age)
+        push!(ssp_ages, a)
+        msg *= "\nAge $a"
+        z = from_dict(metal)
+        msg *= "\nMetallicity $z"
+        push!(ssp_metallicities, z)
+    end
+    @debug msg
+
+    msg = "Stellar kinematics:"
+    stel_vel = from_dict(optical["stellar_kinematics"]["vel"])
+    msg *= "\nVelocity $stel_vel"
+    stel_vdisp = from_dict(optical["stellar_kinematics"]["vdisp"])
+    msg *= "\nVdisp $stel_vdisp"
+    @debug msg
+
+    msg = "Fe II kinematics:"
+    na_feii_vel = from_dict(optical["na_feii_kinematics"]["vel"])
+    msg *= "\nNA Velocity $na_feii_vel"
+    na_feii_vdisp = from_dict(optical["na_feii_kinematics"]["vdisp"])
+    msg *= "\nNA Vdisp $na_feii_vdisp"
+    br_feii_vel = from_dict(optical["br_feii_kinematics"]["vel"])
+    msg *= "\nBR Velocity $br_feii_vel"
+    br_feii_vdisp = from_dict(optical["br_feii_kinematics"]["vdisp"])
+    msg *= "\nBR Vdisp $br_feii_vdisp"
+    @debug msg
+
+    α = Parameter[]
+    if haskey(optical, "power_law_indices")
+        msg *= "Power Laws:"
+        α = [from_dict(optical["power_law_indices"][i]) for i in eachindex(optical["power_law_indices"])]
+        for αi in α
+            msg *= "\nIndex $αi"
+        end
+        @debug msg
+    end
+ 
+    # attenuation parameters
+    msg = "Attenuation:"
+    E_BV = from_dict(optical["attenuation"]["E_BV"])
+    msg *= "\nE(B-V) $E_BV"
+    E_BV_factor = from_dict(optical["attenuation"]["E_BV_factor"])
+    msg *= "\nE(B-V) factor $E_BV_factor"
+    δ_uv = from_dict(optical["attenuation"]["uv_slope"])
+    msg *= "\nδ_uv $δ_uv"
+    frac = from_dict(optical["attenuation"]["frac"])
+    msg *= "\nfrac $frac"
+    @debug msg
+
+    continuum = OpticalContinuum(ssp_ages, ssp_metallicities, stel_vel, stel_vdisp, na_feii_vel, na_feii_vdisp, 
+        br_feii_vel, br_feii_vdisp, α, E_BV, E_BV_factor, δ_uv, frac)
+
+    continuum
 end
 
 
@@ -411,6 +519,7 @@ function parse_lines()
     h3s = Vector{Union{Parameter,Nothing}}(nothing, length(lines["lines"]))
     h4s = Vector{Union{Parameter,Nothing}}(nothing, length(lines["lines"]))
     ηs = Vector{Union{Parameter,Nothing}}(nothing, length(lines["lines"]))
+    tied_amp = Vector{Union{Symbol,Nothing}}(nothing, length(lines["lines"]))
     tied_voff = Vector{Union{Symbol,Nothing}}(nothing, length(lines["lines"]))
     tied_fwhm = Vector{Union{Symbol,Nothing}}(nothing, length(lines["lines"]))
     prof_out = Vector{Union{Symbol,Nothing}}(nothing, length(lines["lines"]))
@@ -422,6 +531,7 @@ function parse_lines()
     acomp_h3s = Matrix{Union{Parameter,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
     acomp_h4s = Matrix{Union{Parameter,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
     acomp_ηs = Matrix{Union{Parameter,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
+    acomp_tied_amp = Matrix{Union{Symbol,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
     acomp_tied_voff = Matrix{Union{Symbol,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
     acomp_tied_fwhm = Matrix{Union{Symbol,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
     acomp_prof_out = Matrix{Union{Symbol,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
@@ -558,7 +668,7 @@ function parse_lines()
         end
 
         # Check if the kinematics should be tied to other lines based on the kinematic groups
-        tied_voff[i] = tied_fwhm[i] = nothing
+        tied_amp[i] = tied_voff[i] = tied_fwhm[i] = nothing
         for group ∈ kinematic_groups
             for groupmember ∈ lines["kinematic_group_" * group]
                 #= Loop through the items in the "kinematic_group_*" list and see if the line name matches any of them.
@@ -568,6 +678,11 @@ function parse_lines()
                 =#
                 if occursin(groupmember, line)
 
+                    # Check if amp should  be tied
+                    tie_amp_group = false
+                    if haskey(lines, "tie_amp_" * group)
+                        tie_amp_group = true
+                    end
                     # Check if voff should be tied
                     tie_voff_group = true
                     if haskey(lines, "tie_voff_" * group)
@@ -579,6 +694,13 @@ function parse_lines()
                         tie_fwhm_group = lines["tie_fwhm_" * group]
                     end
 
+                    if tie_amp_group
+                        @assert isnothing(tied_amp[i]) "Line $(line[i]) is already part of the kinematic group $(tied_amp[i]), but it also passed filtering criteria" *
+                            "to be included in the group $group. Make sure your filters are not too lenient!"
+                        @debug "Tying amplitudes for $line to the group: $group"
+                        # Use the group label
+                        tied_amp[i] = Symbol(group)
+                    end
                     if tie_voff_group
                         # Make sure line is not already a member of another group
                         @assert isnothing(tied_voff[i]) "Line $(line[i]) is already part of the kinematic group $(tied_voff[i]), but it also passed filtering criteria" * 
@@ -608,6 +730,7 @@ function parse_lines()
         end
 
         # Repeat for the acomps
+        acomp_tied_amp[i, :] .= nothing
         acomp_tied_voff[i, :] .= nothing
         acomp_tied_fwhm[i, :] .= nothing
         for j ∈ 1:lines["n_acomps"]
@@ -615,15 +738,31 @@ function parse_lines()
                 for groupmember ∈ lines["acomp_$(j)_kinematic_group_" * group]
                     if occursin(groupmember, line)
 
+                        # Check if amp should be tied
+                        tie_acomp_amp_group = false
+                        if haskey(lines, "tie_acomp_$(j)_amp_" * group)
+                            tie_acomp_amp_group = true
+                        end
+
                         # Check if voff should be tied
                         tie_acomp_voff_group = true
-                        if haskey(lines, "tie_acomp_voff_" * group)
-                            tie_acomp_voff_group = lines["tie_acomp_voff_" * group]
+                        if haskey(lines, "tie_acomp_$(j)_voff_" * group)
+                            tie_acomp_voff_group = lines["tie_acomp_$(j)_voff_" * group]
                         end
                         # Check if fwhm should be tied
                         tie_acomp_fwhm_group = true
-                        if haskey(lines, "tie_acomp_fwhm_" * group)
-                            tie_acomp_fwhm_group = lines["tie_acomp_fwhm_" * group]
+                        if haskey(lines, "tie_acomp_$(j)_fwhm_" * group)
+                            tie_acomp_fwhm_group = lines["tie_acomp_$(j)_fwhm_" * group]
+                        end
+
+                        if !isnothing(acomp_profiles[line][j]) && tie_acomp_amp_group
+                            # Make sure line is not already a member of another group
+                            @assert isnothing(acomp_tied_amp[i, j]) "Line $(line[i]) acomp $(j) is already part of the kinematic group $(acomp_tied_amp[i, j]), " *
+                                "but it also passed filtering criteria to be included in the group $group. Make sure your filters are not too lenient!"
+                            @debug "Tying amplitudes for $line acomp $(j) to the group: $group"
+
+                            # only set acomp_tied if the line actually *has* an acomp
+                            acomp_tied_amp[i,j] = Symbol(group)
                         end
 
                         if !isnothing(acomp_profiles[line][j]) && tie_acomp_voff_group
@@ -705,26 +844,46 @@ function parse_lines()
     # sort by cent_vals
     ss = sortperm(cent_vals)
 
+    # Check for any combined lines
+    combined = []
+    if haskey(lines, "combined_maps")
+        combined = lines["combined_maps"]
+        combined = [[Symbol(ln) for ln in c] for c in combined]
+    end
+
     # create vectorized object for all the line data
     lines_out = TransitionLines(names[ss], latex[ss], annotate[ss], cent_vals[ss], hcat(prof_out[ss], acomp_prof_out[ss, :]), 
-        hcat(tied_voff[ss], acomp_tied_voff[ss, :]), hcat(tied_fwhm[ss], acomp_tied_fwhm[ss, :]), acomp_amps[ss, :],
-        hcat(voffs[ss], acomp_voffs[ss, :]), hcat(fwhms[ss], acomp_fwhms[ss, :]), hcat(h3s[ss], acomp_h3s[ss, :]), 
-        hcat(h4s[ss], acomp_h4s[ss, :]), hcat(ηs[ss], acomp_ηs[ss, :]))
+        hcat(tied_amp[ss], acomp_tied_amp[ss, :]), hcat(tied_voff[ss], acomp_tied_voff[ss, :]), hcat(tied_fwhm[ss], acomp_tied_fwhm[ss, :]), 
+        acomp_amps[ss, :], hcat(voffs[ss], acomp_voffs[ss, :]), hcat(fwhms[ss], acomp_fwhms[ss, :]), hcat(h3s[ss], acomp_h3s[ss, :]), 
+        hcat(h4s[ss], acomp_h4s[ss, :]), hcat(ηs[ss], acomp_ηs[ss, :]), combined)
 
     @debug "#######################################################"
 
     # Create a dictionary containing all of the unique `tie` keys, and the tied parameters 
     # corresponding to that tied key
+    kin_tied_key_amp = [unique(lines_out.tied_amp[:, j]) for j ∈ 1:size(lines_out.tied_amp, 2)]
+    kin_tied_key_amp = [kin_tied_key_amp[i][.!isnothing.(kin_tied_key_amp[i])] for i in eachindex(kin_tied_key_amp)]
     kin_tied_key_voff = [unique(lines_out.tied_voff[:, j]) for j ∈ 1:size(lines_out.tied_voff, 2)]
     kin_tied_key_voff = [kin_tied_key_voff[i][.!isnothing.(kin_tied_key_voff[i])] for i in eachindex(kin_tied_key_voff)]
     kin_tied_key_fwhm = [unique(lines_out.tied_fwhm[:, j]) for j ∈ 1:size(lines_out.tied_fwhm, 2)]
     kin_tied_key_fwhm = [kin_tied_key_fwhm[i][.!isnothing.(kin_tied_key_fwhm[i])] for i in eachindex(kin_tied_key_fwhm)]
+    @debug "kin_tied_key_amp: $kin_tied_key_amp"
     @debug "kin_tied_key_voff: $kin_tied_key_voff"
     @debug "kin_tied_key_fwhm: $kin_tied_key_fwhm"
     
+    amp_tied = [Vector{Dict{Symbol, Float64}}(undef, length(kin_tied_key_amp[j])) for j ∈ 1:size(lines_out.tied_amp, 2)]
     voff_tied = [Vector{Parameter}(undef, length(kin_tied_key_voff[j])) for j ∈ 1:size(lines_out.tied_voff, 2)]
     fwhm_tied = [Vector{Parameter}(undef, length(kin_tied_key_fwhm[j])) for j ∈ 1:size(lines_out.tied_fwhm, 2)]
     msg = ""
+    # Iterate and create the tied amplitude parameters
+    for j ∈ 1:size(lines_out.tied_amp, 2)
+        for (i, kin_tie) ∈ enumerate(kin_tied_key_amp[j])
+            a_ratio = isone(j) ? lines["tie_amp_$kin_tie"] : lines["tie_acomp_amp_$kin_tie"]
+            lines_in_group = lines_out.names[lines_out.tied_amp[:, j] .== kin_tie]
+            amp_tied[j][i] = Dict(ln => ai for (ln, ai) in zip(lines_in_group, a_ratio))
+            msg *= "\namp_tied_$(kin_tie)_$(j) $(amp_tied[j][i])"
+        end
+    end
     # Iterate and create the tied voff parameters
     for j ∈ 1:size(lines_out.tied_voff, 2)
         for (i, kin_tie) ∈ enumerate(kin_tied_key_voff[j])
@@ -793,7 +952,7 @@ function parse_lines()
     end
 
     @debug msg
-    tied_kinematics = TiedKinematics(kin_tied_key_voff, voff_tied, kin_tied_key_fwhm, fwhm_tied)
+    tied_kinematics = TiedKinematics(kin_tied_key_amp, amp_tied, kin_tied_key_voff, voff_tied, kin_tied_key_fwhm, fwhm_tied)
 
     # If tie_voigt_mixing is set, all Voigt profiles have the same tied mixing parameter eta
     if lines["tie_voigt_mixing"]
@@ -927,3 +1086,195 @@ function silicate_ohm()
     data[!, "ext"] ./= 0.4
     data[!, "wave"], data[!, "ext"]
 end
+
+
+"""
+    generate_stellar_populations(λ, lsf, z, Ω, cosmo, name)
+
+Prepare a 3D grid of Simple Stellar Population (SSP) templates over age, metallicity, and wavelength.
+Each template will be cropped around the region of interest given by `λ` (in microns), and degraded 
+to a spectral resolution given by `lsf` (in km/s). The redshift `z` and cosmology `cosmo` are used to
+calculate a luminosity distance so that the templates can be normalized into units of erg/s/cm^2/ang/Msun.
+
+The templates are generated using the Python version of Charlie Conroy's Flexible Stellar Population Synthesis (FSPS)
+package, converted to Python by Dan Foreman-Mackey.
+
+Returns 1D arrays for the wavelengths, ages, and metals that the templates are evaluated at, as well as the
+3D array of templates. Note that some of the templates may be filled with 0s if the grid space is not fully
+occupied.
+"""
+function generate_stellar_populations(λ::Vector{<:Real}, lsf::Vector{<:Real}, z::Real, cosmo::Cosmology.AbstractCosmology,
+    name::String)
+
+    # Make sure λ is logarithmically binned
+    @assert (λ[2]/λ[1]) ≈ (λ[end]/λ[end-1]) "Input spectrum must be logarithmically binned to fit optical data!"
+
+    # Test to see if templates have already been generated
+    if isfile(joinpath("output_$name", "stellar_templates.loki"))
+        @info "Loading pre-generated stellar templates from binary file"
+        out = deserialize(joinpath("output_$name", "stellar_templates.loki"))
+        return out.λ, out.age, out.logz, out.templates
+    end
+
+    # Cut off the templates a little bit before/after the input spectrum
+    λleft, λright = minimum(λ)*0.98, maximum(λ)*1.02
+    # Dummy population
+    ssp0 = py_fsps.StellarPopulation()
+    # Get the wavelength grid that FSPS uses
+    ssp_λ = ssp0.wavelengths
+    # Convert from angstroms to microns
+    ssp_λ ./= 1e4
+    @assert (λleft ≥ minimum(ssp_λ)) && (λright ≤ maximum(ssp_λ)) "The extended input spectrum range of ($λleft, $λright) um " * 
+        "is outside the template range of ($(minimum(ssp_λ)), $(maximum(ssp_λ))) um. Please adjust the input spectrum accordingly."
+    # Mask to a range around the input spectrum
+    mask = λleft .< ssp_λ .< λright
+    ssp_λ = ssp_λ[mask]
+    # Resample onto a linear wavelength grid
+    Δλ = (λright - λleft) / length(ssp_λ)
+    ssp_λlin = collect(λleft:Δλ:λright)
+    
+    # LSF FWHM of the input spectrum in microns, interpolated at the locations of the SSP templates
+    inp_fwhm = Spline1D(λ, lsf ./ C_KMS .* λ, k=1, bc="nearest")(ssp_λlin)
+    # FWHM resolution of the FSPS templates in um
+    ssp_lsf = Spline1D(ssp_λ, abs.(ssp0.resolutions[mask]), k=1, bc="nearest")(ssp_λlin)
+    ssp_fwhm = ssp_lsf ./ C_KMS .* ssp_λlin .* 2√(2log(2))
+    # Difference in resolutions between the input spectrum and SSP templates, in pixels
+    σ_diff = sqrt.(clamp.(inp_fwhm.^2 .- ssp_fwhm.^2, 0., Inf)) ./ (2√(2log(2))) ./ Δλ 
+
+    # Logarithmically rebinned wavelengths
+    logscale = log(λ[2]/λ[1])
+    ssp_lnλ = get_logarithmic_λ([minimum(ssp_λlin), maximum(ssp_λlin)], length(ssp_λlin), logscale=logscale)
+
+    # Calculate luminosity distance in cm in preparation to convert luminosity to flux
+    dL = luminosity_dist(u"cm", cosmo, z).val
+
+    # Generate templates over a range of ages and metallicities
+    ages = exp.(range(log(0.001), log(13.7), 50))        # logarithmically spaced from 1 Myr to 15 Gyr
+    logzs = range(-2.3, 0.4, 10)                         # linearly spaced from log(Z/Zsun) = [M/H] = -2.3 to 0.4
+    ssp_templates = zeros(length(ages), length(logzs), length(ssp_lnλ))
+    n_temp = size(ssp_templates, 1) * size(ssp_templates, 2)
+
+    @info "Generating $n_temp simple stellar population templates with FSPS with " * 
+        "ages ∈ ($(minimum(ages)), $(maximum(ages))) Gyr, [M/H] ∈ ($(minimum(logzs)), $(maximum(logzs)))"
+
+    prog = Progress(n_temp; showspeed=true)
+    for (z_ind, logz) in enumerate(logzs)
+        # Create a simple stellar population (delta function SFH) with a Salpeter IMF and no attenuation
+        ssp = py_fsps.StellarPopulation(zcontinuous=1, logzsol=logz, imf_type=0, sfh=0)
+        for (age_ind, age) in enumerate(ages)
+            # Evaluate the stellar population at the given age
+            _, ssp_LperA = ssp.get_spectrum(tage=age, peraa=true)
+            # Convert Lsun/Msun/Ang to erg/s/cm^2/Ang/Msun
+            ssp_flux = ssp_LperA[mask] .* 3.846e33 ./ (4π .* dL.^2)
+            # Resample onto the linear wavelength grid
+            ssp_flux = Spline1D(ssp_λ, ssp_flux, k=1, bc="nearest")(ssp_λlin)
+            # ssp_flux = resample_conserving_flux(ssp_λlin, ssp_λ, ssp_flux; fill=0.)
+            # Convolve with gaussian kernels to degrade the spectrum to match the input spectrum's resolution
+            ssp_flux, _ = convolveGaussian1D(ssp_flux, σ_diff)
+            # Resample again, this time onto the logarithmic wavelength grid
+            ssp_flux = Spline1D(ssp_λlin, ssp_flux, k=1, bc="nearest")(ssp_lnλ)
+            # ssp_flux = resample_conserving_flux(ssp_lnλ, ssp_λlin, ssp_flux; fill=0.)
+            # Add to the templates array
+            ssp_templates[age_ind, z_ind, :] .= ssp_flux
+            next!(prog)
+        end
+    end
+
+    # save for later
+    serialize(joinpath("output_$name", "stellar_templates.loki"), (λ=ssp_lnλ, age=ages, logz=logzs, templates=ssp_templates))
+
+    ssp_lnλ, ages, logzs, ssp_templates
+end
+
+
+"""
+    generate_feii_templates(λ, lsf)
+
+Prepare two Fe II emission templates from Veron-Cetty et al. (2004): https://www.aanda.org/articles/aa/pdf/2004/14/aa0714.pdf
+derived from the spectrum of I Zw 1 (Seyfert 1). This function loads the templates from the files, converts to vacuum wavelengths,
+interpolates the flux onto a logarithmically spaced grid, and convolves the templates to match the spectral resolution of the
+input spectrum (given by the `lsf` argument, in km/s).
+
+The returned values are the length of the templates in wavelength space, the wavelength grid, and the Fourier Transforms of the
+templates themselves (this is done to speed up the convolution with a LOSVD during the actual fitting -- we cannot return the 
+FFTs of the stellar templates because they may have to be interpolated between age/metallicity, but since the Fe II templates are
+fixed, we are free to pre-compute the FFTs).
+"""
+function generate_feii_templates(λ::Vector{<:Real}, lsf::Vector{<:Real})
+
+    # Make sure λ is logarithmically binned
+    @assert (λ[2]/λ[1]) ≈ (λ[end]/λ[end-1]) "Input spectrum must be logarithmically binned to fit optical data!"
+
+    # Read the templates in from the specified directory
+    template_path = joinpath(@__DIR__, "..", "templates", "veron-cetty_2004")
+    na_feii_temp, _ = readdlm(joinpath(template_path, "VC04_na_feii_template.csv"), ',', Float64, '\n', header=true)
+    br_feii_temp, _ = readdlm(joinpath(template_path, "VC04_br_feii_template.csv"), ',', Float64, '\n', header=true)
+    feii_λ = na_feii_temp[:, 1]
+    na_feii_temp = na_feii_temp[:, 2]
+    br_feii_temp = br_feii_temp[:, 2]
+
+    # Convert to microns
+    feii_λ ./= 1e4
+    # Convert to vacuum wavelengths
+    feii_λ = air_to_vacuum.(feii_λ)
+    # Linear spacing 
+    Δλ = (maximum(feii_λ) - minimum(feii_λ)) / length(feii_λ)
+
+    # Cut off the templates a little bit before/after the input spectrum
+    λleft, λright = minimum(λ)*0.98, maximum(λ)*1.02 
+    inrange = (λleft ≥ minimum(feii_λ)) && (λright ≤ maximum(feii_λ))
+    if !inrange
+        @debug "The input spectrum falls outside the range covered by the Fe II templates. The templates will be padded with 0s."
+        λpad_l = collect(λleft:Δλ:minimum(feii_λ))
+        λpad_r = collect(maximum(feii_λ):Δλ:λright)
+        feii_λ = [λpad_l; feii_λ; λpad_r]
+        Fpad_l = zeros(length(λpad_l))
+        Fpad_r = zeros(length(λpad_r))
+        na_feii_temp = [Fpad_l; na_feii_temp; Fpad_r]
+        br_feii_temp = [Fpad_l; br_feii_temp; Fpad_r]
+    else
+        mask = λleft .< feii_λ .< λright
+        feii_λ = feii_λ[mask]
+        na_feii_temp = na_feii_temp[mask]
+        br_feii_temp = br_feii_temp[mask]
+    end
+
+    # Resample to a linear wavelength grid
+    feii_λlin = collect(λleft:Δλ:λright)
+    na_feii_temp = Spline1D(feii_λ, na_feii_temp, k=1, bc="nearest")(feii_λlin)
+    br_feii_temp = Spline1D(feii_λ, br_feii_temp, k=1, bc="nearest")(feii_λlin)
+
+    # LSF FWHM of the input spectrum in microns, interpolated at the locations of the SSP templates
+    inp_fwhm = Spline1D(λ, lsf ./ C_KMS .* λ, k=1, bc="nearest")(feii_λlin)
+    # FWHM resolution of the Fe II templates in um
+    feii_fwhm = 1.0/1e4
+    # Difference in resolutions between the input spectrum and SSP templates, in pixels
+    σ_diff = sqrt.(clamp.(inp_fwhm.^2 .- feii_fwhm.^2, 0., Inf)) ./ (2√(2log(2))) ./ Δλ
+
+    # Convolve the templates to match the resolution of the input spectrum
+    na_feii_temp, _ = convolveGaussian1D(na_feii_temp, σ_diff)
+    br_feii_temp, _ = convolveGaussian1D(br_feii_temp, σ_diff)
+
+    # Logarithmically rebinned wavelengths
+    logscale = log(λ[2]/λ[1])
+    feii_lnλ = get_logarithmic_λ([minimum(feii_λlin), maximum(feii_λlin)], length(feii_λlin), logscale=logscale)
+    na_feii_temp = Spline1D(feii_λlin, na_feii_temp, k=1, bc="nearest")(feii_lnλ)
+    br_feii_temp = Spline1D(feii_λlin, br_feii_temp, k=1, bc="nearest")(feii_lnλ)
+
+    # Pad with 0s up to the next product of small prime factors -> to make the FFT more efficient
+    npad = nextprod([2,3,5], length(feii_lnλ))
+    na_feii_temp = [na_feii_temp; zeros(npad - length(na_feii_temp))]
+    br_feii_temp = [br_feii_temp; zeros(npad - length(br_feii_temp))]
+
+    # Re-normalize the spectra so the maximum is 1
+    na_feii_temp ./= maximum(na_feii_temp)
+    br_feii_temp ./= maximum(br_feii_temp)
+
+    # Pre-compute the Fourier Transforms of the templates to save time during fitting
+    na_feii_temp_rfft = rfft(na_feii_temp)
+    br_feii_temp_rfft = rfft(br_feii_temp)
+
+    npad, feii_lnλ, na_feii_temp_rfft, br_feii_temp_rfft
+
+end
+
