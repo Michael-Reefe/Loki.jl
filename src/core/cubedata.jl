@@ -1634,7 +1634,8 @@ function make_python_wcs(x_cent::T, y_cent::T, ra_cent::T, dec_cent::T, x_scale:
     wcs.wcs.cunit = ["deg", "deg"]
 
     # Coordinate transform matrix 
-    wcs.wcs.pc = [1.0 0.0; 0.0 1.0]
+    # (negative in the first position because RA increases to the left)
+    wcs.wcs.pc = [-1.0 0.0; 0.0 1.0]
 
     wcs
 

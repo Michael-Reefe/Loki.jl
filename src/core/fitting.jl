@@ -2580,7 +2580,7 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Vector{PyObject})
     # Wrapper function 
     fit_spax_i(index::CartesianIndex) = fit_spaxel(cube_fitter, cube_data, index; use_ap=true)
 
-    @info "===> Beginninng integrated spectrum fitting... <==="
+    @info "===> Beginning integrated spectrum fitting... <==="
     p_out, p_err = fit_spax_i(spaxels[1])
     if !isnothing(p_out)
         out_params[spaxels[1], :] .= p_out
