@@ -1562,7 +1562,7 @@ Save the best fit results for the cube into two FITS files: one for the full 3D 
 individual model components, and one for 2D parameter maps of the best-fit parameters for each spaxel in the cube.
 """
 write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel, param_maps::ParamMaps, 
-    param_errs::Vector{<:ParamMaps}; aperture::Union{Vector{PyObject},Nothing}=nothing) =
+    param_errs::Vector{<:ParamMaps}; aperture::Union{Vector{<:Aperture.AbstractAperture},String,Nothing}=nothing) =
     cube_fitter.spectral_region == :MIR ?
     write_fits_mir(cube_fitter, cube_data, cube_model, param_maps, param_errs; aperture=aperture) :
     write_fits_opt(cube_fitter, cube_data, cube_model, param_maps, param_errs; aperture=aperture)
@@ -1570,48 +1570,50 @@ write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel
 
 # MIR implementation of the write_fits function
 function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel, param_maps::ParamMaps, 
-    param_errs::Vector{<:ParamMaps}; aperture::Union{Vector{PyObject},Nothing}=nothing)
+    param_errs::Vector{<:ParamMaps}; aperture::Union{Vector{<:Aperture.AbstractAperture},String,Nothing}=nothing)
 
     aperture_keys = []
     aperture_vals = []
     aperture_comments = []
     # If using an aperture, extract its properties 
-    if !isnothing(aperture)
-        # Get the RA and Dec of the centroid
-        sky_aperture = aperture[1].to_sky(cube_fitter.cube.wcs)
-        sky_cent = sky_aperture.positions
-        ra_cent = format_angle(ha2hms(sky_cent.ra[1]/15); delim=["h","m","s"])
-        dec_cent = format_angle(deg2dms(sky_cent.dec[1]); delim=["d","m","s"])
+    if typeof(aperture) <: Aperture.AbstractAperture
 
         # Get the name (giving the shape of the aperture: circular, elliptical, or rectangular)
-        ap_shape = aperture[1].__class__.__name__
+        ap_shape = string(typeof(aperture))
 
-        aperture_keys = ["AP_SHAPE", "AP_RA", "AP_DEC"]
-        aperture_vals = Any[ap_shape, ra_cent, dec_cent]
-        aperture_comments = ["The shape of the spectrum extraction aperture", "The RA of the aperture",
-            "The dec of the aperture"]
+        aperture_keys = ["AP_SHAPE", "AP_X", "AP_Y"]
+        aperture_vals = Any[ap_shape, aperture.x, aperture.y]
+        aperture_comments = ["The shape of the spectrum extraction aperture", "The x coordinate of the aperture",
+            "The y coordinate of the aperture"]
 
         # Get the properties, i.e. radius for circular 
-        if ap_shape == "CircularAperture"
-            append!(aperture_keys, ["AP_RADIUS"])
-            append!(aperture_vals, sky_aperture.r[1])
-            append!(aperture_comments, ["Radius of aperture in arcsec"])
-        elseif ap_shape == "EllipticalAperture"
-            append!(aperture_keys, ["AP_A", "AP_B", "AP_PA"])
-            append!(aperture_vals, [sky_aperture.a[1], sky_aperture.b[1], sky_aperture.theta[1]])
-            append!(aperture_comments, ["Semimajor axis of aperture in arcsec", 
-                "Semiminor axis of aperture in arcsec", "Aperture position angle in rad."])
-        elseif ap_shape == "RectangularAperture"
-            append!(aperture_keys, ["AP_W", "AP_H", "AP_PA"])
-            append!(aperture_vals, [sky_aperture.w[1], sky_aperture.h[1], sky_aperture.theta[1]])
-            append!(aperture_comments, ["Width of aperture in arcsec", 
-                "Height of aperture in arcsec", "Aperture position angle in rad."])
+        if contains(ap_shape, "CircularAperture")
+            push!(aperture_keys, "AP_RADIUS")
+            push!(aperture_vals, aperture.r)
+            push!(aperture_comments, "Radius of aperture (pixels)")
+        elseif contains(ap_shape, "EllipticalAperture")
+            append!(aperture_keys, ["AP_A", "AP_B", "AP_ANGLE"])
+            append!(aperture_vals, [aperture.a, aperture.b, aperture.θ])
+            append!(aperture_comments, ["Semimajor axis of aperture (pixels)", 
+                "Semiminor axis of aperture (pixels)", "Aperture angle in deg."])
+        elseif contains(ap_shape, "RectangularAperture")
+            append!(aperture_keys, ["AP_W", "AP_H", "AP_ANGLE"])
+            append!(aperture_vals, [aperture.w, aperture.h, aperture.θ])
+            append!(aperture_comments, ["Width of aperture (pixels)", 
+                "Height of aperture (pixels)", "Aperture angle in deg."])
         end
 
         # Also append the aperture area
-        append!(aperture_keys, ["AP_AR_SR"])
-        append!(aperture_vals, [cube_data.area_sr[1]])
-        append!(aperture_comments, ["Area of aperture in steradians"])
+        push!(aperture_keys, "AP_AREA")
+        push!(aperture_vals, get_area(aperture))
+        push!(aperture_comments, "Area of aperture in pixels")
+    
+    elseif aperture isa String
+
+        n_pix = [sum(.~cube_fitter.cube.mask[:, :, i]) for i in axes(cube_fitter.cube.mask, 3)]
+        aperture_keys = ["AP_SHAPE", "AP_AREA"]
+        aperture_vals = Any["full_cube", median(n_pix[isfinite.(n_pix)])]
+
     end
 
     # Header information
