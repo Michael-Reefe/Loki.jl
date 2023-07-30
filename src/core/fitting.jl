@@ -2069,26 +2069,6 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
     # If any fall outside of this region, do not include these pixels in the chi^2 calculations
     mask_chi2 = mask_bad .| (mask_lines .& .~line_reference)
 
-    l_mask = sum(.~mask)
-    # Statistical uncertainties based on the local RMS of the residuals with a cubic spline fit
-    σ_stat = zeros(l_mask)
-    for i in 1:l_mask
-        indices = sortperm(abs.((1:l_mask) .- i))[1:60]
-        σ_stat[i] = std(I[.~mask][indices] .- I_spline[.~mask][indices])
-    end
-    # We insert at the locations of the lines since the cubic spline does not include them
-    l_all = length(λ)
-    line_inds = (1:l_all)[mask]
-    for line_ind ∈ line_inds
-        insert!(σ_stat, line_ind, σ_stat[max(line_ind-1, 1)])
-    end
-    @debug "Statistical uncertainties: ($(σ_stat[1]) - $(σ_stat[end]))"
-    # σ = hypot.(σ, σ_stat)
-
-    # resid = I[.~mask] .- I_spline[.~mask]
-    # σ_stat = std(resid[resid .< 3std(resid)])
-    σ .= σ_stat
-
     # Check if the fit has already been performed
     if !isfile(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).csv")) || cube_fitter.overwrite
         
@@ -2313,30 +2293,8 @@ function fit_stack!(cube_fitter::CubeFitter)
     # Perform a cubic spline fit, also obtaining the line mask
     mask_lines_init, I_spline_init, σ_spline_init = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init, cube_fitter.spectral_region)
     mask_bad_init = iszero.(I_sum_init) .| iszero.(σ_sum_init)
-    mask_init = mask_lines_init .| mask_bad_init
-
-    l_mask = sum(.~mask_init)
-
-    # Statistical uncertainties based on the local RMS of the residuals with a cubic spline fit
-    σ_stat_init = zeros(l_mask)
-    for i in 1:l_mask
-        indices = sortperm(abs.((1:l_mask) .- i))[1:60]
-        σ_stat_init[i] = std(I_sum_init[.~mask_init][indices] .- I_spline_init[.~mask_init][indices])
-    end
-    # We insert at the locations of the lines since the cubic spline does not include them
-    l_all = length(λ_init)
-    line_inds = (1:l_all)[mask_init]
-    for line_ind ∈ line_inds
-        insert!(σ_stat_init, line_ind, σ_stat_init[max(line_ind-1, 1)])
-    end
-    @debug "Statistical uncertainties: ($(σ_stat_init[1]) - $(σ_stat_init[end]))"
-    # σ_sum_init = hypot.(σ_sum_init, σ_stat_init)
     mask_chi2_init = mask_bad_init
 
-    # resid = I_sum_init[.~mask_lines_init] .- I_spline_init[.~mask_lines_init]
-    # σ_stat_init = std(resid[resid .< 3std(resid)])
-    σ_sum_init .= σ_stat_init
-    
     # Get the normalization
     norm = abs(nanmaximum(I_sum_init))
     norm = norm ≠ 0. ? norm : 1.
@@ -2501,14 +2459,14 @@ function fit_cube!(cube_fitter::CubeFitter)
 end
 
 
-function fit_cube!(cube_fitter::CubeFitter, aperture::PyObject)
+function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Aperture.AbstractAperture,String})
     # Extend the single aperture into an array of apertures and call the corresponding method of fit_cube!
     apertures = repeat([aperture], length(cube_fitter.cube.λ))
     fit_cube!(cube_fitter, apertures)
 end
 
 
-function fit_cube!(cube_fitter::CubeFitter, aperture::Vector{PyObject})
+function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.AbstractAperture},String})
 
     @info """\n
     #############################################################################
@@ -2538,20 +2496,34 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Vector{PyObject})
     I = zeros(Float32, shape)
     σ = zeros(Float32, shape)
     area_sr = zeros(shape[3])
-    @debug "Performing aperture photometry to get the integrated spectrum"
 
     # Loop through each wavelength pixel and perform the aperture photometry
-    for z ∈ 1:shape[3]
-        # Sum up the FLUX within the aperture
-        Fz = cube_fitter.cube.I[:, :, z] .* cube_fitter.cube.Ω
-        e_Fz = cube_fitter.cube.σ[:, :, z] .* cube_fitter.cube.Ω
-        _, _, _, F_ap, eF_ap = py_photutils.aperture.aperture_photometry(Fz', aperture[z], 
-            error=e_Fz', mask=cube_fitter.cube.mask[:, :, z]', method="exact")[1]
+    if aperture isa String
+        @assert lowercase(aperture) == "all" "The only accepted string input for 'aperture' is 'all' to signify the entire cube."
+        
+        @info "Integrating spectrum across the whole cube..."
+        I = sumdim(cube_fitter.cube.I, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+        σ = sqrt.(sumdim(cube_fitter.cube.σ.^2, (1,2))) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+        area_sr = cube_fitter.cube.Ω .* sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
 
-        # Convert back to intensity by dividing out the aperture area
-        area_sr[z] = aperture[z].area * cube_fitter.cube.Ω
-        I[1,1,z] = F_ap / area_sr[z]
-        σ[1,1,z] = eF_ap / area_sr[z]
+    else
+        @info "Performing aperture photometry to get an integrated spectrum..."
+        for z ∈ 1:shape[3]
+
+            # Sum up the FLUX within the aperture
+            Fz = cube_fitter.cube.I[:, :, z] .* cube_fitter.cube.Ω
+            e_Fz = cube_fitter.cube.σ[:, :, z] .* cube_fitter.cube.Ω
+            # Zero out the masked spaxels
+            Fz[cube_fitter.cube.mask[:, :, z]] .= 0.
+            e_Fz[cube_fitter.cube.mask[:, :, z]] .= 0.
+            # Perform the aperture photometry
+            (_, _, F_ap, eF_ap) = photometry(aperture[z], Fz, e_Fz)
+
+            # Convert back to intensity by dividing out the aperture area
+            area_sr[z] = get_area(aperture[z]) * cube_fitter.cube.Ω
+            I[1,1,z] = F_ap / area_sr[z]
+            σ[1,1,z] = eF_ap / area_sr[z]
+        end
     end
     cube_data = (λ=cube_fitter.cube.λ, I=I, σ=σ, area_sr=area_sr)
 

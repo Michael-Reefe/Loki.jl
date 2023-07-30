@@ -420,96 +420,51 @@ function interpolate_nans!(cube::DataCube)
 end
 
 
-######################################### APERTURE PHOTOMETRY ###############################################
-
-
 """
-    make_aperture(cube, type, ra, dec, params...; [auto_centroid, scale_psf, box_size])
+    calculate_statistical_errors!(cube)
 
-Create an aperture using python's photutils library.
-
-# Arguments
-- `cube::DataCube`: The DataCube struct to create the aperture for
-- `type::Symbol`: Must be one of :Circular, :Elliptical, or :Rectangular
-- `ra::String`: Right ascension in sexagesimal hours
-- `dec::String`: Declination in sexagesimal degrees
-- `params...`: Varying number of parameters for the aperture depending on `type`.
-    For circular apertures, the only parameter is the radius in arcseconds.
-    For elliptical apertures, the parameters are the semimajor and semiminor axes in arcseconds, and the position angle in degrees
-    For rectangular apertures, the parameters are the width and height in arcseconds, and the position angle in degrees
-- `auto_centroid::Bool=false`: if true, adjusts the center (ra,dec) to the closest peak in brightness 
-- `scale_psf::Bool=false`: if true, creates a vector of apertures that scale up in radius at the same rate that the PSF scales up
-- `box_size::Integer=11`: if `auto_centroid` is true, this gives the box size to search for a local peak in brightness, in pixels
+This function calculates the 'statistical' errors of the given IFU cube, replacing its error cube.
+The statistical errors are defined as the standard deviation of the residuals between the flux and a cubic spline
+fit to the flux, within a small window (60 pixels). Emission lines are masked out during this process.
 """
-function make_aperture(cube::DataCube, type::Symbol, ra::String, dec::String, params...; auto_centroid=false,
-    scale_psf::Bool=false, box_size::Integer=11)
+function calculate_statistical_errors!(cube::DataCube)
 
-    @info "Creating a(n) $type aperture at $ra, $dec"
+    λ = cube.λ
 
-    # Get the WCS frame from the datacube
-    frame = lowercase(cube.wcs.wcs.radesys)
-    p = (params[1] * py_units.arcsec,)
-    if length(params) > 1
-        p = (p..., params[2] * py_units.arcsec)
-    end
-    if length(params) > 2
-        p = (p..., params[3] * py_units.deg)
-    end
+    println("Calculating statistical errors for each spaxel...")
+    @showprogress for spaxel ∈ CartesianIndices(size(cube.I)[1:2])
+        # Get the flux/error for this spaxel
+        I = cube.I[spaxel, :]
+        σ = cube.σ[spaxel, :]
+        # Perform a cubic spline fit, also obtaining the line mask
+        mask_lines, I_spline, _ = continuum_cubic_spline(λ, I, σ, cube.spectral_region)
+        mask_bad = cube.mask[spaxel, :]
+        mask = mask_lines .| mask_bad
 
-    # Get the correct aperture type
-    ap_dict = Dict(:Circular => py_photutils.aperture.SkyCircularAperture,
-                   :Elliptical => py_photutils.aperture.SkyEllipticalAperture,
-                   :Rectangular => py_photutils.aperture.SkyRectangularAperture)
-
-    # Assume "center" units are parsable with AstroAngles
-    sky_center = py_coords.SkyCoord(ra=(parse_hms(ra) |> hms2ha) * py_units.hourangle, 
-                                    dec=(parse_dms(dec) |> dms2deg) * py_units.deg,
-                                    frame=frame)
-    # Turn into sky aperture
-    sky_ap = ap_dict[type](sky_center, p...)
-
-    # Convert the sky aperture into a pixel aperture using the cube's WCS
-    pix_ap = sky_ap.to_pixel(cube.wcs)
-    
-    # If auto_centroid is true, readjust the center of the aperture to the peak in the local brightness
-    if auto_centroid
-        data = sumdim(cube.I, 3)
-        err = sqrt.(sumdim(cube.σ.^2, 3))
-        mask = trues(size(data))
-        p0 = round.(Int, pix_ap.positions)
-        box_half = fld(box_size, 2)
-        mask[p0[1]-box_half:p0[1]+box_half, p0[2]-box_half:p0[2]+box_half] .= 0
-        # Find the centroid using photutils' 2D-gaussian fitting
-        # NOTE 1: Make sure to transpose the data array because of numpy's reversed axis order
-        # NOTE 2: Add 1 because of python's 0-based indexing
-        x_cent, y_cent = py_photutils.centroids.centroid_2dg(data', error=err', mask=mask')
-        pix_ap.positions = (x_cent, y_cent)
-        ra_cent, dec_cent = cube.wcs.all_pix2world([[x_cent,y_cent]], 1)'
-        @info "Aperture centroid adjusted to $(format_angle(ha2hms(ra_cent/15); delim=["h","m","s"])), " *
-            "$(format_angle(deg2dms(dec_cent); delim=["d","m","s"]))"
-
-    end
-
-    if scale_psf
-        # Scale the aperture size based on the change in the PSF size
-        pix_aps = Vector{PyObject}(undef, length(cube.λ))
-        for i ∈ eachindex(pix_aps)
-            pix_aps[i] = pix_ap.copy()
-            if type == :Circular
-                pix_aps[i].r *= cube.psf[i] / cube.psf[1]
-            elseif type == :Elliptical
-                pix_aps[i].a *= cube.psf[i] / cube.psf[1]
-                pix_aps[i].b *= cube.psf[i] / cube.psf[1]
-            elseif type == :Rectangular
-                pix_aps[i].w *= cube.psf[i] / cube.psf[1]
-                pix_aps[i].h *= cube.psf[i] / cube.psf[1]
-            end
+        l_mask = sum(.~mask)
+        if iszero(l_mask)
+            continue
         end
-        return pix_aps
+        # Statistical uncertainties based on the local RMS of the residuals with a cubic spline fit
+        σ_stat = zeros(l_mask)
+        for i in 1:l_mask
+            indices = sortperm(abs.((1:l_mask) .- i))[1:60]
+            σ_stat[i] = std(I[.~mask][indices] .- I_spline[.~mask][indices])
+        end
+        # We insert at the locations of the lines since the cubic spline does not include them
+        l_all = length(λ)
+        line_inds = (1:l_all)[mask]
+        for line_ind ∈ line_inds
+            insert!(σ_stat, line_ind, σ_stat[max(line_ind-1, 1)])
+        end
+        @debug "Statistical uncertainties for spaxel $spaxel: ($(σ_stat[1]) - $(σ_stat[end]))"
+        # σ = hypot.(σ, σ_stat)
+
+        # Replace the cube's error with the statistical errors
+        cube.σ[spaxel, :] .= σ_stat
     end
 
-    pix_ap
-end
+end 
 
 
 ############################## PLOTTING FUNCTIONS ####################################
@@ -536,14 +491,14 @@ A plotting utility function for 2D maps of the raw intensity / error
 - `z::Union{Real,Nothing}=nothing`: The redshift of the source, used to calculate 
     the distance and thus the spatial scale in kpc.
 - `cosmo::Union{AbstractCosmology,Nothing}=nothing`: Cosmology object for calculating physical distance scales
-- `aperture::Union{PyObject,Nothing}=nothing`: Aperture object that may be plotted to show its location/size
+- `aperture::Union{Aperture.AbstractAperture,Nothing}=nothing`: Aperture object that may be plotted to show its location/size
 
 See also [`DataCube`](@ref), [`plot_1d`](@ref)
 """
 function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=true, logᵢ::Union{Integer,Nothing}=10,
     logₑ::Union{Integer,Nothing}=nothing, colormap::Symbol=:cubehelix, name::Union{String,Nothing}=nothing, 
     slice::Union{Integer,Nothing}=nothing, z::Union{Real,Nothing}=nothing, cosmo::Union{Cosmology.AbstractCosmology,Nothing}=nothing, 
-    aperture::Union{PyObject,Nothing}=nothing)
+    aperture::Union{Aperture.AbstractAperture,Nothing}=nothing)
 
     @debug "Plotting 2D intensity/error map for cube with channel $(data.channel), band $(data.band)"
 
@@ -636,7 +591,14 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
             bbox=Dict(:facecolor => "white", :edgecolor => "white", :pad => 5.0))    
 
         if !isnothing(aperture)
-            aperture.plot(ax1, color="k", lw=2)
+            if aperture isa CircularAperture
+                ap_patch = plt.Circle((aperture.x-1, aperture.y-1), aperture.r, color="k", lw=2, fill=false)
+            elseif aperture isa EllipticalAperture
+                ap_patch = plt.Ellipse((aperture.x-1, aperture.y-1), 2aperture.a, 2aperture.b, aperture.θ, color="k", lw=2, fill=false)
+            elseif aperture isa RectangularAperture
+                ap_patch = plt.Rectangle((aperture.x-1, aperture.y-1), aperture.w, aperture.h, aperture.θ, color="k", lw=2, fill=false)
+            end
+            ax1.add_patch(ap_patch)
         end
 
     end
@@ -670,7 +632,14 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
             bbox=Dict(:facecolor => "white", :edgecolor => "white", :pad => 5.0))
 
         if !isnothing(aperture)
-            aperture.plot(ax2, color="k", lw=2)
+            if aperture isa CircularAperture
+                ap_patch = plt.Circle((aperture.x, aperture.y), aperture.r, color="k", lw=2, fill=false)
+            elseif aperture isa EllipticalAperture
+                ap_patch = plt.Ellipse((aperture.x, aperture.y), 2aperture.a, 2aperture.b, angle=aperture.θ, color="k", lw=2, fill=false)
+            elseif aperture isa RectangularAperture
+                ap_patch = plt.Rectangle((aperture.x, aperture.y), aperture.w, aperture.h, angle=aperture.θ, color="k", lw=2, fill=false)
+            end
+            ax2.add_patch(ap_patch)
         end
 
     end
@@ -1076,17 +1045,13 @@ function adjust_wcs_alignment!(obs::Observation, channels; box_size::Integer=11)
 
         for filter in filters
             data = sumdim(ch_data.I[:, :, filter], 3)
-            err = sqrt.(sumdim(ch_data.σ[:, :, filter].^2, 3))
             wcs = ch_data.wcs
             # Find the peak brightness pixels and place boxes around them
             peak = argmax(data)
             box_half = fld(box_size, 2)
             mask = trues(size(data))
             mask[peak[1]-box_half:peak[1]+box_half, peak[2]-box_half:peak[2]+box_half] .= 0
-            # Find the centroid using photutils' 2D-gaussian fitting
-            # NOTE 1: Make sure to transpose the data array because of numpy's reversed axis order
-            # NOTE 2: Add 1 because of python's 0-based indexing
-            x_cent, y_cent = py_photutils.centroids.centroid_2dg(data', error=err', mask=mask') .+ 1
+            x_cent, y_cent = centroid_com(data, mask)
 
             fig, ax = plt.subplots()
             data[data .≤ 0] .= NaN
@@ -1136,14 +1101,17 @@ Perform a 3D interpolation of the given channels such that all spaxels lie on th
 `S<:Integer`
 - `obs::Observation`: The Observation object to rebin
 - `channels=nothing`: The list of channels to be rebinned. If nothing, rebin all channels.
+- `concat_type=:full`: Should be :full for overall channels or :sub for subchannels (bands).
 - `out_id=0`: The dictionary key corresponding to the newly rebinned cube, defaults to 0.
 - `scrub_output::Bool=true`: Whether or not to delete the individual channels that were interpolated after assigning the new interpolated channel.
-- `rescale_subchannels::Bool=false`: Whether or not to rescale the flux of subchannels so that they match at the overlapping regions.
-    The procedure is the same as for full channels, but this is off by default since *theoretically* the WCS adjustment should take care
-    of most of the differences between subchannel flux levels.
+- `rescale_channels::Union{Real,Nothing}=8.0`: Whether or not to rescale the flux of subchannels so that they match at the overlapping regions.
+    If a real number is provided, this is interpreted as an observed-frame wavelength to choose the reference channel that all other channels
+    are rescaled to match.
+- `adjust_wcs_headerinfo::Bool=false`: Whether or not to try to automatically adjust the WCS header info of the channels by 
+    calculating centroids at the boundaries between the channels and forcing them to match.  Off by default.
 """
 function reproject_channels!(obs::Observation, channels=nothing, concat_type=:full; out_id=0, scrub_output::Bool=false,
-    method=:adaptive, rescale_subchannels::Bool=false)
+    method=:adaptive, rescale_channels::Union{Real,Nothing}=8.0, adjust_wcs_headerinfo::Bool=false)
 
     @assert obs.spectral_region == :MIR "The reproject_channels! function is only supported for MIR cubes!"
 
@@ -1159,7 +1127,9 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
     end
 
     # First and foremost -- adjust the WCS alignment of each channel so that they are consistent with each other
-    adjust_wcs_alignment!(obs, channels; box_size=11)
+    if adjust_wcs_headerinfo
+        adjust_wcs_alignment!(obs, channels; box_size=11)
+    end
 
     # Output angular size
     Ω_out = minimum([obs.channels[channel].Ω for channel ∈ channels])
@@ -1219,11 +1189,9 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
         elseif method == :interp
             @warn "The interp method is currently experimental and produces less robust results than the adaptive method!"
             F_out = permutedims(py_reproject.reproject_interp((F_in, obs.channels[ch_in].wcs), wcs_optimal, 
-                (size(F_in, 1), size_optimal[2], size_optimal[1]), order=3, block_size=(10,10),
-                return_footprint=false), (3,2,1))
+                (size(F_in, 1), size_optimal[2], size_optimal[1]), order=1, return_footprint=false), (3,2,1))
             σF_out = permutedims(py_reproject.reproject_interp((σF_in, obs.channels[ch_in].wcs), wcs_optimal, 
-                (size(σF_in, 1), size_optimal[2], size_optimal[1]), order=3, block_size=(10,10),
-                return_footprint=false), (3,2,1))
+                (size(σF_in, 1), size_optimal[2], size_optimal[1]), order=1, return_footprint=false), (3,2,1))
             # Flux conservation
             for wi ∈ 1:wi_size
                 F_out[:, :, wi] .*= nansum(F_in[wi, :, :]) ./ nansum(F_out[:, :, wi])
@@ -1266,14 +1234,8 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
 
     # Need an additional correction (fudge) factor for overall channels
     jumps = findall(diff(λ_out) .< 0.)
-    if concat_type == :full
-        λ_con = zeros(eltype(λ_out), 0)
-        I_con = zeros(eltype(I_out), size(I_out)[1:2]..., 0)
-        σ_con = zeros(eltype(σ_out), size(σ_out)[1:2]..., 0)
-        mask_con = falses(size(mask_out)[1:2]..., 0)
-        prev_i2 = 1
-    end
-    if (concat_type == :full) || rescale_subchannels
+    scale_factors = Dict{Int, Matrix{Float64}}()
+    if !isnothing(rescale_channels)
         # rescale channels so the flux level is continuous
         for (i, jump) ∈ enumerate(jumps)
             # find the full scale of the overlapping region
@@ -1285,34 +1247,47 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
             med_left = dropdims(nanmedian(I_out[:, :, i1:jump], dims=3), dims=3)
             med_right = dropdims(nanmedian(I_out[:, :, jump+1:i2], dims=3), dims=3)
             # rescale the flux to match between the channels, using the channel at 8 um (2A) as the reference point
-            if wave_left < 8.0 / (1 + obs.z)
+            if wave_left < rescale_channels / (1 + obs.z)
                 scale = clamp.(med_right ./ med_left, 0.5, 1.5)
                 I_out[:, :, 1:jump] .*= scale
                 σ_out[:, :, 1:jump] .*= scale
-                @info "Minimum/Maximum scale factor for channel $(i+1): ($(nanminimum(med_right./med_left)), $(nanmaximum(med_right./med_left)))"
+                @info "Minimum/Maximum scale factor for channel $(i+1): $(nanextrema(scale))"
             else
                 scale = clamp.(med_left ./ med_right, 0.5, 1.5)
                 I_out[:, :, jump+1:end] .*= scale
                 σ_out[:, :, jump+1:end] .*= scale
-                @info "Minimum/Maximum scale factor for channel $(i+1): ($(nanminimum(med_left./med_right)), $(nanmaximum(med_left./med_right)))"
+                @info "Minimum/Maximum scale factor for channel $(i+1): $(nanextrema(scale))"
             end
-            if concat_type == :full
-                # resample fluxes in the overlapping regions
-                λ_res = median([diff(λ_out[i1:jump])[1], diff(λ_out[jump+1:i2])[1]])
-                λ_resamp = λ_out[i1]:λ_res:(λ_out[i2]-eps())
-                ss = sortperm(λ_out[i1:i2])
-                I_resamp, σ_resamp, mask_resamp = resample_conserving_flux(λ_resamp, 
-                    λ_out[i1:i2][ss], I_out[:, :, (i1:i2)[ss]], σ_out[:, :, (i1:i2)[ss]], mask_out[:, :, (i1:i2)[ss]])
-                # replace overlapping regions in outputs
-                λ_con = [λ_con; λ_out[prev_i2:i1-1]; λ_resamp]
-                I_con = cat(I_con, I_out[:, :, prev_i2:i1-1], I_resamp, dims=3)
-                σ_con = cat(σ_con, σ_out[:, :, prev_i2:i1-1], σ_resamp, dims=3)
-                mask_con =cat(mask_con, mask_out[:, :, prev_i2:i1-1], mask_resamp, dims=3)
-                prev_i2 = i2
-            end
+            scale_factors[i+1] = scale
         end
     end
     if concat_type == :full
+        λ_con = zeros(eltype(λ_out), 0)
+        I_con = zeros(eltype(I_out), size(I_out)[1:2]..., 0)
+        σ_con = zeros(eltype(σ_out), size(σ_out)[1:2]..., 0)
+        mask_con = falses(size(mask_out)[1:2]..., 0)
+        prev_i2 = 1
+
+        for (i, jump) ∈ enumerate(jumps)
+            # find the full scale of the overlapping region
+            wave_left, wave_right = λ_out[jump+1], λ_out[jump]
+            _, i1 = findmin(abs.(λ_out[1:jump] .- wave_left))
+            _, i2 = findmin(abs.(λ_out[jump+1:end] .- wave_right))
+            i2 += jump
+            # resample fluxes in the overlapping regions
+            λ_res = median([diff(λ_out[i1:jump])[1], diff(λ_out[jump+1:i2])[1]])
+            λ_resamp = λ_out[i1]:λ_res:(λ_out[i2]-eps())
+            ss = sortperm(λ_out[i1:i2])
+            I_resamp, σ_resamp, mask_resamp = resample_conserving_flux(λ_resamp, 
+                λ_out[i1:i2][ss], I_out[:, :, (i1:i2)[ss]], σ_out[:, :, (i1:i2)[ss]], mask_out[:, :, (i1:i2)[ss]])
+            # replace overlapping regions in outputs
+            λ_con = [λ_con; λ_out[prev_i2:i1-1]; λ_resamp]
+            I_con = cat(I_con, I_out[:, :, prev_i2:i1-1], I_resamp, dims=3)
+            σ_con = cat(σ_con, σ_out[:, :, prev_i2:i1-1], σ_resamp, dims=3)
+            mask_con =cat(mask_con, mask_out[:, :, prev_i2:i1-1], mask_resamp, dims=3)
+            prev_i2 = i2
+        end
+
         λ_out = [λ_con; λ_out[prev_i2:end]]
         I_out = cat(I_con, I_out[:, :, prev_i2:end], dims=3)
         σ_out = cat(σ_con, σ_out[:, :, prev_i2:end], dims=3)
@@ -1370,7 +1345,8 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
     end
 
     @info "Done!"
-    obs.channels[out_id]
+
+    return scale_factors
 
 end
 
@@ -1638,161 +1614,6 @@ function make_python_wcs(x_cent::T, y_cent::T, ra_cent::T, dec_cent::T, x_scale:
     wcs.wcs.pc = [-1.0 0.0; 0.0 1.0]
 
     wcs
-
-end
-
-
-
-############## DEPRECATED FUNCTIONS ##############
-
-"""
-    psf_kernel(cube; psf_scale, kernel_size)
-    
-Compute the kernel that will be convolved with the IFU cube to extract individual spaxels while still respecting
-the PSF FWHM of the observations.
-"""
-function psf_kernel(cube::DataCube; aperture_scale::Real=1., kernel_size::Union{Integer,Nothing}=nothing, kernel_type::Symbol=:Tophat)
-
-    @debug "Creating the PSF kernel..."
-
-    # Make sure kernel size is odd
-    if !isnothing(kernel_size)
-        @assert kernel_size % 2 == 1 "The kernel size must be an odd integer!"
-    end
-
-    # Pixel scale in arcseconds
-    pix_as = sqrt(cube.Ω) * 180/π * 3600
-    # Find the PSF FWHM distance in pixel units (cube value is in arcseconds)
-    psf_fwhm_pix = cube.psf ./ pix_as
-    # ap_pix is the HWHM of the aperture being used (or in the tophat case, the radius)
-    # aperture_scale is essentially a scaling factor for how much larger the aperture should be compared to the PSF FWHM
-    ap_pix = aperture_scale .* psf_fwhm_pix
-
-    @debug "PSF FWHM in arcseconds: $(cube.psf[1]) at $(cube.λ[1]) microns"
-    @debug "PSF FWHM in pixels: $(psf_fwhm_pix[1]) at $(cube.λ[1]) microns"
-    @debug "Aperture radius in pixels (scale = x$(aperture_scale)): $(ap_pix[1]) at $(cube.λ[1]) microns"
-
-    if isnothing(kernel_size)
-        if kernel_type == :Gaussian
-            # Require the kernel size to cover 1-sigma (68%) of the PSF distribution
-            kernel_size = Int(ceil(2 * maximum(ap_pix) / (√(2log(2)))))
-        elseif kernel_type == :Tophat
-            # The diameter of the kernel is 2x the PSF FWHM for an aperture_scale of 1
-            kernel_size = Int(ceil(2 * maximum(ap_pix)))
-        end
-        # Make sure the size is odd so the center position covers the spaxel being convolved
-        if kernel_size % 2 == 0
-            kernel_size += 1
-        end
-        @debug "Using kernel size of $kernel_size pixels"
-    end
-
-    # Initialize kernel
-    kernel = zeros(kernel_size, kernel_size, length(cube.λ))
-    # Get the coordinate of the center of the kernel (i.e. [2,2] for a kernel size of 3)
-    c = cld(kernel_size, 2)
-    f = fld(kernel_size, 2)
-
-    # Loop through each wavelength point
-    for wi ∈ 1:length(cube.λ)
-
-        if kernel_type == :Gaussian
-            # For each pixel in the kernel, calculate the distance from the center (in pixels)
-            # and calculate the value of the normal distribution at that point
-            for xᵢ ∈ 1:kernel_size, yᵢ ∈ 1:kernel_size
-                # Set the kernel to the normal probability distribution function at the given coordinates
-                dist = hypot(xᵢ-c, yᵢ-c)
-                # (This is not normalized properly but it doesnt matter because we divide out the normalization anyways)
-                kernel[xᵢ, yᵢ, wi] = Gaussian(dist, 1., 0., 2*ap_pix[wi])
-            end
-        elseif kernel_type == :Tophat
-            kernel[:, :, wi] .= py_photutils.geometry.circular_overlap_grid(-f-0.5, f+0.5, -f-0.5, f+0.5, kernel_size, kernel_size, 
-                ap_pix[wi], true, 5)'
-        end
-
-        # Renormalize such that it integrates to 1
-        kernel[:,:,wi] ./= sum(kernel[:,:,wi])
-
-    end
-
-    kernel
-
-end
-
-
-"""
-    convolve_psf!(cube, psf_kernel)
-
-Convolve the flux and error cubes with the PSF kernel to obtain a cube that has been smoothed out by the PSF
-"""
-function convolve_psf!(cube::DataCube; aperture_scale::Real=1., kernel_size::Union{Integer,Nothing}=nothing, kernel_type::Symbol=:Tophat)
-
-    kernel = psf_kernel(cube; aperture_scale=aperture_scale, kernel_size=kernel_size, kernel_type=kernel_type)
-
-    kernel_size = size(kernel)[1]
-    kernel_cent = cld(kernel_size, 2)
-    kernel_len = fld(kernel_size, 2)
-
-    @info "The median PSF FWHM is $(median(cube.psf)) arcseconds"
-    @info "Convolving the IFU data with a $(kernel_size)x$(kernel_size) $(kernel_type) PSF FWHM kernel with a median " *
-          "$(kernel_type == :Tophat ? "diameter" : "FWHM") of $(2*aperture_scale*median(cube.psf)) arcseconds"
-
-    # Step along the spatial directions and apply the kernel at each pixel
-    @showprogress for xᵢ ∈ 1:size(cube.I,1), yᵢ ∈ 1:size(cube.I,2)
-
-        if any(cube.mask[xᵢ, yᵢ, :])
-            # Do not convolve spaxels that are masked
-            continue
-        end
-
-        # Copy the kernel
-        k = copy(kernel)
-
-        # Min/max indices to consider
-        xmin = xᵢ - kernel_len
-        xmax = xᵢ + kernel_len
-        ymin = yᵢ - kernel_len
-        ymax = yᵢ + kernel_len
-
-        # Truncate the kernel if we're at one of the bounds
-        if xmin < 1
-            k = k[kernel_cent:end, :, :]
-            xmin = xᵢ
-        elseif xmax > size(cube.I,1)
-            k = k[1:kernel_cent, :, :]
-            xmax = xᵢ
-        end
-        if ymin < 1
-            k = k[:, kernel_cent:end, :]
-            ymin = yᵢ
-        elseif ymax > size(cube.I,2)
-            k = k[:, 1:kernel_cent, :]
-            ymax = yᵢ
-        end
-
-        # Check if any of the spaxels that would be covered by the kernel are masked
-        mask_reg = [any(cube.mask[xx, yy, :]) for xx ∈ xmin:xmax, yy ∈ ymin:ymax] 
-        # If so, renormalize the kernel such that only the unmasked spaxels are weighted
-        k[mask_reg, :] .= 0.
-        if iszero(sum(k))
-            # If every spaxel in the region is masked out, we dont need to do any convolving
-            continue
-        end
-        for wi ∈ axes(k, 3)
-            k[:, :, wi] ./= sum(k[:, :, wi])
-        end
-
-        # Perform the convolution with the kernel
-        I = cube.I[xmin:xmax, ymin:ymax, :]
-        cube.I[xᵢ, yᵢ, :] .= sumdim(k .* I, (1,2))
-
-        # Same for the error
-        σ = cube.σ[xmin:xmax, ymin:ymax, :]
-        cube.σ[xᵢ, yᵢ, :] .= .√(sumdim(k .* σ.^2, (1,2)))
-
-    end
-
-    cube
 
 end
 

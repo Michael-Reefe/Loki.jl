@@ -25,6 +25,7 @@ using CMPFit
 
 # Astronomy packages
 using FITSIO
+using Photometry
 using Cosmology
 using AstroAngles
 using Unitful
@@ -68,7 +69,6 @@ const py_animation::PyObject = PyNULL()
 const py_wcs::PyObject = PyNULL()
 const py_coords::PyObject = PyNULL()
 const py_units::PyObject = PyNULL()
-const py_photutils::PyObject = PyNULL()
 const py_reproject::PyObject = PyNULL()
 const py_mosaicking::PyObject = PyNULL()
 const py_lineidplot::PyObject = PyNULL()
@@ -107,11 +107,10 @@ function __init__()
     # python package for adjusting matplotlib text so it doesn't overlap
     copy!(py_lineidplot, pyimport_conda("lineid_plot", "lineid_plot"))
 
-    # Import the WCS, photutils, and reproject packages from astropy
+    # Import the WCS and reproject packages from astropy
     copy!(py_wcs, pyimport_conda("astropy.wcs", "astropy"))
     copy!(py_coords, pyimport_conda("astropy.coordinates", "astropy"))
     copy!(py_units, pyimport_conda("astropy.units", "astropy"))
-    copy!(py_photutils, pyimport_conda("photutils", "photutils"))
     copy!(py_reproject, pyimport_conda("reproject", "reproject"))
     copy!(py_mosaicking, pyimport_conda("reproject.mosaicking", "reproject"))
 
@@ -167,6 +166,7 @@ export DataCube,   # DataCube struct
        log_rebin!,
        correct!, 
        interpolate_nans!, 
+       calculate_statistical_errors!,
        plot_2d, 
        plot_1d,
        make_aperture,
@@ -178,8 +178,6 @@ export DataCube,   # DataCube struct
        save_fits,
        adjust_wcs_alignment!, 
        reproject_channels!, 
-       # psf_kernel, 
-       convolve_psf!,
 
        # Parameter structs
        Parameter,
@@ -242,6 +240,8 @@ include("core/cubedata.jl")
 include("core/cubefit.jl")
 include("core/fitting.jl")
 include("core/output.jl")
+
+include("util/aperture_utils.jl")
 
 #####################
 #= WELCOME TO LOKI =#
