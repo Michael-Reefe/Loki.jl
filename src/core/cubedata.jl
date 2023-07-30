@@ -1183,27 +1183,23 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
             F_out = permutedims(py_reproject.reproject_adaptive((F_in, obs.channels[ch_in].wcs), wcs_optimal, 
                 (size(F_in, 1), size_optimal[2], size_optimal[1]), conserve_flux=true, kernel="gaussian", boundary_mode="strict",
                 return_footprint=false), (3,2,1))
-            σF_out = permutedims(py_reproject.reproject_adaptive((σF_in, obs.channels[ch_in].wcs), wcs_optimal, 
+            σF_out = permutedims(py_reproject.reproject_adaptive((σF_in.^2, obs.channels[ch_in].wcs), wcs_optimal, 
                 (size(σF_in, 1), size_optimal[2], size_optimal[1]), conserve_flux=true, kernel="gaussian", boundary_mode="strict",
                 return_footprint=false), (3,2,1))
         elseif method == :interp
             @warn "The interp method is currently experimental and produces less robust results than the adaptive method!"
             F_out = permutedims(py_reproject.reproject_interp((F_in, obs.channels[ch_in].wcs), wcs_optimal, 
                 (size(F_in, 1), size_optimal[2], size_optimal[1]), order=1, return_footprint=false), (3,2,1))
-            σF_out = permutedims(py_reproject.reproject_interp((σF_in, obs.channels[ch_in].wcs), wcs_optimal, 
+            σF_out = permutedims(py_reproject.reproject_interp((σF_in.^2, obs.channels[ch_in].wcs), wcs_optimal, 
                 (size(σF_in, 1), size_optimal[2], size_optimal[1]), order=1, return_footprint=false), (3,2,1))
-            # Flux conservation
-            for wi ∈ 1:wi_size
-                F_out[:, :, wi] .*= nansum(F_in[wi, :, :]) ./ nansum(F_out[:, :, wi])
-                σF_out[:, :, wi] .*= nansum(σF_in[wi, :, :]) ./ nansum(σF_out[:, :, wi])
-            end
         elseif method == :exact
             @warn "The exact method is currently experimental and produces less robust results than the adaptive method!"
             F_out = permutedims(py_reproject.reproject_exact((F_in, obs.channels[ch_in].wcs), wcs_optimal, 
                 (size(F_in, 1), size_optimal[2], size_optimal[1]), return_footprint=false), (3,2,1))
-            σF_out = permutedims(py_reproject.reproject_exact((σF_in, obs.channels[ch_in].wcs), wcs_optimal, 
+            σF_out = permutedims(py_reproject.reproject_exact((σF_in.^2, obs.channels[ch_in].wcs), wcs_optimal, 
                 (size(σF_in, 1), size_optimal[2], size_optimal[1]), return_footprint=false), (3,2,1))
         end
+        σF_out = sqrt.(σF_out)
 
         # Convert back to intensity
         I_out[:, :, wsum+1:wsum+wi_size] .= F_out ./ Ω_out

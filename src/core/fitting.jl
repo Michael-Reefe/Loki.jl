@@ -2069,6 +2069,24 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
     # If any fall outside of this region, do not include these pixels in the chi^2 calculations
     mask_chi2 = mask_bad .| (mask_lines .& .~line_reference)
 
+    if use_ap
+        l_mask = sum(.~mask)
+        # Statistical uncertainties based on the local RMS of the residuals with a cubic spline fit
+        σ_stat = zeros(l_mask)
+        for i in 1:l_mask
+            indices = sortperm(abs.((1:l_mask) .- i))[1:60]
+            σ_stat[i] = std(I[.~mask][indices] .- I_spline[.~mask][indices])
+        end
+        # We insert at the locations of the lines since the cubic spline does not include them
+        l_all = length(λ)
+        line_inds = (1:l_all)[mask]
+        for line_ind ∈ line_inds
+            insert!(σ_stat, line_ind, σ_stat[max(line_ind-1, 1)])
+        end
+        @debug "Statistical uncertainties: ($(σ_stat[1]) - $(σ_stat[end]))"
+        σ .= σ_stat
+    end
+
     # Check if the fit has already been performed
     if !isfile(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).csv")) || cube_fitter.overwrite
         
@@ -2293,7 +2311,26 @@ function fit_stack!(cube_fitter::CubeFitter)
     # Perform a cubic spline fit, also obtaining the line mask
     mask_lines_init, I_spline_init, σ_spline_init = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init, cube_fitter.spectral_region)
     mask_bad_init = iszero.(I_sum_init) .| iszero.(σ_sum_init)
+    mask_init = mask_lines_init .| mask_bad_init
+
+    l_mask = sum(.~mask_init)
+
+    # Statistical uncertainties based on the local RMS of the residuals with a cubic spline fit
+    σ_stat_init = zeros(l_mask)
+    for i in 1:l_mask
+        indices = sortperm(abs.((1:l_mask) .- i))[1:60]
+        σ_stat_init[i] = std(I_sum_init[.~mask_init][indices] .- I_spline_init[.~mask_init][indices])
+    end
+    # We insert at the locations of the lines since the cubic spline does not include them
+    l_all = length(λ_init)
+    line_inds = (1:l_all)[mask_init]
+    for line_ind ∈ line_inds
+        insert!(σ_stat_init, line_ind, σ_stat_init[max(line_ind-1, 1)])
+    end
+    @debug "Statistical uncertainties: ($(σ_stat_init[1]) - $(σ_stat_init[end]))"
     mask_chi2_init = mask_bad_init
+
+    σ_sum_init .= σ_stat_init
 
     # Get the normalization
     norm = abs(nanmaximum(I_sum_init))
