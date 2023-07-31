@@ -1103,15 +1103,16 @@ Perform a 3D interpolation of the given channels such that all spaxels lie on th
 - `channels=nothing`: The list of channels to be rebinned. If nothing, rebin all channels.
 - `concat_type=:full`: Should be :full for overall channels or :sub for subchannels (bands).
 - `out_id=0`: The dictionary key corresponding to the newly rebinned cube, defaults to 0.
+- `res=nothing`: Determines which channel's angular resolution to use for the output. Defaults to the first channel in `channels`.
 - `scrub_output::Bool=true`: Whether or not to delete the individual channels that were interpolated after assigning the new interpolated channel.
-- `rescale_channels::Union{Real,Nothing}=8.0`: Whether or not to rescale the flux of subchannels so that they match at the overlapping regions.
+- `rescale_channels::Union{Real,Nothing}=nothing`: Whether or not to rescale the flux of subchannels so that they match at the overlapping regions.
     If a real number is provided, this is interpreted as an observed-frame wavelength to choose the reference channel that all other channels
     are rescaled to match.
-- `adjust_wcs_headerinfo::Bool=false`: Whether or not to try to automatically adjust the WCS header info of the channels by 
-    calculating centroids at the boundaries between the channels and forcing them to match.  Off by default.
+- `adjust_wcs_headerinfo::Bool=true`: Whether or not to try to automatically adjust the WCS header info of the channels by 
+    calculating centroids at the boundaries between the channels and forcing them to match.  On by default.
 """
-function reproject_channels!(obs::Observation, channels=nothing, concat_type=:full; out_id=0, scrub_output::Bool=false,
-    method=:adaptive, rescale_channels::Union{Real,Nothing}=8.0, adjust_wcs_headerinfo::Bool=false)
+function reproject_channels!(obs::Observation, channels=nothing, concat_type=:full; out_id=0, res=nothing, scrub_output::Bool=false,
+    method=:adaptive, rescale_channels::Union{Real,Nothing}=nothing, adjust_wcs_headerinfo::Bool=true)
 
     @assert obs.spectral_region == :MIR "The reproject_channels! function is only supported for MIR cubes!"
 
@@ -1132,7 +1133,10 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
     end
 
     # Output angular size
-    Ω_out = minimum([obs.channels[channel].Ω for channel ∈ channels])
+    if isnothing(res)
+        res = channels[1]
+    end
+    Ω_out = obs.channels[res].Ω
 
     if concat_type == :sub
         # Find the optimal output WCS using the reproject python package
