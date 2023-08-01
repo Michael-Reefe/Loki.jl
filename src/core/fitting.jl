@@ -760,7 +760,8 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
             if !isdir(folder)
                 mkdir(folder)
             end
-            plt.savefig(joinpath(folder, "spaxel_$(spaxel[1])_$(spaxel[2]).pdf"), dpi=300, bbox_inches="tight")
+            fname = isone(length(spaxel)) ? "voronoi_bin_$(spaxel[1])" : "spaxel_$(spaxel[1])_$(spaxel[2])"
+            plt.savefig(joinpath(folder, "$fname.pdf"), dpi=300, bbox_inches="tight")
             plt.close()
         end
     end
@@ -965,7 +966,8 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
             lock(file_lock) do 
                 open(joinpath("output_$(cube_fitter.name)", "loki.convergence.log"), "a") do conv
                     redirect_stdout(conv) do
-                        println("Spaxel ($(spaxel[1]),$(spaxel[2])) on worker $(myid()):")
+                        label = isone(length(spaxel)) ? "Voronoi bin $(spaxel[1])" : "Spaxel ($(spaxel[1]),$(spaxel[2]))"
+                        println("$label on worker $(myid()):")
                         println(res)
                         println("-------------------------------------------------------")
                     end
@@ -1422,7 +1424,8 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
             lock(file_lock) do 
                 open(joinpath("output_$(cube_fitter.name)", "loki.convergence.log"), "a") do conv
                     redirect_stdout(conv) do
-                        println("Spaxel ($(spaxel[1]),$(spaxel[2])) on worker $(myid()):")
+                        label = isone(length(spaxel)) ? "Voronoi bin $(spaxel[1])" : "Spaxel ($(spaxel[1]),$(spaxel[2]))"
+                        println("$label on worker $(myid()):")
                         println(res)
                         println("-------------------------------------------------------")
                     end
@@ -1437,6 +1440,9 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
 
     # Parinfo and config objects
     parinfo, config = get_continuum_parinfo(n_free_cont+n_free_lines, lower_bounds, upper_bounds, dstep)
+    # Lower tolerance level for line fit
+    config.ftol = 1e-14
+    config.xtol = 1e-14
 
     res = cmpfit(λ_spax, I_spax, σ_spax, fit_joint, p₁, parinfo=parinfo, config=config)
     n = 1
@@ -2040,12 +2046,13 @@ of a crash.
 - `spaxel::CartesianIndex`: The coordinates of the spaxel to be fit
 - `use_ap::Bool=false`: Flag determining whether or not one is fitting an integrated spectrum within an aperture
 """
-function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::CartesianIndex; use_ap::Bool=false)
+function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::CartesianIndex; use_ap::Bool=false,
+    use_vorbins::Bool=false)
 
     λ = cube_data.λ
     I = cube_data.I[spaxel, :]
     σ = cube_data.σ[spaxel, :]
-    area_sr = cube_data.area_sr
+    area_sr = cube_data.area_sr[spaxel, :]
 
     # if there are any NaNs, skip over the spaxel
     if any(.!isfinite.(I))
@@ -2054,7 +2061,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
 
     # Perform a cubic spline fit, also obtaining the line mask
     mask_lines, I_spline, σ_spline = continuum_cubic_spline(λ, I, σ, cube_fitter.spectral_region)
-    mask_bad = use_ap ? iszero.(I) .| iszero.(σ) : cube_fitter.cube.mask[spaxel, :]
+    mask_bad = (use_ap || use_vorbins) ? iszero.(I) .| iszero.(σ) : cube_fitter.cube.mask[spaxel, :]
     mask = mask_lines .| mask_bad
 
     # Check the line mask against the expected line locations from the fitted line list
@@ -2069,7 +2076,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
     # If any fall outside of this region, do not include these pixels in the chi^2 calculations
     mask_chi2 = mask_bad .| (mask_lines .& .~line_reference)
 
-    if use_ap
+    if use_ap || use_vorbins
         l_mask = sum(.~mask)
         # Statistical uncertainties based on the local RMS of the residuals with a cubic spline fit
         σ_stat = zeros(l_mask)
@@ -2088,7 +2095,8 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
     end
 
     # Check if the fit has already been performed
-    if !isfile(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).csv")) || cube_fitter.overwrite
+    fname = use_vorbins ? "voronoi_bin_$(spaxel[1])" : "spaxel_$(spaxel[1])_$(spaxel[2])"
+    if !isfile(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.csv")) || cube_fitter.overwrite
         
         # Create a local logger for this individual spaxel
         timestamp_logger(logger) = TransformerLogger(logger) do log
@@ -2097,7 +2105,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
         # This log should be entirely handled by 1 process, since each spaxel is entirely handled by 1 process
         # so there should be no problems with I/O race conditions
         spaxel_logger = TeeLogger(ConsoleLogger(stdout, Logging.Info), timestamp_logger(MinLevelLogger(FileLogger(
-                             joinpath("output_$(cube_fitter.name)", "logs", "loki.spaxel_$(spaxel[1])_$(spaxel[2]).log"); 
+                             joinpath("output_$(cube_fitter.name)", "logs", "loki.$fname.log"); 
                              always_flush=true), Logging.Debug)))
 
         p_out, p_err = with_logger(spaxel_logger) do
@@ -2208,14 +2216,15 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                 plot_spaxel_fit(cube_fitter.spectral_region, λ, I, I_model, σ, mask_bad, mask_lines, comps, 
                     cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_abs_feat, cube_fitter.n_ssps, cube_fitter.n_comps, 
                     cube_fitter.lines.λ₀, cube_fitter.lines.names, cube_fitter.lines.annotate, cube_fitter.lines.latex, cube_fitter.extinction_screen, 
-                    cube_fitter.z, χ2/dof, cube_fitter.name, "spaxel_$(spaxel[1])_$(spaxel[2])", backend=cube_fitter.plot_spaxels, I_boot_min=I_boot_min, 
+                    cube_fitter.z, χ2/dof, cube_fitter.name, fname, backend=cube_fitter.plot_spaxels, I_boot_min=I_boot_min, 
                     I_boot_max=I_boot_max)
                 if !isnothing(cube_fitter.plot_range)
                     for (i, plot_range) ∈ enumerate(cube_fitter.plot_range)
+                        fname2 = use_vorbins ? "lines_bin_$(spaxel[1])_$i" : "lines_$(spaxel[1])_$(spaxel[2])_$i"
                         plot_spaxel_fit(cube_fitter.spectral_region, λ, I, I_model, σ, mask_bad, mask_lines, comps,
                             cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_abs_feat, cube_fitter.n_ssps, cube_fitter.n_comps, 
                             cube_fitter.lines.λ₀, cube_fitter.lines.names, cube_fitter.lines.annotate, cube_fitter.lines.latex, cube_fitter.extinction_screen, 
-                            cube_fitter.z, χ2/dof, cube_fitter.name, "lines_$(spaxel[1])_$(spaxel[2])_$i", backend=cube_fitter.plot_spaxels, I_boot_min=I_boot_min, 
+                            cube_fitter.z, χ2/dof, cube_fitter.name, fname2, backend=cube_fitter.plot_spaxels, I_boot_min=I_boot_min, 
                             I_boot_max=I_boot_max, range_um=plot_range)
                     end
                 end
@@ -2224,13 +2233,13 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
             @debug "Saving results to csv for spaxel $spaxel"
             # serialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).LOKI"), (p_out=p_out, p_err=p_err))
             # save output as csv file
-            open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).csv"), "w") do f 
+            open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.csv"), "w") do f 
                 writedlm(f, [p_out p_err], ',')
             end
  
             # save memory allocations & other logistic data to a separate log file
             if cube_fitter.track_memory
-                open(joinpath("output_$(cube_fitter.name)", "logs", "mem.spaxel_$(spaxel[1])_$(spaxel[2]).log"), "w") do f
+                open(joinpath("output_$(cube_fitter.name)", "logs", "mem.$fname.log"), "w") do f
 
                     print(f, """
                     ### PROCESS ID: $(getpid()) ###
@@ -2256,7 +2265,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
     end
 
     # Otherwise, just grab the results from before
-    results = readdlm(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).csv"), ',', Float64, '\n')
+    results = readdlm(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.csv"), ',', Float64, '\n')
     p_out = results[:, 1]
     p_err = results[:, 2:3]
 
@@ -2397,10 +2406,27 @@ function fit_cube!(cube_fitter::CubeFitter)
         cube_fitter.n_params_extra + 2) .* NaN
     out_errs = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
         cube_fitter.n_params_extra + 2, 2) .* NaN
+
     # "cube_data" object holds the primary wavelength, intensity, and errors
     # this is just a convenience object since these may be different when fitting an integrated spectrum
-    # within an aperture
-    cube_data = (λ=cube_fitter.cube.λ, I=cube_fitter.cube.I, σ=cube_fitter.cube.σ, area_sr=cube_fitter.cube.Ω .* ones(shape[3]))
+    # within an aperture, or when using voronoi bins
+    cube_data = (λ=cube_fitter.cube.λ, I=cube_fitter.cube.I, σ=cube_fitter.cube.σ, area_sr=cube_fitter.cube.Ω .* ones(shape))
+
+    vorbin = !isnothing(cube_fitter.cube.voronoi_bins)
+    if vorbin
+        # Reformat cube data as a 2D array with the first axis slicing each voronoi bin
+        n_bins = maximum(cube_fitter.cube.voronoi_bins)
+        I_vorbin = zeros(n_bins, shape[3])
+        σ_vorbin = zeros(n_bins, shape[3])
+        area_vorbin = zeros(n_bins, shape[3])
+        for n in 1:n_bins
+            w = cube_fitter.cube.voronoi_bins .== n
+            I_vorbin[n, :] .= sumdim(cube_fitter.cube.I[w, :], 1) ./ sum(w)
+            σ_vorbin[n, :] .= sqrt.(sumdim(cube_fitter.cube.σ[w, :].^2, 1)) ./ sum(w)
+            area_vorbin[n, :] .= sum(w) .* cube_fitter.cube.Ω
+        end
+        cube_data = (λ=cube_fitter.cube.λ, I=I_vorbin, σ=σ_vorbin, area_sr=area_vorbin)
+    end
 
     ######################### DO AN INITIAL FIT WITH THE SUM OF ALL SPAXELS ###################
 
@@ -2423,9 +2449,13 @@ function fit_cube!(cube_fitter::CubeFitter)
 
     # Get the indices of all spaxels
     spaxels = CartesianIndices(selectdim(cube_fitter.cube.I, 3, 1))
+    # The indices are different for voronoi-binned cubes
+    if vorbin
+        spaxels = CartesianIndices((n_bins,))
+    end
 
     # Wrapper function 
-    fit_spax_i(index::CartesianIndex) = fit_spaxel(cube_fitter, cube_data, index)
+    fit_spax_i(index::CartesianIndex) = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
 
     # Use multiprocessing (not threading) to iterate over multiple spaxels at once using multiple CPUs
     if cube_fitter.parallel
@@ -2437,8 +2467,16 @@ function fit_cube!(cube_fitter::CubeFitter)
         # Populate results into the output arrays
         for index ∈ spaxels
             if !isnothing(result[index][1])
-                out_params[index, :] .= result[index][1]
-                out_errs[index, :, :] .= result[index][2]
+                if vorbin
+                    out_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(index)[1])
+                    for out_index in out_indices
+                        out_params[out_index, :] .= result[index][1]
+                        out_errs[out_index, :, :] .= result[index][2]
+                    end
+                else
+                    out_params[index, :] .= result[index][1]
+                    out_errs[index, :, :] .= result[index][2]
+                end
             end
         end
     else
@@ -2447,8 +2485,16 @@ function fit_cube!(cube_fitter::CubeFitter)
         for index ∈ spaxels
             p_out, p_err = fit_spax_i(index)
             if !isnothing(p_out)
-                out_params[index, :] .= p_out
-                out_errs[index, :, :] .= p_err
+                if vorbin
+                    out_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(index)[1])
+                    for out_index in out_indices
+                        out_params[out_index, :] .= p_out
+                        out_errs[out_index, :, :] .= p_err
+                    end
+                else
+                    out_params[index, :] .= p_out
+                    out_errs[index, :, :] .= p_err
+                end
             end
             next!(prog)
         end
@@ -2457,7 +2503,7 @@ function fit_cube!(cube_fitter::CubeFitter)
     @info "===> Generating parameter maps and model cubes... <==="
 
     # Create the ParamMaps and CubeModel structs containing the outputs
-    param_maps, param_errs, cube_model = assign_outputs(out_params, out_errs, cube_fitter, cube_data, spaxels, cube_fitter.z, false)
+    param_maps, param_errs, cube_model = assign_outputs(out_params, out_errs, cube_fitter, cube_data, cube_fitter.z, false)
 
     if cube_fitter.plot_maps
         @info "===> Plotting parameter maps... <==="
@@ -2527,13 +2573,6 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
     out_errs = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
         cube_fitter.n_params_extra + 2, 2) .* NaN
 
-    # If using an aperture, overwrite the cube_data object with the quantities within
-    # the aperture, which are calculated here.
-    # Prepare the 1D arrays
-    I = zeros(Float32, shape)
-    σ = zeros(Float32, shape)
-    area_sr = zeros(shape[3])
-
     # Loop through each wavelength pixel and perform the aperture photometry
     if aperture isa String
         @assert lowercase(aperture) == "all" "The only accepted string input for 'aperture' is 'all' to signify the entire cube."
@@ -2542,8 +2581,16 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
         I = sumdim(cube_fitter.cube.I, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
         σ = sqrt.(sumdim(cube_fitter.cube.σ.^2, (1,2))) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
         area_sr = cube_fitter.cube.Ω .* sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+        area_sr = reshape(area_sr, (1,1,length(area_sr)))
 
     else
+        # If using an aperture, overwrite the cube_data object with the quantities within
+        # the aperture, which are calculated here.
+        # Prepare the 1D arrays
+        I = zeros(Float32, shape)
+        σ = zeros(Float32, shape)
+        area_sr = zeros(shape)
+
         @info "Performing aperture photometry to get an integrated spectrum..."
         for z ∈ 1:shape[3]
 
@@ -2557,7 +2604,7 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
             (_, _, F_ap, eF_ap) = photometry(aperture[z], Fz, e_Fz)
 
             # Convert back to intensity by dividing out the aperture area
-            area_sr[z] = get_area(aperture[z]) * cube_fitter.cube.Ω
+            area_sr[1,1,z] = get_area(aperture[z]) * cube_fitter.cube.Ω
             I[1,1,z] = F_ap / area_sr[z]
             σ[1,1,z] = eF_ap / area_sr[z]
         end
@@ -2599,7 +2646,7 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
     @info "===> Generating parameter maps and model cubes... <==="
 
     # Create the ParamMaps and CubeModel structs containing the outputs
-    param_maps, param_errs, cube_model = assign_outputs(out_params, out_errs, cube_fitter, cube_data, spaxels, cube_fitter.z, true)
+    param_maps, param_errs, cube_model = assign_outputs(out_params, out_errs, cube_fitter, cube_data, cube_fitter.z, true)
 
     if cube_fitter.save_fits
         @info "===> Writing FITS outputs... <==="

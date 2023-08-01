@@ -72,7 +72,7 @@ plim = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_3.29".fwhm]
-val = 0.060
+val = 0.050
 plim = [0.4, 1.4]
 locked = false
 

@@ -66,11 +66,13 @@ mutable struct DataCube
     masked::Bool
     vacuum_wave::Bool
 
+    voronoi_bins::Union{Matrix{<:Integer},Nothing}
+
     # This is the constructor for the DataCube struct; see the DataCube docstring for details
     function DataCube(λ::Vector{<:Real}, I::Array{<:Real,3}, σ::Array{<:Real,3}, mask::Union{BitArray{3},Nothing}=nothing, 
         Ω::Real=NaN, α::Real=NaN, δ::Real=NaN, psf::Union{Vector{<:Real},Nothing}=nothing, lsf::Union{Vector{<:Real},Nothing}=nothing, 
         wcs::Union{PyObject,Nothing}=nothing, channel::String="Generic Channel", band::String="Generic Band", spectral_region::Symbol=:MIR, 
-        rest_frame::Bool=false, masked::Bool=false, vacuum_wave::Bool=true)
+        rest_frame::Bool=false, masked::Bool=false, vacuum_wave::Bool=true, voronoi_bins::Union{Matrix{<:Integer},Nothing}=nothing)
 
         # Make sure inputs have the right dimensions
         @assert ndims(λ) == 1 "Wavelength vector must be 1-dimensional!"
@@ -94,7 +96,7 @@ mutable struct DataCube
         end
 
         # Return a new instance of the DataCube struct
-        new(λ, I, σ, mask, Ω, α, δ, psf, lsf, wcs, channel, band, nx, ny, nz, spectral_region, rest_frame, masked, vacuum_wave)
+        new(λ, I, σ, mask, Ω, α, δ, psf, lsf, wcs, channel, band, nx, ny, nz, spectral_region, rest_frame, masked, vacuum_wave, voronoi_bins)
     end
 
 end
@@ -465,6 +467,45 @@ function calculate_statistical_errors!(cube::DataCube)
     end
 
 end 
+
+
+"""
+    voronoi_rebin!(cube, target_SN)
+
+Calculate Voronoi bins for the cube such that each bin has a signal to noise ratio roughly equal to `target_SN`.
+Modifies the cube object in-place with the `voronoi_bins` attribute, which is a 2D array that gives unique integer
+labels to each voronoi bin.
+"""
+function voronoi_rebin!(cube::DataCube, target_SN::Real)
+
+    @info "Performing Voronoi rebinning with target S/N=$target_SN"
+    # Get the signal and noise 
+    signal = dropdims(nanmedian(cube.I, dims=3), dims=3)
+    noise = dropdims(nanmedian(cube.σ, dims=3), dims=3)
+    # x/y coordinate arrays
+    x = [i for i in axes(signal,1), _ in axes(signal,2)]
+    y = [j for _ in axes(signal,1), j in axes(signal,2)]
+    # mask out bad spaxels
+    mask = (.~isfinite.(signal)) .| (.~isfinite.(noise))
+    # flatten arrays
+    signal = signal[.~mask]
+    noise = noise[.~mask]
+    x = x[.~mask]
+    y = y[.~mask]
+    # make sure signals are nonnegative
+    signal = clamp.(signal, 0., Inf)
+    # perform voronoi rebinning
+    bin_numbers, _, _, _, _, _, _, _ = py_vorbin.voronoi_2d_binning(x, y, signal, noise, target_SN, pixelsize=1.0, 
+        cvt=true, wvt=true, plot=false)
+    # reformat bin numbers as a 2D array so that we don't need the x/y vectors anymore
+    voronoi_bins = zeros(Int, size(cube.I)[1:2])
+    for i in eachindex(bin_numbers)
+        voronoi_bins[x[i], y[i]] = bin_numbers[i] + 1  # python 0-based indexing -> julia 1-based indexing
+    end
+    # Set the voronoi_bins value in the cube object
+    cube.voronoi_bins = voronoi_bins
+
+end
 
 
 ############################## PLOTTING FUNCTIONS ####################################

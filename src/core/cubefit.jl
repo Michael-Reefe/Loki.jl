@@ -1343,7 +1343,13 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         # Override if an extinction_map was provided
         if !isnothing(cube_fitter.extinction_map)
             @debug "Using the provided τ_9.7 values from the extinction_map and rescaling starting point"
-            p₀[pᵢ] = cube_fitter.extinction_map[spaxel]
+            if !isnothing(cube_fitter.cube.voronoi_bins)
+                data_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(spaxel)[1])
+                p₀[pᵢ] = mean(cube_fitter.extinction_map[data_indices])
+            else
+                data_index = spaxel
+                p₀[pᵢ] = cube_fitter.extinction_map[data_index]
+            end
         end
 
         # Do not adjust absorption feature amplitudes since they are multiplicative
@@ -1502,7 +1508,13 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
             ebv_factor = p₀[pₑ+1]
 
             @debug "Using the provided E(B-V) values from the extinction_map and rescaling starting point"
-            ebv_new = cube_fitter.extinction_map[spaxel]
+            if !isnothing(cube_fitter.cube.voronoi_bins)
+                data_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(spaxel)[1])
+                ebv_new = mean(cube_fitter.extinction_map[data_indices])
+            else
+                data_index = spaxel
+                ebv_new = cube_fitter.extinction_map[data_index]
+            end
             ebv_factor_new = continuum.E_BV_factor.value
 
             # Rescale to keep the continuum at a good starting point
@@ -1938,9 +1950,9 @@ function get_line_plimits(cube_fitter::CubeFitter, init::Bool, ext_curve::Union{
         if cube_fitter.spectral_region == :MIR
             max_amp = 1 / exp(-cube_fitter.continuum.τ_97.limits[2])
         elseif cube_fitter.extinction_curve == "ccm"
-            max_amp = attenuation_cardelli([cube_fitter.cube.λ[1]], cube_fitter.continuum.E_BV.limits[2])[1]
+            max_amp = 1 / attenuation_cardelli([cube_fitter.cube.λ[1]], cube_fitter.continuum.E_BV.limits[2])[1]
         elseif cube_fitter.extinction_curve == "calzetti"
-            max_amp = attenuation_calzetti([cube_fitter.cube.λ[1]], cube_fitter.continuum.E_BV.limits[2],
+            max_amp = 1 / attenuation_calzetti([cube_fitter.cube.λ[1]], cube_fitter.continuum.E_BV.limits[2],
                 δ=cube_fitter.fit_uv_bump ? cube_fitter.continuum.δ_uv : nothing, 
                 f_nodust=cube_fitter.fit_covering_frac ? cube_fitter.continuum.frac : nothing)[1]
         end 
@@ -1971,6 +1983,7 @@ function get_line_plimits(cube_fitter::CubeFitter, init::Bool, ext_curve::Union{
                 # name
                 ln_name = string(cube_fitter.lines.names[i]) * "_$(j)"
                 amp_ln_plim = isone(j) ? amp_plim : cube_fitter.lines.acomp_amp[i, j-1].limits
+                amp_ln_locked = isone(j) ? false : cube_fitter.lines.acomp_amp[i, j-1].locked
 
                 # get the right amp, voff, and fwhm parameters based on if theyre tied or not
                 at = vt = ft = false
@@ -2014,7 +2027,7 @@ function get_line_plimits(cube_fitter::CubeFitter, init::Bool, ext_curve::Union{
                 # Depending on flexible_wavesol, we need to add 2 voffs instead of 1 voff
                 if !isnothing(cube_fitter.lines.tied_voff[i, j]) && cube_fitter.flexible_wavesol && isone(j)
                     append!(ln_plims, [amp_ln_plim, voff_ln_plim, cube_fitter.lines.voff[i, j].limits, fwhm_ln_plim])
-                    append!(ln_lock, [false, voff_ln_locked, cube_fitter.lines.voff[i, j].locked, fwhm_ln_locked])
+                    append!(ln_lock, [amp_ln_locked, voff_ln_locked, cube_fitter.lines.voff[i, j].locked, fwhm_ln_locked])
                     append!(ln_names, ["$(ln_name)_amp", voff_ln_name, "$(ln_name)_voff_indiv", fwhm_ln_name])
                     append!(voff_tied[j][kv], [ind+1])
                     if ft
@@ -2023,7 +2036,7 @@ function get_line_plimits(cube_fitter::CubeFitter, init::Bool, ext_curve::Union{
                     ind += 4
                 else
                     append!(ln_plims, [amp_ln_plim, voff_ln_plim, fwhm_ln_plim])
-                    append!(ln_lock, [false, voff_ln_locked, fwhm_ln_locked])
+                    append!(ln_lock, [amp_ln_locked, voff_ln_locked, fwhm_ln_locked])
                     append!(ln_names, ["$(ln_name)_amp", voff_ln_name, fwhm_ln_name])
                     if vt
                         append!(voff_tied[j][kv], [ind+1])
@@ -2174,34 +2187,36 @@ function get_line_initial_values(cube_fitter::CubeFitter, init::Bool)
         end
     end
 
-    # Relative step size vector
-    deps = sqrt(eps())
-    ln_dstep = Float64[]
-    for i ∈ 1:cube_fitter.n_lines
-        for j ∈ 1:cube_fitter.n_comps
-            if !isnothing(cube_fitter.lines.profiles[i, j])
+    # Relative step size vector (0 tells CMPFit to use a default value)
+    ln_dstep = zeros(length(ln_pars))
 
-                amp_dstep = deps
-                voff_dstep = 1e-4
-                fwhm_dstep = 1e-4
+    # deps = sqrt(eps())
+    # ln_dstep = Float64[]
+    # for i ∈ 1:cube_fitter.n_lines
+    #     for j ∈ 1:cube_fitter.n_comps
+    #         if !isnothing(cube_fitter.lines.profiles[i, j])
 
-                # Depending on flexible_wavesol option, we need to add 2 voffs
-                if !isnothing(cube_fitter.lines.tied_voff[i, j]) && cube_fitter.flexible_wavesol && isone(j)
-                    append!(ln_dstep, [amp_dstep, voff_dstep, voff_dstep, fwhm_dstep])
-                else
-                    append!(ln_dstep, [amp_dstep, voff_dstep, fwhm_dstep])
-                end
+    #             amp_dstep = deps
+    #             voff_dstep = 1e-4
+    #             fwhm_dstep = isone(j) ? 1e-4 : deps
 
-                if cube_fitter.lines.profiles[i, j] == :GaussHermite
-                    # 2 extra parameters: h3 and h4
-                    append!(ln_dstep, [deps, deps])
-                elseif cube_fitter.lines.profiles[i, j] == :Voigt
-                    # 1 extra parameter: eta
-                    append!(ln_dstep, [deps])
-                end
-            end
-        end
-    end 
+    #             # Depending on flexible_wavesol option, we need to add 2 voffs
+    #             if !isnothing(cube_fitter.lines.tied_voff[i, j]) && cube_fitter.flexible_wavesol && isone(j)
+    #                 append!(ln_dstep, [amp_dstep, voff_dstep, voff_dstep, fwhm_dstep])
+    #             else
+    #                 append!(ln_dstep, [amp_dstep, voff_dstep, fwhm_dstep])
+    #             end
+
+    #             if cube_fitter.lines.profiles[i, j] == :GaussHermite
+    #                 # 2 extra parameters: h3 and h4
+    #                 append!(ln_dstep, [deps, deps])
+    #             elseif cube_fitter.lines.profiles[i, j] == :Voigt
+    #                 # 1 extra parameter: eta
+    #                 append!(ln_dstep, [deps])
+    #             end
+    #         end
+    #     end
+    # end 
 
     ln_pars, ln_dstep
 
@@ -2227,6 +2242,9 @@ function get_line_parinfo(n_free, lb, ub, dp)
 
     # Create a `config` structure
     config = CMPFit.Config()
+    # Lower tolerance level for lines fit
+    config.ftol = 1e-14
+    config.xtol = 1e-14
 
     parinfo, config
 end

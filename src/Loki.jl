@@ -73,6 +73,9 @@ const py_reproject::PyObject = PyNULL()
 const py_mosaicking::PyObject = PyNULL()
 const py_lineidplot::PyObject = PyNULL()
 
+# Voronoi binning
+const py_vorbin::PyObject = PyNULL()
+
 # FSPS Library
 const py_fsps::PyObject = PyNULL()
 
@@ -113,6 +116,8 @@ function __init__()
     copy!(py_units, pyimport_conda("astropy.units", "astropy"))
     copy!(py_reproject, pyimport_conda("reproject", "reproject"))
     copy!(py_mosaicking, pyimport_conda("reproject.mosaicking", "reproject"))
+    # Voronoi binning package
+    copy!(py_vorbin, pyimport_conda("vorbin.voronoi_2d_binning", "vorbin"))
 
     # Warnings
     copy!(py_warnings, pyimport_conda("warnings", "warnings"))
@@ -167,6 +172,7 @@ export DataCube,   # DataCube struct
        correct!, 
        interpolate_nans!, 
        calculate_statistical_errors!,
+       voronoi_rebin!,
        plot_2d, 
        plot_1d,
        make_aperture,
