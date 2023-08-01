@@ -429,9 +429,19 @@ This function calculates the 'statistical' errors of the given IFU cube, replaci
 The statistical errors are defined as the standard deviation of the residuals between the flux and a cubic spline
 fit to the flux, within a small window (60 pixels). Emission lines are masked out during this process.
 """
-function calculate_statistical_errors!(cube::DataCube)
+function calculate_statistical_errors!(cube::DataCube, Δ::Union{Integer,Nothing}=nothing, 
+    n_inc_thresh::Union{Integer,Nothing}=nothing, thresh::Union{Real,Nothing}=nothing)
 
     λ = cube.λ
+    if isnothing(Δ)
+        Δ = cube.spectral_region == :MIR ? 3 : 20
+    end
+    if isnothing(n_inc_thresh)
+        n_inc_thresh = cube.spectral_region == :MIR ? 3 : 7
+    end
+    if isnothing(thresh)
+        thresh = 3.0
+    end
 
     println("Calculating statistical errors for each spaxel...")
     @showprogress for spaxel ∈ CartesianIndices(size(cube.I)[1:2])
@@ -439,7 +449,7 @@ function calculate_statistical_errors!(cube::DataCube)
         I = cube.I[spaxel, :]
         σ = cube.σ[spaxel, :]
         # Perform a cubic spline fit, also obtaining the line mask
-        mask_lines, I_spline, _ = continuum_cubic_spline(λ, I, σ, cube.spectral_region)
+        mask_lines, I_spline, _ = continuum_cubic_spline(λ, I, σ, Δ, n_inc_thresh, thresh)
         mask_bad = cube.mask[spaxel, :]
         mask = mask_lines .| mask_bad
 
@@ -1153,7 +1163,7 @@ Perform a 3D interpolation of the given channels such that all spaxels lie on th
     calculating centroids at the boundaries between the channels and forcing them to match.  On by default.
 """
 function reproject_channels!(obs::Observation, channels=nothing, concat_type=:full; out_id=0, res=nothing, scrub_output::Bool=false,
-    method=:adaptive, rescale_channels::Union{Real,Nothing}=nothing, adjust_wcs_headerinfo::Bool=true)
+    method=:adaptive, rescale_channels::Union{Real,Nothing}=nothing, adjust_wcs_headerinfo::Bool=true, min_λ::Real=-Inf, max_λ::Real=Inf)
 
     @assert obs.spectral_region == :MIR "The reproject_channels! function is only supported for MIR cubes!"
 
@@ -1353,6 +1363,13 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
         @warn "The wavelength dimension has not be resampled to be linear when concatenating multiple full channels! " *
               "Only overlapping regions between channels have been resampled to a median resolution!"
     end
+
+    # Cut off at large wavelength, if specified
+    λmask = min_λ .≤ λ_out .≤ max_λ
+    λ_out = λ_out[λmask]
+    I_out = I_out[:, :, λmask]
+    σ_out = σ_out[:, :, λmask]
+    mask_out = mask_out[:, :, λmask]
 
     # New PSF FWHM function with input in the rest frame
     if obs.rest_frame

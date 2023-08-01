@@ -33,7 +33,7 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
 
         # Get the normalization to un-normalized the fitted parameters
         data_index = !isnothing(cube_fitter.cube.voronoi_bins) ? cube_fitter.cube.voronoi_bins[index] : index
-        if data_index > 0
+        if Tuple(data_index)[1] > 0
             N = Float64(abs(nanmaximum(cube_data.I[data_index, :])))
             N = N ≠ 0. ? N : 1.
         else
@@ -407,7 +407,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
 
         # Get the normalization to un-normalized the fitted parameters
         data_index = !isnothing(cube_fitter.cube.voronoi_bins) ? cube_fitter.cube.voronoi_bins[index] : index
-        if data_index > 0
+        if Tuple(data_index)[1] > 0
             N = Float64(abs(nanmaximum(cube_data.I[data_index, :])))
             N = N ≠ 0. ? N : 1.
         else

@@ -721,6 +721,11 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     line_test_threshold::T
     plot_line_test::Bool
 
+    # Line masking options
+    linemask_Δ::S
+    linemask_n_inc_thresh::S
+    linemask_thresh::T
+
     p_init_cont::Vector{T}
     p_init_line::Vector{T}
     p_init_pahtemp::Vector{T}
@@ -787,6 +792,17 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
         # Sub-folder for log files
         if !isdir(joinpath("output_$name", "logs"))
             mkdir(joinpath("output_$name", "logs"))
+        end
+
+        # More default options
+        if !haskey(out, :linemask_delta)
+            out[:linemask_delta] = spectral_region == :MIR ? 3 : 20
+        end
+        if !haskey(out, :linemask_n_inc_thresh)
+            out[:linemask_n_inc_thresh] = spectral_region == :MIR ? 3 : 7
+        end
+        if !haskey(out, :linemask_thresh)
+            out[:linemask_thresh] = 3.
         end
 
         #############################################################
@@ -1099,8 +1115,8 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             out[:use_pah_templates], pah_template_map, out[:fit_joint], out[:fit_uv_bump], out[:fit_covering_frac], continuum, n_dust_cont, n_power_law, n_dust_features, 
             n_abs_features, dust_features, abs_features, abs_taus, n_ssps, ssp_λ, ssp_templates, feii_templates_fft, velscale, vsyst_ssp, vsyst_feii, npad_feii, n_lines, 
             n_acomps, n_comps, lines, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, out[:cosmology], 
-            flexible_wavesol, out[:n_bootstrap], out[:random_seed], out[:line_test_lines], out[:line_test_threshold], out[:plot_line_test], p_init_cont, p_init_line, 
-            p_init_pahtemp)
+            flexible_wavesol, out[:n_bootstrap], out[:random_seed], out[:line_test_lines], out[:line_test_threshold], out[:plot_line_test], out[:linemask_delta],
+            out[:linemask_n_inc_thresh], out[:linemask_thresh], p_init_cont, p_init_line, p_init_pahtemp)
     end
 
 end

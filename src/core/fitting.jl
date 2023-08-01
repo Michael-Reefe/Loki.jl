@@ -11,7 +11,7 @@ CubeFitter. An example of this is provided in the test driver files in the test 
 
 
 """
-    mask_emission_lines(λ, I, spectral_region; [Δ, n_inc_thresh, thresh])
+    mask_emission_lines(λ, I; [Δ, n_inc_thresh, thresh])
 
 Mask out emission lines in a given spectrum using a numerical second derivative and flagging 
 negative(positive) spikes, indicating strong concave-downness(upness) up to some tolerance threshold (i.e. 3-sigma).
@@ -28,16 +28,7 @@ is above some (potentially different) tolerance threshold. Returns the mask as a
 
 See also [`continuum_cubic_spline`](@ref)
 """
-function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}, spectral_region::Symbol; 
-    Δ::Union{Integer,Nothing}=nothing, n_inc_thresh::Union{Integer,Nothing}=nothing, thresh::Real=3.)
-
-    # Defaults different for MIR and optical data
-    if isnothing(Δ)
-        Δ = spectral_region == :MIR ? 3 : 20
-    end
-    if isnothing(n_inc_thresh)
-        n_inc_thresh = spectral_region == :MIR ? 3 : 7
-    end
+function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}, Δ::Integer, n_inc_thresh::Integer, thresh::Real)
 
     # Wavelength difference vector
     diffs = diff(λ)
@@ -119,11 +110,11 @@ noise. Returns the line mask, spline-interpolated I, and spline-interpolated σ.
 
 See also [`mask_emission_lines`](@ref)
 """
-function continuum_cubic_spline(λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vector{<:Real},
-    spectral_region::Symbol)
+function continuum_cubic_spline(λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vector{<:Real}, linemask_Δ::Integer, 
+    linemask_n_inc_thresh::Integer, linemask_thresh::Real)
 
     # Mask out emission lines so that they aren't included in the continuum fit
-    mask_lines = mask_emission_lines(λ, I, spectral_region)
+    mask_lines = mask_emission_lines(λ, I, linemask_Δ, linemask_n_inc_thresh, linemask_thresh)
 
     # Interpolate the NaNs
     # Break up cubic spline interpolation into knots 7 pixels long
@@ -2060,7 +2051,8 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
     end
 
     # Perform a cubic spline fit, also obtaining the line mask
-    mask_lines, I_spline, σ_spline = continuum_cubic_spline(λ, I, σ, cube_fitter.spectral_region)
+    mask_lines, I_spline, σ_spline = continuum_cubic_spline(λ, I, σ, cube_fitter.linemask_Δ, cube_fitter.linemask_n_inc_thresh,
+        cube_fitter.linemask_thresh)
     mask_bad = (use_ap || use_vorbins) ? iszero.(I) .| iszero.(σ) : cube_fitter.cube.mask[spaxel, :]
     mask = mask_lines .| mask_bad
 
@@ -2146,7 +2138,8 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                     I_boot = I_boots[nboot]
                     # Redo the cubic spline fit
                     mask_lines_boot, I_spline_boot, σ_spline_boot = with_logger(NullLogger()) do 
-                        continuum_cubic_spline(λ, I, σ, cube_fitter.spectral_region)
+                        continuum_cubic_spline(λ, I, σ, cube_fitter.linemask_Δ, cube_fitter.linemask_n_inc_thresh, 
+                            cube_fitter.linemask_thresh)
                     end
                     # (do not recalculate sigma_stat since it would be increased by a factor of sqrt(2), but in reality
                     # we would have to divide out the sqrt(2) because we now have 2 "measurements")
@@ -2318,7 +2311,8 @@ function fit_stack!(cube_fitter::CubeFitter)
     @assert all(isfinite.(I_sum_init) .& isfinite.(σ_sum_init)) "Error: Non-finite values found in the summed intensity/error arrays!"
 
     # Perform a cubic spline fit, also obtaining the line mask
-    mask_lines_init, I_spline_init, σ_spline_init = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init, cube_fitter.spectral_region)
+    mask_lines_init, I_spline_init, σ_spline_init = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init, cube_fitter.linemask_Δ,
+        cube_fitter.linemask_n_inc_thresh, cube_fitter.linemask_thresh)
     mask_bad_init = iszero.(I_sum_init) .| iszero.(σ_sum_init)
     mask_init = mask_lines_init .| mask_bad_init
 
