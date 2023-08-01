@@ -1636,7 +1636,7 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
     # Calculate relative step sizes for finite difference derivatives
     deps = sqrt(eps())
 
-    ssp_dstep = vcat([[1e-6, 1e-3, deps] for _ in continuum.ssp_ages]...)
+    ssp_dstep = vcat([[deps, deps, deps] for _ in continuum.ssp_ages]...)
     stel_kin_dstep = [1e-4, 1e-4]
     feii_dstep = []
     if cube_fitter.fit_opt_na_feii

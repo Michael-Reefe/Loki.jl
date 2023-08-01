@@ -61,7 +61,7 @@ const CT_prof = silicate_ct()
 const CT_interp = Spline1D(CT_prof[1], CT_prof[2]; k=3)
 
 # Save the KVT profile as a constant
-const KVT_interp = Spline1D(kvt_prof[:, 1], kvt_prof[:, 2], k=1, bc="nearest")
+const KVT_interp = Spline1D(kvt_prof[:, 1], kvt_prof[:, 2], k=2, bc="nearest")
 const KVT_interp_end = Spline1D([kvt_prof[end, 1], kvt_prof[end, 1]+2], [kvt_prof[end, 2], 0.], k=1, bc="nearest")
 
 # Save the OHM 1992 profile as a constant

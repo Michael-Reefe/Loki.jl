@@ -12,16 +12,16 @@ kinematic_group_H2 = [
     "H200_"
 ]
 
-kinematic_group_Balmer = [
-    "HI_H_"
-]
-# Case B recombination amplitude ratios
-tie_amp_Balmer = [0.105, 0.158, 0.256, 0.466, 1.0, 2.87]
+# kinematic_group_Balmer = [
+#     "HI_H_"
+# ]
+# # Case B recombination amplitude ratios
+# tie_amp_Balmer = [0.105, 0.158, 0.256, 0.466, 1.0, 2.87]
 
 # Tie ALL recombination lines together
-# kinematic_group_HI = [
-#     "HI_"
-# ]
+kinematic_group_HI = [
+    "HI_"
+]
 
 # Ionized species with doublets and/or multiple lines within the fitting region
 kinematic_group_OIII = [
@@ -59,7 +59,7 @@ kinematic_group_MgV = [
 combined_maps = [["OII_03727", "OII_03729"]]
 
 # Line voff and FWHM limits
-voff_plim = [-1000.0, 1000.0]              # -500 to 500 km/s from the rest wavelength
+voff_plim = [-1000.0, 1000.0]            # -1000 to 1000 km/s from the rest wavelength
 fwhm_plim = [0.0, 1000.0]                # 0 to 1000 km/s FWHM velocity of the line -- this is the *intrinsic* FWHM,
                                          #    i.e. the FWHM after the instrumental FWHM has been subtracted in quadrature
 h3_plim = [-0.5, 0.5]                    # skewness (3rd moment): limits (-0.5, 0.5), to remain mostly gaussian
@@ -71,7 +71,7 @@ n_acomps = 1
 acomp_amp_plim = [[0.0, 1.0]]
 acomp_voff_plim = [[-1000.0, 1000.0]]    # additive factor with the main line voff -> i.e. the additional component
                                          # is allowed to have a voff up to +/-1000 km/s from the main component 
-acomp_fwhm_plim = [[1.1, 2.0]]           # multiplicative factor with the main line FWHM -> i.e. the additional component
+acomp_fwhm_plim = [[1.0, 2.0]]           # multiplicative factor with the main line FWHM -> i.e. the additional component
                                          # is allowed to have a FWHM from 1-5x the main component (it must be wider)
 
 # Uncertainty in the wavelength solution of the data
@@ -883,8 +883,8 @@ default = "Voigt"
 # acomps: specify which, if any, lines to add an additional component, and what type
 # of profile it should be. Can add an arbitrary number of additional components.
 [acomps]
-OIII_04960 = ["Voigt"]
-OIII_05008 = ["Voigt"]
+# OIII_04960 = ["Voigt"]
+# OIII_05008 = ["Voigt"]
 
 # NeVI_7652 = ["Voigt"]
 # NeII_12813 = ["Voigt"]
