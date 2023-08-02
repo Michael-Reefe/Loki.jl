@@ -1181,12 +1181,12 @@ Also returns a boolean vector for which parameters are allowed to vary.
 """
 get_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, init::Bool; 
     split::Bool=false) = cube_fitter.spectral_region == :MIR ? 
-    get_mir_continuum_plimits(cube_fitter, init; split=split) : 
+    get_mir_continuum_plimits(cube_fitter, I, init; split=split) : 
     get_opt_continuum_plimits(cube_fitter, λ, I, init)
 
 
 # MIR implementation of the get_continuum_plimits function
-function get_mir_continuum_plimits(cube_fitter::CubeFitter, init::Bool; split::Bool=false)
+function get_mir_continuum_plimits(cube_fitter::CubeFitter, I::Vector{<:Real}, init::Bool; split::Bool=false)
 
     dust_features = cube_fitter.dust_features
     abs_features = cube_fitter.abs_features
@@ -1218,9 +1218,14 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, init::Bool; split::B
     ab_lock = vcat([[tau.locked, mi.locked, fi.locked] for (tau, mi, fi) ∈ zip(abs_taus, abs_features.mean, abs_features.fwhm)]...)
     ext_plim = [continuum.τ_97.limits, continuum.τ_ice.limits, continuum.τ_ch.limits, continuum.β.limits]
     ext_lock = [continuum.τ_97.locked, continuum.τ_ice.locked, continuum.τ_ch.locked, continuum.β.locked]
+
     # Lock tau_9.7 if an extinction map has been provided
     if !isnothing(cube_fitter.extinction_map) && !init
         ext_lock[1] = true
+    end
+    # Also lock if the continuum is close to 0
+    if nanmedian(I) ≤ 0.
+        ext_lock[1:4] .= true
     end
 
     hd_plim = cube_fitter.fit_sil_emission ? [amp_dc_plim, continuum.T_hot.limits, continuum.Cf_hot.limits, 
@@ -1361,6 +1366,12 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
 
         # Set optical depth based on the initial guess or the initial fit (whichever is larger)
         p₀[pᵢ] = max(cube_fitter.continuum.τ_97.value, p₀[pᵢ])
+
+        # Set τ_9.7 and τ_CH to 0 if the continuum is close to 0
+        if nanmedian(I) ≤ 0.
+            p₀[pᵢ] = 0.
+            p₀[pᵢ+2] = 0.
+        end
         # Override if an extinction_map was provided
         if !isnothing(cube_fitter.extinction_map)
             @debug "Using the provided τ_9.7 values from the extinction_map and rescaling starting point"

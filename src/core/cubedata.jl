@@ -1164,7 +1164,8 @@ Perform a 3D interpolation of the given channels such that all spaxels lie on th
     calculating centroids at the boundaries between the channels and forcing them to match.  On by default.
 """
 function reproject_channels!(obs::Observation, channels=nothing, concat_type=:full; out_id=0, res=nothing, scrub_output::Bool=false,
-    method=:adaptive, rescale_channels::Union{Real,Nothing}=nothing, adjust_wcs_headerinfo::Bool=true, min_λ::Real=-Inf, max_λ::Real=Inf)
+    method=:adaptive, rescale_channels::Union{Real,Nothing}=nothing, adjust_wcs_headerinfo::Bool=true, min_λ::Real=-Inf, max_λ::Real=Inf,
+    rescale_limits::Tuple{<:Real,<:Real}=(0.5, 1.5))
 
     @assert obs.spectral_region == :MIR "The reproject_channels! function is only supported for MIR cubes!"
 
@@ -1299,14 +1300,18 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
             # get the median fluxes from both channels over the full region
             med_left = dropdims(nanmedian(I_out[:, :, i1:jump], dims=3), dims=3)
             med_right = dropdims(nanmedian(I_out[:, :, jump+1:i2], dims=3), dims=3)
+            # DO NOT rescale low S/N spaxels
+            SN = dropdims(nanmedian(I_out ./ σ_out, dims=3), dims=3)
+            med_left[SN .< 10, :] .= 1.
+            med_right[SN .< 10, :] .= 1.
             # rescale the flux to match between the channels, using the given reference point
             if wave_left < rescale_channels
-                scale = clamp.(med_right ./ med_left, 0.5, 1.5)
+                scale = clamp.(med_right ./ med_left, rescale_limits...)
                 I_out[:, :, 1:jump] .*= scale
                 σ_out[:, :, 1:jump] .*= scale
                 @info "Minimum/Maximum scale factor for channel $(i+1): $(nanextrema(scale))"
             else
-                scale = clamp.(med_left ./ med_right, 0.5, 1.5)
+                scale = clamp.(med_left ./ med_right, rescale_limits...)
                 I_out[:, :, jump+1:end] .*= scale
                 σ_out[:, :, jump+1:end] .*= scale
                 @info "Minimum/Maximum scale factor for channel $(i+1): $(nanextrema(scale))"

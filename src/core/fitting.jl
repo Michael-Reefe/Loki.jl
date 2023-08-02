@@ -346,7 +346,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         for i in 1:cube_fitter.n_dust_feat
             pahtemp .+= comps["dust_feat_$i"]
         end
-        pah_amp = maximum(pahtemp)/2
+        pah_amp = repeat([maximum(pahtemp)/2], 2)
     else
         pah_amp = zeros(2)
     end
@@ -916,6 +916,9 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     # Get CMPFit parinfo object from bounds
     parinfo, config = get_line_parinfo(n_free, lbfree_tied, ubfree_tied, dfree_tied)
 
+    # Place initial values within the lower/upper limits (amplitudes may be too large if the extinction levels differ between spaxels)
+    pfree_tied = clamp.(pfree_tied, lbfree_tied, ubfree_tied)
+
     # Wrapper function for fitting only the free, tied parameters
     function fit_step3(x, pfree_tied, func; n=0)
         ptot = zeros(Float64, length(p_tied))
@@ -1231,6 +1234,9 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
             pfree_lines_tied[amp_inds] .*= scale_factor
         end
     end
+
+    # Place initial values within the lower/upper limits (amplitudes may be too large if the extinction levels differ between spaxels)
+    pfree_lines_tied = clamp.(pfree_lines_tied, lower_bounds_lines_tied, upper_bounds_lines_tied)
 
     @debug """\n
     ##################################################################################################################
