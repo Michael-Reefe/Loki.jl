@@ -61,6 +61,9 @@ extinction_curve = "kvt"
 # (1 - e^-tau) / tau (false), following PAHFIT.
 extinction_screen = false
 
+# whether or not to fit the stellar continuum (MIR)
+fit_stellar_continuum = true
+
 # whether or not to fit silicate emission
 fit_sil_emission = true
 

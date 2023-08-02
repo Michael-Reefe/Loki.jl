@@ -117,12 +117,12 @@ annotate = true
 [lines.HI_H_epsilon]
 wave = 0.3971202
 latex = "H$\\varepsilon$"
-annotate = false
+annotate = true
 
 [lines.HI_H_zeta]
 wave = 0.3890166
 latex = "H$\\zeta$"
-annotate = false
+annotate = true
 
 # Helium lines
 [lines.HeI_03889]
@@ -262,12 +262,12 @@ annotate = true
 [lines.SII_04069]
 wave = 0.4069749
 latex = "[S II]"
-annotate = false
+annotate = true
 
 [lines.SII_04077]
 wave = 0.4077500
 latex = "[S II]"
-annotate = false
+annotate = true
 
 [lines.SIII_06314]
 wave = 0.6313806
@@ -313,69 +313,69 @@ annotate = true
 [lines.HI_Br_alpha]
 wave = 4.05225
 latex = "Br$\\alpha$"
-annotate = false
+annotate = true
 
 [lines.HI_Br_beta]
 wave = 2.6259
 latex = "Br$\\beta$"
-annotate = false
+annotate = true
 
 [lines.HI_Br_gamma]
 wave = 2.1661
 latex = "Br$\\gamma$"
-annotate = false
+annotate = true
 
 # Pfund Series (Hydrogen, n -> 5) Lines
 [lines.HI_Pf_alpha]
 wave = 7.4599
 latex = "Pf$\\alpha$"
-annotate = false
+annotate = true
 
 [lines.HI_Pf_beta]
 wave = 4.6538
 latex = "Pf$\\beta$"
-annotate = false
+annotate = true
 
 [lines.HI_Pf_gamma]
 wave = 3.7405
 latex = "Pf$\\gamma$"
-annotate = false
+annotate = true
 
 [lines.HI_Pf_delta]
 wave = 3.2970
 latex = "Pf$\\delta$"
-annotate = false
+annotate = true
 
 [lines.HI_Pf_epsilon]
 wave = 3.0392
 latex = "Pf$\\varepsilon$"
-annotate = false
+annotate = true
 
 # Humphreys Series (Hydrogen, n -> 6) Lines
 [lines.HI_Hu_alpha]
 wave = 12.372
 latex = "Hu$\\alpha$"
-annotate = false
+annotate = true
 
 [lines.HI_Hu_beta]
 wave = 7.503
 latex = "Hu$\\beta$"
-annotate = false
+annotate = true
 
 [lines.HI_Hu_gamma]
 wave = 5.908
 latex = "Hu$\\gamma$"
-annotate = false
+annotate = true
 
 [lines.HI_Hu_delta]
 wave = 5.129
 latex = "Hu$\\delta$"
-annotate = false
+annotate = true
 
 [lines.HI_Hu_epsilon]
 wave = 4.673
 latex = "Hu$\\varepsilon$"
-annotate = false
+annotate = true
 
 # Argon Lines
 [lines.ArII_6985]
@@ -386,7 +386,7 @@ annotate = true
 [lines.ArV_7901]
 wave = 7.901600
 latex = "[Ar V]"
-annotate = false
+annotate = true
 
 [lines.ArIII_8991]
 wave = 8.991380
@@ -402,18 +402,18 @@ annotate = true
 # [lines.ClII_14368]
 # wave = 14.367800
 # latex = "[Cl II]"
-# annotate = false
+# annotate = true
 
 # Iron Lines
 [lines.FeII_4889]
 wave = 4.889137
 latex = "[Fe II]"
-annotate = false
+annotate = true
 
 [lines.FeII_5062]
 wave = 5.062350
 latex = "[Fe II]"
-annotate = false
+annotate = true
 
 [lines.FeII_5340]
 wave = 5.340169
@@ -423,49 +423,49 @@ annotate = true
 [lines.FeVIII_5447]
 wave = 5.4466
 latex = "[Fe VIII]"
-annotate = false
+annotate = true
 
 [lines.FeII_6721]
 wave = 6.721283
 latex = "[Fe II]"
-annotate = false
+annotate = true
 
 [lines.FeVII_7814]
 wave = 7.814500
 latex = "[Fe VII]"
-annotate = false
+annotate = true
 
 [lines.FeVII_9527]
 wave = 9.526700
 latex = "[Fe VII]"
-annotate = false
+annotate = true
 
 [lines.FeII_17936]
 wave = 17.935950
 latex = "[Fe II]"
-annotate = false
+annotate = true
 
 [lines.FeIII_22925]
 wave = 22.925000
 latex = "[Fe III]"
-annotate = false
+annotate = true
 
 [lines.FeII_25988]
 wave = 25.988290
 latex = "[Fe II]"
-annotate = false
+annotate = true
 
 # Helium Lines
 [lines.HeII_5228]
 wave = 5.2279972
 latex = "He II"
-annotate = false
+annotate = true
 
 # Magnesium Lines
 [lines.MgVII_5503]
 wave = 5.503200
 latex = "[Mg VII]"
-annotate = false
+annotate = true
 
 [lines.MgV_5609]
 wave = 5.609850
@@ -475,13 +475,13 @@ annotate = true
 [lines.MgV_13521]
 wave = 13.521300
 latex = "[Mg V]"
-annotate = false
+annotate = true
 
 # Sodium Lines
 [lines.NaIII_7318]
 wave = 7.317700
 latex = "[Na III]"
-annotate = false
+annotate = true
 
 # Neon Lines
 [lines.NeVI_7652]
@@ -513,7 +513,7 @@ annotate = true
 [lines.NiII_6636]
 wave = 6.636000
 latex = "[Ni II]"
-annotate = false
+annotate = true
 
 # Oxygen Lines
 [lines.OIV_25890]
@@ -525,7 +525,7 @@ annotate = true
 [lines.PIII_17885]
 wave = 17.885000
 latex = "[P III]"
-annotate = false
+annotate = true
 
 # Sulfur Lines
 [lines.SIV_10511]

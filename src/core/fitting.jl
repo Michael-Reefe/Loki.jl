@@ -28,7 +28,8 @@ is above some (potentially different) tolerance threshold. Returns the mask as a
 
 See also [`continuum_cubic_spline`](@ref)
 """
-function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}, Δ::Integer, n_inc_thresh::Integer, thresh::Real)
+function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}, Δ::Integer, n_inc_thresh::Integer, thresh::Real,
+    overrides::Vector{Tuple{T,T}}=Vector{Tuple{Real,Real}}()) where {T<:Real}
 
     # Wavelength difference vector
     diffs = diff(λ)
@@ -84,6 +85,11 @@ function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}, Δ::Integer,
     mask[11.17 .< λ .< 11.24] .= 0
     mask[11.26 .< λ .< 11.355] .= 0
     # mask[12.5 .< λ .< 12.79] .= 0
+    
+    # manual regions that wish to be masked out
+    for override in overrides
+        mask[override[1] .< λ .< override[2]] .= 1
+    end
 
     # Force the beginning/end few pixels to be unmasked to prevent runaway splines at the edges
     mask[1:7] .= 0
@@ -111,10 +117,10 @@ noise. Returns the line mask, spline-interpolated I, and spline-interpolated σ.
 See also [`mask_emission_lines`](@ref)
 """
 function continuum_cubic_spline(λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vector{<:Real}, linemask_Δ::Integer, 
-    linemask_n_inc_thresh::Integer, linemask_thresh::Real)
+    linemask_n_inc_thresh::Integer, linemask_thresh::Real, overrides::Vector{Tuple{T,T}}=Vector{Tuple{Real,Real}}()) where {T<:Real}
 
     # Mask out emission lines so that they aren't included in the continuum fit
-    mask_lines = mask_emission_lines(λ, I, linemask_Δ, linemask_n_inc_thresh, linemask_thresh)
+    mask_lines = mask_emission_lines(λ, I, linemask_Δ, linemask_n_inc_thresh, linemask_thresh, overrides)
 
     # Interpolate the NaNs
     # Break up cubic spline interpolation into knots 7 pixels long
@@ -2052,7 +2058,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
 
     # Perform a cubic spline fit, also obtaining the line mask
     mask_lines, I_spline, σ_spline = continuum_cubic_spline(λ, I, σ, cube_fitter.linemask_Δ, cube_fitter.linemask_n_inc_thresh,
-        cube_fitter.linemask_thresh)
+        cube_fitter.linemask_thresh, cube_fitter.linemask_overrides)
     mask_bad = (use_ap || use_vorbins) ? iszero.(I) .| iszero.(σ) : cube_fitter.cube.mask[spaxel, :]
     mask = mask_lines .| mask_bad
 
@@ -2139,7 +2145,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                     # Redo the cubic spline fit
                     mask_lines_boot, I_spline_boot, σ_spline_boot = with_logger(NullLogger()) do 
                         continuum_cubic_spline(λ, I, σ, cube_fitter.linemask_Δ, cube_fitter.linemask_n_inc_thresh, 
-                            cube_fitter.linemask_thresh)
+                            cube_fitter.linemask_thresh, cube_fitter.linemask_overrides)
                     end
                     # (do not recalculate sigma_stat since it would be increased by a factor of sqrt(2), but in reality
                     # we would have to divide out the sqrt(2) because we now have 2 "measurements")
@@ -2312,7 +2318,7 @@ function fit_stack!(cube_fitter::CubeFitter)
 
     # Perform a cubic spline fit, also obtaining the line mask
     mask_lines_init, I_spline_init, σ_spline_init = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init, cube_fitter.linemask_Δ,
-        cube_fitter.linemask_n_inc_thresh, cube_fitter.linemask_thresh)
+        cube_fitter.linemask_n_inc_thresh, cube_fitter.linemask_thresh, cube_fitter.linemask_overrides)
     mask_bad_init = iszero.(I_sum_init) .| iszero.(σ_sum_init)
     mask_init = mask_lines_init .| mask_bad_init
 

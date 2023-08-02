@@ -430,7 +430,8 @@ The statistical errors are defined as the standard deviation of the residuals be
 fit to the flux, within a small window (60 pixels). Emission lines are masked out during this process.
 """
 function calculate_statistical_errors!(cube::DataCube, Δ::Union{Integer,Nothing}=nothing, 
-    n_inc_thresh::Union{Integer,Nothing}=nothing, thresh::Union{Real,Nothing}=nothing)
+    n_inc_thresh::Union{Integer,Nothing}=nothing, thresh::Union{Real,Nothing}=nothing,
+    overrides::Vector{Tuple{T,T}}=Vector{Tuple{Real,Real}}()) where {T<:Real}
 
     λ = cube.λ
     if isnothing(Δ)
@@ -449,7 +450,7 @@ function calculate_statistical_errors!(cube::DataCube, Δ::Union{Integer,Nothing
         I = cube.I[spaxel, :]
         σ = cube.σ[spaxel, :]
         # Perform a cubic spline fit, also obtaining the line mask
-        mask_lines, I_spline, _ = continuum_cubic_spline(λ, I, σ, Δ, n_inc_thresh, thresh)
+        mask_lines, I_spline, _ = continuum_cubic_spline(λ, I, σ, Δ, n_inc_thresh, thresh, overrides)
         mask_bad = cube.mask[spaxel, :]
         mask = mask_lines .| mask_bad
 
@@ -1189,7 +1190,7 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
     end
     Ω_out = obs.channels[res].Ω
 
-    if concat_type == :sub
+    if adjust_wcs_headerinfo && (concat_type == :sub)
         # Find the optimal output WCS using the reproject python package
         shapes = [size(obs.channels[channel].I)[1:2] for channel ∈ channels]
         wcs2ds = [obs.channels[channel].wcs for channel ∈ channels]
@@ -1242,17 +1243,18 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
                 (size(σF_in, 1), size_optimal[2], size_optimal[1]), conserve_flux=true, kernel="gaussian", boundary_mode="strict",
                 return_footprint=false), (3,2,1))
         elseif method == :interp
-            @warn "The interp method is currently experimental and produces less robust results than the adaptive method!"
             F_out = permutedims(py_reproject.reproject_interp((F_in, obs.channels[ch_in].wcs), wcs_optimal, 
                 (size(F_in, 1), size_optimal[2], size_optimal[1]), order=1, return_footprint=false), (3,2,1))
             σF_out = permutedims(py_reproject.reproject_interp((σF_in.^2, obs.channels[ch_in].wcs), wcs_optimal, 
                 (size(σF_in, 1), size_optimal[2], size_optimal[1]), order=1, return_footprint=false), (3,2,1))
         elseif method == :exact
-            @warn "The exact method is currently experimental and produces less robust results than the adaptive method!"
             F_out = permutedims(py_reproject.reproject_exact((F_in, obs.channels[ch_in].wcs), wcs_optimal, 
                 (size(F_in, 1), size_optimal[2], size_optimal[1]), return_footprint=false), (3,2,1))
             σF_out = permutedims(py_reproject.reproject_exact((σF_in.^2, obs.channels[ch_in].wcs), wcs_optimal, 
                 (size(σF_in, 1), size_optimal[2], size_optimal[1]), return_footprint=false), (3,2,1))
+        elseif method == :none
+            F_out = permutedims(F_in, (3,2,1))
+            σF_out = permutedims(σF_in.^2, (3,2,1))
         end
         σF_out = sqrt.(σF_out)
 
@@ -1297,8 +1299,8 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
             # get the median fluxes from both channels over the full region
             med_left = dropdims(nanmedian(I_out[:, :, i1:jump], dims=3), dims=3)
             med_right = dropdims(nanmedian(I_out[:, :, jump+1:i2], dims=3), dims=3)
-            # rescale the flux to match between the channels, using the channel at 8 um (2A) as the reference point
-            if wave_left < rescale_channels / (1 + obs.z)
+            # rescale the flux to match between the channels, using the given reference point
+            if wave_left < rescale_channels
                 scale = clamp.(med_right ./ med_left, 0.5, 1.5)
                 I_out[:, :, 1:jump] .*= scale
                 σ_out[:, :, 1:jump] .*= scale

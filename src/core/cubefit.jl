@@ -662,6 +662,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     extinction_curve::String
     extinction_screen::Bool
     extinction_map::Union{Matrix{T},Nothing}
+    fit_stellar_continuum::Bool
     fit_sil_emission::Bool
     fit_opt_na_feii::Bool
     fit_opt_br_feii::Bool
@@ -725,6 +726,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     linemask_Δ::S
     linemask_n_inc_thresh::S
     linemask_thresh::T
+    linemask_overrides::Vector{Tuple{T,T}}
 
     p_init_cont::Vector{T}
     p_init_line::Vector{T}
@@ -803,6 +805,9 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
         end
         if !haskey(out, :linemask_thresh)
             out[:linemask_thresh] = 3.
+        end
+        if !haskey(out, :linemask_overrides)
+            out[:linemask_overrides] = Tuple[]
         end
 
         #############################################################
@@ -1111,12 +1116,12 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
         ctype = isnothing(feii_templates_fft) ? ComplexF64 : eltype(feii_templates_fft)
         new{typeof(z), typeof(n_lines), ctype}(cube, z, name, spectral_region, out[:user_mask], out[:plot_spaxels], out[:plot_maps], out[:plot_range], 
             out[:parallel], out[:save_fits], out[:save_full_model], out[:overwrite], out[:track_memory], out[:track_convergence], out[:make_movies], 
-            out[:extinction_curve], out[:extinction_screen], extinction_map, out[:fit_sil_emission], out[:fit_opt_na_feii], out[:fit_opt_br_feii], out[:fit_all_samin], 
-            out[:use_pah_templates], pah_template_map, out[:fit_joint], out[:fit_uv_bump], out[:fit_covering_frac], continuum, n_dust_cont, n_power_law, n_dust_features, 
-            n_abs_features, dust_features, abs_features, abs_taus, n_ssps, ssp_λ, ssp_templates, feii_templates_fft, velscale, vsyst_ssp, vsyst_feii, npad_feii, n_lines, 
-            n_acomps, n_comps, lines, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, out[:cosmology], 
-            flexible_wavesol, out[:n_bootstrap], out[:random_seed], out[:line_test_lines], out[:line_test_threshold], out[:plot_line_test], out[:linemask_delta],
-            out[:linemask_n_inc_thresh], out[:linemask_thresh], p_init_cont, p_init_line, p_init_pahtemp)
+            out[:extinction_curve], out[:extinction_screen], extinction_map, out[:fit_stellar_continuum], out[:fit_sil_emission], out[:fit_opt_na_feii], out[:fit_opt_br_feii], 
+            out[:fit_all_samin], out[:use_pah_templates], pah_template_map, out[:fit_joint], out[:fit_uv_bump], out[:fit_covering_frac], continuum, n_dust_cont, 
+            n_power_law, n_dust_features, n_abs_features, dust_features, abs_features, abs_taus, n_ssps, ssp_λ, ssp_templates, feii_templates_fft, velscale, vsyst_ssp, 
+            vsyst_feii, npad_feii, n_lines, n_acomps, n_comps, lines, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, 
+            n_params_extra, out[:cosmology], flexible_wavesol, out[:n_bootstrap], out[:random_seed], out[:line_test_lines], out[:line_test_threshold], out[:plot_line_test], 
+            out[:linemask_delta], out[:linemask_n_inc_thresh], out[:linemask_thresh], out[:linemask_overrides], p_init_cont, p_init_line, p_init_pahtemp)
     end
 
 end
@@ -1192,7 +1197,7 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, init::Bool; split::B
     amp_df_plim = (0., clamp(1 / exp(-continuum.τ_97.limits[2]), 1., Inf))
 
     stellar_plim = [amp_dc_plim, continuum.T_s.limits]
-    stellar_lock = [false, continuum.T_s.locked]
+    stellar_lock = [!cube_fitter.fit_stellar_continuum, continuum.T_s.locked]
     dc_plim = vcat([[amp_dc_plim, Ti.limits] for Ti ∈ continuum.T_dc]...)
     dc_lock = vcat([[false, Ti.locked] for Ti ∈ continuum.T_dc]...)
     pl_plim = vcat([[amp_dc_plim, pl.limits] for pl ∈ continuum.α]...)
@@ -1394,6 +1399,9 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         # Stellar amplitude
         λ_s = minimum(λ) < 5 ? minimum(λ)+0.1 : 5.1
         A_s = clamp(cubic_spline(λ_s) * N / Blackbody_ν(λ_s, continuum.T_s.value), 0., Inf)
+        if !cube_fitter.fit_stellar_continuum
+            A_s = 0.
+        end
 
         # Dust feature amplitudes
         A_df = repeat([clamp(nanmedian(I)/2, 0., Inf)], cube_fitter.n_dust_feat)
