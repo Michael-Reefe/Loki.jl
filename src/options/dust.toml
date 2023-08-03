@@ -739,7 +739,7 @@ locked = true
 # at ~6.9 microns (the peak).
 [extinction.tau_ch]
 val = 0.1
-plim = [0.0, 10.0]
+plim = [0.0, 1.0]
 locked = false
 
 # extinction.beta: the mixing ratio for the extinction profile,

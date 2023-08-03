@@ -1162,10 +1162,14 @@ Perform a 3D interpolation of the given channels such that all spaxels lie on th
     are rescaled to match.
 - `adjust_wcs_headerinfo::Bool=true`: Whether or not to try to automatically adjust the WCS header info of the channels by 
     calculating centroids at the boundaries between the channels and forcing them to match.  On by default.
+- `min_λ::Real=-Inf`: Minimum wavelength cutoff for the output cube.
+- `max_λ::Real=Inf`: Maximum wavelength cutoff for the output cube.
+- `rescale_limits::Tuple{<:Real,<:Real}=(0.5, 1.5)`: Lower/upper limits on the rescaling factor between channels.
+- `rescale_snr::Real=10.0`: SNR threshold that a spaxel must pass before being rescaled.
 """
 function reproject_channels!(obs::Observation, channels=nothing, concat_type=:full; out_id=0, res=nothing, scrub_output::Bool=false,
     method=:adaptive, rescale_channels::Union{Real,Nothing}=nothing, adjust_wcs_headerinfo::Bool=true, min_λ::Real=-Inf, max_λ::Real=Inf,
-    rescale_limits::Tuple{<:Real,<:Real}=(0.5, 1.5))
+    rescale_limits::Tuple{<:Real,<:Real}=(0.5, 1.5), rescale_snr::Real=10.0)
 
     @assert obs.spectral_region == :MIR "The reproject_channels! function is only supported for MIR cubes!"
 
@@ -1302,8 +1306,8 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
             med_right = dropdims(nanmedian(I_out[:, :, jump+1:i2], dims=3), dims=3)
             # DO NOT rescale low S/N spaxels
             SN = dropdims(nanmedian(I_out ./ σ_out, dims=3), dims=3)
-            med_left[SN .< 10, :] .= 1.
-            med_right[SN .< 10, :] .= 1.
+            med_left[SN .< rescale_snr, :] .= 1.
+            med_right[SN .< rescale_snr, :] .= 1.
             # rescale the flux to match between the channels, using the given reference point
             if wave_left < rescale_channels
                 scale = clamp.(med_right ./ med_left, rescale_limits...)

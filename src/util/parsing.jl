@@ -79,8 +79,8 @@ function parse_resolving(channel::String)
     # taking an input wi in the OBSERVED frame
     interp_R = Spline1D(wave, R, k=1)
 
-    # The line-spread function in km/s
-    lsf = wi -> C_KMS / interp_R(wi)
+    # The line-spread function in km/s - reduce by 25% from the pre-flight data
+    lsf = wi -> 0.75 * C_KMS / interp_R(wi)
     
     lsf
 end

@@ -127,6 +127,14 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             pᵢ += 6
         end
 
+        # Template amplitudes
+        for (q, tp) ∈ enumerate(cube_fitter.template_names)
+            param_maps.templates[tp][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
+            param_errs[1].templates[tp][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
+            param_errs[2].templates[tp][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN 
+            pᵢ += 1
+        end
+
         # Dust feature log(amplitude), mean, FWHM
         for (k, df) ∈ enumerate(cube_fitter.dust_features.names)
             param_maps.dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z)*N)-17 : -Inf
@@ -154,7 +162,7 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             # End of continuum parameters: recreate the continuum model
             I_cont, comps_c = model_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], N, cube_fitter.n_dust_cont, cube_fitter.n_power_law,
                 cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, 
-                cube_fitter.fit_sil_emission, false, true)
+                cube_fitter.fit_sil_emission, false, cube_fitter.templates, true)
         end
 
         # Save marker of the point where the continuum parameters end and the line parameters begin
@@ -332,6 +340,9 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             end
             if cube_fitter.fit_sil_emission
                 cube_model.hot_dust[:, index] .= comps["hot_dust"] .* (1 .+ z)
+            end
+            for q ∈ 1:cube_fitter.n_templates
+                cube_model.templates[:, index, q] .= comps["templates_$q"] .* (1 .+ z)
             end
             for j ∈ 1:cube_fitter.n_comps
                 for k ∈ 1:cube_fitter.n_lines
@@ -781,6 +792,8 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
             bunit = L"$\log_{10}(A_{\rm pl} / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-2}$)"
         elseif occursin("hot_dust", name_i)
             bunit = L"$\log_{10}(A_{\rm sil})$" # normalized
+        elseif occursin("template", name_i)
+            bunit = L"$\log_{10}(A_{\rm template})$"
         else
             bunit = L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$"
         end
@@ -1150,6 +1163,17 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
             name_i = join(["hot_dust", parameter], "_")
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "hot_dust", "$(name_i).pdf")
             plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf), 
+                cube_fitter.cosmology, cube_fitter.cube.wcs)
+        end
+    end
+
+    # Template parameters
+    for temp ∈ keys(param_maps.templates)
+        for parameter ∈ keys(param_maps.templates[temp])
+            data = param_maps.templates[temp][parameter]
+            name_i = join(["template", temp, parameter], "_")
+            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "continuum", "$(name_i).pdf")
+            plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf),
                 cube_fitter.cosmology, cube_fitter.cube.wcs)
         end
     end
@@ -1680,6 +1704,9 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
             for (m, ab) ∈ enumerate(cube_fitter.abs_features.names)                                     
                 write(f, permutedims(cube_model.abs_features[:, :, :, m], (2,3,1)); name="$ab")         # Absorption feature profiles
             end
+            for (q, tp) ∈ enumerate(cube_fitter.template_names)
+                write(f, permutedims(cube_model.templates[:, :, :, q], (2,3,1)); name="TEMPLATE_$tp")   # Template profiles
+            end
             for (k, line) ∈ enumerate(cube_fitter.lines.names)
                 write(f, permutedims(cube_model.lines[:, :, :, k], (2,3,1)); name="$line")              # Emission line profiles
             end
@@ -1710,6 +1737,9 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
             end
             for ab ∈ cube_fitter.abs_features.names
                 write_key(f["$ab"], "BUNIT", "unitless")
+            end
+            for tp ∈ cube_fitter.template_names
+                write_key(f["TEMPLATE_$tp"], "BUNIT", "MJy/sr")
             end
             for line ∈ cube_fitter.lines.names
                 write_key(f["$line"], "BUNIT", "MJy/sr")
@@ -1836,6 +1866,17 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 bunit = "unitless"
                 write(f, data; name=name_i)
                 write_key(f[name_i], "BUNIT", bunit)  
+            end
+
+            # Template parameters
+            for temp ∈ keys(param_data.templates)
+                for parameter ∈ keys(param_data.templates[temp])
+                    data = param_data.templates[temp][parameter]
+                    name_i = join(["templates", temp, parameter], "_")
+                    bunit = "unitless"
+                    write(f, data; name=name_i)
+                    write_key(f[name_i], "BUNIT", bunit)
+                end
             end
 
             # Line parameters

@@ -1148,7 +1148,7 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 """
 function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
     n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, use_pah_templates::Bool, 
-    return_components::Bool)
+    templates::Matrix{<:Real}, return_components::Bool)
 
     # Prepare outputs
     out_type = eltype(params)
@@ -1214,6 +1214,13 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
         pᵢ += 6
     end
 
+    # Add generic templates with a normalization parameter
+    for i in axes(templates, 2)
+        comps["templates_$i"] = params[pᵢ] .* templates[:, i]
+        contin .+= comps["templates_$i"]
+        pᵢ += 1
+    end
+
     if use_pah_templates
         pah3 = Smith3_interp(λ)
         contin .+= params[pᵢ] .* pah3  ./ maximum(pah3) .* comps["extinction"]
@@ -1243,7 +1250,7 @@ end
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
 function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
-    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, use_pah_templates::Bool)
+    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, use_pah_templates::Bool, templates::Matrix{<:Real})
 
     # Prepare outputs
     out_type = eltype(params)
@@ -1301,6 +1308,12 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
         # Ref: Gallimore et al. 2010
         contin .+= silicate_emission(λ, params[pᵢ:pᵢ+5]...) ./ N .* abs_ice .* abs_ch .* abs_tot
         pᵢ += 6
+    end
+
+    # Add generic templates with a normalization parameter
+    for i in axes(templates, 2)
+        contin .+= params[pᵢ] .* templates[:, i]
+        pᵢ += 1
     end
 
     if use_pah_templates
@@ -1878,7 +1891,7 @@ Currently this includes the integrated intensity, equivalent width, and signal t
 """
 function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, comps::Dict, n_dust_cont::Integer,
     n_power_law::Integer, n_dust_feat::Integer, dust_profiles::Vector{Symbol}, n_abs_feat::Integer, fit_sil_emission::Bool, 
-    n_lines::Integer, n_acomps::Integer, n_comps::Integer, lines::TransitionLines, flexible_wavesol::Bool, 
+    n_templates::Integer, n_lines::Integer, n_acomps::Integer, n_comps::Integer, lines::TransitionLines, flexible_wavesol::Bool, 
     lsf::Function, popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}, 
     extinction::Vector{T}, mask_lines::BitVector, continuum::Vector{T}, 
     area_sr::Vector{T}, propagate_err::Bool=true) where {T<:Real}
@@ -1893,7 +1906,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     p_dust_err = zeros(3n_dust_feat)
     pₒ = 1
     # Initial parameter vector index where dust profiles start
-    pᵢ = 3 + 2n_dust_cont + 2n_power_law + 4 + 3n_abs_feat + (fit_sil_emission ? 6 : 0)
+    pᵢ = 3 + 2n_dust_cont + 2n_power_law + 4 + 3n_abs_feat + (fit_sil_emission ? 6 : 0) + n_templates
     # Extinction normalization factor
     # max_ext = 1 / minimum(extinction)
 
@@ -1937,7 +1950,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
         
         # Calculate the equivalent width using the utility function
         eqw, e_err = calculate_eqw(λ, prof, comps, false, n_dust_cont, n_power_law, n_abs_feat, n_dust_feat, fit_sil_emission,
-            A*N, A_err*N, μ, μ_err, fwhm, fwhm_err, m=m, m_err=m_err, ν=ν, ν_err=ν_err, propagate_err=propagate_err)
+            n_templates, A*N, A_err*N, μ, μ_err, fwhm, fwhm_err, m=m, m_err=m_err, ν=ν, ν_err=ν_err, propagate_err=propagate_err)
         
         snr = A*N*ext / std(I[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)] .- continuum[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)])
 
@@ -2075,7 +2088,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                 
                 # Calculate equivalent width using the helper function
                 p_lines[pₒ+1], p_lines_err[pₒ+1] = calculate_eqw(λ, lines.profiles[k, j], comps, true, n_dust_cont, n_power_law, n_abs_feat,
-                    n_dust_feat, fit_sil_emission, amp*N, amp_err*N, mean_μm, mean_μm_err, fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, 
+                    n_dust_feat, fit_sil_emission, n_templates, amp*N, amp_err*N, mean_μm, mean_μm_err, fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, 
                     h4=h4, h4_err=h4_err, η=η, η_err=η_err, propagate_err=propagate_err)
 
                 # SNR
@@ -2309,7 +2322,7 @@ integral of the ratio of the feature profile to the underlying continuum.
 """
 function calculate_eqw(λ::Vector{T}, profile::Symbol, comps::Dict, line::Bool,
     n_dust_cont::Integer, n_power_law::Integer, n_abs_feat::Integer, n_dust_feat::Integer, 
-    fit_sil_emission::Bool, amp::T, amp_err::T, peak::T, peak_err::T, fwhm::T, fwhm_err::T; 
+    fit_sil_emission::Bool, n_templates::Integer, amp::T, amp_err::T, peak::T, peak_err::T, fwhm::T, fwhm_err::T; 
     h3::Union{T,Nothing}=nothing, h3_err::Union{T,Nothing}=nothing, 
     h4::Union{T,Nothing}=nothing, h4_err::Union{T,Nothing}=nothing, 
     η::Union{T,Nothing}=nothing, η_err::Union{T,Nothing}=nothing, 
@@ -2332,6 +2345,9 @@ function calculate_eqw(λ::Vector{T}, profile::Symbol, comps::Dict, line::Bool,
     contin .*= comps["abs_ice"] .* comps["abs_ch"]
     for k ∈ 1:n_abs_feat
         contin .*= comps["abs_feat_$k"]
+    end
+    for q ∈ 1:n_templates
+        contin .+= comps["templates_$q"]
     end
     # For line EQWs, we consider PAHs as part of the "continuum"
     if line
