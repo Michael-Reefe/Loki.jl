@@ -203,7 +203,11 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     λ_spax = λ_spax[.~mask_bad]
     I_spax = I_spax[.~mask_bad]
     σ_spax = σ_spax[.~mask_bad]
-    templates_spax = cube_fitter.templates[.~mask_bad, :]
+    if cube_fitter.n_templates > 0
+        templates_spax = cube_fitter.templates[.~mask_bad, :]
+    else
+        templates_spax = cube_fitter.templates
+    end
 
     if !isnothing(cube_fitter.user_mask)
         # Mask out additional regions
@@ -212,7 +216,9 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
             λ_spax = λ_spax[.~region]
             I_spax = I_spax[.~region]
             σ_spax = σ_spax[.~region]
-            templates_spax = templates_spax[.~region, :]
+            if cube_fitter.n_templates > 0
+                templates_spax = templates_spax[.~region, :]
+            end
         end
     end
 
@@ -296,8 +302,10 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     fit_cont = cube_fitter.spectral_region == :MIR ? fit_cont_mir : fit_cont_opt
 
     res = cmpfit(λ_spax, I_spax, σ_spax, fit_cont, pfree, parinfo=parinfo, config=config)
+
+    cont_snr = nanmedian(I_spax ./ σ_spax)
     n = 1
-    while res.niter < 5
+    while (res.niter < 5) && (cont_snr > 3)
         @warn "LM Solver is stuck on the initial state for the continuum fit of spaxel $spaxel. Jittering starting params..."
         # Jitter the starting parameters a bit
         jit_lo = (lb .- pfree) ./ 20  # defined to be negative
@@ -407,7 +415,11 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     λ_spax = λ_spax[.~mask_bad]
     I_spax = I_spax[.~mask_bad]
     σ_spax = σ_spax[.~mask_bad]
-    templates_spax = cube_fitter.templates[.~mask_bad, :]
+    if cube_fitter.n_templates > 0
+        templates_spax = cube_fitter.templates[.~mask_bad, :]
+    else
+        templates_spax = cube_fitter.templates
+    end
 
     if !isnothing(cube_fitter.user_mask)
         # Mask out additional regions
@@ -416,7 +428,9 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
             λ_spax = λ_spax[.~region]
             I_spax = I_spax[.~region]
             σ_spax = σ_spax[.~region]
-            templates_spax = templates_spax[.~region, :]
+            if cube_fitter.n_templates > 0
+                templates_spax = templates_spax[.~region, :]
+            end
         end
     end
 
@@ -480,8 +494,10 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         end
     end
     res_1 = cmpfit(λ_spax, I_spax, σ_spax, fit_step1, p1free, parinfo=parinfo_1, config=config)
+
+    cont_snr = nanmedian(I_spax ./ σ_spax)
     n = 1
-    while res_1.niter < 5
+    while (res_1.niter < 5) && (cont_snr > 3)
         @warn "LM Solver is stuck on the initial state for the continuum fit (step 1) of spaxel $spaxel. Jittering starting params..."
         # Jitter the starting parameters a bit
         jit_lo = (lb_1 .- p1free) ./ 20  # defined to be negative
@@ -550,7 +566,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     end
     res_2 = cmpfit(λ_spax, I_spax.-I_cont, σ_spax, fit_step2, p2free, parinfo=parinfo_2, config=config)
     n = 1
-    while res_2.niter < 5
+    while (res_2.niter < 5) && (cont_snr > 3)
         @warn "LM Solver is stuck on the initial state for the continuum fit (step 2) of spaxel $spaxel. Jittering starting params..."
         # Jitter the starting parameters a bit
         jit_lo = (lb_2 .- p2free) ./ 20  # defined to be negative
@@ -1004,6 +1020,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
         cube_fitter.flexible_wavesol, ext_curve_norm[1+n:end-n], lsf_interp_func)
     
     res = cmpfit(λnorm, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func_2), p₁, parinfo=parinfo, config=config)
+
     n = 1
     while res.niter < 5
         @warn "LM Solver is stuck on the initial state for the line fit of spaxel $spaxel. Jittering starting params..."
@@ -1163,7 +1180,11 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     I_spax = I_spax[.~mask_bad]
     I_spline_spax = I_spline_spax[.~mask_bad]
     σ_spax = σ_spax[.~mask_bad]
-    templates_spax = cube_fitter.templates[.~mask_bad, :]
+    if cube_fitter.n_templates > 0
+        templates_spax = cube_fitter.templates[.~mask_bad, :]
+    else
+        templates_spax = cube_fitter.templates
+    end
 
     if !isnothing(cube_fitter.user_mask)
         # Mask out additional regions
@@ -1173,7 +1194,9 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
             I_spax = I_spax[.~region]
             I_spline_spax = I_spline_spax[.~region]
             σ_spax = σ_spax[.~region]
-            templates_spax = templates_spax[.~region, :]
+            if cube_fitter.n_templates > 0
+                templates_spax = templates_spax[.~region, :]
+            end
         end
     end
 
@@ -1461,8 +1484,10 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     config.xtol = 1e-14
 
     res = cmpfit(λ_spax, I_spax, σ_spax, fit_joint, p₁, parinfo=parinfo, config=config)
+
+    cont_snr = nanmedian(I_spax ./ σ_spax)
     n = 1
-    while res.niter < 5 
+    while (res.niter < 5) && (cont_snr > 3)
         @warn "LM Solver is stuck on the initial state for the continuum+lines fit of spaxel $spaxel. Jittering starting params..."
         # Jitter the starting parameters a bit
         jit_lo = (lower_bounds .- p₁) ./ 20  # defined to be negative
@@ -2538,7 +2563,7 @@ function fit_cube!(cube_fitter::CubeFitter)
 
     if cube_fitter.plot_maps
         @info "===> Plotting parameter maps... <==="
-        plot_parameter_maps(cube_fitter, param_maps)
+        plot_parameter_maps(cube_fitter, param_maps, snr_thresh=cube_fitter.map_snr_thresh)
     end
 
     if cube_fitter.save_fits

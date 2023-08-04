@@ -461,7 +461,7 @@ function calculate_statistical_errors!(cube::DataCube, Δ::Union{Integer,Nothing
         # Statistical uncertainties based on the local RMS of the residuals with a cubic spline fit
         σ_stat = zeros(l_mask)
         for i in 1:l_mask
-            indices = sortperm(abs.((1:l_mask) .- i))[1:60]
+            indices = sortperm(abs.((1:l_mask) .- i))[1:min(60,l_mask)]
             σ_stat[i] = std(I[.~mask][indices] .- I_spline[.~mask][indices])
         end
         # We insert at the locations of the lines since the cubic spline does not include them
@@ -1268,8 +1268,12 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
         σ_out[:, :, wsum+1:wsum+wi_size] .= σF_out ./ Ω_out
 
         # Use nearest-neighbor interpolation for the mask since it's a binary 1 or 0
-        mask_out_temp = permutedims(py_reproject.reproject_interp((mask_in, obs.channels[ch_in].wcs), 
-            wcs_optimal, (size(mask_in, 1), size_optimal[2], size_optimal[1]), order="nearest-neighbor", return_footprint=false), (3,2,1))
+        if method != :none
+            mask_out_temp = permutedims(py_reproject.reproject_interp((mask_in, obs.channels[ch_in].wcs), 
+                wcs_optimal, (size(mask_in, 1), size_optimal[2], size_optimal[1]), order="nearest-neighbor", return_footprint=false), (3,2,1))
+        else
+            mask_out_temp = permutedims(mask_in, (3,2,1))
+        end
 
         # Set all NaNs to 1s for the mask (i.e. they are masked out)
         mask_out_temp[.!isfinite.(mask_out_temp) .| .!isfinite.(I_out[:, :, wsum+1:wsum+wi_size]) .| 

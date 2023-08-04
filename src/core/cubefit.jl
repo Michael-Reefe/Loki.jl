@@ -656,6 +656,7 @@ one with the additional profile, in order to include the additional profile in t
 - `linemask_overrides::Vector{Tuple{T,T}}`: Optional list of tuples specifying (min, max) wavelength ranges that will be forcibly 
     added to the line mask. This is different from the `user_mask` option since it only applies to the continuum fitting step but
     will be ignored during the line fitting step.
+- `map_snr_thresh::T`: The SNR threshold below which to mask out spaxels from parameter maps for emission lines.
 
 ## Best fit parameters
 - `p_init_cont::Vector{T}`: The best-fit continuum parameters for the initial fit to the sum of all spaxels.
@@ -759,6 +760,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     linemask_n_inc_thresh::S
     linemask_thresh::T
     linemask_overrides::Vector{Tuple{T,T}}
+    map_snr_thresh::T
 
     p_init_cont::Vector{T}
     p_init_line::Vector{T}
@@ -847,6 +849,9 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
         end
         if !haskey(out, :linemask_overrides)
             out[:linemask_overrides] = Tuple[]
+        end
+        if !haskey(out, :map_snr_thresh)
+            out[:map_snr_thresh] = 3.
         end
 
         #############################################################
@@ -1162,7 +1167,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             n_ssps, ssp_λ, ssp_templates, feii_templates_fft, velscale, vsyst_ssp, vsyst_feii, npad_feii, n_lines, n_acomps, n_comps, lines, tied_kinematics, tie_voigt_mixing, 
             voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, out[:cosmology], flexible_wavesol, out[:n_bootstrap], out[:random_seed], out[:line_test_lines], 
             out[:line_test_threshold], out[:plot_line_test], out[:linemask_delta], out[:linemask_n_inc_thresh], out[:linemask_thresh], out[:linemask_overrides], 
-            p_init_cont, p_init_line, p_init_pahtemp)
+            out[:map_snr_thresh], p_init_cont, p_init_line, p_init_pahtemp)
     end
 
 end
@@ -1265,8 +1270,8 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, I::Vector{<:Real}, i
     if !isnothing(cube_fitter.extinction_map) && !init
         ext_lock[1] = true
     end
-    # Also lock if the continuum is close to 0
-    if nanmedian(I) ≤ 0.
+    # Also lock if the continuum is within 1 std dev of 0
+    if nanmedian(I) ≤ std(I)
         ext_lock[1:4] .= true
     end
 
@@ -1384,7 +1389,6 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         p₀ = copy(cube_fitter.p_init_cont)
         pah_frac = copy(cube_fitter.p_init_pahtemp)
 
-        t = cube_fitter.n_templates > 0
         # pull out optical depth that was pre-fit
         # τ_97_0 = cube_fitter.τ_guess[parse(Int, cube_fitter.cube.channel)][spaxel]
         # max_τ = cube_fitter.continuum.τ_97.limits[2]
@@ -1396,26 +1400,26 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         # max_amp = 1 / exp(-max_τ)
 
         # Stellar amplitude (rescaled)
-        p₀[1] = !t ? p₀[1] * scale : 0.
+        p₀[1] = p₀[1] * scale 
         pᵢ = 3
 
         # Dust continuum amplitudes (rescaled)
         for _ ∈ 1:cube_fitter.n_dust_cont
-            p₀[pᵢ] = !t ? p₀[pᵢ] * scale : 0.
+            p₀[pᵢ] = p₀[pᵢ] * scale 
             pᵢ += 2
         end
 
         # Power law amplitudes (NOT rescaled)
         for _ ∈ 1:cube_fitter.n_power_law
-            p₀[pᵢ] = !t ? p₀[pᵢ] : 0.
+            # p₀[pᵢ] = p₀[pᵢ] 
             pᵢ += 2
         end
 
         # Set optical depth based on the initial guess or the initial fit (whichever is larger)
         p₀[pᵢ] = max(cube_fitter.continuum.τ_97.value, p₀[pᵢ])
 
-        # Set τ_9.7 and τ_CH to 0 if the continuum is close to 0
-        if nanmedian(I) ≤ 0.
+        # Set τ_9.7 and τ_CH to 0 if the continuum is within 1 std dev of 0
+        if nanmedian(I) ≤ std(I)
             p₀[pᵢ] = 0.
             p₀[pᵢ+2] = 0.
         end
@@ -1538,8 +1542,8 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
     dλ = (λ[end] - λ[1]) / length(λ)
     deps = sqrt(eps())
 
-    stellar_dstep = [1e-6, 1e-4]
-    dc_dstep = vcat([[1e-6, 1e-4] for _ in continuum.T_dc]...)
+    stellar_dstep = [deps, 1e-4]
+    dc_dstep = vcat([[deps, 1e-4] for _ in continuum.T_dc]...)
     pl_dstep = vcat([[deps, deps] for _ in continuum.α]...)
     df_dstep = Float64[]
     for n in 1:length(cube_fitter.dust_features.names)
@@ -1550,7 +1554,7 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
     end
     ab_dstep = vcat([[deps, dλ/10/mi.value, dλ/1000/fi.value] for (mi, fi) in zip(cube_fitter.abs_features.mean, cube_fitter.abs_features.fwhm)]...)
     if cube_fitter.fit_sil_emission
-        hd_dstep = [1e-6, 1e-4, deps, deps, deps, dλ/10/continuum.sil_peak.value]
+        hd_dstep = [deps, 1e-4, deps, deps, deps, dλ/10/continuum.sil_peak.value]
     else
         hd_dstep = []
     end
