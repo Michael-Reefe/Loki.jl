@@ -18,6 +18,7 @@ using EllipsisNotation
 using SpecialFunctions
 using FFTW
 using Polynomials
+using NLsolve
 
 # Optimization packages
 using Optim

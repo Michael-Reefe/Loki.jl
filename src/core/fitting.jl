@@ -231,6 +231,12 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         pars_0 = p1_boots
     end
 
+    # Constrain optical depth to be at least 80% of the guess
+    if cube_fitter.guess_tau
+        pₑ = 3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law
+        plims[pₑ] = (0.8 * pars_0[pₑ], plims[pₑ][2]) 
+    end
+
     # Sort parameters by those that are locked and those that are unlocked
     pfix = pars_0[lock]
     pfree = pars_0[.~lock]
@@ -444,6 +450,12 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
             (cube_fitter.fit_sil_emission ? 6 : 0)+cube_fitter.n_templates)], p1_boots[end-1:end])
         pars_2 = p1_boots[(3+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+3*cube_fitter.n_abs_feat+
             (cube_fitter.fit_sil_emission ? 6 : 0)+cube_fitter.n_templates):end-2]
+    end
+
+    # Constrain optical depth to be at least 80% of the guess
+    if cube_fitter.guess_tau
+        pₑ = 3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law
+        plims_1[pₑ] = (0.8 * pars_1[pₑ], plims_1[pₑ][2])
     end
 
     # Sort parameters by those that are locked and those that are unlocked

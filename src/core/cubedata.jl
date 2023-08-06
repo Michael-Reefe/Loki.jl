@@ -431,7 +431,7 @@ fit to the flux, within a small window (60 pixels). Emission lines are masked ou
 """
 function calculate_statistical_errors!(cube::DataCube, Δ::Union{Integer,Nothing}=nothing, 
     n_inc_thresh::Union{Integer,Nothing}=nothing, thresh::Union{Real,Nothing}=nothing,
-    overrides::Vector{Tuple{T,T}}=Vector{Tuple{Real,Real}}()) where {T<:Real}
+    overrides::Vector{Tuple{T,T}}=Vector{Tuple{Real,Real}}(); median::Bool=false) where {T<:Real}
 
     λ = cube.λ
     if isnothing(Δ)
@@ -474,6 +474,9 @@ function calculate_statistical_errors!(cube::DataCube, Δ::Union{Integer,Nothing
         # σ = hypot.(σ, σ_stat)
 
         # Replace the cube's error with the statistical errors
+        if median
+            σ_stat .= nanmedian(σ_stat)
+        end
         cube.σ[spaxel, :] .= σ_stat
     end
 

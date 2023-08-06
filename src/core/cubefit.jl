@@ -573,7 +573,10 @@ specific emission lines of interest).
 - `extinction_map::Union{Matrix{T},Nothing}`: An optional map of estimated extinction values. For MIR spectra, this is interpreted 
 as tau_9.7 values, whereas for optical spectra it is interpreted as E(B-V) values. The fits will be locked to the value at the 
 corresponding spaxel.
+- `fit_stellar_continuum::Bool`: Whether or not to fit MIR stellar continuum
 - `fit_sil_emission::Bool`: Whether or not to fit MIR hot silicate dust emission
+- `guess_tau::Bool`: Whether or not to guess the optical depth at 9.7 microns by interpolating between PAH-free parts of the 
+    continuum at 5.8 microns and 13.7 microns (must have enough spectral coverage). The fitted value will then be constrained within 20%.
 - `fit_opt_na_feii::Bool`: Whether or not to fit optical narrow Fe II emission
 - `fit_opt_br_feii::Bool`: Whether or not to fit optical broad Fe II emission
 - `fit_all_samin::Bool`: Whether or not to fit all spaxels with simulated annealing
@@ -694,6 +697,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     extinction_map::Union{Matrix{T},Nothing}
     fit_stellar_continuum::Bool
     fit_sil_emission::Bool
+    guess_tau::Bool
     fit_opt_na_feii::Bool
     fit_opt_br_feii::Bool
     fit_all_samin::Bool
@@ -852,6 +856,9 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
         end
         if !haskey(out, :map_snr_thresh)
             out[:map_snr_thresh] = 3.
+        end
+        if !haskey(out, :guess_tau)
+            out[:guess_tau] = false
         end
 
         #############################################################
@@ -1161,8 +1168,8 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
         ctype = isnothing(feii_templates_fft) ? ComplexF64 : eltype(feii_templates_fft)
         new{typeof(z), typeof(n_lines), ctype}(cube, z, name, spectral_region, out[:user_mask], out[:plot_spaxels], out[:plot_maps], out[:plot_range], 
             out[:parallel], out[:save_fits], out[:save_full_model], out[:overwrite], out[:track_memory], out[:track_convergence], out[:make_movies], 
-            out[:extinction_curve], out[:extinction_screen], extinction_map, out[:fit_stellar_continuum], out[:fit_sil_emission], out[:fit_opt_na_feii], out[:fit_opt_br_feii], 
-            out[:fit_all_samin], out[:use_pah_templates], pah_template_map, out[:fit_joint], out[:fit_uv_bump], out[:fit_covering_frac], 
+            out[:extinction_curve], out[:extinction_screen], extinction_map, out[:fit_stellar_continuum], out[:fit_sil_emission], out[:guess_tau], out[:fit_opt_na_feii], 
+            out[:fit_opt_br_feii], out[:fit_all_samin], out[:use_pah_templates], pah_template_map, out[:fit_joint], out[:fit_uv_bump], out[:fit_covering_frac], 
             continuum, n_dust_cont, n_power_law, n_dust_features, n_abs_features, n_templates, out[:templates], out[:template_names], dust_features, abs_features, abs_taus, 
             n_ssps, ssp_λ, ssp_templates, feii_templates_fft, velscale, vsyst_ssp, vsyst_feii, npad_feii, n_lines, n_acomps, n_comps, lines, tied_kinematics, tie_voigt_mixing, 
             voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, out[:cosmology], flexible_wavesol, out[:n_bootstrap], out[:random_seed], out[:line_test_lines], 
@@ -1389,7 +1396,40 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         p₀ = copy(cube_fitter.p_init_cont)
         pah_frac = copy(cube_fitter.p_init_pahtemp)
 
-        # pull out optical depth that was pre-fit
+        # guess optical depth from the dip in the continuum level
+        if cube_fitter.guess_tau
+            i1 = nanmedian(I[5.75 .< λ .< 6.0])
+            i2 = nanmedian(I[13.5 .< λ .< 14.0])
+            m = (i2 - i1) / (13.75 - 5.875)
+            contin_unextinct = i1 + m * (10.0 - 5.875)  # linear extrapolation over the silicate feature
+            contin_extinct = clamp(nanmedian(I[9.9 .< λ .< 10.1]), 0., Inf)
+            # Optical depth at 10 microns
+            r = contin_extinct / contin_unextinct
+            tau_10 = r > 0 ? clamp(-log(r), continuum.τ_97.limits...) : 0.
+            if !cube_fitter.extinction_screen && r > 0
+                # solve nonlinear equation
+                f(τ) = r - (1 - exp(-τ[1]))/τ[1]
+                soln = nlsolve(f, [tau_10])
+                tau_10 = clamp(soln.zero[1], continuum.τ_97.limits...)
+            end
+
+            pₑ = 3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law
+            # Get the extinction curve
+            if cube_fitter.extinction_curve == "d+"
+                ext_10 = τ_dp([10.0], p₀[pₑ+3])[1]
+            elseif cube_fitter.extinction_curve == "kvt"
+                ext_10 = τ_kvt([10.0], p₀[pₑ+3])[1]
+            elseif cube_fitter.extinction_curve == "ct"
+                ext_10 = τ_ct([10.0])[1]
+            elseif cube_fitter.extinction_curve == "ohm"
+                ext_10 = τ_ohm([10.0])[1]
+            else
+                error("Unrecognized extinction curve: $(cube_fitter.extinction_curve)")
+            end
+            # Convert tau at 10 microns to tau at 9.7 microns
+            tau_guess = clamp(tau_10 / ext_10, continuum.τ_97.limits...)
+        end
+
         # τ_97_0 = cube_fitter.τ_guess[parse(Int, cube_fitter.cube.channel)][spaxel]
         # max_τ = cube_fitter.continuum.τ_97.limits[2]
 
@@ -1423,6 +1463,11 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
             p₀[pᵢ] = 0.
             p₀[pᵢ+2] = 0.
         end
+        # Set τ_9.7 to the guess if the guess_tau flag is set
+        if cube_fitter.guess_tau
+            p₀[pᵢ] = tau_guess
+        end
+
         # Override if an extinction_map was provided
         if !isnothing(cube_fitter.extinction_map)
             @debug "Using the provided τ_9.7 values from the extinction_map and rescaling starting point"

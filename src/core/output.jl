@@ -778,9 +778,8 @@ automtically using the `name_i` parameter.
 """
 function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::String, Ω::Float64, z::Float64, psf_fwhm::Float64,
     cosmo::Cosmology.AbstractCosmology, python_wcs::Union{PyObject,Nothing}; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, 
-    snr_thresh::Float64=3., cmap::PyObject=py_colormap.cubehelix, line_latex::Union{String,Nothing}=nothing, disable_axes::Bool=true,
-    disable_colorbar::Bool=false, modify_ax::Union{Tuple{PyObject,PyObject},Nothing}=nothing, 
-    colorscale_limits::Union{Tuple{<:Real,<:Real},Nothing}=nothing, custom_bunit::Union{LaTeXString,Nothing}=nothing)
+    snr_thresh::Float64=3., cmap=py_colormap.cubehelix, line_latex::Union{String,Nothing}=nothing, disable_axes::Bool=true,
+    disable_colorbar::Bool=false, modify_ax=nothing, colorscale_limits=nothing, custom_bunit::Union{LaTeXString,Nothing}=nothing)
 
     # I know this is ugly but I couldn't figure out a better way to do it lmao
     if occursin("amp", name_i)
@@ -1116,6 +1115,7 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         # Get the components that make up the complex
         indiv_inds = findall(cube_fitter.dust_features.complexes .== dust_complex)
         indivs = [cube_fitter.dust_features.names[i] for i ∈ indiv_inds]
+        snr = dropdims(nanmaximum(cat([param_maps.dust_features[df][:SNR] for df ∈ indivs]..., dims=3), dims=3), dims=3)
 
         # Sum up individual component fluxes
         total_flux = log10.(sum([exp10.(param_maps.dust_features[df][:flux]) for df ∈ indivs]))
@@ -1125,14 +1125,14 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         comp_name = "PAH $dust_complex " * L"$\mu$m"
         save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "dust_features", "$(name_i).pdf")
         plot_parameter_map(total_flux, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
-            cube_fitter.cosmology, cube_fitter.cube.wcs, line_latex=comp_name)
+            cube_fitter.cosmology, cube_fitter.cube.wcs, line_latex=comp_name, snr_filter=snr, snr_thresh=snr_thresh)
 
         # Repeat for equivalent width
         total_eqw = sum([param_maps.dust_features[df][:eqw] for df ∈ indivs])
         name_i = "complex_$(dust_complex)_total_eqw"
         save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "dust_features", "$(name_i).pdf")
         plot_parameter_map(total_eqw, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
-            cube_fitter.cosmology, cube_fitter.cube.wcs, line_latex=comp_name)
+            cube_fitter.cosmology, cube_fitter.cube.wcs, line_latex=comp_name, snr_filter=snr, snr_thresh=snr_thresh)
     end
 
     # Absorption feature parameters
