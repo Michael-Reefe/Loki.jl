@@ -575,8 +575,9 @@ as tau_9.7 values, whereas for optical spectra it is interpreted as E(B-V) value
 corresponding spaxel.
 - `fit_stellar_continuum::Bool`: Whether or not to fit MIR stellar continuum
 - `fit_sil_emission::Bool`: Whether or not to fit MIR hot silicate dust emission
-- `guess_tau::Bool`: Whether or not to guess the optical depth at 9.7 microns by interpolating between PAH-free parts of the 
-    continuum at 5.8 microns and 13.7 microns (must have enough spectral coverage). The fitted value will then be constrained within 20%.
+- `guess_tau::Union{Vector{<:Tuple},Nothing}`: Whether or not to guess the optical depth at 9.7 microns by interpolating between 
+    PAH-free parts of the continuum at the given wavelength windows in microns (must have enough spectral coverage). 
+    The fitted value will then be constrained to be at least 80% of the inferred value.
 - `fit_opt_na_feii::Bool`: Whether or not to fit optical narrow Fe II emission
 - `fit_opt_br_feii::Bool`: Whether or not to fit optical broad Fe II emission
 - `fit_all_samin::Bool`: Whether or not to fit all spaxels with simulated annealing
@@ -697,7 +698,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     extinction_map::Union{Matrix{T},Nothing}
     fit_stellar_continuum::Bool
     fit_sil_emission::Bool
-    guess_tau::Bool
+    guess_tau::Union{Vector{<:Tuple},Nothing}
     fit_opt_na_feii::Bool
     fit_opt_br_feii::Bool
     fit_all_samin::Bool
@@ -858,7 +859,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             out[:map_snr_thresh] = 3.
         end
         if !haskey(out, :guess_tau)
-            out[:guess_tau] = false
+            out[:guess_tau] = nothing
         end
 
         #############################################################
@@ -1227,19 +1228,19 @@ end
 
 
 """
-    get_continuum_plimits(cube_fitter, λ, I, init; split)
+    get_continuum_plimits(cube_fitter, λ, I, σ, init; split)
 
 Get the continuum limits vector for a given CubeFitter object, possibly split up by the 2 continuum fitting steps.
 Also returns a boolean vector for which parameters are allowed to vary.
 """
-get_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, init::Bool; 
+get_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vector{<:Real}, init::Bool; 
     split::Bool=false) = cube_fitter.spectral_region == :MIR ? 
-    get_mir_continuum_plimits(cube_fitter, I, init; split=split) : 
+    get_mir_continuum_plimits(cube_fitter, I, σ, init; split=split) : 
     get_opt_continuum_plimits(cube_fitter, λ, I, init)
 
 
 # MIR implementation of the get_continuum_plimits function
-function get_mir_continuum_plimits(cube_fitter::CubeFitter, I::Vector{<:Real}, init::Bool; split::Bool=false)
+function get_mir_continuum_plimits(cube_fitter::CubeFitter, I::Vector{<:Real}, σ::Vector{<:Real}, init::Bool; split::Bool=false)
 
     dust_features = cube_fitter.dust_features
     abs_features = cube_fitter.abs_features
@@ -1278,7 +1279,7 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, I::Vector{<:Real}, i
         ext_lock[1] = true
     end
     # Also lock if the continuum is within 1 std dev of 0
-    if nanmedian(I) ≤ std(I)
+    if nanmedian(I) ≤ nanmedian(σ)
         ext_lock[1:4] .= true
     end
 
@@ -1370,20 +1371,20 @@ end
 
 
 """
-    get_continuum_initial_values(cube_fitter, spaxel, λ, I, N, init; split)
+    get_continuum_initial_values(cube_fitter, spaxel, λ, I, σ, N, init; split)
 
 Get the vectors of starting values and relative step sizes for the continuum fit for a given CubeFitter object. 
 Again, the vector may be split up by the 2 continuum fitting steps in the MIR case.
 """
-get_continuum_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, 
-    init::Bool; split::Bool=false) = cube_fitter.spectral_region == :MIR ? 
-    get_mir_continuum_initial_values(cube_fitter, spaxel, λ, I, N, init, split=split) :
+get_continuum_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real},
+    σ::Vector{<:Real}, N::Real, init::Bool; split::Bool=false) = cube_fitter.spectral_region == :MIR ? 
+    get_mir_continuum_initial_values(cube_fitter, spaxel, λ, I, σ, N, init, split=split) :
     get_opt_continuum_initial_values(cube_fitter, spaxel, λ, I, N, init)
 
 
 # MIR implementation of the get_continuum_initial_values function
 function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
-    N::Real, init::Bool; split::Bool=false)
+    σ::Vector{<:Real}, N::Real, init::Bool; split::Bool=false)
 
     continuum = cube_fitter.continuum
 
@@ -1397,11 +1398,11 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         pah_frac = copy(cube_fitter.p_init_pahtemp)
 
         # guess optical depth from the dip in the continuum level
-        if cube_fitter.guess_tau
-            i1 = nanmedian(I[5.75 .< λ .< 6.0])
-            i2 = nanmedian(I[13.5 .< λ .< 14.0])
-            m = (i2 - i1) / (13.75 - 5.875)
-            contin_unextinct = i1 + m * (10.0 - 5.875)  # linear extrapolation over the silicate feature
+        if !isnothing(cube_fitter.guess_tau)
+            i1 = nanmedian(I[cube_fitter.guess_tau[1][1] .< λ .< cube_fitter.guess_tau[1][2]])
+            i2 = nanmedian(I[cube_fitter.guess_tau[2][1] .< λ .< cube_fitter.guess_tau[2][2]])
+            m = (i2 - i1) / (mean(cube_fitter.guess_tau[2]) - mean(cube_fitter.guess_tau[1]))
+            contin_unextinct = i1 + m * (10.0 - mean(cube_fitter.guess_tau[1]))  # linear extrapolation over the silicate feature
             contin_extinct = clamp(nanmedian(I[9.9 .< λ .< 10.1]), 0., Inf)
             # Optical depth at 10 microns
             r = contin_extinct / contin_unextinct
@@ -1409,8 +1410,12 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
             if !cube_fitter.extinction_screen && r > 0
                 # solve nonlinear equation
                 f(τ) = r - (1 - exp(-τ[1]))/τ[1]
-                soln = nlsolve(f, [tau_10])
-                tau_10 = clamp(soln.zero[1], continuum.τ_97.limits...)
+                try
+                    soln = nlsolve(f, [tau_10])
+                    tau_10 = clamp(soln.zero[1], continuum.τ_97.limits...)
+                catch
+                    tau_10 = 0.
+                end
             end
 
             pₑ = 3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law
@@ -1459,12 +1464,12 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         p₀[pᵢ] = max(cube_fitter.continuum.τ_97.value, p₀[pᵢ])
 
         # Set τ_9.7 and τ_CH to 0 if the continuum is within 1 std dev of 0
-        if nanmedian(I) ≤ std(I)
+        if nanmedian(I) ≤ nanmedian(σ)
             p₀[pᵢ] = 0.
             p₀[pᵢ+2] = 0.
         end
         # Set τ_9.7 to the guess if the guess_tau flag is set
-        if cube_fitter.guess_tau
+        if !isnothing(cube_fitter.guess_tau)
             p₀[pᵢ] = tau_guess
         end
 
