@@ -666,10 +666,11 @@ for non-necessary line components to 0).
 - `Inorm::Vector{<:Real}`: The 1D normalized intensity vector
 - `σnorm::Vector{<:Real}`: The 1D normalized error vector
 - `lsf_interp_func::Function`: Interpolating function for the line-spread function (LSF) in km/s as a function of wavelength
+- `all_fail::Bool=false`: Flag to force all tests to automatically fail, fitting each line with one profile.
 """
 function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::CartesianIndex, p₀::Vector{<:Real}, 
     param_lock::BitVector, lower_bounds::Vector{<:Real}, upper_bounds::Vector{<:Real}, λnorm::Vector{<:Real},
-    Inorm::Vector{<:Real}, σnorm::Vector{<:Real}, lsf_interp_func::Function)
+    Inorm::Vector{<:Real}, σnorm::Vector{<:Real}, lsf_interp_func::Function; all_fail::Bool=false)
     @debug "Performing line component testing..."
 
     # Perform a test to see if each line with > 1 component really needs multiple components to be fit
@@ -728,7 +729,10 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
             reshape(cube_fitter.lines.h3[i, :], (1, cube_fitter.n_comps)),
             reshape(cube_fitter.lines.h4[i, :], (1, cube_fitter.n_comps)), 
             reshape(cube_fitter.lines.η[i, :], (1, cube_fitter.n_comps)),
-            cube_fitter.lines.combined
+            cube_fitter.lines.combined, 
+            cube_fitter.lines.rel_amp,
+            cube_fitter.lines.rel_voff,
+            cube_fitter.lines.rel_fwhm
         )
 
         if cube_fitter.plot_line_test
@@ -737,36 +741,49 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
         end
 
         # Perform fits for all possible numbers of components
-        last_chi2 = 0.
+        last_chi2 = test_chi2 = 0.
         test_stat = 0.
+        chi2_A = chi2_B = 0.
         profiles_to_fit = 0
         for np in 1:n_prof
             @debug "Testing $(cube_fitter.lines.names[i]) with $np components:"
+            if all_fail
+                @debug "all_fail flag has been set -- fitting with 1 profile"
+                profiles_to_fit = 1
+                break
+            end
 
             fit_func_test = (x, p) -> model_line_residuals(x, p, 1, np, line_object, cube_fitter.flexible_wavesol,
-                ones(sum(region)), lsf_interp_func, false)
+                ones(sum(region)), lsf_interp_func, cube_fitter.relative_flags, false)
 
             # Stop index
             pstop = pstart + sum(pcomps[1:np]) - 1
 
+            # Parameters
+            parameters = p₀[pstart:pstop]
+
             # Parameter info
             parinfo_test = CMPFit.Parinfo(pstop-pstart+1)
             for i in 1:(pstop-pstart+1)
-                parinfo_test[i].fixed = 0
+                parinfo_test[i].fixed = param_lock[pstart+i-1]
                 parinfo_test[i].limited = (1,1)
                 parinfo_test[i].limits = (lower_bounds[pstart+i-1], upper_bounds[pstart+i-1])
             end
             config_test = CMPFit.Config()
 
-
-            res_test = cmpfit(λnorm[region], Inorm[region], σnorm[region], fit_func_test, p₀[pstart:pstop], 
+            res_test = cmpfit(λnorm[region], Inorm[region], σnorm[region], fit_func_test, parameters, 
                                 parinfo=parinfo_test, config=config_test)
+
             # Save the reduced chi2 values
-            test_chi2 = res_test.bestnorm
+            test_model = fit_func_test(λnorm[region], res_test.param)
+            test_chi2 = res_test.bestnorm / res_test.dof
+            chi2_A = round(last_chi2, digits=3)
+            chi2_B = round(test_chi2, digits=3)
             test_stat = 1.0 - test_chi2/last_chi2
+            @debug "(A) Previous reduced chi^2 = $last_chi2"
+            @debug "(B) New reduced chi^2 = $test_chi2"
             @debug "Chi^2 ratio = $test_stat | Threshold = $(cube_fitter.line_test_threshold)"
 
-            test_model = fit_func_test(λnorm[region], res_test.param)
             if cube_fitter.plot_line_test
                 ax.plot(λnorm[region], test_model, linestyle="-", label="$np-component model")
             end
@@ -789,8 +806,9 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
             ax.set_title(cube_fitter.lines.latex[i])
             ax.legend(loc="upper right")
             ax.set_xlim(wbounds[1], wbounds[2])
-            ax.annotate("Result: $profiles_to_fit profile(s)\n" * L"$1-\chi^2_B/\chi^2_A = %$test_stat_final$", (0.05, 0.95), 
-                xycoords="axes fraction", ha="left", va="top")
+            ax.annotate("Result: $profiles_to_fit profile(s)\n" * L"$\tilde{\chi}^2_A = %$chi2_A$" * "\n" *
+                L"$\tilde{\chi}^2_B = %$chi2_B$" * "\n" * L"$1-\tilde{\chi}^2_B/\tilde{\chi}^2_A = %$test_stat_final$", 
+                (0.05, 0.95), xycoords="axes fraction", ha="left", va="top")
             ax.axvline(cube_fitter.lines.λ₀[i], linestyle="--", alpha=0.5, color="k", lw=0.5)
             folder = joinpath("output_$(cube_fitter.name)", "line_tests", "$(cube_fitter.lines.names[i])")
             if !isdir(folder)
@@ -983,10 +1001,10 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
         fit_func = (x, p, n) -> -ln_likelihood(
                                 Inorm, 
                                 model_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
-                                    cube_fitter.flexible_wavesol, ext_curve_norm, lsf_interp_func), 
+                                    cube_fitter.flexible_wavesol, ext_curve_norm, lsf_interp_func, cube_fitter.relative_flags), 
                                 σnorm)
         x_tol = 1e-5
-        f_tol = abs(fit_func(λnorm, p₀, 0) - fit_func(λnorm, clamp.(p₀ .- x_tol, lower_bounds, upper_bounds), 0))
+        f_tol = abs(fit_func(λnorm, p₀, 0) - fit_func(λnorm, clamp.(p₀ .* (1 .- x_tol), lower_bounds, upper_bounds), 0))
 
         # Replace infinite upper limits with finite ones so SAMIN can calculate convergence
         lb_samin = lbfree_tied
@@ -1029,7 +1047,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     ############################################# FIT WITH LEVMAR ###################################################
 
     fit_func_2 = (x, p, n) -> model_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
-        cube_fitter.flexible_wavesol, ext_curve_norm[1+n:end-n], lsf_interp_func)
+        cube_fitter.flexible_wavesol, ext_curve_norm[1+n:end-n], lsf_interp_func, cube_fitter.relative_flags)
     
     res = cmpfit(λnorm, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func_2), p₁, parinfo=parinfo, config=config)
 
@@ -1089,21 +1107,37 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
 
     # Final optimized fit
     I_model, comps = model_line_residuals(λ, popt, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
-        cube_fitter.flexible_wavesol, ext_curve, lsf_interp_func, true)
+        cube_fitter.flexible_wavesol, ext_curve, lsf_interp_func, cube_fitter.relative_flags, true)
     
     if init
         pᵢ = 1
         for i in 1:cube_fitter.n_lines
+            amp_main = popt[pᵢ]
+            voff_main = popt[pᵢ+1]
+            fwhm_main = (!isnothing(cube_fitter.lines.tied_voff[i, 1]) && cube_fitter.flexible_wavesol) ? popt[pᵢ+3] : popt[pᵢ+2]
             for j in 1:cube_fitter.n_comps
                 if !isnothing(cube_fitter.lines.profiles[i, j])
+                    # If additional components arent detected, set them to a small nonzero value
+                    replace_line = iszero(popt[pᵢ])
+                    if replace_line && (j > 1)
+                        popt[pᵢ] = cube_fitter.relative_flags[1] ? 0.01 : 0.01 * amp_main
+                    end
                     # If any line component is not detected, set the voff and fwhm to 0 (if it isn't tied)
-                    if iszero(popt[pᵢ]) && isnothing(cube_fitter.lines.tied_voff[i, j])
-                        popt[pᵢ+1] = 0. # voff
+                    if replace_line && isnothing(cube_fitter.lines.tied_voff[i, j])
+                        if j > 1
+                            popt[pᵢ+1] = cube_fitter.relative_flags[2] ? 0. : voff_main
+                        else
+                            popt[pᵢ+1] = voff_main = 0. # voff
+                        end
                         if isnothing(cube_fitter.lines.tied_fwhm[i, j])
-                            popt[pᵢ+2] = lower_bounds[pᵢ+2] # fwhm
+                            if j > 1
+                                popt[pᵢ+2] = cube_fitter.relative_flags[3] ? 1.0 : fwhm_main
+                            else
+                                popt[pᵢ+2] = fwhm_main = lower_bounds[pᵢ+2] # fwhm
+                            end
                         end
                     end 
-                    if iszero(popt[pᵢ]) && !isnothing(cube_fitter.lines.tied_voff[i, j]) && isone(j) && cube_fitter.flexible_wavesol
+                    if replace_line && !isnothing(cube_fitter.lines.tied_voff[i, j]) && isone(j) && cube_fitter.flexible_wavesol
                         popt[pᵢ+2] = 0. # individual voff
                     end
                     # Check if using a flexible_wavesol tied voff -> if so there is an extra voff parameter
@@ -1371,7 +1405,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
             cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission,
             false, templates_spax)
         Ilines = model_line_residuals(x, ptot_lines, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol,
-            ext_curve, lsf_interp_func)
+            ext_curve, lsf_interp_func, cube_fitter.relative_flags)
         
         # Return the sum of the models
         Icont .+ Ilines
@@ -1428,7 +1462,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
             cube_fitter.n_ssps, cube_fitter.ssp_λ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, 
             cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve)
         Ilines = model_line_residuals(x, ptot_lines, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol,
-            ext_curve_gas, lsf_interp_func)
+            ext_curve_gas, lsf_interp_func, cube_fitter.relative_flags)
 
         # Return the sum of the models
         Icont .+ Ilines
@@ -1456,7 +1490,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         # before refining the fit later with a LevMar local minimum routine
         fit_func = p -> -ln_likelihood(I_spax, fit_joint(λ_spax, p, n=0), σ_spax)
         x_tol = 1e-5
-        f_tol = abs(fit_func(p₀) - fit_func(clamp.(p₀ .- x_tol, lower_bounds, upper_bounds)))
+        f_tol = abs(fit_func(p₀) - fit_func(clamp.(p₀ .* (1 .- x_tol), lower_bounds, upper_bounds)))
 
         # Replace infinite upper limits with finite ones so SAMIN can calculate convergence
         lb_samin = lower_bounds
@@ -1571,7 +1605,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         ext_key = "attenuation_gas"
     end
     Ilines, comps_lines = model_line_residuals(λ, popt_lines, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol,
-        comps_cont[ext_key], lsf_interp_func, true)
+        comps_cont[ext_key], lsf_interp_func, cube_fitter.relative_flags, true)
 
     # Estimate PAH template amplitude
     if cube_fitter.spectral_region == :MIR
@@ -1987,14 +2021,8 @@ function plot_spaxel_fit(spectral_region::Symbol, λ_um::Vector{<:Real}, I::Vect
         pk = py_lineidplot.initial_plot_kwargs()
         pk["lw"] = 0.5
         pk["alpha"] = 0.5
-        if isnothing(range)
-            fig, ax1 = py_lineidplot.plot_line_ids(copy(λ), copy(I ./ norm .* factor), line_wave[line_annotate], line_latex[line_annotate], ax=ax1,
-                extend=false, label1_size=12, plot_kwargs=pk, annotate_kwargs=ak)
-        else
-            # Use all labels for the zoomed in plots since they are less likely to be overcrowded
-            fig, ax1 = py_lineidplot.plot_line_ids(copy(λ), copy(I ./ norm .* factor), line_wave, line_latex, ax=ax1,
-                extend=false, label1_size=12, plot_kwargs=pk, annotate_kwargs=ak)
-        end
+        fig, ax1 = py_lineidplot.plot_line_ids(copy(λ), copy(I ./ norm .* factor), line_wave[line_annotate], line_latex[line_annotate], ax=ax1,
+            extend=false, label1_size=12, plot_kwargs=pk, annotate_kwargs=ak)
 
         # Output file path creation
         out_folder = joinpath("output_$name", isnothing(range) ? "spaxel_plots" : joinpath("zoomed_plots", split(label, "_")[end]))
@@ -2079,15 +2107,15 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
             p_dust, p_lines, p_dust_err, p_lines_err = calculate_extra_parameters(λ, I, norm, comps, cube_fitter.n_dust_cont,
                 cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, 
                 cube_fitter.fit_sil_emission, cube_fitter.n_templates, cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, 
-                cube_fitter.lines, cube_fitter.flexible_wavesol, lsf_interp_func, popt_c, popt_l, perr_c, perr_l, comps[ext_key], mask_lines, 
-                I_spline, area_sr, !bootstrap_iter)
+                cube_fitter.lines, cube_fitter.flexible_wavesol, lsf_interp_func, cube_fitter.relative_flags, popt_c, popt_l, perr_c, 
+                perr_l, comps[ext_key], mask_lines, I_spline, area_sr, !bootstrap_iter)
             p_out = [popt_c; popt_l; p_dust; p_lines; χ2; dof]
             p_err = [perr_c; perr_l; p_dust_err; p_lines_err; 0.; 0.]
         else
             p_lines, p_lines_err = calculate_extra_parameters(λ, I, norm, comps, cube_fitter.n_ssps, cube_fitter.n_power_law,
                 cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, 
-                cube_fitter.lines, cube_fitter.flexible_wavesol, lsf_interp_func, popt_l, perr_l, comps[ext_key], mask_lines, I_spline, 
-                area_sr, !bootstrap_iter)
+                cube_fitter.lines, cube_fitter.flexible_wavesol, lsf_interp_func, cube_fitter.relative_flags, popt_l, perr_l, comps[ext_key], 
+                mask_lines, I_spline, area_sr, !bootstrap_iter)
             p_out = [popt_c; popt_l; p_lines; χ2; dof]
             p_err = [perr_c; perr_l; p_lines_err; 0.; 0.]
         end
@@ -2256,7 +2284,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                     ext_key = "attenuation_gas"
                 end
                 I_boot_line, comps_boot_line = model_line_residuals(λ, p_out[split1+1:split2], cube_fitter.n_lines, cube_fitter.n_comps,
-                    cube_fitter.lines, cube_fitter.flexible_wavesol, comps_boot_cont[ext_key], lsf_interp_func, true)
+                    cube_fitter.lines, cube_fitter.flexible_wavesol, comps_boot_cont[ext_key], lsf_interp_func, cube_fitter.relative_flags, true)
 
                 # Reconstruct the full model
                 I_model = I_boot_cont .+ I_boot_line

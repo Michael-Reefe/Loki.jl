@@ -14,6 +14,21 @@ get_area(ap::RectangularAnnulus) = ap.w_out * ap.h_out - ap.w_in * ap.h_in
 
 
 """
+    get_patches(aperture)
+
+Get matplotlib patches for a given Photometry.jl Aperture or Annulus object.
+"""
+get_patches(aperture::CircularAperture) = [plt.Circle((aperture.x-1, aperture.y-1), aperture.r, color="k", lw=2, fill=false)]
+get_patches(aperture::EllipticalAperture) = [plt.Ellipse((aperture.x-1, aperture.y-1), 2aperture.a, 2aperture.b, angle=aperture.θ, color="k", lw=2, fill=false)]
+get_patches(aperture::RectangularAperture) = [plt.Rectangle((aperture.x-1, aperture.y-1), aperture.w, aperture.h, angle=aperture.θ, color="k", lw=2, fill=false)]
+get_patches(aperture::CircularAnnulus) = [plt.Circle((aperture.x-1, aperture.y-1), aperture.r_in, color="k", lw=2, fill=false),
+                                          plt.Circle((aperture.x-1, aperture.y-1), aperture.r_out, color="k", lw=2, fill=false)]
+get_patches(aperture::EllipticalAnnulus) = [plt.Ellipse((aperture.x-1, aperture.y-1), 2aperture.a_in, 2aperture.b_in, angle=aperture.θ, color="k", lw=2, fill=false),
+                                            plt.Ellipse((aperture.x-1, aperture.y-1), 2aperture.a_out, 2aperture.b_out, angle=aperture.θ, color="k", lw=2, fill=false)]
+get_patches(aperture::RectangularAnnulus) = [plt.Rectangle((aperture.x-1, aperture.y-1), aperture.w_in, aperture.h_in, angle=aperture.θ, color="k", lw=2, fill=false),
+                                             plt.Rectangle((aperture.x-1, aperture.y-1), aperture.w_out, aperture.h_out, angle=aperture.θ, color="k", lw=2, fill=false)]
+
+"""
     centroid_com(data[, mask])
 
 Get the center of mass coordinates of a given n-dimensional array `data`.

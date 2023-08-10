@@ -578,7 +578,7 @@ function parse_lines()
         end
 
         # Determine the initial values for the additional components
-        acomp_amp_init = haskey(lines, "acomp_amp_init") ? lines["acomp_amp_init"] : repeat([0.25], lines["n_acomps"])
+        acomp_amp_init = haskey(lines, "acomp_amp_init") ? lines["acomp_amp_init"] : repeat([0.1], lines["n_acomps"])
         acomp_fwhm_init = haskey(lines, "acomp_fwhm_init") ? lines["acomp_fwhm_init"] : repeat([fwhm_init], lines["n_acomps"])
         acomp_voff_init = haskey(lines, "acomp_voff_init") ? lines["acomp_voff_init"] : repeat([voff_init], lines["n_acomps"])
         acomp_h3_init = haskey(lines, "acomp_h3_init") ? lines["acomp_h3_init"] : repeat([h3_init], lines["n_acomps"])
@@ -637,6 +637,13 @@ function parse_lines()
                         paramvars[param_str][3] = lines["parameters"][line]["$(param_str)_init"]
                     end
                 end
+                # Unpack paramvars back into the appropriate variables
+                voff_plim, voff_locked, voff_init = paramvars["voff"]
+                fwhm_plim, fwhm_locked, fwhm_init = paramvars["fwhm"]
+                h3_plim, h3_locked, h3_init = paramvars["h3"]
+                h4_plim, h4_locked, h4_init = paramvars["h4"]
+                η_plim, η_locked, η_init = paramvars["eta"]
+
                 # Repeat for acomp parameters
                 acomp_paramvars = Dict("acomp_amp" => [acomp_amp_plims, acomp_amp_locked, acomp_amp_init],
                                        "acomp_voff" => [acomp_voff_plims, acomp_voff_locked, acomp_voff_init],
@@ -664,6 +671,8 @@ function parse_lines()
                         end
                     end
                 end
+                # Dont need to unpack acomp_paramvars since they are vectors (modified in-place) and not individual variables
+
             end
         end
 
@@ -851,11 +860,22 @@ function parse_lines()
         combined = [[Symbol(ln) for ln in c] for c in combined]
     end
 
+    rel_amp = rel_voff = rel_fwhm = false
+    if haskey(lines, "rel_amp")
+        rel_amp = lines["rel_amp"]
+    end
+    if haskey(lines, "rel_voff")
+        rel_voff = lines["rel_voff"]
+    end
+    if haskey(lines, "rel_fwhm")
+        rel_fwhm = lines["rel_fwhm"]
+    end
+
     # create vectorized object for all the line data
     lines_out = TransitionLines(names[ss], latex[ss], annotate[ss], cent_vals[ss], hcat(prof_out[ss], acomp_prof_out[ss, :]), 
         hcat(tied_amp[ss], acomp_tied_amp[ss, :]), hcat(tied_voff[ss], acomp_tied_voff[ss, :]), hcat(tied_fwhm[ss], acomp_tied_fwhm[ss, :]), 
         acomp_amps[ss, :], hcat(voffs[ss], acomp_voffs[ss, :]), hcat(fwhms[ss], acomp_fwhms[ss, :]), hcat(h3s[ss], acomp_h3s[ss, :]), 
-        hcat(h4s[ss], acomp_h4s[ss, :]), hcat(ηs[ss], acomp_ηs[ss, :]), combined)
+        hcat(h4s[ss], acomp_h4s[ss, :]), hcat(ηs[ss], acomp_ηs[ss, :]), combined, rel_amp, rel_voff, rel_fwhm)
 
     @debug "#######################################################"
 

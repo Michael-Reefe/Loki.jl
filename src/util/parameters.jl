@@ -211,6 +211,11 @@ struct TransitionLines
     # Combined lines (for map purposes)
     combined::Vector{Vector{Symbol}}
 
+    # Relative flags for additional components
+    rel_amp::Bool
+    rel_voff::Bool
+    rel_fwhm::Bool
+
 end
 
 

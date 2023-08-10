@@ -25,6 +25,9 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
     cube_model = generate_cubemodel(cube_fitter, aperture)
     param_maps, param_errs = generate_parammaps(cube_fitter, aperture)
 
+    # Unpack relative flags for lines
+    rel_amp, rel_voff, rel_fwhm = cube_fitter.relative_flags
+
     # Loop over each spaxel and fill in the associated fitting parameters into the ParamMaps and CubeModel
     # I know this is long and ugly and looks stupid but it works for now and I'll make it pretty later
     spaxels = CartesianIndices(size(out_params)[1:2])
@@ -176,7 +179,7 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
                     ln = Symbol(cube_fitter.lines.names[k], "_$(j)")
                     amp = out_params[index, pᵢ]
                     amp_err = out_errs[index, pᵢ, :]
-                    if isone(j)
+                    if isone(j) || !rel_amp
                         param_maps.lines[ln][:amp][index] = amp
                         param_errs[1].lines[ln][:amp][index] = amp_err[1]
                         param_errs[2].lines[ln][:amp][index] = amp_err[2]
@@ -191,7 +194,7 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
                     # Voff parameter
                     voff = out_params[index, pᵢ+1]
                     voff_err = out_errs[index, pᵢ+1, :]
-                    if isone(j)
+                    if isone(j) || !rel_voff
                         param_maps.lines[ln][:voff][index] = voff
                         param_errs[1].lines[ln][:voff][index] = voff_err[1]
                         param_errs[2].lines[ln][:voff][index] = voff_err[2]
@@ -220,7 +223,7 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
                     end
 
                     # FWHM parameter
-                    if isone(j)
+                    if isone(j) || !rel_fwhm
                         param_maps.lines[ln][:fwhm][index] = fwhm
                         param_errs[1].lines[ln][:fwhm][index] = fwhm_err[1]
                         param_errs[2].lines[ln][:fwhm][index] = fwhm_err[2]
@@ -259,7 +262,7 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
 
             # End of line parameters: recreate the un-extincted (intrinsic) line model
             I_line, comps_l = model_line_residuals(cube_fitter.cube.λ, out_params[index, vᵢ:pᵢ-1], cube_fitter.n_lines, cube_fitter.n_comps,
-                cube_fitter.lines, cube_fitter.flexible_wavesol, comps_c["extinction"], lsf_interp_func, true)
+                cube_fitter.lines, cube_fitter.flexible_wavesol, comps_c["extinction"], lsf_interp_func, cube_fitter.relative_flags, true)
 
             # Combine the continuum and line models
             I_model = I_cont .+ I_line
@@ -410,6 +413,9 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
     cube_model = generate_cubemodel(cube_fitter, aperture)
     param_maps, param_errs = generate_parammaps(cube_fitter, aperture)
 
+    # Unpack relative flags for lines
+    rel_amp, rel_voff, rel_fwhm = cube_fitter.relative_flags
+
     # Loop over each spaxel and fill in the associated fitting parameters into the ParamMaps and CubeModel
     # I know this is long and ugly and looks stupid but it works for now and I'll make it pretty later
     spaxels = CartesianIndices(size(out_params)[1:2])
@@ -540,7 +546,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
                     ln = Symbol(cube_fitter.lines.names[k], "_$(j)")
                     amp = out_params[index, pᵢ]
                     amp_err = out_errs[index, pᵢ, :]
-                    if isone(j)
+                    if isone(j) || !rel_amp
                         param_maps.lines[ln][:amp][index] = amp
                         param_errs[1].lines[ln][:amp][index] = amp_err[1]
                         param_errs[2].lines[ln][:amp][index] = amp_err[2]
@@ -555,7 +561,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
                     # Voff parameter
                     voff = out_params[index, pᵢ+1]
                     voff_err = out_errs[index, pᵢ+1, :]
-                    if isone(j)
+                    if isone(j) || !rel_voff
                         param_maps.lines[ln][:voff][index] = voff
                         param_errs[1].lines[ln][:voff][index] = voff_err[1]
                         param_errs[2].lines[ln][:voff][index] = voff_err[2]
@@ -584,7 +590,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
                     end
 
                     # FWHM parameter
-                    if isone(j)
+                    if isone(j) || !rel_fwhm
                         param_maps.lines[ln][:fwhm][index] = fwhm
                         param_errs[1].lines[ln][:fwhm][index] = fwhm_err[1]
                         param_errs[2].lines[ln][:fwhm][index] = fwhm_err[2]
@@ -623,7 +629,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
 
             # End of line parameters: recreate the un-extincted (intrinsic) line model
             I_line, comps_l = model_line_residuals(cube_fitter.cube.λ, out_params[index, vᵢ:pᵢ-1], cube_fitter.n_lines, cube_fitter.n_comps,
-                cube_fitter.lines, cube_fitter.flexible_wavesol, comps_c["attenuation_gas"], lsf_interp_func, true)
+                cube_fitter.lines, cube_fitter.flexible_wavesol, comps_c["attenuation_gas"], lsf_interp_func, cube_fitter.relative_flags, true)
 
             # Combine the continuum and line models
             I_model = I_cont .+ I_line
@@ -1205,9 +1211,9 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
     for (k, name) ∈ enumerate(cube_fitter.lines.names)
         n_line_comps = sum(.!isnothing.(cube_fitter.lines.profiles[k, :]))
         wave_i = cube_fitter.lines.λ₀[k]
-        snr_filter = param_maps.lines[Symbol(name, "_1")][:SNR]
         if n_line_comps > 1
             component_keys = [Symbol(name, "_$(j)") for j in 1:n_line_comps]
+            snr_filter = dropdims(maximum(cat([param_maps.lines[comp][:SNR] for comp in component_keys]..., dims=3), dims=3), dims=3)
 
             # Total flux
             total_flux = log10.(sum([exp10.(param_maps.lines[comp][:flux]) for comp in component_keys]))
@@ -1403,9 +1409,9 @@ function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
     for (k, name) ∈ enumerate(cube_fitter.lines.names)
         n_line_comps = sum(.!isnothing.(cube_fitter.lines.profiles[k, :]))
         wave_i = cube_fitter.lines.λ₀[k]
-        snr_filter = param_maps.lines[Symbol(name, "_1")][:SNR]
         if n_line_comps > 1
             component_keys = [Symbol(name, "_$(j)") for j in 1:n_line_comps]
+            snr_filter = dropdims(maximum(cat([param_maps.lines[comp][:SNR] for comp in component_keys]..., dims=3), dims=3), dims=3)
 
             # Total flux
             total_flux = log10.(sum([exp10.(param_maps.lines[comp][:flux]) for comp in component_keys]))

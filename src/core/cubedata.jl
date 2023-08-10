@@ -646,14 +646,10 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
             bbox=Dict(:facecolor => "white", :edgecolor => "white", :pad => 5.0))    
 
         if !isnothing(aperture)
-            if aperture isa CircularAperture
-                ap_patch = plt.Circle((aperture.x-1, aperture.y-1), aperture.r, color="k", lw=2, fill=false)
-            elseif aperture isa EllipticalAperture
-                ap_patch = plt.Ellipse((aperture.x-1, aperture.y-1), 2aperture.a, 2aperture.b, aperture.θ, color="k", lw=2, fill=false)
-            elseif aperture isa RectangularAperture
-                ap_patch = plt.Rectangle((aperture.x-1, aperture.y-1), aperture.w, aperture.h, aperture.θ, color="k", lw=2, fill=false)
+            patches = get_patches(aperture)
+            for patch in patches
+                ax1.add_patch(patch)
             end
-            ax1.add_patch(ap_patch)
         end
 
     end
@@ -687,14 +683,10 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
             bbox=Dict(:facecolor => "white", :edgecolor => "white", :pad => 5.0))
 
         if !isnothing(aperture)
-            if aperture isa CircularAperture
-                ap_patch = plt.Circle((aperture.x, aperture.y), aperture.r, color="k", lw=2, fill=false)
-            elseif aperture isa EllipticalAperture
-                ap_patch = plt.Ellipse((aperture.x, aperture.y), 2aperture.a, 2aperture.b, angle=aperture.θ, color="k", lw=2, fill=false)
-            elseif aperture isa RectangularAperture
-                ap_patch = plt.Rectangle((aperture.x, aperture.y), aperture.w, aperture.h, angle=aperture.θ, color="k", lw=2, fill=false)
+            patches = get_patches(aperture)
+            for patch in patches
+                ax2.add_patch(patch)
             end
-            ax2.add_patch(ap_patch)
         end
 
     end

@@ -1686,7 +1686,7 @@ end
 
 """
     model_line_residuals(λ, params, n_lines, n_comps, lines, flexible_wavesol, ext_curve, lsf,
-        return_components) 
+        relative_flags, return_components) 
 
 Create a model of the emission lines at the given wavelengths `λ`, given the parameter vector `params`.
 
@@ -1703,16 +1703,21 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 wavelength solution in the data
 - `ext_curve::Vector{<:Real}`: The extinction curve fit with model_{mir|opt}_continuum
 - `lsf::Function`: A function giving the FWHM of the line-spread function in km/s as a function of rest-frame wavelength in microns.
+- `relative_flags::BitVector`: BitVector giving flags for whether the amp, voff, and fwhm of additional line profiles should be
+    parametrized relative to the main profile or not.
 - `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
 addition to the overall fit
 """
 function model_line_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, n_lines::S, n_comps::S, lines::TransitionLines, 
-    flexible_wavesol::Bool, ext_curve::Vector{<:Real}, lsf::Function, return_components::Bool) where {S<:Integer}
+    flexible_wavesol::Bool, ext_curve::Vector{<:Real}, lsf::Function, relative_flags::BitVector, return_components::Bool) where {S<:Integer}
 
     # Prepare outputs
     out_type = eltype(params)
     comps = Dict{String, Vector{out_type}}()
     contin = zeros(out_type, length(λ))
+
+    # Flags for additional components being relative
+    rel_amp, rel_voff, rel_fwhm = relative_flags
 
     pᵢ = 1
     # Add emission lines
@@ -1749,12 +1754,18 @@ function model_line_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, n_line
                     amp_1 = amp
                     voff_1 = voff
                     fwhm_1 = fwhm
-                # For the additional components, we parametrize them this way to essentially give them soft constraints
+                # For the additional components, we (optionally) parametrize them this way to essentially give them soft constraints
                 # relative to the primary component
                 else
-                    amp *= amp_1
-                    voff += voff_1
-                    fwhm *= fwhm_1
+                    if rel_amp
+                        amp *= amp_1
+                    end
+                    if rel_voff
+                        voff += voff_1
+                    end
+                    if rel_fwhm
+                        fwhm *= fwhm_1
+                    end
                 end
 
                 # Broaden the FWHM by the instrumental FWHM at the location of the line
@@ -1799,11 +1810,14 @@ end
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
 function model_line_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, n_lines::S, n_comps::S, lines::TransitionLines, 
-    flexible_wavesol::Bool, ext_curve::Vector{<:Real}, lsf::Function) where {S<:Integer}
+    flexible_wavesol::Bool, ext_curve::Vector{<:Real}, lsf::Function, relative_flags::BitVector) where {S<:Integer}
 
     # Prepare outputs
     out_type = eltype(params)
     contin = zeros(out_type, length(λ))
+
+    # Flags for additional components being relative
+    rel_amp, rel_voff, rel_fwhm = relative_flags
 
     pᵢ = 1
     # Add emission lines
@@ -1840,12 +1854,18 @@ function model_line_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, n_line
                     amp_1 = amp
                     voff_1 = voff
                     fwhm_1 = fwhm
-                # For the additional components, we parametrize them this way to essentially give them soft constraints
+                # For the additional components, we (optionally) parametrize them this way to essentially give them soft constraints
                 # relative to the primary component
                 else
-                    amp *= amp_1
-                    voff += voff_1
-                    fwhm *= fwhm_1
+                    if rel_amp
+                        amp *= amp_1
+                    end
+                    if rel_voff
+                        voff += voff_1
+                    end
+                    if rel_fwhm
+                        fwhm *= fwhm_1
+                    end
                 end
 
                 # Broaden the FWHM by the instrumental FWHM at the location of the line
@@ -1892,7 +1912,7 @@ Currently this includes the integrated intensity, equivalent width, and signal t
 function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, comps::Dict, n_dust_cont::Integer,
     n_power_law::Integer, n_dust_feat::Integer, dust_profiles::Vector{Symbol}, n_abs_feat::Integer, fit_sil_emission::Bool, 
     n_templates::Integer, n_lines::Integer, n_acomps::Integer, n_comps::Integer, lines::TransitionLines, flexible_wavesol::Bool, 
-    lsf::Function, popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}, 
+    lsf::Function, relative_flags::BitVector, popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}, 
     extinction::Vector{T}, mask_lines::BitVector, continuum::Vector{T}, 
     area_sr::Vector{T}, propagate_err::Bool=true) where {T<:Real}
 
@@ -1981,6 +2001,10 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     # Loop through lines
     p_lines = zeros(3n_lines+3n_acomps)
     p_lines_err = zeros(3n_lines+3n_acomps)
+
+    # Unpack the relative flags
+    rel_amp, rel_voff, rel_fwhm = relative_flags
+
     pₒ = pᵢ = 1
     for (k, λ0) ∈ enumerate(lines.λ₀)
         amp_1 = amp_1_err = voff_1 = voff_1_err = fwhm_1 = fwhm_1_err = nothing
@@ -2034,14 +2058,18 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                 # For the additional components, we parametrize them this way to essentially give them soft constraints
                 # relative to the primary component
                 else
-                    amp_err = propagate_err ? hypot(amp_1_err*amp, amp_err*amp_1) : 0.
-                    amp *= amp_1
-                    
-                    voff_err = propagate_err ? hypot(voff_err, voff_1_err) : 0.
-                    voff += voff_1
-
-                    fwhm_err = propagate_err ? hypot(fwhm_1_err*fwhm, fwhm_err*fwhm_1) : 0.
-                    fwhm *= fwhm_1
+                    if rel_amp
+                        amp_err = propagate_err ? hypot(amp_1_err*amp, amp_err*amp_1) : 0.
+                        amp *= amp_1
+                    end
+                    if rel_voff 
+                        voff_err = propagate_err ? hypot(voff_err, voff_1_err) : 0.
+                        voff += voff_1
+                    end
+                    if rel_fwhm
+                        fwhm_err = propagate_err ? hypot(fwhm_1_err*fwhm, fwhm_err*fwhm_1) : 0.
+                        fwhm *= fwhm_1
+                    end
                 end
 
                 # Broaden the FWHM by the instrumental FWHM at the location of the line
@@ -2117,8 +2145,8 @@ Currently this includes the integrated intensity, equivalent width, and signal t
 """
 function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, comps::Dict, n_ssps::Integer,
     n_power_law::Integer, fit_opt_na_feii::Bool, fit_opt_br_feii::Bool, n_lines::Integer, n_acomps::Integer, n_comps::Integer, 
-    lines::TransitionLines, flexible_wavesol::Bool, lsf::Function, popt_l::Vector{T}, perr_l::Vector{T}, extinction::Vector{T}, 
-    mask_lines::BitVector, continuum::Vector{T}, area_sr::Vector{T}, propagate_err::Bool=true) where {T<:Real}
+    lines::TransitionLines, flexible_wavesol::Bool, lsf::Function, relative_flags::BitVector, popt_l::Vector{T}, perr_l::Vector{T}, 
+    extinction::Vector{T}, mask_lines::BitVector, continuum::Vector{T}, area_sr::Vector{T}, propagate_err::Bool=true) where {T<:Real}
 
     @debug "Calculating extra parameters"
 
@@ -2131,6 +2159,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     # Loop through lines
     p_lines = zeros(3n_lines+3n_acomps)
     p_lines_err = zeros(3n_lines+3n_acomps)
+    rel_amp, rel_voff, rel_fwhm = relative_flags
     pₒ = pᵢ = 1
     for (k, λ0) ∈ enumerate(lines.λ₀)
         amp_1 = amp_1_err = voff_1 = voff_1_err = fwhm_1 = fwhm_1_err = nothing
@@ -2183,14 +2212,18 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                 # For the additional components, we parametrize them this way to essentially give them soft constraints
                 # relative to the primary component
                 else
-                    amp_err = propagate_err ? hypot(amp_1_err*amp, amp_err*amp_1) : 0.
-                    amp *= amp_1
-                    
-                    voff_err = propagate_err ? hypot(voff_err, voff_1_err) : 0.
-                    voff += voff_1
-
-                    fwhm_err = propagate_err ? hypot(fwhm_1_err*fwhm, fwhm_err*fwhm_1) : 0.
-                    fwhm *= fwhm_1
+                    if rel_amp
+                        amp_err = propagate_err ? hypot(amp_1_err*amp, amp_err*amp_1) : 0.
+                        amp *= amp_1
+                    end
+                    if rel_voff 
+                        voff_err = propagate_err ? hypot(voff_err, voff_1_err) : 0.
+                        voff += voff_1
+                    end
+                    if rel_fwhm
+                        fwhm_err = propagate_err ? hypot(fwhm_1_err*fwhm, fwhm_err*fwhm_1) : 0.
+                        fwhm *= fwhm_1
+                    end
                 end
 
                 # Broaden the FWHM by the instrumental FWHM at the location of the line

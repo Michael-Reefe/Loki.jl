@@ -624,6 +624,8 @@ at each point in the wavelength grid.
 - `n_lines::S`: The number of lines being fit
 - `n_acomps::S`: The summed total number of line profiles fit to all lines in the spectrum, including additional components.
 - `n_comps::S`: The maximum number of additional profiles that may be fit to any given line.
+- `relative_flags::BitVector`: Flags for whether additional line components should be parametrized relative to the primary component,
+    ordered as (amp, voff, fwhm) (global settings for all lines).
 - `lines::TransitionLines`: A TransitionLines struct containing parameters and tied information for the emission lines.
 
 ## Tied Kinematics
@@ -737,6 +739,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     n_lines::S
     n_acomps::S
     n_comps::S
+    relative_flags::BitVector
     lines::TransitionLines
 
     # Tied voffs
@@ -1016,7 +1019,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
         lines = TransitionLines(lines.names[ln_filt], lines.latex[ln_filt], lines.annotate[ln_filt], lines.λ₀[ln_filt], 
                                 lines.profiles[ln_filt, :], lines.tied_amp[ln_filt, :], lines.tied_voff[ln_filt, :], lines.tied_fwhm[ln_filt, :], 
                                 lines.acomp_amp[ln_filt, :], lines.voff[ln_filt, :], lines.fwhm[ln_filt, :], lines.h3[ln_filt, :], 
-                                lines.h4[ln_filt, :], lines.η[ln_filt, :], lines.combined)
+                                lines.h4[ln_filt, :], lines.η[ln_filt, :], lines.combined, lines.rel_amp, lines.rel_voff, lines.rel_fwhm)
         n_lines = length(lines.names)
         n_comps = size(lines.profiles, 2)
         n_acomps = sum(.!isnothing.(lines.profiles[:, 2:end]))
@@ -1030,6 +1033,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             end
         end
         @debug msg
+        relative_flags = BitVector([lines.rel_amp, lines.rel_voff, lines.rel_fwhm])
 
         # Remove unnecessary rows/keys from the tied_kinematics object after the lines have been filtered
         @debug "TiedKinematics before filtering: $tied_kinematics"
@@ -1172,8 +1176,8 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             out[:extinction_curve], out[:extinction_screen], extinction_map, out[:fit_stellar_continuum], out[:fit_sil_emission], out[:guess_tau], out[:fit_opt_na_feii], 
             out[:fit_opt_br_feii], out[:fit_all_samin], out[:use_pah_templates], pah_template_map, out[:fit_joint], out[:fit_uv_bump], out[:fit_covering_frac], 
             continuum, n_dust_cont, n_power_law, n_dust_features, n_abs_features, n_templates, out[:templates], out[:template_names], dust_features, abs_features, abs_taus, 
-            n_ssps, ssp_λ, ssp_templates, feii_templates_fft, velscale, vsyst_ssp, vsyst_feii, npad_feii, n_lines, n_acomps, n_comps, lines, tied_kinematics, tie_voigt_mixing, 
-            voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, out[:cosmology], flexible_wavesol, out[:n_bootstrap], out[:random_seed], out[:line_test_lines], 
+            n_ssps, ssp_λ, ssp_templates, feii_templates_fft, velscale, vsyst_ssp, vsyst_feii, npad_feii, n_lines, n_acomps, n_comps, relative_flags, lines, tied_kinematics, 
+            tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, out[:cosmology], flexible_wavesol, out[:n_bootstrap], out[:random_seed], out[:line_test_lines], 
             out[:line_test_threshold], out[:plot_line_test], out[:linemask_delta], out[:linemask_n_inc_thresh], out[:linemask_thresh], out[:linemask_overrides], 
             out[:map_snr_thresh], p_init_cont, p_init_line, p_init_pahtemp)
     end
@@ -1388,6 +1392,45 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
 
     continuum = cube_fitter.continuum
 
+    # guess optical depth from the dip in the continuum level
+    if !isnothing(cube_fitter.guess_tau)
+        i1 = nanmedian(I[cube_fitter.guess_tau[1][1] .< λ .< cube_fitter.guess_tau[1][2]])
+        i2 = nanmedian(I[cube_fitter.guess_tau[2][1] .< λ .< cube_fitter.guess_tau[2][2]])
+        m = (i2 - i1) / (mean(cube_fitter.guess_tau[2]) - mean(cube_fitter.guess_tau[1]))
+        contin_unextinct = i1 + m * (10.0 - mean(cube_fitter.guess_tau[1]))  # linear extrapolation over the silicate feature
+        contin_extinct = clamp(nanmedian(I[9.9 .< λ .< 10.1]), 0., Inf)
+        # Optical depth at 10 microns
+        r = contin_extinct / contin_unextinct
+        tau_10 = r > 0 ? clamp(-log(r), continuum.τ_97.limits...) : 0.
+        if !cube_fitter.extinction_screen && r > 0
+            # solve nonlinear equation
+            f(τ) = r - (1 - exp(-τ[1]))/τ[1]
+            try
+                soln = nlsolve(f, [tau_10])
+                tau_10 = clamp(soln.zero[1], continuum.τ_97.limits...)
+            catch
+                tau_10 = 0.
+            end
+        end
+
+        pₑ = 3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law
+        # Get the extinction curve
+        β = init ? continuum.β.value : cube_fitter.p_init_cont[pₑ+3]
+        if cube_fitter.extinction_curve == "d+"
+            ext_10 = τ_dp([10.0], β)[1]
+        elseif cube_fitter.extinction_curve == "kvt"
+            ext_10 = τ_kvt([10.0], β)[1]
+        elseif cube_fitter.extinction_curve == "ct"
+            ext_10 = τ_ct([10.0])[1]
+        elseif cube_fitter.extinction_curve == "ohm"
+            ext_10 = τ_ohm([10.0])[1]
+        else
+            error("Unrecognized extinction curve: $(cube_fitter.extinction_curve)")
+        end
+        # Convert tau at 10 microns to tau at 9.7 microns
+        tau_guess = clamp(tau_10 / ext_10, continuum.τ_97.limits...)
+    end
+
     # Check if the cube fitter has initial fit parameters 
     if !init
 
@@ -1396,44 +1439,6 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         # Set the parameters to the best parameters
         p₀ = copy(cube_fitter.p_init_cont)
         pah_frac = copy(cube_fitter.p_init_pahtemp)
-
-        # guess optical depth from the dip in the continuum level
-        if !isnothing(cube_fitter.guess_tau)
-            i1 = nanmedian(I[cube_fitter.guess_tau[1][1] .< λ .< cube_fitter.guess_tau[1][2]])
-            i2 = nanmedian(I[cube_fitter.guess_tau[2][1] .< λ .< cube_fitter.guess_tau[2][2]])
-            m = (i2 - i1) / (mean(cube_fitter.guess_tau[2]) - mean(cube_fitter.guess_tau[1]))
-            contin_unextinct = i1 + m * (10.0 - mean(cube_fitter.guess_tau[1]))  # linear extrapolation over the silicate feature
-            contin_extinct = clamp(nanmedian(I[9.9 .< λ .< 10.1]), 0., Inf)
-            # Optical depth at 10 microns
-            r = contin_extinct / contin_unextinct
-            tau_10 = r > 0 ? clamp(-log(r), continuum.τ_97.limits...) : 0.
-            if !cube_fitter.extinction_screen && r > 0
-                # solve nonlinear equation
-                f(τ) = r - (1 - exp(-τ[1]))/τ[1]
-                try
-                    soln = nlsolve(f, [tau_10])
-                    tau_10 = clamp(soln.zero[1], continuum.τ_97.limits...)
-                catch
-                    tau_10 = 0.
-                end
-            end
-
-            pₑ = 3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law
-            # Get the extinction curve
-            if cube_fitter.extinction_curve == "d+"
-                ext_10 = τ_dp([10.0], p₀[pₑ+3])[1]
-            elseif cube_fitter.extinction_curve == "kvt"
-                ext_10 = τ_kvt([10.0], p₀[pₑ+3])[1]
-            elseif cube_fitter.extinction_curve == "ct"
-                ext_10 = τ_ct([10.0])[1]
-            elseif cube_fitter.extinction_curve == "ohm"
-                ext_10 = τ_ohm([10.0])[1]
-            else
-                error("Unrecognized extinction curve: $(cube_fitter.extinction_curve)")
-            end
-            # Convert tau at 10 microns to tau at 9.7 microns
-            tau_guess = clamp(tau_10 / ext_10, continuum.τ_97.limits...)
-        end
 
         # τ_97_0 = cube_fitter.τ_guess[parse(Int, cube_fitter.cube.channel)][spaxel]
         # max_τ = cube_fitter.continuum.τ_97.limits[2]
@@ -1535,7 +1540,7 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         # Dust continuum amplitudes
         λ_dc = clamp.([Wein(Ti.value) for Ti ∈ continuum.T_dc], minimum(λ), maximum(λ))
         A_dc = clamp.([cubic_spline(λ_dci) * N / Blackbody_ν(λ_dci, T_dci.value) for (λ_dci, T_dci) ∈ 
-            zip(λ_dc, continuum.T_dc)] .* (λ_dc ./ 9.7).^2 ./ 5., 0., Inf)
+            zip(λ_dc, continuum.T_dc)] .* (λ_dc ./ 9.7).^2 ./ (cube_fitter.n_dust_cont / 2), 0., Inf)
         A_dc .*= (length(temp_pars) > 0) ? 0.5 : 1.0
         
         # Power law amplitudes
@@ -1570,6 +1575,9 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         end
 
         extinction_pars = [continuum.τ_97.value, continuum.τ_ice.value, continuum.τ_ch.value, continuum.β.value]
+        if !isnothing(cube_fitter.guess_tau)
+            extinction_pars[1] = tau_guess
+        end
 
         # Initial parameter vector
         p₀ = Vector{Float64}(vcat(stellar_pars, dc_pars, pl_pars, extinction_pars, ab_pars, hd_pars, temp_pars, df_pars))
@@ -1902,19 +1910,19 @@ function pretty_print_mir_continuum_results(cube_fitter::CubeFitter, popt::Vecto
     msg *= "################# SPAXEL FIT RESULTS -- CONTINUUM ####################\n"
     msg *= "######################################################################\n"
     msg *= "\n#> STELLAR CONTINUUM <#\n"
-    msg *= "Stellar_amp: \t\t\t $(@sprintf "%.3e" popt[1]) +/- $(@sprintf "%.3e" perr[1]) [-] \t Limits: (0, Inf)\n"
+    msg *= "Stellar_amp: \t\t\t $(@sprintf "%.3g" popt[1]) +/- $(@sprintf "%.3g" perr[1]) [-] \t Limits: (0, Inf)\n"
     msg *= "Stellar_temp: \t\t\t $(@sprintf "%.0f" popt[2]) +/- $(@sprintf "%.3e" perr[2]) K \t (fixed)\n"
     pᵢ = 3
     msg *= "\n#> DUST CONTINUUM <#\n"
     for i ∈ 1:cube_fitter.n_dust_cont
-        msg *= "Dust_continuum_$(i)_amp: \t\t $(@sprintf "%.3e" popt[pᵢ]) +/- $(@sprintf "%.3e" perr[pᵢ]) [-] \t Limits: (0, Inf)\n"
+        msg *= "Dust_continuum_$(i)_amp: \t\t $(@sprintf "%.3g" popt[pᵢ]) +/- $(@sprintf "%.3g" perr[pᵢ]) [-] \t Limits: (0, Inf)\n"
         msg *= "Dust_continuum_$(i)_temp: \t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.3e" perr[pᵢ+1]) K \t\t\t (fixed)\n"
         msg *= "\n"
         pᵢ += 2
     end
     msg *= "\n#> POWER LAWS <#\n"
     for k ∈ 1:cube_fitter.n_power_law
-        msg *= "Power_law_$(k)_amp: \t\t $(@sprintf "%.3e" popt[pᵢ]) +/- $(@sprintf "%.3e" perr[pᵢ]) [x norm] \t Limits: (0, Inf)\n"
+        msg *= "Power_law_$(k)_amp: \t\t $(@sprintf "%.3g" popt[pᵢ]) +/- $(@sprintf "%.3g" perr[pᵢ]) [x norm] \t Limits: (0, Inf)\n"
         msg *= "Power_law_$(k)_index: \t\t $(@sprintf "%.3f" popt[pᵢ+1]) +/- $(@sprintf "%.3f" perr[pᵢ+1]) [-] \t Limits: " *
             "($(@sprintf "%.3f" continuum.α[k].limits[1]), $(@sprintf "%.3f" continuum.α[k].limits[2]))" *
             (continuum.α[k].locked ? " (fixed)" : "") * "\n"
@@ -1950,7 +1958,7 @@ function pretty_print_mir_continuum_results(cube_fitter::CubeFitter, popt::Vecto
     end 
     if cube_fitter.fit_sil_emission
         msg *= "\n#> HOT DUST <#\n"
-        msg *= "Hot_dust_amp: \t\t\t $(@sprintf "%.3e" popt[pᵢ]) +/- $(@sprintf "%.3e" perr[pᵢ]) [-] \t Limits: (0, Inf)\n"
+        msg *= "Hot_dust_amp: \t\t\t $(@sprintf "%.3g" popt[pᵢ]) +/- $(@sprintf "%.3g" perr[pᵢ]) [-] \t Limits: (0, Inf)\n"
         msg *= "Hot_dust_temp: \t\t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) K \t Limits: " *
             "($(@sprintf "%.0f" continuum.T_hot.limits[1]), $(@sprintf "%.0f" continuum.T_hot.limits[2]))" *
             (continuum.T_hot.locked ? " (fixed)" : "") * "\n"
@@ -2015,7 +2023,7 @@ function pretty_print_opt_continuum_results(cube_fitter::CubeFitter, popt::Vecto
     msg *= "\n#> STELLAR POPULATIONS <#\n"
     pᵢ = 1
     for i ∈ 1:cube_fitter.n_ssps
-        msg *= "SSP_$(i)_amp: \t\t\t $(@sprintf "%.3e" popt[pᵢ]) +/- $(@sprintf "%.3e" perr[pᵢ]) [x norm] \t Limits: (0, Inf)\n"
+        msg *= "SSP_$(i)_amp: \t\t\t $(@sprintf "%.3g" popt[pᵢ]) +/- $(@sprintf "%.3g" perr[pᵢ]) [x norm] \t Limits: (0, Inf)\n"
         msg *= "SSP_$(i)_age: \t\t\t $(@sprintf "%.3f" popt[pᵢ+1]) +/- $(@sprintf "%.3f" perr[pᵢ+1]) Gyr \t Limits: " *
             "($(@sprintf "%.3f" continuum.ssp_ages[i].limits[1]), $(@sprintf "%.3f" continuum.ssp_ages[i].limits[2]))" *
             (continuum.ssp_ages[i].locked ? " (fixed)" : "") * "\n"
@@ -2055,7 +2063,7 @@ function pretty_print_opt_continuum_results(cube_fitter::CubeFitter, popt::Vecto
     end
     msg *= "\n#> FE II EMISSION <#\n"
     if cube_fitter.fit_opt_na_feii
-        msg *= "na_feii_amp: \t\t\t $(@sprintf "%.3e" popt[pᵢ]) +/- $(@sprintf "%.3e" perr[pᵢ]) [x norm] \t Limits: (0, Inf)\n"
+        msg *= "na_feii_amp: \t\t\t $(@sprintf "%.3g" popt[pᵢ]) +/- $(@sprintf "%.3g" perr[pᵢ]) [x norm] \t Limits: (0, Inf)\n"
         msg *= "na_feii_vel: \t\t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) km/s \t Limits: " *
             "($(@sprintf "%.0f" continuum.na_feii_vel.limits[1]), $(@sprintf "%.0f" continuum.na_feii_vel.limits[2]))" * 
             (continuum.na_feii_vel.locked ? " (fixed)" : "") * "\n"
@@ -2065,7 +2073,7 @@ function pretty_print_opt_continuum_results(cube_fitter::CubeFitter, popt::Vecto
         pᵢ += 3
     end
     if cube_fitter.fit_opt_br_feii
-        msg *= "br_feii_amp: \t\t\t $(@sprintf "%.3e" popt[pᵢ]) +/- $(@sprintf "%.3e" perr[pᵢ]) [x norm] \t Limits: (0, Inf)\n"
+        msg *= "br_feii_amp: \t\t\t $(@sprintf "%.3g" popt[pᵢ]) +/- $(@sprintf "%.3g" perr[pᵢ]) [x norm] \t Limits: (0, Inf)\n"
         msg *= "br_feii_vel: \t\t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) km/s \t Limits: " *
             "($(@sprintf "%.0f" continuum.br_feii_vel.limits[1]), $(@sprintf "%.0f" continuum.br_feii_vel.limits[2]))" * 
             (continuum.br_feii_vel.locked ? " (fixed)" : "") * "\n"
@@ -2076,7 +2084,7 @@ function pretty_print_opt_continuum_results(cube_fitter::CubeFitter, popt::Vecto
     end
     msg *= "\n#> POWER LAWS <#\n"
     for j ∈ 1:cube_fitter.n_power_law
-        msg *= "PL_$(j)_amp: \t\t\t\t $(@sprintf "%.3e" popt[pᵢ]) +/- $(@sprintf "%.3e" perr[pᵢ]) [x norm] \t Limits: (0, Inf)\n"
+        msg *= "PL_$(j)_amp: \t\t\t\t $(@sprintf "%.3g" popt[pᵢ]) +/- $(@sprintf "%.3g" perr[pᵢ]) [x norm] \t Limits: (0, Inf)\n"
         msg *= "PL_$(j)_index: \t\t\t\t $(@sprintf "%.3f" popt[pᵢ+1]) +/- $(@sprintf "%.3f" perr[pᵢ+1]) [-] \t Limits: " *
             "($(@sprintf "%.3f" continuum.α[j].limits[1]), $(@sprintf "%.3f" continuum.α[j].limits[2]))" *
             (continuum.α[j].locked ? " (fixed)" : "") * "\n"
@@ -2412,6 +2420,8 @@ Print out a nicely formatted summary of the line fit results for a given CubeFit
 """
 function pretty_print_line_results(cube_fitter::CubeFitter, popt::Vector{<:Real}, perr::Vector{<:Real})
 
+    rel_amp, rel_voff, rel_fwhm = cube_fitter.relative_flags
+
     msg = "######################################################################\n"
     msg *= "############### SPAXEL FIT RESULTS -- EMISSION LINES #################\n"
     msg *= "######################################################################\n"
@@ -2421,8 +2431,9 @@ function pretty_print_line_results(cube_fitter::CubeFitter, popt::Vector{<:Real}
         for j ∈ 1:cube_fitter.n_comps
             if !isnothing(cube_fitter.lines.profiles[k, j])
                 nm = string(name) * "_$(j)"
-                msg *= "$(nm)_amp:\t\t\t $(@sprintf "%.3f" popt[pᵢ]) +/- $(@sprintf "%.3f" perr[pᵢ]) [x norm] \t Limits: (0, 1)\n"
-                msg *= "$(nm)_voff:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) " * (isone(j) ? "km/s" : "[+ voff_1]") * " \t " *
+                msg *= "$(nm)_amp:\t\t\t $(@sprintf "%.3f" popt[pᵢ]) +/- $(@sprintf "%.3f" perr[pᵢ]) " * ((isone(j) || !rel_amp) ? "[x norm]" : "[x amp_1]") * "\t " * 
+                    "Limits: " * (isone(j) ? "(0, 1)" : "($(@sprintf "%.3f" cube_fitter.lines.acomp_amp[k, j-1].limits[1]), $(@sprintf "%.3f" cube_fitter.lines.acomp_amp[k, j-1].limits[2]))") * "\n"
+                msg *= "$(nm)_voff:   \t\t $(@sprintf "%.0f" popt[pᵢ+1]) +/- $(@sprintf "%.0f" perr[pᵢ+1]) " * ((isone(j) || !rel_voff) ? "km/s" : "[+ voff_1]") * " \t " *
                     "Limits: ($(@sprintf "%.0f" cube_fitter.lines.voff[k, j].limits[1]), $(@sprintf "%.0f" cube_fitter.lines.voff[k, j].limits[2]))\n"
                 if !isnothing(cube_fitter.lines.tied_voff[k, j]) && cube_fitter.flexible_wavesol && isone(j)
                     msg *= "$(nm)_voff_indiv:   \t\t $(@sprintf "%.0f" popt[pᵢ+2]) +/- $(@sprintf "%.0f" perr[pᵢ+2]) km/s \t " *
@@ -2435,7 +2446,7 @@ function pretty_print_line_results(cube_fitter::CubeFitter, popt::Vector{<:Real}
                         msg *= "$(nm)_fwhm:   \t\t $(@sprintf "%.0f" popt[pᵢ+2]) +/- $(@sprintf "%.0f" perr[pᵢ+2]) km/s \t " *
                             "Limits: ($(@sprintf "%.0f" cube_fitter.lines.fwhm[k, j].limits[1]), $(@sprintf "%.0f" cube_fitter.lines.fwhm[k, j].limits[2]))\n"
                     else
-                        msg *= "$(nm)_fwhm:   \t\t $(@sprintf "%.3f" popt[pᵢ+2]) +/- $(@sprintf "%.3f" perr[pᵢ+2]) [x fwhm_1] \t " *
+                        msg *= "$(nm)_fwhm:   \t\t $(@sprintf "%.3f" popt[pᵢ+2]) +/- $(@sprintf "%.3f" perr[pᵢ+2]) " * ((isone(j) || !rel_fwhm) ? "km/s" : "[x fwhm_1]") * "\t " *
                             "Limits: ($(@sprintf "%.3f" cube_fitter.lines.fwhm[k, j].limits[1]), $(@sprintf "%.3f" cube_fitter.lines.fwhm[k, j].limits[2]))\n"
                     end
                     pᵢ += 3

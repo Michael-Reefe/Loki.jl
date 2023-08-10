@@ -94,15 +94,13 @@ fit_uv_bump = false
 fit_covering_frac = false
 
 user_mask = []
-# user_mask = [[0.42992, 0.43091], [0.47545, 0.47995]]
 
 # which lines should be tested for additional components
 line_test_lines = []
-# line_test_lines = [["OIII_05008", "OIII_04960"]]
 
 # a threshold value on the chi^2 ratio (1 - chi^2_line/chi^2_noline) to determine how significant additional line 
 # components must be in order to include them in a fit
-line_test_threshold = 0.25
+line_test_threshold = 0.0
 
 # whether or not to plot the results of line testing
 plot_line_test = true
