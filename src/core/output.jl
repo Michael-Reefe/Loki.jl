@@ -767,7 +767,7 @@ Plotting function for 2D parameter maps which are output by `fit_cube!`
 - `z::Float64`: The redshift of the object (used for physical scalebar)
 - `psf_fwhm::Float64`: The FWHM of the point-spread function in arcseconds (used to add a circular patch with this size)
 - `cosmo::Cosmology.AbstractCosmology`: The cosmology to use to calculate distance for the physical scalebar
-- `python_wcs::PyObject`: The astropy WCS object used to project the maps onto RA/Dec space
+- `wcs::WCSTransform`: The WCS object used to project the maps onto RA/Dec space
 - `snr_filter::Union{Nothing,Matrix{Float64}}=nothing`: A 2D array of S/N values to
     be used to filter out certain spaxels from being plotted - must be the same size as `data` to filter
 - `snr_thresh::Float64=3.`: The S/N threshold below which to cut out any spaxels using the values in snr_filter
@@ -783,7 +783,7 @@ they will be determined automatically from the data.
 automtically using the `name_i` parameter.
 """
 function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::String, Ω::Float64, z::Float64, psf_fwhm::Float64,
-    cosmo::Cosmology.AbstractCosmology, python_wcs::Union{PyObject,Nothing}; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, 
+    cosmo::Cosmology.AbstractCosmology, wcs::Union{WCSTransform,Nothing}; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, 
     snr_thresh::Float64=3., cmap=py_colormap.cubehelix, line_latex::Union{String,Nothing}=nothing, disable_axes::Bool=true,
     disable_colorbar::Bool=false, modify_ax=nothing, colorscale_limits=nothing, custom_bunit::Union{LaTeXString,Nothing}=nothing)
 
@@ -901,7 +901,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
 
     if isnothing(modify_ax)
         fig = plt.figure()
-        ax = fig.add_subplot(111, projection=python_wcs) 
+        ax = fig.add_subplot(111) 
     else
         fig, ax = modify_ax
     end
@@ -951,8 +951,8 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         cdata = ax.imshow(filtered', origin=:lower, cmap=cmap, vmin=colorscale_limits[1], vmax=colorscale_limits[2])
     end
     ax.tick_params(which="both", axis="both", direction="in", color=text_color)
-    ax.set_xlabel(isnothing(python_wcs) ? L"$x$ (spaxels)" : "R.A.")
-    ax.set_ylabel(isnothing(python_wcs) ? L"$y$ (spaxels)" : "Dec.")
+    ax.set_xlabel(L"$x$ (spaxels)")
+    ax.set_ylabel(L"$y$ (spaxels)")
     if disable_axes
         ax.axis(:off)
     end
@@ -1675,29 +1675,27 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
     # Header information
     hdr = FITSHeader(
         Vector{String}(cat(["TARGNAME", "REDSHIFT", "CHANNEL", "BAND", "PIXAR_SR", "RA", "DEC", "WCSAXES",
-            "CDELT1", "CDELT2", "CTYPE1", "CTYPE2", "CRPIX1", "CRPIX2", "CRVAL1", "CRVAL2", "CUNIT1", "CUNIT2", 
-            "PC1_1", "PC1_2", "PC2_1", "PC2_2"], aperture_keys, dims=1)),
+            "CDELT1", "CDELT2", "CDELT3", "CTYPE1", "CTYPE2", "CTYPE3", "CRPIX1", "CRPIX2", "CRPIX3", 
+            "CRVAL1", "CRVAL2", "CRVAL3", "CUNIT1", "CUNIT2", "CUNIT3", "PC1_1", "PC1_2", "PC1_3", 
+            "PC2_1", "PC2_2", "PC2_3", "PC3_1", "PC3_2", "PC3_3"], aperture_keys, dims=1)),
 
         cat([cube_fitter.name, cube_fitter.z, cube_fitter.cube.channel, cube_fitter.cube.band, cube_fitter.cube.Ω, 
-         cube_fitter.cube.α, cube_fitter.cube.δ, cube_fitter.cube.wcs.wcs.naxis, 
-         cube_fitter.cube.wcs.wcs.cdelt[1], cube_fitter.cube.wcs.wcs.cdelt[2], 
-         cube_fitter.cube.wcs.wcs.ctype[1], cube_fitter.cube.wcs.wcs.ctype[2], 
-         cube_fitter.cube.wcs.wcs.crpix[1], cube_fitter.cube.wcs.wcs.crpix[2], 
-         cube_fitter.cube.wcs.wcs.crval[1], cube_fitter.cube.wcs.wcs.crval[2], 
-         cube_fitter.cube.wcs.wcs.cunit[1].name, cube_fitter.cube.wcs.wcs.cunit[2].name, 
-         cube_fitter.cube.wcs.wcs.pc[1,1], cube_fitter.cube.wcs.wcs.pc[1,2], 
-         cube_fitter.cube.wcs.wcs.pc[2,1], cube_fitter.cube.wcs.wcs.pc[2,2]], aperture_vals, dims=1),
+         cube_fitter.cube.α, cube_fitter.cube.δ, cube_fitter.cube.wcs.naxis],
+         cube_fitter.cube.wcs.cdelt, cube_fitter.cube.wcs.ctype, cube_fitter.cube.wcs.crpix,
+         cube_fitter.cube.wcs.crval, cube_fitter.cube.wcs.cunit, reshape(cube_fitter.cube.wcs.pc, (9,)), aperture_vals, dims=1),
 
         Vector{String}(cat(["Target name", "Target redshift", "MIRI channel", "MIRI band",
         "Solid angle per pixel (rad.)", "Right ascension of target (deg.)", "Declination of target (deg.)",
         "number of World Coordinate System axes", 
-        "first axis increment per pixel", "second axis increment per pixel",
-        "first axis coordinate type", "second axis coordinate type",
-        "axis 1 coordinate of the reference pixel", "axis 2 coordinate of the reference pixel",
-        "first axis value at the reference pixel", "second axis value at the reference pixel",
-        "first axis units", "second axis units",
-        "linear transformation matrix element", "linear transformation matrix element",
-        "linear transformation matrix element", "linear transformation matrix element"], aperture_comments, dims=1))
+        "first axis increment per pixel", "second axis increment per pixel", "third axis increment per pixel",
+        "first axis coordinate type", "second axis coordinate type", "third axis coordinate type",
+        "axis 1 coordinate of the reference pixel", "axis 2 coordinate of the reference pixel", "axis 3 coordinate of the reference pixel",
+        "first axis value at the reference pixel", "second axis value at the reference pixel", "third axis value at the reference pixel",
+        "first axis units", "second axis units", "third axis units",
+        "linear transformation matrix element", "linear transformation matrix element", "linear transformation matrix element",
+        "linear transformation matrix element", "linear transformation matrix element", "linear transformation matrix element",
+        "linear transformation matrix element", "linear transformation matrix element", "linear transformation matrix element"], 
+        aperture_comments, dims=1))
     )
 
     if cube_fitter.save_full_model
@@ -1991,31 +1989,30 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
     
     # Header information
     if !isnothing(cube_fitter.cube.wcs)
+
         hdr = FITSHeader(
             Vector{String}(cat(["TARGNAME", "REDSHIFT", "CHANNEL", "BAND", "PIXAR_SR", "RA", "DEC", "WCSAXES",
-                "CDELT1", "CDELT2", "CTYPE1", "CTYPE2", "CRPIX1", "CRPIX2", "CRVAL1", "CRVAL2", "CUNIT1", "CUNIT2", 
-                "PC1_1", "PC1_2", "PC2_1", "PC2_2"], aperture_keys, dims=1)),
+                "CDELT1", "CDELT2", "CDELT3", "CTYPE1", "CTYPE2", "CTYPE3", "CRPIX1", "CRPIX2", "CRPIX3", 
+                "CRVAL1", "CRVAL2", "CRVAL3", "CUNIT1", "CUNIT2", "CUNIT3", "PC1_1", "PC1_2", "PC1_3", 
+                "PC2_1", "PC2_2", "PC2_3", "PC3_1", "PC3_2", "PC3_3"], aperture_keys, dims=1)),
 
             cat([cube_fitter.name, cube_fitter.z, cube_fitter.cube.channel, cube_fitter.cube.band, cube_fitter.cube.Ω, 
-            cube_fitter.cube.α, cube_fitter.cube.δ, cube_fitter.cube.wcs.wcs.naxis, 
-            cube_fitter.cube.wcs.wcs.cdelt[1], cube_fitter.cube.wcs.wcs.cdelt[2], 
-            cube_fitter.cube.wcs.wcs.ctype[1], cube_fitter.cube.wcs.wcs.ctype[2], 
-            cube_fitter.cube.wcs.wcs.crpix[1], cube_fitter.cube.wcs.wcs.crpix[2], 
-            cube_fitter.cube.wcs.wcs.crval[1], cube_fitter.cube.wcs.wcs.crval[2], 
-            cube_fitter.cube.wcs.wcs.cunit[1].name, cube_fitter.cube.wcs.wcs.cunit[2].name, 
-            cube_fitter.cube.wcs.wcs.pc[1,1], cube_fitter.cube.wcs.wcs.pc[1,2], 
-            cube_fitter.cube.wcs.wcs.pc[2,1], cube_fitter.cube.wcs.wcs.pc[2,2]], aperture_vals, dims=1),
+            cube_fitter.cube.α, cube_fitter.cube.δ, cube_fitter.cube.wcs.naxis],
+            cube_fitter.cube.wcs.cdelt, cube_fitter.cube.wcs.ctype, cube_fitter.cube.wcs.crpix,
+            cube_fitter.cube.wcs.crval, cube_fitter.cube.wcs.cunit, reshape(cube_fitter.cube.wcs.pc, (9,)), aperture_vals, dims=1),
 
             Vector{String}(cat(["Target name", "Target redshift", "MIRI channel", "MIRI band",
             "Solid angle per pixel (rad.)", "Right ascension of target (deg.)", "Declination of target (deg.)",
             "number of World Coordinate System axes", 
-            "first axis increment per pixel", "second axis increment per pixel",
-            "first axis coordinate type", "second axis coordinate type",
-            "axis 1 coordinate of the reference pixel", "axis 2 coordinate of the reference pixel",
-            "first axis value at the reference pixel", "second axis value at the reference pixel",
-            "first axis units", "second axis units",
-            "linear transformation matrix element", "linear transformation matrix element",
-            "linear transformation matrix element", "linear transformation matrix element"], aperture_comments, dims=1))
+            "first axis increment per pixel", "second axis increment per pixel", "third axis increment per pixel",
+            "first axis coordinate type", "second axis coordinate type", "third axis coordinate type",
+            "axis 1 coordinate of the reference pixel", "axis 2 coordinate of the reference pixel", "axis 3 coordinate of the reference pixel",
+            "first axis value at the reference pixel", "second axis value at the reference pixel", "third axis value at the reference pixel",
+            "first axis units", "second axis units", "third axis units",
+            "linear transformation matrix element", "linear transformation matrix element", "linear transformation matrix element",
+            "linear transformation matrix element", "linear transformation matrix element", "linear transformation matrix element",
+            "linear transformation matrix element", "linear transformation matrix element", "linear transformation matrix element"], 
+            aperture_comments, dims=1))
         )
     else
         hdr = FITSHeader(

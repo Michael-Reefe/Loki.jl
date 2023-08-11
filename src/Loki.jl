@@ -30,6 +30,8 @@ using Photometry
 using Cosmology
 using AstroAngles
 using SkyCoords
+using WCS
+using Reproject
 using Unitful, UnitfulAstro
 
 # File I/O
@@ -55,20 +57,12 @@ using LaTeXStrings
 # PyCall needed for some matplotlib modules
 using PyCall
 
-# Warnings
-const py_warnings::PyObject = PyNULL()
-
 # Matplotlib modules
 const plt::PyObject = PyNULL()
 const py_anchored_artists::PyObject = PyNULL()
 const py_ticker::PyObject = PyNULL()
 const py_colormap::PyObject = PyNULL()
 const py_animation::PyObject = PyNULL()
-
-# Astropy modules
-const py_wcs::PyObject = PyNULL()
-const py_reproject::PyObject = PyNULL()
-const py_mosaicking::PyObject = PyNULL()
 const py_lineidplot::PyObject = PyNULL()
 
 # Voronoi binning
@@ -108,16 +102,9 @@ function __init__()
     # python package for adjusting matplotlib text so it doesn't overlap
     copy!(py_lineidplot, pyimport_conda("lineid_plot", "lineid_plot"))
 
-    # Import the WCS and reproject packages from astropy
-    copy!(py_wcs, pyimport_conda("astropy.wcs", "astropy"))
-    copy!(py_reproject, pyimport_conda("reproject", "reproject"))
-    copy!(py_mosaicking, pyimport_conda("reproject.mosaicking", "reproject"))
     # Voronoi binning package
     copy!(py_vorbin, pyimport_conda("vorbin.voronoi_2d_binning", "vorbin"))
-
-    # Warnings
-    copy!(py_warnings, pyimport_conda("warnings", "warnings"))
-
+    
     try
         copy!(py_fsps, pyimport_conda("fsps", "fsps"))
     catch
@@ -136,9 +123,6 @@ function __init__()
     plt.rc("text", usetex=true)                # use LaTeX for things like axis labels
     plt.rc("text.latex", preamble="\\usepackage{siunitx}")   # use the siunitx LaTeX package
     plt.rc("font", family="Times New Roman")   # use Times New Roman font
-
-    # Filter annoying FITS fixed warnings from astropy
-    py_warnings.filterwarnings("ignore", category=py_wcs.FITSFixedWarning)
 
     ###### SETTING UP A GLOBAL LOGGER ######
 

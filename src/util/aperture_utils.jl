@@ -100,11 +100,11 @@ function make_aperture(cube::DataCube, ap_type::Symbol, ra::Union{String,Real}, 
     sky_center = coords(ra_rad, dec_rad)
     
     # Convert the sky position to a pixel position
-    x_cent, y_cent = cube.wcs.all_world2pix([[ra_deg, dec_deg]], 1)'
+    x_cent, y_cent = world_to_pix(cube.wcs, [ra_deg, dec_deg, 1.0])[1:2]
 
     # Take a point directly north by 1 arcsecond and convert it to pixel coordinates to get the pixel scale
     sky_offset = offset(sky_center, 1/3600*π/180, 0)
-    x_offset, y_offset = cube.wcs.all_world2pix([[sky_offset.ra |> rad2deg, sky_offset.dec |> rad2deg]], 1)'
+    x_offset, y_offset = world_to_pix(cube.wcs, [sky_offset.ra |> rad2deg, sky_offset.dec |> rad2deg, 1.0])[1:2]
     dx = x_offset - x_cent
     dy = y_offset - y_cent
     pixscale = hypot(dx, dy)         # scale in pixels per arcsecond
@@ -129,7 +129,7 @@ function make_aperture(cube::DataCube, ap_type::Symbol, ra::Union{String,Real}, 
 
         # Find the centroid using a center-of-mass estimation
         x_cent, y_cent = centroid_com(data, mask)
-        ra_cent, dec_cent = cube.wcs.all_pix2world([[x_cent,y_cent]], 1)'
+        ra_cent, dec_cent = pix_to_world(cube.wcs, [x_cent, y_cent, 1.0])[1:2]
         @info "Aperture centroid adjusted to $(format_angle(ha2hms(ra_cent/15); delim=["h","m","s"])), " *
             "$(format_angle(deg2dms(dec_cent); delim=["d","m","s"]))"
     end
