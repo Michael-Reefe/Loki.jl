@@ -548,7 +548,7 @@ function get_physical_scales(data::DataCube, cosmo::Union{Cosmology.AbstractCosm
     else
         pix_as = sqrt(data.Ω) * 180/π * 3600
         n_pix = 1/pix_as
-        θ_as = round(size(data, 1) * pix_as / 4, digits=1)
+        θ_as = round(size(data.I, 1) * pix_as / 4, digits=1)
         n_pix = 1/sqrt(data.Ω) * θ_as / 3600 * π/180
         scalebar_text_dist = ""
     end
@@ -646,8 +646,6 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
             label=(isnothing(logᵢ) ? "" : L"$\log_{%$logᵢ}$(") * L"$I_{%$sub}\,/\,$" * unit_str * (isnothing(logᵢ) ? "" : ")"))
         ax1.axis(:off)
         ax1.tick_params(which="both", axis="both", direction="in")
-        ax1.set_xlabel("R.A.")
-        ax1.set_ylabel("Dec.")
         
         if !isnothing(z) && !isnothing(cosmo)
             scalebar_1 = py_anchored_artists.AnchoredSizeBar(ax1.transData, n_pix, scalebar_text_dist, "upper center", pad=0, borderpad=0, 
@@ -679,10 +677,8 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
         cdata = ax2.imshow(σ', origin=:lower, cmap=colormap, vmin=nanquantile(σ, 0.01), vmax=nanquantile(σ, 0.99))
         fig.colorbar(cdata, ax=ax2, fraction=0.046, pad=0.04,
             label=isnothing(logₑ) ? L"$\sigma_{I_{%$sub}}\,/\,$" * unit_str : L"$\sigma_{\log_{%$logᵢ}I_{%$sub}}$")
-        # ax2.axis(:off)
+        ax2.axis(:off)
         ax2.tick_params(which="both", axis="both", direction="in")
-        ax2.set_xlabel("R.A.")
-        ax2.set_ylabel("Dec.")
 
         if !isnothing(z) && !isnothing(cosmo)
             scalebar_1 = py_anchored_artists.AnchoredSizeBar(ax2.transData, n_pix, scalebar_text_dist, "upper center", pad=0, borderpad=0, 
