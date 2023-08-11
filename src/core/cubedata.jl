@@ -1261,8 +1261,8 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
         σF_out = zeros(size_optimal..., size(F_in, 3))
         mask_out_temp = zeros(size_optimal..., size(F_in, 3))
 
-        if order == -1
-            @assert size(F_in) == size_optimal
+        if (order == -1) || (i == output_wcs_frame)
+            @assert size(F_in)[1:2] == size_optimal
             F_out = F_in
             σF_out = σF_in
             mask_out_temp = mask_in
