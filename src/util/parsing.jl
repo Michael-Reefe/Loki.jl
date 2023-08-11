@@ -1074,7 +1074,7 @@ function silicate_dp()
     # Get optical depth
     τ_DS = log10.(cubic_spline_irs.(λ_irs) ./ F_irs)
     # Smooth data and remove features < ~7.5 um
-    τ_smooth = movmean(τ_DS, 10)
+    τ_smooth = movmean(τ_DS, 5)
     v1, p1 = findmin(τ_DS[λ_irs .< 6])
     v2, p2 = findmin(τ_DS[7 .< λ_irs .< 8])
     slope_beg = (v2 - v1) / (λ_irs[7 .< λ_irs .< 8][p2] - λ_irs[λ_irs .< 6][p1])

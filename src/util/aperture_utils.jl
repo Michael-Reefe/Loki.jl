@@ -57,8 +57,8 @@ Create an aperture using the Photometry Library.
 # Arguments
 - `cube::DataCube`: The DataCube struct to create the aperture for
 - `type::Symbol`: Must be one of :Circular, :Elliptical, or :Rectangular
-- `ra::String`: Right ascension in sexagesimal hours
-- `dec::String`: Declination in sexagesimal degrees
+- `ra::Union{String,Real}`: Right ascension. If string, should be in sexagesimal hours, if real, should be decimal degrees.
+- `dec::Union{String,Real}`: Declination. If string, should be in sexagesimal degrees, if real, should be decimal degrees.
 - `params...`: Varying number of parameters for the aperture depending on `type`.
     For circular apertures, the only parameter is the radius in arcseconds.
     For elliptical apertures, the parameters are the semimajor and semiminor axes in arcseconds, and the position angle in degrees
@@ -81,27 +81,34 @@ function make_aperture(cube::DataCube, ap_type::Symbol, ra::Union{String,Real}, 
 
     # Get the WCS frame from the datacube
     frame = lowercase(cube.wcs.wcs.radesys)
+    if frame == "icrs"
+        coords = ICRSCoords
+    elseif frame == "fk5"
+        coords = FK5Coords
+    end
 
     # Dictionary mapping symbols to aperture types
     ap_class = Dict(:Circular => CircularAperture, :Elliptical => EllipticalAperture, :Rectangular => RectangularAperture)
 
     # If given as strings, assume ra/dec units are parsable with AstroAngles, otherwise assume decimal degrees
-    ra_deg = ra isa String ? parse_hms(ra) |> hms2deg : ra
-    dec_deg = dec isa String ? parse_dms(dec) |> dms2deg : dec
-    sky_center = py_coords.SkyCoord(ra=ra_deg * py_units.deg, 
-                                    dec=dec_deg * py_units.deg,
-                                    frame=frame)
+    ra_deg = ra isa String ? ra |> parse_hms |> hms2deg : ra
+    dec_deg = dec isa String ? dec |> parse_dms |> dms2deg : dec
+    # Convert to radians
+    ra_rad = ra_deg |> deg2rad
+    dec_rad = dec_deg |> deg2rad
+    # Create SkyCoords object
+    sky_center = coords(ra_rad, dec_rad)
     
     # Convert the sky position to a pixel position
     x_cent, y_cent = cube.wcs.all_world2pix([[ra_deg, dec_deg]], 1)'
 
     # Take a point directly north by 1 arcsecond and convert it to pixel coordinates to get the pixel scale
-    sky_offset = sky_center.directional_offset_by(0.0, 1.0 * py_units.arcsec)
-    x_offset, y_offset = cube.wcs.all_world2pix([[sky_offset.ra[1], sky_offset.dec[1]]], 1)'
+    sky_offset = offset(sky_center, 1/3600*π/180, 0)
+    x_offset, y_offset = cube.wcs.all_world2pix([[sky_offset.ra |> rad2deg, sky_offset.dec |> rad2deg]], 1)'
     dx = x_offset - x_cent
     dy = y_offset - y_cent
-    pixscale = hypot(dx, dy)      # scale in pixels per arcsecond
-    angle = atan(dy, dx) * 180/π  # rotation angle in degrees
+    pixscale = hypot(dx, dy)         # scale in pixels per arcsecond
+    angle = atan(dy, dx) |> rad2deg  # rotation angle in degrees
 
     # Convert parameters to pixel units
     pix_params = [params...]

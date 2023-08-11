@@ -1164,7 +1164,7 @@ Perform a 3D interpolation of the given channels such that all spaxels lie on th
 """
 function reproject_channels!(obs::Observation, channels=nothing, concat_type=:full; out_id=0, res=nothing, scrub_output::Bool=false,
     method=:adaptive, rescale_channels::Union{Real,Nothing}=nothing, adjust_wcs_headerinfo::Bool=true, min_λ::Real=-Inf, max_λ::Real=Inf,
-    rescale_limits::Tuple{<:Real,<:Real}=(0.5, 1.5), rescale_snr::Real=10.0)
+    rescale_limits::Tuple{<:Real,<:Real}=(0.5, 1.5), rescale_snr::Real=10.0, output_wcs_frame=1)
 
     @assert obs.spectral_region == :MIR "The reproject_channels! function is only supported for MIR cubes!"
 
@@ -1190,17 +1190,8 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
     end
     Ω_out = obs.channels[res].Ω
 
-    if adjust_wcs_headerinfo && (concat_type == :sub)
-        # Find the optimal output WCS using the reproject python package
-        shapes = [size(obs.channels[channel].I)[1:2] for channel ∈ channels]
-        wcs2ds = [obs.channels[channel].wcs for channel ∈ channels]
-        wcs_optimal, size_optimal = py_mosaicking.find_optimal_celestial_wcs([(reverse(shapes[i]), wcs2ds[i]) 
-            for i ∈ 1:length(channels)], resolution=sqrt(Ω_out) * py_units.rad, projection="TAN")
-        size_optimal = reverse(size_optimal)
-    else
-        wcs_optimal = obs.channels[channels[1]].wcs
-        size_optimal = size(obs.channels[channels[1]].I)[1:2]
-    end
+    wcs_optimal = obs.channels[channels[output_wcs_frame]].wcs
+    size_optimal = size(obs.channels[channels[output_wcs_frame]].I)[1:2]
 
     # Output wavelength is just the individual wavelength vectors concatenated (for now -- will be interpolated later)
     λ_out = vcat([obs.channels[ch_i].λ for ch_i ∈ channels]...)
@@ -1574,10 +1565,8 @@ function frebin(array::AbstractArray, nsout::S, nlout::S=1; total::Bool=false) w
 
     # Contraction by an integral amount
     if (sbox == round(Int, sbox)) && (lbox == round(Int, lbox)) && (ns % nsout == 0) && (nl % nlout == 0)
-        return @pipe array |> 
-            reshape(_, (Int(sbox), nsout, Int(lbox), nlout)) |> 
-            (total ? sum : mean)(_, dims=(1,3)) |>
-            dropdims(_, dims=(1,3))
+        array_shaped = reshape(array, (Int(sbox), nsout, Int(lbox), nlout))
+        return dropdims((total ? sum : mean)(array_shaped, dims=(1,3)), dims=(1,3))
     end
 
     # Expansion by an integral amount

@@ -29,8 +29,8 @@ using FITSIO
 using Photometry
 using Cosmology
 using AstroAngles
-using Unitful
-using UnitfulAstro
+using SkyCoords
+using Unitful, UnitfulAstro
 
 # File I/O
 using TOML
@@ -51,7 +51,6 @@ using Dates
 using InteractiveUtils
 using ColorSchemes
 using LaTeXStrings
-using Pipe: @pipe
 
 # PyCall needed for some matplotlib modules
 using PyCall
@@ -68,8 +67,6 @@ const py_animation::PyObject = PyNULL()
 
 # Astropy modules
 const py_wcs::PyObject = PyNULL()
-const py_coords::PyObject = PyNULL()
-const py_units::PyObject = PyNULL()
 const py_reproject::PyObject = PyNULL()
 const py_mosaicking::PyObject = PyNULL()
 const py_lineidplot::PyObject = PyNULL()
@@ -113,8 +110,6 @@ function __init__()
 
     # Import the WCS and reproject packages from astropy
     copy!(py_wcs, pyimport_conda("astropy.wcs", "astropy"))
-    copy!(py_coords, pyimport_conda("astropy.coordinates", "astropy"))
-    copy!(py_units, pyimport_conda("astropy.units", "astropy"))
     copy!(py_reproject, pyimport_conda("reproject", "reproject"))
     copy!(py_mosaicking, pyimport_conda("reproject.mosaicking", "reproject"))
     # Voronoi binning package
@@ -176,7 +171,6 @@ export DataCube,   # DataCube struct
        voronoi_rebin!,
        plot_2d, 
        plot_1d,
-       make_aperture,
 
        # Observation struct
        Observation, 
@@ -223,6 +217,10 @@ export DataCube,   # DataCube struct
        write_fits,
 
        # Utility functions that the user may wish to take advantage of
+       get_area,
+       get_patches,
+       centroid_com,
+       make_aperture,
        frebin,
        fshift,
        make_python_wcs,

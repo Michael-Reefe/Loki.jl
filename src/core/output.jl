@@ -1643,6 +1643,20 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
             append!(aperture_vals, [aperture.w, aperture.h, aperture.θ])
             append!(aperture_comments, ["Width of aperture (pixels)", 
                 "Height of aperture (pixels)", "Aperture angle in deg."])
+        elseif contains(ap_shape, "CircularAnnulus")
+            append!(aperture_keys, ["AP_R_IN", "AP_R_OUT"])
+            append!(aperture_vals, [aperture.r_in, aperture.r_out])
+            append!(aperture_comments, ["Inner radius of annulus (pixels)", "Outer radius of annulus (pixels)"])
+        elseif contains(ap_shape, "EllipticalAnnulus")
+            append!(aperture_keys, ["AP_A_IN", "AP_A_OUT", "AP_B_IN", "AP_B_OUT", "AP_ANGLE"])
+            append!(aperture_vals, [aperture.a_in, aperture.a_out, aperture.b_in, aperture.b_out, aperture.θ])
+            append!(aperture_comments, ["Inner semimajor axis of annulus (pixels)", "Outer semimajor axis of annulus (pixels)",
+                "Inner semiminor axis of annulus (pixels)", "Outer semiminor axis of annulus (pixels)", "Annulus angle in deg."])
+        elseif contains(ap_shape, "RectangularAnnulus")
+            append!(aperture_keys, ["AP_W_IN", "AP_W_OUT", "AP_H_IN", "AP_H_OUT", "AP_ANGLE"])
+            append!(aperture_vals, [aperture.w_in, aperture.w_out, aperture.h_in, aperture.h_out, aperture.θ])
+            append!(aperture_comments, ["Inner width of annulus (pixels)", "Outer width of annulus (pixels)",
+                "Inner height of annulus (pixels)", "Outer height of annulus (pixels)", "Aperture angle in deg."])    
         end
 
         # Also append the aperture area
