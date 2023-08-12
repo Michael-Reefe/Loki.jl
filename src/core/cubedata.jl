@@ -1237,15 +1237,15 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
 
         # Get the intensity and error arrays
         # NOTE 1: Dont forget to permute and re-permute the dimensions from the numpy row-major order back to the julia column-major order
-        # NOTE 2: We need to resample the FLUX, not the intensity, because the pixel sizes may be different between the input and output images,
+        # NOTE 2: We need to resample the INTENSITY, not the flux, because the pixel sizes may be different between the input and output images,
         #          and flux scales with the pixel size whereas intensity does not (assuming it's an extended source).
-        F_in = obs.channels[ch_in].I .* obs.channels[ch_in].Ω
-        σF_in = obs.channels[ch_in].σ .* obs.channels[ch_in].Ω
+        I_in = obs.channels[ch_in].I 
+        σI_in = obs.channels[ch_in].σ
         mask_in = obs.channels[ch_in].mask
 
         # Replace NaNs with 0s for the interpolation
-        F_in[.!isfinite.(F_in)] .= 0.
-        σF_in[.!isfinite.(σF_in)] .= 0.
+        I_in[.!isfinite.(I_in)] .= 0.
+        σI_in[.!isfinite.(σI_in)] .= 0.
 
         # Get 2D WCS representation
         wcs_channel = WCSTransform(2; 
@@ -1257,29 +1257,28 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
                                    pc=obs.channels[ch_in].wcs.pc[1:2, 1:2],
                                    radesys=obs.channels[ch_in].wcs.radesys)
 
-        F_out = zeros(size_optimal..., size(F_in, 3))
-        σF_out = zeros(size_optimal..., size(F_in, 3))
-        mask_out_temp = zeros(size_optimal..., size(F_in, 3))
+        I_out_ch = zeros(size_optimal..., size(I_in, 3))
+        σI_out_ch = zeros(size_optimal..., size(I_in, 3))
+        mask_out_temp = zeros(size_optimal..., size(I_in, 3))
 
         if (order == -1) || (i == output_wcs_frame)
-            @assert size(F_in)[1:2] == size_optimal
-            F_out = F_in
-            σF_out = σF_in
+            @assert size(I_in)[1:2] == size_optimal
+            I_out_ch = I_in
+            σI_out_ch = σI_in
             mask_out_temp = mask_in
         else
-            @showprogress for wi in axes(F_in, 3)
+            @showprogress for wi in axes(I_in, 3)
                 # Reproject using interpolation
-                F_out[:, :, wi], _ = reproject((F_in[:, :, wi], wcs_channel), wcs_optimal, shape_out=size_optimal, order=order)
-                σF_out[:, :, wi], _ = reproject((σF_in[:, :, wi].^2, wcs_channel), wcs_optimal, shape_out=size_optimal, order=order)
-                σF_out[:, :, wi] .= sqrt.(σF_out[:, :, wi])
+                I_out_ch[:, :, wi], _ = reproject((I_in[:, :, wi], wcs_channel), wcs_optimal, shape_out=size_optimal, order=order)
+                σ²_temp, _ = reproject((σI_in[:, :, wi].^2, wcs_channel), wcs_optimal, shape_out=size_optimal, order=order)
+                σ²_temp[σ²_temp .< 0] .= 0.
+                σI_out_ch[:, :, wi] .= sqrt.(σ²_temp)
                 # Use nearest-neighbor interpolation for the mask since it's a binary 1 or 0
                 mask_out_temp[:, :, wi], _ = reproject((Matrix{Float64}(mask_in[:, :, wi]), wcs_channel), wcs_optimal, shape_out=size_optimal, order=0)
             end
         end
-
-        # Convert back to intensity
-        I_out[:, :, wsum+1:wsum+wi_size] .= F_out ./ Ω_out
-        σ_out[:, :, wsum+1:wsum+wi_size] .= σF_out ./ Ω_out
+        I_out[:, :, wsum+1:wsum+wi_size] .= I_out_ch
+        σ_out[:, :, wsum+1:wsum+wi_size] .= σI_out_ch
 
         # Set all NaNs to 1s for the mask (i.e. they are masked out)
         mask_out_temp[.!isfinite.(mask_out_temp) .| .!isfinite.(I_out[:, :, wsum+1:wsum+wi_size]) .| 

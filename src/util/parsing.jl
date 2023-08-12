@@ -978,7 +978,8 @@ function parse_lines()
     if lines["tie_voigt_mixing"]
         η_init = haskey(lines, "eta_init") ? lines["eta_init"] : 0.5       # Voigts start half gaussian, half lorentzian
         η_plim = (lines["eta_plim"]...,)
-        voigt_mix_tied = Parameter(η_init, false, η_plim)
+        η_locked = haskey(lines, "eta_locked") ? lines["eta_locked"] : false
+        voigt_mix_tied = Parameter(η_init, η_locked, η_plim)
         @debug "voigt_mix_tied $voigt_mix_tied (tied)"
     else
         voigt_mix_tied = nothing

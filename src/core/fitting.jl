@@ -1149,6 +1149,12 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
                     if cube_fitter.lines.profiles[i, j] == :GaussHermite
                         pc += 2
                     elseif cube_fitter.lines.profiles[i, j] == :Voigt
+                        # Set the Voigt mixing ratios back to 0.5 since a summed fit may lose the structure of the line-spread function
+                        if !cube_fitter.tie_voigt_mixing && !cube_fitter.lines.η[i, j].locked
+                            popt[pᵢ+pc] = 0.5
+                        elseif cube_fitter.tie_voigt_mixing && !cube_fitter.voigt_mix_tied.locked
+                            popt[pᵢ+pc] = 0.5
+                        end
                         pc += 1
                     end
                     pᵢ += pc

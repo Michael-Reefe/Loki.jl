@@ -2221,11 +2221,11 @@ function get_line_plimits(cube_fitter::CubeFitter, init::Bool, ext_curve::Union{
                     # add voigt mixing parameter, but only if it's not tied
                     if !cube_fitter.tie_voigt_mixing
                         append!(ln_plims, [cube_fitter.lines.η[i, j].limits])
-                        append!(ln_lock, [cube_fitter.lines.η[i, j].locked || !init])
+                        append!(ln_lock, [cube_fitter.lines.η[i, j].locked])
                         append!(ln_names, ["$(ln_name)_eta"])
                     else
                         append!(ln_plims, [cube_fitter.voigt_mix_tied.limits])
-                        append!(ln_lock, [cube_fitter.voigt_mix_tied.locked || !init])
+                        append!(ln_lock, [cube_fitter.voigt_mix_tied.locked])
                         append!(ln_names, ["eta_tied"])
                         append!(η_tied, [ind])
                     end

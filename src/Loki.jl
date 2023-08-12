@@ -207,7 +207,6 @@ export DataCube,   # DataCube struct
        make_aperture,
        frebin,
        fshift,
-       make_python_wcs,
        attenuation_calzetti,
        attenuation_cardelli,  # (AKA ccm_unred)
        resample_conserving_flux,
@@ -231,13 +230,5 @@ include("core/fitting.jl")
 include("core/output.jl")
 
 include("util/aperture_utils.jl")
-
-#####################
-#= WELCOME TO LOKI =#
-#####################
-
-# Namespace:
-# First-class => most of cubefit.jl and cubedata.jl
-# "Loki" => utils.jl, parameters.jl
 
 end

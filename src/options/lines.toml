@@ -65,6 +65,8 @@ fwhm_plim = [0.0, 1200.0]                # 0 to 1000 km/s FWHM velocity of the l
 h3_plim = [-0.5, 0.5]                    # skewness (3rd moment): limits (-0.5, 0.5), to remain mostly gaussian
 h4_plim = [-0.5, 0.5]                    # kurtosis (4th moment): limits (-0.5, 0.5), to remain mostly gaussian
 eta_plim = [0.0, 1.0]                    # mixing parameter for Voigt profiles: limits (0.0, 1.0)
+eta_init = 1.0                           # start the mixing ratio fully Gaussian
+eta_locked = true                        # the MIRI/MRS line-spread function should essentially be purely Gaussian
 
 # Additional line components
 n_acomps = 1
