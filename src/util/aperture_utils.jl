@@ -80,7 +80,7 @@ function make_aperture(cube::DataCube, ap_type::Symbol, ra::Union{String,Real}, 
     @info "Creating a circular aperture at $ra, $dec"
 
     # Get the WCS frame from the datacube
-    frame = lowercase(cube.wcs.wcs.radesys)
+    frame = lowercase(cube.wcs.radesys)
     if frame == "icrs"
         coords = ICRSCoords
     elseif frame == "fk5"

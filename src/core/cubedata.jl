@@ -525,7 +525,7 @@ function get_physical_scales(data::DataCube, cosmo::Union{Cosmology.AbstractCosm
         # Remove units
         dA = uconvert(NoUnits, dA/u"pc")
         # l = d * theta (") where theta is chosen as 1/4 the horizontal extent of the image
-        l = dA * (size(data, 1) * pix_as / 4) * π/180 / 3600  
+        l = dA * (size(data.I, 1) * pix_as / 4) * π/180 / 3600  
         # Round to a nice even number
         l = Int(round(l, sigdigits=1))
         # new angular size for this scale
@@ -1180,10 +1180,14 @@ Perform a 3D interpolation of the given channels such that all spaxels lie on th
 - `max_λ::Real=Inf`: Maximum wavelength cutoff for the output cube.
 - `rescale_limits::Tuple{<:Real,<:Real}=(0.5, 1.5)`: Lower/upper limits on the rescaling factor between channels.
 - `rescale_snr::Real=10.0`: SNR threshold that a spaxel must pass before being rescaled.
+- `output_wcs_frame::Integer=1`: Which WCS frame to project the inputs onto. Defaults to 1 (the first channel in channels).
+- `interpolate_overlaps::Bool=false`: If true, will throw out the overlapping regions between channels/subchannels and replace them
+    with cubic spline interpolations using the data to the left/right.
 """
 function reproject_channels!(obs::Observation, channels=nothing, concat_type=:full; out_id=0, scrub_output::Bool=false,
-    order::Integer=1, rescale_channels::Union{Real,Nothing}=nothing, adjust_wcs_headerinfo::Bool=true, min_λ::Real=-Inf, max_λ::Real=Inf,
-    rescale_limits::Tuple{<:Real,<:Real}=(0.5, 1.5), rescale_snr::Real=10.0, output_wcs_frame::Integer=1)
+    order::Integer=1, rescale_channels::Union{Real,Nothing}=nothing, adjust_wcs_headerinfo::Bool=true, 
+    min_λ::Real=-Inf, max_λ::Real=Inf, rescale_limits::Tuple{<:Real,<:Real}=(0.5, 1.5), rescale_snr::Real=10.0, 
+    output_wcs_frame::Integer=1, interpolate_overlaps::Bool=false)
 
     @assert obs.spectral_region == :MIR "The reproject_channels! function is only supported for MIR cubes!"
 
@@ -1302,6 +1306,7 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
     # Need an additional correction (fudge) factor for overall channels
     jumps = findall(diff(λ_out) .< 0.)
     scale_factors = Dict{Int, Matrix{Float64}}()
+    ww = []
     if !isnothing(rescale_channels)
         # rescale channels so the flux level is continuous
         for (i, jump) ∈ enumerate(jumps)
@@ -1330,6 +1335,7 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
                 @info "Minimum/Maximum scale factor for channel $(i+1): $(nanextrema(scale))"
             end
             scale_factors[i+1] = scale
+            push!(ww, (wave_left, wave_right))
         end
     end
     if concat_type == :full
@@ -1371,6 +1377,23 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
     I_out = I_out[:, :, ss]
     σ_out = σ_out[:, :, ss]
     mask_out = mask_out[:, :, ss]
+
+    if interpolate_overlaps && !isnothing(rescale_channels)
+        for wwi in ww
+            # Smoothly extend the function from the left/right 
+            _, i1 = findmin(abs.(λ_out .- wwi[1]))
+            _, i2 = findmin(abs.(λ_out .- wwi[2]))
+            for xi in axes(I_out,1), yi in axes(I_out,2)
+                wave_window = [λ_out[1:i1-1]; λ_out[i2+1:end]]
+                I_window = [I_out[xi, yi, 1:i1-1]; I_out[xi, yi, i2+1:end]]
+                mask_window = [mask_out[xi, yi, 1:i1-1]; mask_out[xi, yi, i2+1:end]]
+                if sum(.~mask_window) < 3
+                    continue
+                end
+                I_out[xi, yi, i1:i2] = Spline1D(wave_window[.~mask_window], I_window[.~mask_window], k=3)(λ_out[i1:i2])
+            end
+        end
+    end
 
     # Now we interpolate the wavelength dimension using a flux-conserving approach
     Δλ = median(diff(λ_out))
@@ -1667,3 +1690,34 @@ function frebin(array::AbstractArray, nsout::S, nlout::S=1; total::Bool=false) w
 
 end
 
+
+# function reproject_lanczos(data::Matrix{<:Real}, wcs_in::WCSTransform, wcs_out::WCSTransform, 
+#     shape_out::Tuple; a::Integer=2, pad::Real=NaN)
+
+#     coordinate_transform(x_out, y_out) = world_to_pix(wcs_in, pix_to_world(wcs_out, [Float64(x_out), Float64(y_out)]))
+#     # Reproject using sinc interpolation
+#     kernel(x,y) = (abs(x) ≤ a) && (abs(y) ≤ a) ? sinc(x) * sinc(x/a) * sinc(y) * sinc(y/a) : 0.
+#     # Pad with 0s
+#     data_padded = zeros(size(data).+2a)
+#     data_padded[1+a:end-a, 1+a:end-a] .= data
+
+#     data_out = zeros(shape_out)
+
+#     for x_out in axes(data_out,1), y_out in axes(data_out,2)
+#         x_in, y_in = coordinate_transform(x_out, y_out)
+#         # Convolve with the kernel
+#         xmin = floor(Int, x_in)-a+1
+#         xmax = floor(Int, x_in)+a
+#         ymin = floor(Int, y_in)-a+1
+#         ymax = floor(Int, y_in)+a
+#         if (1-a ≤ xmin ≤ size(data,1)+a) && (1-a ≤ xmax ≤ size(data,1)+a) && 
+#             (1-a ≤ ymin ≤ size(data,2)+a) && (1-a ≤ ymax ≤ size(data,2)+a)
+#             data_out[x_out, y_out] = sum(data_padded[(xmin:xmax) .+ a, (ymin:ymax) .+ a] .* 
+#                 [kernel(xx,yy) for xx in x_in .- (xmin:xmax), yy in y_in .- (ymin:ymax)])
+#         else
+#             data_out[x_out, y_out] = pad
+#         end
+#     end
+
+#     data_out
+# end

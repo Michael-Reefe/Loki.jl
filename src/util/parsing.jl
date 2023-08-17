@@ -213,6 +213,18 @@ function parse_dust()
         α = []
     end
 
+    # Template amplitudes
+    if haskey(dust, "template_amps")
+        temp_A = [from_dict(dust["template_amps"][i]) for i ∈ eachindex(dust["template_amps"])]
+        msg = "Template amplitudes:"
+        for Ai ∈ temp_A
+            msg *= "\n$Ai"
+        end
+        @debug msg
+    else
+        temp_A = []
+    end
+
     # Dust feature central wavelengths and FWHMs
     cent_vals = zeros(length(dust["dust_features"]))
     name = Vector{String}(undef, length(dust["dust_features"]))
@@ -324,7 +336,7 @@ function parse_dust()
     @debug msg
 
     # Create continuum object
-    continuum = MIRContinuum(T_s, T_dc, α, τ_97, τ_ice, τ_ch, β, T_hot, Cf, τ_warm, τ_cold, sil_peak)
+    continuum = MIRContinuum(T_s, T_dc, α, τ_97, τ_ice, τ_ch, β, T_hot, Cf, τ_warm, τ_cold, sil_peak, temp_A)
 
     continuum, dust_features, abs_features, abs_taus
 end

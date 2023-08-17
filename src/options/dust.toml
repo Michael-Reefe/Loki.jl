@@ -32,44 +32,50 @@ locked = false
 # [[dust_continuum_temps]]
 # val = 500.0
 # plim = [499.9, 500.1]
-# locked = true
+# locked = false
 # [[dust_continuum_temps]]
 # val = 300.0
 # plim = [299.9, 300.1]
-# locked = true
+# locked = false
 # [[dust_continuum_temps]]
 # val = 200.0
 # plim = [199.9, 200.1]
-# locked = true
+# locked = false
 # [[dust_continuum_temps]]
 # val = 135.0
 # plim = [134.9, 135.1]
-# locked = true
+# locked = false
 # [[dust_continuum_temps]]
 # val = 90.0
 # plim = [89.9, 90.1]
-# locked = true
+# locked = false
 # [[dust_continuum_temps]]
 # val = 65.0
 # plim = [64.9, 65.1]
-# locked = true
+# locked = false
 # [[dust_continuum_temps]]
 # val = 50.0
 # plim = [49.9, 50.1]
-# locked = true
+# locked = false
 # [[dust_continuum_temps]]
 # val = 40.0
 # plim = [39.9, 40.1]
-# locked = true
+# locked = false
 # [[dust_continuum_temps]]
 # val = 35.0
 # plim = [34.9, 35.1]
-# locked = true
+# locked = false
 
 # [[power_law_indices]]
 # val = 1.4
 # plim = [-3.0, 3.0]
 # locked = false
+
+# template_amps: amplitude parameters for each template in the fit
+[[template_amps]]
+val = 1.0
+plim = [0.0, 1.0]
+locked = true
 
 # dust_features: each of these specifies a Polycyclic Aromatic 
 # Hydrocarbon (PAH) profile to include in the model. Each of these
@@ -86,379 +92,379 @@ locked = false
 
 [dust_features."PAH_3.29".fwhm]
 val = 0.050
-plim = [0.4, 1.1]
+plim = [0.9, 1.1]
 locked = false
 
-[dust_features."PAH_5.24".wave]
-val = 5.24
+[dust_features."PAH_5.25".wave]
+val = 5.253
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_5.24".fwhm]
-val = 0.058
-plim = [0.4, 1.1]
+[dust_features."PAH_5.25".fwhm]
+val = 0.032
+plim = [0.9, 1.1]
 locked = false
 
 [dust_features."PAH_5.27".wave]
-val = 5.27
+val = 5.266
 plim = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_5.27".fwhm]
-val = 0.179
-plim = [0.4, 1.1]
+val = 0.138
+plim = [0.9, 1.1]
 locked = false
 
 [dust_features."PAH_5.70".wave]
-val = 5.7
+val = 5.699
 plim = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_5.70".fwhm]
-val = 0.200
-plim = [0.4, 1.1]
+val = 0.153
+plim = [0.9, 1.1]
 locked = false
 
 [dust_features."PAH_5.87".wave]
-val = 5.87
+val = 5.856
 plim = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_5.87".fwhm]
-val = 0.200
-plim = [0.4, 1.1]
+val = 0.119
+plim = [0.9, 1.1]
 locked = false
 
 [dust_features."PAH_6.00".wave]
-val = 6.0
+val = 6.019
 plim = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_6.00".fwhm]
-val = 0.200
-plim = [0.4, 1.1]
+val = 0.085
+plim = [0.9, 1.1]
 locked = false
 
-[dust_features."PAH_6.18"]
+[dust_features."PAH_6.21"]
 complex = "6.2"
 
-[dust_features."PAH_6.18".wave]
-val = 6.18
+[dust_features."PAH_6.21".wave]
+val = 6.214
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_6.18".fwhm]
-val = 0.100
-plim = [0.4, 1.1]
+[dust_features."PAH_6.21".fwhm]
+val = 0.105
+plim = [0.9, 1.1]
 locked = false
 
-[dust_features."PAH_6.30"]
+[dust_features."PAH_6.33"]
 complex = "6.2"
 
-[dust_features."PAH_6.30".wave]
-val = 6.3
+[dust_features."PAH_6.33".wave]
+val = 6.329
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_6.30".fwhm]
-val = 0.187
-plim = [0.4, 1.1]
+[dust_features."PAH_6.33".fwhm]
+val = 0.206
+plim = [0.9, 1.1]
 locked = false
 
-[dust_features."PAH_6.69".wave]
-val = 6.69
+[dust_features."PAH_6.70".wave]
+val = 6.705
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_6.69".fwhm]
-val = 0.468
-plim = [0.4, 1.1]
+[dust_features."PAH_6.70".fwhm]
+val = 0.515
+plim = [0.9, 1.1]
 locked = false
 
 [dust_features."PAH_7.42"]
 complex = "7.7"
 
 [dust_features."PAH_7.42".wave]
-val = 7.42
+val = 7.427
 plim = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_7.42".fwhm]
-val = 0.935
-plim = [0.4, 1.1]
+val = 0.942
+plim = [0.9, 1.1]
 locked = false
 
 [dust_features."PAH_7.60"]
 complex = "7.7"
 
 [dust_features."PAH_7.60".wave]
-val = 7.60
+val = 7.587
 plim = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_7.60".fwhm]
-val = 0.334
-plim = [0.4, 1.1]
+val = 0.249
+plim = [0.9, 1.1]
 locked = false
 
-[dust_features."PAH_7.85"]
+[dust_features."PAH_7.84"]
 complex = "7.7"
 
-[dust_features."PAH_7.85".wave]
-val = 7.85
+[dust_features."PAH_7.84".wave]
+val = 7.841
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_7.85".fwhm]
-val = 0.416
-plim = [0.4, 1.1]
+[dust_features."PAH_7.84".fwhm]
+val = 0.432
+plim = [0.9, 1.1]
 locked = false
 
-[dust_features."PAH_8.33".wave]
-val = 8.33
+[dust_features."PAH_8.29".wave]
+val = 8.293
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_8.33".fwhm]
-val = 0.417
-plim = [0.4, 1.1]
+[dust_features."PAH_8.29".fwhm]
+val = 0.423
+plim = [0.9, 1.1]
 locked = false
 
-[dust_features."PAH_8.61".wave]
-val = 8.61
+[dust_features."PAH_8.60".wave]
+val = 8.602
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_8.61".fwhm]
-val = 0.336
-plim = [0.4, 1.1]
+[dust_features."PAH_8.60".fwhm]
+val = 0.296
+plim = [0.9, 1.1]
 locked = false
 
-[dust_features."PAH_10.68".wave]
-val = 10.68
+[dust_features."PAH_10.63".wave]
+val = 10.630
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_10.68".fwhm]
-val = 0.214
-plim = [0.4, 1.1]
+[dust_features."PAH_10.63".fwhm]
+val = 0.229
+plim = [0.9, 1.1]
 locked = false
 
 [dust_features."PAH_11.00".wave]
-val = 11.0
+val = 10.978
 plim = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_11.00".fwhm]
-val = 0.100
-plim = [0.4, 1.1]
+val = 0.063
+plim = [0.9, 1.1]
 locked = false
 
 [dust_features."PAH_11.15"]
 complex = "11.3"
 
 [dust_features."PAH_11.15".wave]
-val = 11.15
+val = 11.191
 plim = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_11.15".fwhm]
-val = 0.030
-plim = [0.4, 1.1]
+val = 0.023
+plim = [0.9, 1.1]
 locked = false
 
-[dust_features."PAH_11.20"]
+[dust_features."PAH_11.21"]
 complex = "11.3"
 
-[dust_features."PAH_11.20".wave]
-val = 11.2
+[dust_features."PAH_11.21".wave]
+val = 11.211
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_11.20".fwhm]
-val = 0.030
-plim = [0.4, 1.1]
+[dust_features."PAH_11.21".fwhm]
+val = 0.028
+plim = [0.9, 1.1]
 locked = false
 
-[dust_features."PAH_11.22"]
+[dust_features."PAH_11.24"]
 complex = "11.3"
 
-[dust_features."PAH_11.22".wave]
-val = 11.22
+[dust_features."PAH_11.24".wave]
+val = 11.244
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_11.22".fwhm]
-val = 0.100
-plim = [0.4, 1.1]
+[dust_features."PAH_11.24".fwhm]
+val = 0.043
+plim = [0.9, 1.1]
 locked = false
 
-[dust_features."PAH_11.25"]
+[dust_features."PAH_11.29"]
 complex = "11.3"
 
-[dust_features."PAH_11.25".wave]
-val = 11.25
+[dust_features."PAH_11.29".wave]
+val = 11.291
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_11.25".fwhm]
-val = 0.135
-plim = [0.4, 1.1]
+[dust_features."PAH_11.29".fwhm]
+val = 0.077
+plim = [0.9, 1.1]
 locked = false
 
-[dust_features."PAH_11.33"]
+[dust_features."PAH_11.38"]
 complex = "11.3"
 
-[dust_features."PAH_11.33".wave]
-val = 11.33
+[dust_features."PAH_11.38".wave]
+val = 11.380
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_11.33".fwhm]
-val = 0.363
-plim = [0.4, 1.1]
+[dust_features."PAH_11.38".fwhm]
+val = 0.362
+plim = [0.9, 1.1]
 locked = false
 
-[dust_features."PAH_11.99".wave]
-val = 11.99
+[dust_features."PAH_11.95".wave]
+val = 11.956
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_11.99".fwhm]
-val = 0.540
-plim = [0.4, 1.1]
+[dust_features."PAH_11.95".fwhm]
+val = 0.594
+plim = [0.9, 1.1]
 locked = false
 
-[dust_features."PAH_12.62".wave]
-val = 12.62
+[dust_features."PAH_12.63".wave]
+val = 12.635
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_12.62".fwhm]
-val = 0.530
-plim = [0.4, 1.1]
+[dust_features."PAH_12.63".fwhm]
+val = 0.573
+plim = [0.9, 1.1]
 locked = false
 
-[dust_features."PAH_12.69".wave]
-val = 12.69
+[dust_features."PAH_12.74".wave]
+val = 12.738
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_12.69".fwhm]
-val = 0.120
-plim = [0.4, 1.1]
+[dust_features."PAH_12.74".fwhm]
+val = 0.111
+plim = [0.9, 1.1]
 locked = false
 
-[dust_features."PAH_13.48".wave]
-val = 13.48
+[dust_features."PAH_13.44".wave]
+val = 13.439
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_13.48".fwhm]
-val = 0.539
-plim = [0.4, 1.1]
+[dust_features."PAH_13.44".fwhm]
+val = 0.593
+plim = [0.9, 1.1]
 locked = false
 
-[dust_features."PAH_14.04".wave]
-val = 14.04
+[dust_features."PAH_13.99".wave]
+val = 13.99
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_14.04".fwhm]
-val = 0.225
-plim = [0.4, 1.1]
+[dust_features."PAH_13.99".fwhm]
+val = 0.248
+plim = [0.9, 1.1]
 locked = false
 
-[dust_features."PAH_14.19".wave]
-val = 14.19
+[dust_features."PAH_14.21".wave]
+val = 14.207
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_14.19".fwhm]
-val = 0.355
-plim = [0.4, 1.1]
+[dust_features."PAH_14.21".fwhm]
+val = 0.390
+plim = [0.9, 1.1]
 locked = false
 
-[dust_features."PAH_14.65".wave]
-val = 14.65
+[dust_features."PAH_14.64".wave]
+val = 14.639
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_14.65".fwhm]
-val = 0.500
-plim = [0.4, 1.1]
+[dust_features."PAH_14.64".fwhm]
+val = 0.384
+plim = [0.9, 1.1]
 locked = false
 
-[dust_features."PAH_15.90".wave]
-val = 15.9
+[dust_features."PAH_15.85".wave]
+val = 15.851
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_15.90".fwhm]
-val = 0.318
-plim = [0.4, 1.1]
+[dust_features."PAH_15.85".fwhm]
+val = 0.276
+plim = [0.9, 1.1]
 locked = false
 
 [dust_features."PAH_16.45"]
 complex = "17"
 
 [dust_features."PAH_16.45".wave]
-val = 16.45
+val = 16.459
 plim = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_16.45".fwhm]
-val = 0.230
-plim = [0.4, 1.1]
+val = 0.156
+plim = [0.9, 1.1]
 locked = false
 
-[dust_features."PAH_17.04"]
+[dust_features."PAH_17.02"]
 complex = "17"
 
-[dust_features."PAH_17.04".wave]
-val = 17.04
+[dust_features."PAH_17.02".wave]
+val = 17.023
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_17.04".fwhm]
-val = 1.108
-plim = [0.4, 1.1]
+[dust_features."PAH_17.02".fwhm]
+val = 0.877
+plim = [0.9, 1.1]
 locked = false
 
-[dust_features."PAH_17.375"]
+[dust_features."PAH_17.39"]
 complex = "17"
 
-[dust_features."PAH_17.375".wave]
-val = 17.375
+[dust_features."PAH_17.39".wave]
+val = 17.389
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_17.375".fwhm]
-val = 0.209
-plim = [0.4, 1.1]
+[dust_features."PAH_17.39".fwhm]
+val = 0.190
+plim = [0.9, 1.1]
 locked = false
 
-[dust_features."PAH_17.87"]
+[dust_features."PAH_17.88"]
 complex = "17"
 
-[dust_features."PAH_17.87".wave]
-val = 17.87
+[dust_features."PAH_17.88".wave]
+val = 17.887
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_17.87".fwhm]
-val = 0.286
-plim = [0.4, 1.1]
+[dust_features."PAH_17.88".fwhm]
+val = 0.258
+plim = [0.9, 1.1]
 locked = false
 
-[dust_features."PAH_18.92".wave]
-val = 18.92
+[dust_features."PAH_18.94".wave]
+val = 18.937
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_18.92".fwhm]
-val = 0.359
-plim = [0.4, 1.1]
+[dust_features."PAH_18.94".fwhm]
+val = 0.395
+plim = [0.9, 1.1]
 locked = false
 
 # ~19.8 um PAH feature? https://www.aanda.org/articles/aa/full_html/2010/03/aa12714-09/aa12714-09.html
@@ -471,7 +477,7 @@ locked = false
 
 [dust_features."PAH_33.10".fwhm]
 val = 1.655
-plim = [0.4, 1.1]
+plim = [0.9, 1.1]
 locked = false
 
 # Absorption features (also modeled with Drude profiles)
@@ -494,7 +500,7 @@ locked = false
 
 # [absorption_features."abs_leak_12.22".fwhm]
 # val = 0.133
-# plim = [0.4, 1.1]
+# plim = [0.9, 1.1]
 # locked = true
 
 # [absorption_features."abs_C2H2_13.7".wave]
@@ -504,7 +510,7 @@ locked = false
 
 # [absorption_features."abs_C2H2_13.7".fwhm]
 # val = 0.0197
-# plim = [0.4, 1.1]
+# plim = [0.9, 1.1]
 # locked = true
 
 # Other potential absorption features:

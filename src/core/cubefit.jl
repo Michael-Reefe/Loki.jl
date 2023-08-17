@@ -602,8 +602,8 @@ This object will obviously be different depending on if the spectral region is :
 - `n_dust_feat::S`: The number of PAH features
 - `n_abs_feat::S`: The number of absorption features
 - `n_templates::S`: The number of generic templates
-- `templates::Matrix{T}`: Each template to be used in the fit. The first axis should be wavelength and the second axis should
-    iterate over each individual template. Each template will get an amplitude parameter in the fit.
+- `templates::Array{T,4}`: Each template to be used in the fit. The first 2 axes are spatial, the 3rd axis should be wavelength, 
+    and the 4th axis should iterate over each individual template. Each template will get an amplitude parameter in the fit.
 - `template_names::Vector{String}`: The names of each generic template in the fit.
 - `dust_features::Union{DustFeatures,Nothing}`: All of the fitting parameters for each PAH feature
 - `abs_features::Union{DustFeatures,Nothing}`: All of the fitting parameters for each absorption feature
@@ -719,7 +719,8 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     n_dust_feat::S
     n_abs_feat::S
     n_templates::S
-    templates::Matrix{T}
+    # 4D templates: first 3 axes are the template's spatial and spectral axes, while the 4th axis enumerates individual templates
+    templates::Array{T, 4}  
     template_names::Vector{String}
     dust_features::Union{DustFeatures,Nothing}
     abs_features::Union{DustFeatures,Nothing}
@@ -840,10 +841,10 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
 
         # More default options
         if !haskey(out, :templates)
-            out[:templates] = Matrix{Float64}(undef, 0, 0)
+            out[:templates] = Array{Float64, 4}(undef, 0, 0, 0, 0)
         end
         if !haskey(out, :template_names)
-            out[:template_names] = String[]
+            out[:template_names] = String["template_$i" for i in axes(out[:templates], 4)]
         end
 
         if !haskey(out, :linemask_delta)
@@ -962,7 +963,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
 
             # Set defaults for the optical components that will not be fit
             n_ssps = 0
-            n_templates = size(out[:templates], 2)
+            n_templates = size(out[:templates], 4)
             ssp_λ = ssp_templates = feii_templates_fft = nothing
             npad_feii = velscale = vsyst_ssp = vsyst_feii = 0
 
@@ -1175,11 +1176,11 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             out[:parallel], out[:save_fits], out[:save_full_model], out[:overwrite], out[:track_memory], out[:track_convergence], out[:make_movies], 
             out[:extinction_curve], out[:extinction_screen], extinction_map, out[:fit_stellar_continuum], out[:fit_sil_emission], out[:guess_tau], out[:fit_opt_na_feii], 
             out[:fit_opt_br_feii], out[:fit_all_samin], out[:use_pah_templates], pah_template_map, out[:fit_joint], out[:fit_uv_bump], out[:fit_covering_frac], 
-            continuum, n_dust_cont, n_power_law, n_dust_features, n_abs_features, n_templates, out[:templates], out[:template_names], dust_features, abs_features, abs_taus, 
-            n_ssps, ssp_λ, ssp_templates, feii_templates_fft, velscale, vsyst_ssp, vsyst_feii, npad_feii, n_lines, n_acomps, n_comps, relative_flags, lines, tied_kinematics, 
-            tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, out[:cosmology], flexible_wavesol, out[:n_bootstrap], out[:random_seed], out[:line_test_lines], 
-            out[:line_test_threshold], out[:plot_line_test], out[:linemask_delta], out[:linemask_n_inc_thresh], out[:linemask_thresh], out[:linemask_overrides], 
-            out[:map_snr_thresh], p_init_cont, p_init_line, p_init_pahtemp)
+            continuum, n_dust_cont, n_power_law, n_dust_features, n_abs_features, n_templates, out[:templates], out[:template_names], dust_features, 
+            abs_features, abs_taus, n_ssps, ssp_λ, ssp_templates, feii_templates_fft, velscale, vsyst_ssp, vsyst_feii, npad_feii, n_lines, n_acomps, n_comps, relative_flags, 
+            lines, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, out[:cosmology], flexible_wavesol, out[:n_bootstrap], 
+            out[:random_seed], out[:line_test_lines], out[:line_test_threshold], out[:plot_line_test], out[:linemask_delta], out[:linemask_n_inc_thresh], out[:linemask_thresh], 
+            out[:linemask_overrides], out[:map_snr_thresh], p_init_cont, p_init_line, p_init_pahtemp)
     end
 
 end
@@ -1253,7 +1254,6 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, I::Vector{<:Real}, �
 
     amp_dc_plim = (0., Inf)
     amp_df_plim = (0., clamp(1 / exp(-continuum.τ_97.limits[2]), 1., Inf))
-    amp_temp_plim = (0., 2.)
 
     stellar_plim = [amp_dc_plim, continuum.T_s.limits]
     stellar_lock = [!cube_fitter.fit_stellar_continuum, continuum.T_s.locked]
@@ -1292,8 +1292,8 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, I::Vector{<:Real}, �
     hd_lock = cube_fitter.fit_sil_emission ? [false, continuum.T_hot.locked, continuum.Cf_hot.locked,
         continuum.τ_warm.locked, continuum.τ_cold.locked, continuum.sil_peak.locked] : []
     
-    temp_plim = [amp_temp_plim for _ in 1:cube_fitter.n_templates]
-    temp_lock = [false for _ in 1:cube_fitter.n_templates]
+    temp_plim = [ta.limits for ta in continuum.temp_amp]
+    temp_lock = [ta.locked for ta in continuum.temp_amp]
 
     if !split
         plims = Vector{Tuple}(vcat(stellar_plim, dc_plim, pl_plim, ext_plim, ab_plim, hd_plim, temp_plim, df_plim))
@@ -1501,7 +1501,6 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
 
         # Template amplitudes (not rescaled)
         for n ∈ 1:cube_fitter.n_templates
-            p₀[pᵢ] = clamp(nanmedian(I) / nanmedian(cube_fitter.templates[:, n]), 1e-10, 2.)
             pᵢ += 1
         end
 
@@ -1519,7 +1518,7 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         @debug "Calculating initial starting points..."
         cubic_spline = Spline1D(λ, I, k=3)
 
-        temp_pars = [0.5/cube_fitter.n_templates for _ in 1:cube_fitter.n_templates]
+        temp_pars = [ta.value for ta in continuum.temp_amp]
 
         # Stellar amplitude
         λ_s = minimum(λ) < 5 ? minimum(λ)+0.1 : 5.1

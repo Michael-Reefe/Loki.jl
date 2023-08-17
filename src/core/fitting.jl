@@ -204,9 +204,21 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, ﾎ
     I_spax = I_spax[.~mask_bad]
     ﾏダspax = ﾏダspax[.~mask_bad]
     if cube_fitter.n_templates > 0
-        templates_spax = cube_fitter.templates[.~mask_bad, :]
+        if init
+            n_pix = sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+            templates_spax = sumdim(cube_fitter.templates[:, :, .~mask_bad, :], (1,2))
+            for s in axes(templates_spax, 2)
+                templates_spax[:, s] ./= n_pix
+            end
+        else
+            templates_spax = cube_fitter.templates[spaxel, .~mask_bad, :]
+        end
+        for s in axes(templates_spax, 2)
+            m = .~isfinite.(templates_spax[:, s])
+            templates_spax[m, s] .= nanmedian(templates_spax[:, s])
+        end
     else
-        templates_spax = cube_fitter.templates
+        templates_spax = Matrix{Float64}(undef, 0, 0)
     end
 
     if !isnothing(cube_fitter.user_mask)
@@ -348,9 +360,26 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, ﾎ
 
     # Create the full model, again only if not bootstrapping
     if cube_fitter.spectral_region == :MIR
+        if cube_fitter.n_templates > 0
+            if init
+                n_pix = sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+                templates_full = sumdim(cube_fitter.templates, (1,2))
+                for s in axes(templates_full, 2)
+                    templates_full[:, s] ./= n_pix
+                end
+            else
+                templates_full = cube_fitter.templates[spaxel, :, :]
+            end
+            for s in axes(templates_full, 2)
+                m = .~isfinite.(templates_full[:, s])
+                templates_full[m, s] .= nanmedian(templates_full[:, s])
+            end
+        else
+            templates_full = Matrix{Float64}(undef,0,0)
+        end
         I_model, comps = model_continuum(ﾎｻ, popt, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
             cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, false,
-            cube_fitter.templates, true)
+            templates_full,  true)
     else
         I_model, comps = model_continuum(ﾎｻ, popt, N, cube_fitter.velscale, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
             cube_fitter.n_ssps, cube_fitter.ssp_ﾎｻ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, 
@@ -422,9 +451,21 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, ﾎ
     I_spax = I_spax[.~mask_bad]
     ﾏダspax = ﾏダspax[.~mask_bad]
     if cube_fitter.n_templates > 0
-        templates_spax = cube_fitter.templates[.~mask_bad, :]
+        if init
+            n_pix = sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+            templates_spax = sumdim(cube_fitter.templates[:, :, .~mask_bad, :], (1,2))
+            for s in axes(templates_spax, 2)
+                templates_spax[:, s] ./= n_pix
+            end
+        else
+            templates_spax = cube_fitter.templates[spaxel, .~mask_bad, :]
+        end
+        for s in axes(templates_spax, 2)
+            m = .~isfinite.(templates_spax[:, s])
+            templates_spax[m, s] .= nanmedian(templates_spax[:, s])
+        end
     else
-        templates_spax = cube_fitter.templates
+        templates_spax = Matrix{Float64}(undef, 0, 0) 
     end
 
     if !isnothing(cube_fitter.user_mask)
@@ -623,9 +664,26 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, ﾎ
     # @debug "Continuum covariance matrix: \n $covar"
 
     # Create the full model, again only if not bootstrapping
+    if cube_fitter.n_templates > 0
+        if init
+            n_pix = sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+            templates_full = sumdim(cube_fitter.templates, (1,2))
+            for s in axes(templates_full, 2)
+                templates_full[:, s] ./= n_pix
+            end
+        else
+            templates_full = cube_fitter.templates[spaxel, :, :]
+        end
+        for s in axes(templates_full, 2)
+            m = .~isfinite.(templates_full[:, s])
+            templates_full[m, s] .= nanmedian(templates_full[:, s])
+        end
+    else
+        templates_full = Matrix{Float64}(undef,0,0)
+    end
     I_model, comps = model_continuum(ﾎｻ, popt, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
         cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, false,
-        cube_fitter.templates, true)
+        templates_full, true)
 
     if init
         cube_fitter.p_init_cont[:] .= popt
@@ -1233,7 +1291,19 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, ﾎｻ::Vec
     I_spline_spax = I_spline_spax[.~mask_bad]
     ﾏダspax = ﾏダspax[.~mask_bad]
     if cube_fitter.n_templates > 0
-        templates_spax = cube_fitter.templates[.~mask_bad, :]
+        if init
+            n_pix = sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+            templates_spax = sumdim(cube_fitter.templates[:, :, .~mask_bad, :], (1,2))
+            for s in axes(templates_spax, 2)
+                templates_spax[:, s] ./= n_pix
+            end
+        else
+            templates_spax = cube_fitter.templates[spaxel, .~mask_bad, :]
+        end
+        for s in axes(templates_spax, 2)
+            m = .~isfinite.(templates_spax[:, s])
+            templates_spax[m, s] .= nanmedian(templates_spax[:, s])
+        end
     else
         templates_spax = cube_fitter.templates
     end
@@ -1600,9 +1670,26 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, ﾎｻ::Vec
 
     # Create the full model
     if cube_fitter.spectral_region == :MIR
+        if cube_fitter.n_templates > 0
+            if init
+                n_pix = sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+                templates_full = sumdim(cube_fitter.templates, (1,2))
+                for s in axes(templates_full, 2)
+                    templates_full[:, s] ./= n_pix
+                end
+            else
+                templates_full = cube_fitter.templates[spaxel, :, :]
+            end
+            for s in axes(templates_full, 2)
+                m = .~isfinite.(templates_full[:, s])
+                templates_full[m, s] .= nanmedian(templates_full[:, s])
+            end
+        else
+            templates_full = Matrix{Float64}(undef,0,0)
+        end
         Icont, comps_cont = model_continuum(ﾎｻ, popt_cont, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
             cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, false, 
-            cube_fitter.templates, true)
+            templates_full, true)
         ext_key = "extinction"
     else
         Icont, comps_cont = model_continuum(ﾎｻ, popt_cont, N, cube_fitter.velscale, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
@@ -2280,7 +2367,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                 if cube_fitter.spectral_region == :MIR
                     I_boot_cont, comps_boot_cont = model_continuum(ﾎｻ, p_out[1:split1], norm, cube_fitter.n_dust_cont, cube_fitter.n_power_law, 
                         cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, 
-                        cube_fitter.fit_sil_emission, false, cube_fitter.templates, true)
+                        cube_fitter.fit_sil_emission, false, cube_fitter.n_templates > 0 ? cube_fitter.templates[spaxel, :, :] : Matrix{Float64}(undef, 0, 0), true)
                     ext_key = "extinction"
                 else
                     I_boot_cont, comps_boot_cont = model_continuum(ﾎｻ, p_out[1:split1], norm, cube_fitter.velscale, cube_fitter.vsyst_ssp, 

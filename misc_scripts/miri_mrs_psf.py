@@ -20,8 +20,13 @@ import os
 #### single-band, level 3 reduced data cubes from the JWST pipeline (the IFU-aligned axes can be achieved by setting
 #### spec3.cube_build.coord_system = 'ifualign')
 
+#### Another option is to calculate the PSF models for all wavelength slices in a given channel/band. This can be achieved
+#### by inputting a LOKI/JWST-formatted sky-aligned input model instead of a parameter maps FITS file, and specifying the 
+#### channel/band to compute the models for, i.e. '1A', '3C', etc. (Warning: This may take a while, as each model takes ~3-5 seconds
+#### to generate)
 
-def calculate_mrs_psf(ifu_cube, wave=None, out_wcs=None, out_shape=None, oversample=4, broadening='both', debug=False):
+
+def calculate_mrs_psf(ifu_cube, centroid=None, wave=None, out_wcs=None, out_shape=None, oversample=4, broadening='both', debug=False):
     """
     Calculate the point-spread function of the MIRI Medium Resolution Spectrometer (MRS) IFU unit, using
     an in-development version of webbpsf, for a given observation. The PSFs are calculated at the peak
@@ -91,22 +96,6 @@ def calculate_mrs_psf(ifu_cube, wave=None, out_wcs=None, out_shape=None, oversam
     miri.detector = detector
     miri.pixelscale = pix_as
 
-    centroids = []
-    for wavei in wave:
-        wave_slice = np.argmin(np.abs(wavei - wave_full))
-        centroid = photutils.centroids.centroid_com(ifu_cube[1].data[wave_slice, :, :])
-        centroids.append(centroid)
-    centroid_x = np.mean([cent[0] for cent in centroids])
-    centroid_y = np.mean([cent[1] for cent in centroids])
-
-    # Adjust the position of the source to match the source in the data
-    center_y, center_x = np.array(ifu_cube[1].data.shape[1:]) / 2
-    offset_x_as = (centroid_x + 0.5 - center_x) * pix_as
-    offset_y_as = (centroid_y + 0.5 - center_y) * pix_as
-    miri.options['source_offset_x'] = offset_x_as
-    miri.options['source_offset_y'] = offset_y_as
-    print(f"Source position offset: {offset_x_as:.3f}\", {offset_y_as:.3f}\"")
-
     # Prepare output array
     psf_cube = np.zeros((len(wave), *ifu_cube[1].data.shape[1:]))
 
@@ -116,14 +105,35 @@ def calculate_mrs_psf(ifu_cube, wave=None, out_wcs=None, out_shape=None, oversam
         cdata = ax.imshow(np.full(psf_cube.shape[1:], fill_value=-5.0, dtype=float), origin='lower', cmap='cubehelix', vmin=-5, vmax=0)
         fig.colorbar(cdata)
 
+
+    if centroid is None:
+        centroid_x, centroid_y = photutils.centroids.centroid_2dg(np.nansum(ifu_cube['SCI'].data, axis=0),
+                                                                  error=np.sqrt(np.nansum(ifu_cube['ERR'].data**2, axis=0)))
+    else:
+        centroid_x, centroid_y = centroid
+
+    # Adjust the position of the source to match the source in the data
+    center_y, center_x = np.array(ifu_cube[1].data.shape[1:]) / 2
+    offset_x_as = (centroid_x + 0.5 - center_x) * pix_as
+    offset_y_as = (centroid_y + 0.5 - center_y) * pix_as
+    miri.options['source_offset_x'] = offset_x_as
+    miri.options['source_offset_y'] = offset_y_as
+    print(f"Source position offset: {offset_x_as:.3f}\", {offset_y_as:.3f}\"")
+
     for i in tqdm.trange(len(wave)):
 
         # Calculate the PSF
-        psf = miri.calc_psf(monochromatic=wave[i], broadening=broadening, add_distortion=False, 
-                            oversample=oversample, display=False, fov_arcsec=fov_as, crop_psf=True)
+        try:
+            psf = miri.calc_psf(monochromatic=wave[i], broadening=broadening, add_distortion=False, 
+                                oversample=oversample, display=False, fov_arcsec=fov_as, crop_psf=True)
+        except:
+            # This is dumb but it works for some reason
+            miri.pixelscale = pix_as
+            psf = miri.calc_psf(monochromatic=wave[i], broadening=broadening, add_distortion=False, 
+                                oversample=oversample, display=False, fov_arcsec=fov_as, crop_psf=True)
         
-        # Normalize so that it integrates to 1
-        psf_norm = psf[3].data / np.sum(psf[3].data)
+        # Normalize so that the maximum is 1
+        psf_norm = psf[3].data / np.nanmax(psf[3].data)
         # Add to output array
         psf_cube[i, :, :] = psf_norm
 
@@ -137,14 +147,54 @@ def calculate_mrs_psf(ifu_cube, wave=None, out_wcs=None, out_shape=None, oversam
     
     # Reproject onto output WCS
     if out_wcs is not None:
+        print("Reprojecting PSF onto output grid...")
         in_wcs = WCS(ifu_cube[1].header)[0]
-        psf_cube = reproject.reproject_interp((psf_cube, in_wcs), out_wcs, out_shape, order='bilinear', return_footprint=False)
+        psf_cube = rotate_and_shift(psf_cube, in_wcs, out_wcs, out_shape)
 
     if debug:
         plt.close()
 
     # Return the PSF cube object 
     return psf_cube
+
+
+def rotate_and_shift(psf, in_wcs, out_wcs, out_shape, shift_to=None):
+    """
+    Reproject the PSF model onto another coordinate system, given an input and output WCS and an output shift.
+    Also optionally shift the PSF so the centroid matches with the centroid of a given FITS file.
+
+    :param psf: np.ndarray
+        The 3D PSF model, in IFU coordinates
+    :param in_wcs: WCS
+        The WCS for the input PSF model
+    :param out_wcs: WCS
+        The output WCS for the PSF to be projected onto
+    :param out_shape: iterable
+        The output shape for the PSF to be projected onto
+    :param shift_to: HDUList, optional
+        A FITS HDUList object containing data that can be centroided, such that the centroids can be matched and aligned.
+    """
+    
+    print('Reprojecting PSFs onto the output coordinate frame...')
+    psf_rot = reproject.reproject_interp((psf, in_wcs), out_wcs, out_shape, order='bilinear', return_footprint=False)
+    if shift_to is None:
+        return psf_rot
+
+    print('Shifting PSFs to match the centroids...')
+    psf_rotshift = np.zeros(psf_rot.shape)
+    data = np.nansum(shift_to['SCI'].data, axis=0)
+    cent0 = photutils.centroids.centroid_com(data)
+    # box = (int(cent0[1])-2, int(cent0[1])+2, int(cent0[0])-2, int(cent0[0])+2)
+
+    mask_out = np.nansum(shift_to['SCI'].data, axis=0) == 0.
+
+    for i in tqdm.trange(psf_rot.shape[0]):
+        # cent0 = photutils.centroids.centroid_com(shift_to['SCI'].data[i, box[0]:box[1], box[2]:box[3]]) + np.array([box[2]+0.5, box[0]+0.5])
+        cent1 = photutils.centroids.centroid_com(psf_rot[i, :, :])
+        shift = cent0 - cent1
+        psf_rotshift[i,:,:] = ndimage.shift(psf_rot[i,:,:], shift[::-1], order=1, mode='constant', cval=0.)
+        
+    return psf_rotshift
 
 
 def calculate_extended_emission(ifu_cubes, params, line_dict):
@@ -180,15 +230,16 @@ def calculate_extended_emission(ifu_cubes, params, line_dict):
     out_shape = params[1].data.shape
     names = [param.name for param in params]
 
+    print('Adding HDUs for pointlike and extended emission...')
     for param in params:
 
         # Correct all line flux maps
-        if ('lines' in param.name) and ('flux' in param.name):
+        if ('LINES' in param.name) and ('FLUX' in param.name) and ('POINT' not in param.name) and ('EXTENDED' not in param.name):
 
             # Loop through lines dictionary to find the rest wavelenth
             line_wave = None
             for key in line_dict['lines'].keys():
-                if key in param.name:
+                if key.upper() in param.name:
                     line_wave = line_dict['lines'][key]['wave']
             if line_wave is None:
                 raise ValueError(f'Could not find line entry for {param.name}')
@@ -196,14 +247,18 @@ def calculate_extended_emission(ifu_cubes, params, line_dict):
             line_wave *= (1+z)
             # Get the MIRI Channel/Band that this falls under
             chbands = []
+            centroids = []
             for key, val in ch_dict.items():
                 if val[0] < line_wave < val[1]:
                     chbands.append(key)
+                    centroid_frame1 = photutils.centroids.centroid_com(10**param.data)
+                    centroid_frame2 = WCS(ifu_cubes[key][1].header)[0].world_to_pixel(out_wcs.pixel_to_world(*centroid_frame1))
+                    centroids.append(centroid_frame2)
             # Generate PSFs for each channel/band
             psfs = []
-            for chband in chbands:
-                psf = calculate_mrs_psf(ifu_cubes[chband], line_wave, out_wcs, out_shape)
-                psf /= np.nanmax(psf)
+            print(f'Calculating {len(chbands)} PSFs for {param.name}')
+            for (centroid, chband) in zip(centroids, chbands):
+                psf = calculate_mrs_psf(ifu_cubes[chband], centroid, line_wave, out_wcs, out_shape)
                 psfs.append(psf)
             # For lines that happen to fall on the channel boundaries, average the two PSFs
             if len(psfs) > 1:
@@ -236,9 +291,15 @@ def calculate_extended_emission(ifu_cubes, params, line_dict):
 if __name__ == '__main__':
 
     # Inputs: file paths to (1) IFU-aligned single-channel single-band level 3 reduced cubes,
-    #                       (2) Parameter maps FITS file
+    #                       (2) Parameter maps FITS file (if editing already-fit data) OR LOKI-formatted input data (if generating full PSF models)
+    #                       (3) OPTIONAL, string giving the channel/band (i.e. '2B') if generating full PSF models
     ifu_path = sys.argv[1]
     param_path = sys.argv[2]
+    try:
+        just_psf = sys.argv[3]
+    except:
+        just_psf = ''
+
     line_dict_path = os.path.join(os.path.dirname(__file__), '..', 'src', 'options', 'lines.toml')
 
     # Get IFU-aligned cubes for each subchannel
@@ -255,15 +316,45 @@ if __name__ == '__main__':
                  '4A': fits.open(os.path.join(ifu_path, 'Level3_ch4-short_s3d.fits')),
                  '4B': fits.open(os.path.join(ifu_path, 'Level3_ch4-medium_s3d.fits')),
                  '4C': fits.open(os.path.join(ifu_path, 'Level3_ch4-long_s3d.fits'))}
+
     # Get the parameter maps from the fitting
     params = fits.open(param_path, mode='update')
     # Get the line dictionary so we can get rest wavelengths based on the HDU names
     line_dict = toml.load(line_dict_path)
 
-    params = calculate_extended_emission(ifu_cubes, params, line_dict)
+    if just_psf:
+        if not os.path.exists(f'psf_model_ch{just_psf}_norm.fits'):
+            # Calculate the PSFs
+            psfs = calculate_mrs_psf(ifu_cubes[just_psf])
+            # Save as FITS file
+            hdul = fits.HDUList([fits.PrimaryHDU(psfs, ifu_cubes[just_psf][1].header)])
+            hdul.writeto(f'psf_model_ch{just_psf}_norm.fits', overwrite=True)
+            hdul.close()
+        else:
+            psfs = fits.open(f'psf_model_ch{just_psf}_norm.fits')[0].data
 
-    # Write changes to the file and close
-    params.flush()
-    params.close()
-    for val in ifu_cubes.values():
-        val.close()
+        in_wcs = WCS(ifu_cubes[just_psf][1].header)[0]
+        out_wcs = WCS(params[1].header)[0]
+        out_shape = (ifu_cubes[just_psf][1].data.shape[0], *params[1].data.shape[1:])
+
+        psfs_rotshift = rotate_and_shift(psfs, in_wcs, out_wcs, out_shape, shift_to=params)
+        hdul = fits.HDUList([fits.PrimaryHDU(header=params[0].header)])
+        hdul.append(fits.ImageHDU(psfs_rotshift, params[1].header, name='SCI'))
+        hdul.append(fits.ImageHDU(np.zeros(psfs_rotshift.shape), params[2].header, name='ERR'))
+        hdul.append(fits.ImageHDU(np.zeros(psfs_rotshift.shape, dtype=np.uint16), params[2].header, name='DQ'))
+        # wavecol = fits.Column(name='wave', format='1D', array=params['AUX'].data['wave'])
+        # psfcol = fits.Column(name='psf', format='1D', array=params['AUX'].data['psf'])
+        # lsfcol = fits.Column(name='lsf', format='1D', array=params['AUX'].data['lsf'])
+        # cols = fits.ColDefs([wavecol, psfcol, lsfcol])
+        # hdul.append(fits.BinTableHDU.from_columns(cols))
+        hdul.writeto(f'psf_model_ch{just_psf}_norm_rot_shift.fits', overwrite=True, output_verify='warn')
+        hdul.close()
+
+    else:
+        params = calculate_extended_emission(ifu_cubes, params, line_dict)
+
+        # Write changes to the file and close
+        params.flush()
+        params.close()
+        for val in ifu_cubes.values():
+            val.close()

@@ -1216,7 +1216,7 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
 
     # Add generic templates with a normalization parameter
     for i in axes(templates, 2)
-        comps["templates_$i"] = params[pᵢ] .* templates[:, i]
+        comps["templates_$i"] = params[pᵢ] .* templates[:, i] ./ N
         contin .+= comps["templates_$i"]
         pᵢ += 1
     end
@@ -1312,7 +1312,7 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
 
     # Add generic templates with a normalization parameter
     for i in axes(templates, 2)
-        contin .+= params[pᵢ] .* templates[:, i]
+        contin .+= params[pᵢ] .* templates[:, i] ./ N
         pᵢ += 1
     end
 

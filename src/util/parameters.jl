@@ -101,7 +101,7 @@ end
 abstract type Continuum end
 
 """
-    MIRContinuum(T_s, T_dc, α, τ_97, τ_ice, τ_ch, β, T_hot, Cf_hot, τ_warm, τ_cold, sil_peak)
+    MIRContinuum(T_s, T_dc, α, τ_97, τ_ice, τ_ch, β, T_hot, Cf_hot, τ_warm, τ_cold, sil_peak, temp_amp)
 
 A container for various MIR continuum modeling parameters.
 """
@@ -120,6 +120,7 @@ struct MIRContinuum <: Continuum
     τ_warm::Parameter
     τ_cold::Parameter
     sil_peak::Parameter
+    temp_amp::Vector{Parameter}
 
 end
 

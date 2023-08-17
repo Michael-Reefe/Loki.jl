@@ -165,7 +165,8 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             # End of continuum parameters: recreate the continuum model
             I_cont, comps_c = model_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], N, cube_fitter.n_dust_cont, cube_fitter.n_power_law,
                 cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, 
-                cube_fitter.fit_sil_emission, false, cube_fitter.templates, true)
+                cube_fitter.fit_sil_emission, false, cube_fitter.n_templates > 0 ? cube_fitter.templates[index, :, :] : Matrix{Float64}(undef, 0, 0), 
+                true)
         end
 
         # Save marker of the point where the continuum parameters end and the line parameters begin
@@ -1020,7 +1021,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     end
     plt.savefig(save_path, dpi=300, bbox_inches=:tight)
     if !isnothing(modify_ax)
-        return fig, ax
+        return fig, ax, cdata
     end
     plt.close()
 
