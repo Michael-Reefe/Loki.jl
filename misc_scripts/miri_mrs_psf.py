@@ -26,7 +26,8 @@ import os
 #### to generate)
 
 
-def calculate_mrs_psf(ifu_cube, centroid=None, wave=None, out_wcs=None, out_shape=None, oversample=4, broadening='both', debug=False):
+def calculate_mrs_psf(ifu_cube, centroid=None, wave=None, out_wcs=None, out_shape=None, oversample=4, broadening='both', debug=False,
+                      shift_to=None, shift_wcs=None):
     """
     Calculate the point-spread function of the MIRI Medium Resolution Spectrometer (MRS) IFU unit, using
     an in-development version of webbpsf, for a given observation. The PSFs are calculated at the peak
@@ -149,7 +150,7 @@ def calculate_mrs_psf(ifu_cube, centroid=None, wave=None, out_wcs=None, out_shap
     if out_wcs is not None:
         print("Reprojecting PSF onto output grid...")
         in_wcs = WCS(ifu_cube[1].header)[0]
-        psf_cube = rotate_and_shift(psf_cube, in_wcs, out_wcs, out_shape)
+        psf_cube = rotate_and_shift(psf_cube, in_wcs, out_wcs, out_shape, shift_to=shift_to, shift_wcs=shift_wcs)
 
     if debug:
         plt.close()
@@ -158,7 +159,7 @@ def calculate_mrs_psf(ifu_cube, centroid=None, wave=None, out_wcs=None, out_shap
     return psf_cube
 
 
-def rotate_and_shift(psf, in_wcs, out_wcs, out_shape, shift_to=None):
+def rotate_and_shift(psf, in_wcs, out_wcs, out_shape, shift_to=None, shift_wcs=None):
     """
     Reproject the PSF model onto another coordinate system, given an input and output WCS and an output shift.
     Also optionally shift the PSF so the centroid matches with the centroid of a given FITS file.
@@ -182,18 +183,25 @@ def rotate_and_shift(psf, in_wcs, out_wcs, out_shape, shift_to=None):
 
     print('Shifting PSFs to match the centroids...')
     psf_rotshift = np.zeros(psf_rot.shape)
-    data = np.nansum(shift_to['SCI'].data, axis=0)
+    if len(shift_to.shape) > 2:
+        data = np.nansum(shift_to, axis=0)
+    else:
+        data = shift_to
     cent0 = photutils.centroids.centroid_com(data)
-    # box = (int(cent0[1])-2, int(cent0[1])+2, int(cent0[0])-2, int(cent0[0])+2)
+    if shift_wcs is not None:
+        cent0 = out_wcs.world_to_pixel(shift_wcs.pixel_to_world(*cent0))
 
-    mask_out = np.nansum(shift_to['SCI'].data, axis=0) == 0.
-
-    for i in tqdm.trange(psf_rot.shape[0]):
-        # cent0 = photutils.centroids.centroid_com(shift_to['SCI'].data[i, box[0]:box[1], box[2]:box[3]]) + np.array([box[2]+0.5, box[0]+0.5])
-        cent1 = photutils.centroids.centroid_com(psf_rot[i, :, :])
+    if len(psf_rot.shape) > 2:
+        for i in tqdm.trange(psf_rot.shape[0]):
+            # cent0 = photutils.centroids.centroid_com(shift_to['SCI'].data[i, box[0]:box[1], box[2]:box[3]]) + np.array([box[2]+0.5, box[0]+0.5])
+            cent1 = photutils.centroids.centroid_com(psf_rot[i, :, :])
+            shift = cent0 - cent1
+            psf_rotshift[i,:,:] = ndimage.shift(psf_rot[i,:,:], shift[::-1], order=1, mode='constant', cval=0.)
+    else:
+        cent1 = photutils.centroids.centroid_com(psf_rot)
         shift = cent0 - cent1
-        psf_rotshift[i,:,:] = ndimage.shift(psf_rot[i,:,:], shift[::-1], order=1, mode='constant', cval=0.)
-        
+        psf_rotshift = ndimage.shift(psf_rot, shift[::-1], order=1, mode='constant', cval=0.)
+
     return psf_rotshift
 
 
@@ -231,59 +239,79 @@ def calculate_extended_emission(ifu_cubes, params, line_dict):
     names = [param.name for param in params]
 
     print('Adding HDUs for pointlike and extended emission...')
-    for param in params:
+    # Get list of all lines to be included
+    lines = np.array([], dtype=str)
+    for key in line_dict['lines'].keys():
+        for name in names:
+            if (key.upper() in name) and (key not in lines):
+                lines = np.append(lines, key)
 
-        # Correct all line flux maps
-        if ('LINES' in param.name) and ('FLUX' in param.name) and ('POINT' not in param.name) and ('EXTENDED' not in param.name):
+    for line_name in lines:
+        line_wave = line_dict['lines'][line_name]['wave']
+        line_wave *= (1+z)
+        line_param = 'FLUX'
+        j = 1
+        # Search for line components until we dont find any 
+        flux = np.zeros(params[1].data.shape)
+        while True:
+            try:
+                data_i = 10**params[f'LINES_{line_name.upper()}_{j}_{line_param}'].data
+                data_i[~np.isfinite(data_i)] = 0.
+                flux += data_i
+                j += 1
+            except:
+                break
 
-            # Loop through lines dictionary to find the rest wavelenth
-            line_wave = None
-            for key in line_dict['lines'].keys():
-                if key.upper() in param.name:
-                    line_wave = line_dict['lines'][key]['wave']
-            if line_wave is None:
-                raise ValueError(f'Could not find line entry for {param.name}')
-            # Convert to observed-frame wavelength
-            line_wave *= (1+z)
-            # Get the MIRI Channel/Band that this falls under
-            chbands = []
-            centroids = []
-            for key, val in ch_dict.items():
-                if val[0] < line_wave < val[1]:
-                    chbands.append(key)
-                    centroid_frame1 = photutils.centroids.centroid_com(10**param.data)
-                    centroid_frame2 = WCS(ifu_cubes[key][1].header)[0].world_to_pixel(out_wcs.pixel_to_world(*centroid_frame1))
-                    centroids.append(centroid_frame2)
-            # Generate PSFs for each channel/band
-            psfs = []
-            print(f'Calculating {len(chbands)} PSFs for {param.name}')
-            for (centroid, chband) in zip(centroids, chbands):
-                psf = calculate_mrs_psf(ifu_cubes[chband], centroid, line_wave, out_wcs, out_shape)
-                psfs.append(psf)
-            # For lines that happen to fall on the channel boundaries, average the two PSFs
-            if len(psfs) > 1:
-                psf = np.nanmean(psfs, axis=0)
-            else:
-                psf = psfs[0]
-                
-            # For logarithmic quantities make sure to undo the log before correcting
-            flux = 10**param.data
-            flux_nuc = np.nanmax(flux)
-            # Redo the log
-            flux_point = np.log10(psf*flux_nuc)
-            flux_ext = np.log10(flux - psf*flux_nuc)
+        # Get the MIRI Channel/Band that this falls under
+        chbands = []
+        centroids = []
+        for key, val in ch_dict.items():
+            if val[0] < line_wave < val[1]:
+                chbands.append(key)
+                hdr = ifu_cubes[key][1].header
+                wave_full = hdr["CRVAL3"] + hdr["CDELT3"] * (hdr["CRPIX3"] + np.arange(hdr["NAXIS3"]) - 1)
+                wave_slice = np.nanargmin(np.abs(wave_full - line_wave))
+                # centroid_frame1 = np.unravel_index(np.nanargmax(flux), flux.shape)[::-1]
+                centroid_frame1 = photutils.centroids.centroid_2dg(flux, mask=~np.isfinite(flux))
+                centroid_frame2 = WCS(ifu_cubes[key][1].header)[0].world_to_pixel(out_wcs.pixel_to_world(*centroid_frame1))
+                centroids.append(centroid_frame2)
 
-            # Make a new HDU with the corrected flux
-            if param.name.upper() + '_POINT' not in names:
-                flux_point = fits.ImageHDU(flux_point, param.header, name=param.name.upper() + '_POINT')
-                params.append(flux_point)
-            else:
-                params[param.name.upper() + '_POINT'].data = flux_point
-            if param.name.upper() + '_EXTENDED' not in names:
-                flux_ext = fits.ImageHDU(flux_ext, param.header, name=param.name.upper() + '_EXTENDED')
-                params.append(flux_ext)
-            else:
-                params[param.name.upper() + '_EXTENDED'].data = flux_ext
+        # Generate PSFs for each channel/band
+        psfs = []
+        print(f'Calculating {len(chbands)} PSFs for LINES_{line_name.upper()}_1_{line_param}')
+        for (centroid, chband) in zip(centroids, chbands):
+            psf = calculate_mrs_psf(ifu_cubes[chband], centroid=None, wave=line_wave, out_wcs=out_wcs, out_shape=out_shape, 
+                                    shift_to=ifu_cubes[chband][1].data[max(0,wave_slice-50):min(wave_slice+50,ifu_cubes[chband][1].data.shape[0]), :, :], 
+                                    shift_wcs=WCS(ifu_cubes[chband][1].header)[0])
+            psfs.append(psf)
+
+        # For lines that happen to fall on the channel boundaries, average the two PSFs
+        if len(psfs) > 1:
+            psf = np.nanmean(psfs, axis=0)
+        else:
+            psf = psfs[0]
+
+        # Renormalize the PSF
+        psf /= np.nanmax(psf)
+
+        # Apply PSF correction and redo the log
+        flux_nuc = np.nanmax(flux)
+        flux_point = np.log10(psf*flux_nuc)
+        flux_ext = np.log10(flux - psf*flux_nuc)
+
+        # Make a new HDU with the corrected flux
+        if f'LINES_{line_name.upper()}_1_FLUX_POINT' not in names:
+            flux_point = fits.ImageHDU(flux_point, params[f'LINES_{line_name.upper()}_1_FLUX'].header, 
+                                       name=f'LINES_{line_name.upper()}_1_FLUX_POINT')
+            params.append(flux_point)
+        else:
+            params[f'LINES_{line_name.upper()}_1_FLUX_POINT'].data = flux_point
+        if f'LINES_{line_name.upper()}_1_FLUX_EXTENDED' not in names:
+            flux_ext = fits.ImageHDU(flux_ext, params[f'LINES_{line_name.upper()}_1_FLUX'].header, 
+                                     name=f'LINES_{line_name.upper()}_1_FLUX_EXTENDED')
+            params.append(flux_ext)
+        else:
+            params[f'LINES_{line_name.upper()}_1_FLUX_EXTENDED'].data = flux_ext
 
     return params
 
@@ -337,7 +365,7 @@ if __name__ == '__main__':
         out_wcs = WCS(params[1].header)[0]
         out_shape = (ifu_cubes[just_psf][1].data.shape[0], *params[1].data.shape[1:])
 
-        psfs_rotshift = rotate_and_shift(psfs, in_wcs, out_wcs, out_shape, shift_to=params)
+        psfs_rotshift = rotate_and_shift(psfs, in_wcs, out_wcs, out_shape, shift_to=params['SCI'].data)
         hdul = fits.HDUList([fits.PrimaryHDU(header=params[0].header)])
         hdul.append(fits.ImageHDU(psfs_rotshift, params[1].header, name='SCI'))
         hdul.append(fits.ImageHDU(np.zeros(psfs_rotshift.shape), params[2].header, name='ERR'))

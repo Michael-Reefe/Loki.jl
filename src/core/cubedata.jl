@@ -1308,6 +1308,7 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
     scale_factors = Dict{Int, Matrix{Float64}}()
     ww = []
     if !isnothing(rescale_channels)
+        mask2d = [all(mask_out[i,j,:]) for i in axes(mask_out,1), j in axes(mask_out,2)]
         # rescale channels so the flux level is continuous
         for (i, jump) ∈ enumerate(jumps)
             # find the full scale of the overlapping region
@@ -1318,7 +1319,20 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
             # get the median fluxes from both channels over the full region
             med_left = dropdims(nanmedian(I_out[:, :, i1:jump], dims=3), dims=3)
             med_right = dropdims(nanmedian(I_out[:, :, jump+1:i2], dims=3), dims=3)
-            # DO NOT rescale low S/N spaxels
+            # Check for any medians close to or below 0 and dont rescale them
+            thresh_left = dropdims(nanstd(I_out[:, :, i1:jump], dims=3), dims=3)
+            thresh_right = dropdims(nanstd(I_out[:, :, jump+1:i2], dims=3), dims=3)
+            med_left[(med_left .< thresh_left) .| (med_right .< thresh_right)] .= 1.
+            med_right[(med_left .< thresh_left) .| (med_right .< thresh_right)] .= 1.
+            # Also check for non-finite values or zeros
+            med_left[.~isfinite.(med_left) .| .~isfinite.(med_right)] .= 1.
+            med_right[.~isfinite.(med_left) .| .~isfinite.(med_right)] .= 1.
+            med_left[iszero.(med_left) .| iszero.(med_right)] .= 1.
+            med_right[iszero.(med_left) .| iszero.(med_right)] .= 1.
+            # Do not rescale masked spaxels
+            med_left[mask2d] .= 1.
+            med_right[mask2d] .= 1.
+            # Do not rescale low S/N spaxels
             SN = dropdims(nanmedian(I_out ./ σ_out, dims=3), dims=3)
             med_left[SN .< rescale_snr, :] .= 1.
             med_right[SN .< rescale_snr, :] .= 1.

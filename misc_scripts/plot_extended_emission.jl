@@ -64,7 +64,9 @@ function plot_decomposed_flux_maps(path::String)
             exists = true
             while exists
                 try
-                    data .+= 10 .^ read(params[join(["lines", line, j, line_param], "_")])
+                    data_i = 10 .^ read(params[join(["lines", line, j, line_param], "_")])
+                    data_i[.~isfinite.(data_i)] .= 0.
+                    data .+= data_i
                     j += 1
                 catch
                     exists = false

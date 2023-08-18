@@ -72,10 +72,10 @@ locked = false
 # locked = false
 
 # template_amps: amplitude parameters for each template in the fit
-[[template_amps]]
-val = 1.0
-plim = [0.0, 1.0]
-locked = true
+# [[template_amps]]
+# val = 0.7
+# plim = [0.0, 1.0]
+# locked = true
 
 # dust_features: each of these specifies a Polycyclic Aromatic 
 # Hydrocarbon (PAH) profile to include in the model. Each of these
