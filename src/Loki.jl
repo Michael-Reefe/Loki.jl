@@ -25,6 +25,7 @@ using Optim
 using CMPFit
 
 # Astronomy packages
+using AstroLib
 using FITSIO
 using Photometry
 using Cosmology
@@ -32,6 +33,7 @@ using AstroAngles
 using SkyCoords
 using WCS
 using Reproject
+using ImageFiltering
 using Unitful, UnitfulAstro
 
 # File I/O
@@ -210,7 +212,6 @@ export DataCube,   # DataCube struct
        attenuation_calzetti,
        attenuation_cardelli,  # (AKA ccm_unred)
        resample_conserving_flux,
-       air_to_vacuum,
        extend,
        sumdim,
        Doppler_shift_v,

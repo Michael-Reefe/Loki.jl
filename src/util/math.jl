@@ -207,30 +207,6 @@ julia> Doppler_width_λ(0, 10)
 
 
 """
-    air_to_vacuum(λair)
-
-Convert an air wavelength to a vacuum wavelength, correcting for the index of refraction of air.
-Only converts wavelengths > 2000 angstroms.
-
-Reference: FIREFLY code, Kyle B. Westfall, https://www.icg.port.ac.uk/firefly/
-"""
-function air_to_vacuum(λair::Real)
-    # Do not modify < 2000 angstroms
-    if λair < 0.2
-        return λair
-    end
-    λvac = λair
-    for _ in 1:3
-        # wavenumber squared
-        s² = (1/λvac)^2
-        n = 1.0 + 5.792105e-2/(238.0185 - s²) + 1.67917e-3/(57.362 - s²)
-        λvac = λair * n
-    end
-    λvac
-end
-
-
-"""
     convolveGaussian1D(flux, σ)
 
 Convolve a spectrum by a Gaussian with different sigma for every pixel.
@@ -433,7 +409,7 @@ Return the Blackbody function Bν (per unit FREQUENCY) in MJy/sr,
 given a wavelength in μm and a temperature in Kelvins.
 """
 @inline function Blackbody_ν(λ::Real, Temp::Real)
-    Bν_1/λ^3 / (exp(Bν_2/(λ*Temp))-1)
+    Bν_1/λ^3 / expm1(Bν_2/(λ*Temp))
 end
 
 

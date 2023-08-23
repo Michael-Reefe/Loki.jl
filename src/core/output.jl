@@ -132,9 +132,9 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
 
         # Template amplitudes
         for (q, tp) ∈ enumerate(cube_fitter.template_names)
-            param_maps.templates[tp][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
-            param_errs[1].templates[tp][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
-            param_errs[2].templates[tp][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN 
+            param_maps.templates[tp][:amp][index] = out_params[index, pᵢ] 
+            param_errs[1].templates[tp][:amp][index] = out_errs[index, pᵢ, 1]
+            param_errs[2].templates[tp][:amp][index] = out_errs[index, pᵢ, 2]
             pᵢ += 1
         end
 
@@ -799,7 +799,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         elseif occursin("hot_dust", name_i)
             bunit = L"$\log_{10}(A_{\rm sil})$" # normalized
         elseif occursin("template", name_i)
-            bunit = L"$\log_{10}(A_{\rm template})$"
+            bunit = L"$A_{\rm template}$" # the only amplitude that is NOT log
         else
             bunit = L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$"
         end

@@ -775,6 +775,13 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     p_init_line::Vector{T}
     p_init_pahtemp::Vector{T}
 
+    p_init_cube_λ::Union{Vector{T},Nothing}
+    p_init_cube_cont::Union{Array{T,3},Nothing}
+    p_init_cube_lines::Union{Array{T,3},Nothing}
+    p_init_cube_wcs::Union{WCSTransform,Nothing}
+    p_init_cube_coords::Union{Vector{Vector{T}},Nothing}
+    p_init_cube_Ω::Union{T,Nothing}
+
     #= Constructor function --> the default inputs are all taken from the configuration files, but may be overwritten
     by the kwargs object using the same syntax as any keyword argument. The rest of the fields are generated in the function 
     from these inputs =#
@@ -841,7 +848,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
 
         # More default options
         if !haskey(out, :templates)
-            out[:templates] = Array{Float64, 4}(undef, 0, 0, 0, 0)
+            out[:templates] = Array{Float64, 4}(undef, size(cube.I)..., 0)
         end
         if !haskey(out, :template_names)
             out[:template_names] = String["template_$i" for i in axes(out[:templates], 4)]
@@ -884,17 +891,17 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
 
         if spectral_region == :MIR
 
-            continuum, dust_features, abs_features, abs_taus = parse_dust()
+            continuum, dust_features_0, abs_features_0, abs_taus_0 = parse_dust()
 
             # Adjust wavelengths/FWHMs for any local absorption features
-            for i in 1:length(abs_features.names)
-                if abs_features._local[i]
-                    abs_features.mean[i].value /= (1 + z)
-                    abs_features.mean[i].limits = (abs_features.mean[i].limits[1] / (1 + z),
-                                                abs_features.mean[i].limits[2] / (1 + z))
-                    abs_features.fwhm[i].value /= (1 + z)
-                    abs_features.fwhm[i].limits = (abs_features.fwhm[i].limits[1] / (1 + z),
-                                                abs_features.fwhm[i].limits[2] / (1 + z))
+            for i in 1:length(abs_features_0.names)
+                if abs_features_0._local[i]
+                    abs_features_0.mean[i].value /= (1 + z)
+                    abs_features_0.mean[i].limits = (abs_features_0.mean[i].limits[1] / (1 + z),
+                                                abs_features_0.mean[i].limits[2] / (1 + z))
+                    abs_features_0.fwhm[i].value /= (1 + z)
+                    abs_features_0.fwhm[i].limits = (abs_features_0.fwhm[i].limits[1] / (1 + z),
+                                                abs_features_0.fwhm[i].limits[2] / (1 + z))
                 end
             end
 
@@ -917,20 +924,20 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             @debug msg
 
             # Only use PAH features within +/-0.5 um of the region being fit (to include wide tails)
-            df_filt = [(minimum(λ)-0.5 < dust_features.mean[i].value < maximum(λ)+0.5) for i ∈ 1:length(dust_features.mean)]
+            df_filt = [(minimum(λ)-0.5 < dust_features_0.mean[i].value < maximum(λ)+0.5) for i ∈ 1:length(dust_features_0.mean)]
             if !isnothing(out[:user_mask])
                 for pair in out[:user_mask]
-                    df_filt .&= [~(pair[1] < dust_features.mean[i].value < pair[2]) for i ∈ 1:length(dust_features.mean)]
+                    df_filt .&= [~(pair[1] < dust_features_0.mean[i].value < pair[2]) for i ∈ 1:length(dust_features_0.mean)]
                 end
             end
-            dust_features = DustFeatures(dust_features.names[df_filt], 
-                                        dust_features.profiles[df_filt],
-                                        dust_features.mean[df_filt],
-                                        dust_features.fwhm[df_filt],
-                                        dust_features.index[df_filt],
-                                        dust_features.cutoff[df_filt],
-                                        dust_features.complexes[df_filt],
-                                        dust_features._local[df_filt])
+            dust_features = DustFeatures(dust_features_0.names[df_filt], 
+                                        dust_features_0.profiles[df_filt],
+                                        dust_features_0.mean[df_filt],
+                                        dust_features_0.fwhm[df_filt],
+                                        dust_features_0.index[df_filt],
+                                        dust_features_0.cutoff[df_filt],
+                                        dust_features_0.complexes[df_filt],
+                                        dust_features_0._local[df_filt])
             n_dust_features = length(dust_features.names)
             msg = "### Model will include $n_dust_features dust feature (PAH) components ###"
             for df_mn ∈ dust_features.mean
@@ -939,21 +946,21 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             @debug msg
 
             # Only use absorption features within +/-0.5 um of the region being fit
-            ab_filt = [(minimum(λ)-0.5 < abs_features.mean[i].value < maximum(λ)+0.5) for i ∈ 1:length(abs_features.mean)]
+            ab_filt = [(minimum(λ)-0.5 < abs_features_0.mean[i].value < maximum(λ)+0.5) for i ∈ 1:length(abs_features_0.mean)]
             if !isnothing(out[:user_mask])
                 for pair in out[:user_mask]
-                    ab_filt .&= [~(pair[1] < abs_features.mean[i].value < pair[2]) for i ∈ 1:length(abs_features.mean)]
+                    ab_filt .&= [~(pair[1] < abs_features_0.mean[i].value < pair[2]) for i ∈ 1:length(abs_features_0.mean)]
                 end
             end
-            abs_features = DustFeatures(abs_features.names[ab_filt],
-                                        abs_features.profiles[ab_filt],
-                                        abs_features.mean[ab_filt],
-                                        abs_features.fwhm[ab_filt],
-                                        abs_features.index[ab_filt],
-                                        abs_features.cutoff[ab_filt],
-                                        abs_features.complexes[ab_filt],
-                                        abs_features._local[ab_filt])
-            abs_taus = abs_taus[ab_filt]
+            abs_features = DustFeatures(abs_features_0.names[ab_filt],
+                                        abs_features_0.profiles[ab_filt],
+                                        abs_features_0.mean[ab_filt],
+                                        abs_features_0.fwhm[ab_filt],
+                                        abs_features_0.index[ab_filt],
+                                        abs_features_0.cutoff[ab_filt],
+                                        abs_features_0.complexes[ab_filt],
+                                        abs_features_0._local[ab_filt])
+            abs_taus = abs_taus_0[ab_filt]
             n_abs_features = length(abs_features.names)
             msg = "### Model will include $n_abs_features absorption feature components ###"
             for ab_mn ∈ abs_features.mean
@@ -966,6 +973,13 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             n_templates = size(out[:templates], 4)
             ssp_λ = ssp_templates = feii_templates_fft = nothing
             npad_feii = velscale = vsyst_ssp = vsyst_feii = 0
+
+            if n_templates == 0
+                # Ignore any template amplitude entries in the dust.toml options if there are no templates
+                continuum = MIRContinuum(continuum.T_s, continuum.T_dc, continuum.α, continuum.τ_97, continuum.τ_ice,
+                                         continuum.τ_ch, continuum.β, continuum.T_hot, continuum.Cf_hot, continuum.τ_warm, 
+                                         continuum.τ_cold, continuum.sil_peak, Parameter[])
+            end
 
         elseif spectral_region == :OPT
 
@@ -1007,20 +1021,20 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
 
         end
 
-        lines, tied_kinematics, flexible_wavesol, tie_voigt_mixing, voigt_mix_tied = parse_lines()
+        lines_0, tied_kinematics, flexible_wavesol, tie_voigt_mixing, voigt_mix_tied = parse_lines()
 
         # Only use lines within the wavelength range being fit
-        ln_filt = minimum(λ) .< lines.λ₀ .< maximum(λ)
+        ln_filt = minimum(λ) .< lines_0.λ₀ .< maximum(λ)
         if !isnothing(out[:user_mask])
             for pair in out[:user_mask]
-                ln_filt .&= .~(pair[1] .< lines.λ₀ .< pair[2])
+                ln_filt .&= .~(pair[1] .< lines_0.λ₀ .< pair[2])
             end
         end
         # Convert to a vectorized "TransitionLines" object
-        lines = TransitionLines(lines.names[ln_filt], lines.latex[ln_filt], lines.annotate[ln_filt], lines.λ₀[ln_filt], 
-                                lines.profiles[ln_filt, :], lines.tied_amp[ln_filt, :], lines.tied_voff[ln_filt, :], lines.tied_fwhm[ln_filt, :], 
-                                lines.acomp_amp[ln_filt, :], lines.voff[ln_filt, :], lines.fwhm[ln_filt, :], lines.h3[ln_filt, :], 
-                                lines.h4[ln_filt, :], lines.η[ln_filt, :], lines.combined, lines.rel_amp, lines.rel_voff, lines.rel_fwhm)
+        lines = TransitionLines(lines_0.names[ln_filt], lines_0.latex[ln_filt], lines_0.annotate[ln_filt], lines_0.λ₀[ln_filt], 
+                                lines_0.profiles[ln_filt, :], lines_0.tied_amp[ln_filt, :], lines_0.tied_voff[ln_filt, :], lines_0.tied_fwhm[ln_filt, :], 
+                                lines_0.acomp_amp[ln_filt, :], lines_0.voff[ln_filt, :], lines_0.fwhm[ln_filt, :], lines_0.h3[ln_filt, :], 
+                                lines_0.h4[ln_filt, :], lines_0.η[ln_filt, :], lines_0.combined, lines_0.rel_amp, lines_0.rel_voff, lines_0.rel_fwhm)
         n_lines = length(lines.names)
         n_comps = size(lines.profiles, 2)
         n_acomps = sum(.!isnothing.(lines.profiles[:, 2:end]))
@@ -1171,6 +1185,175 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             p_init_pahtemp = readdlm(joinpath("output_$name", "spaxel_binaries", "init_fit_pahtemp.csv"), ',', Float64, '\n')[:, 1]
         end
 
+        p_init_cube_λ = p_init_cube_cont = p_init_cube_lines = p_init_cube_wcs = p_init_cube_coords = p_init_cube_Ω = nothing
+        if haskey(out, :p_init_cube)
+
+            # Use fitting parameters from another run (on a potentially different WCS) as initial conditions
+            path = out[:p_init_cube]
+            oname = replace(basename(path), "output_" => "")
+            hdu = FITS(joinpath(path, "$(oname)_full_model.fits"))
+            # Wavelength vector
+            p_init_cube_λ = read(hdu["WAVELENGTH"], "wave") ./ (1 + z)
+            # WCS
+            p_init_cube_wcs = WCS.from_header(read_header(hdu[1], String))[1]
+            # Angular resolution
+            p_init_cube_Ω = read_header(hdu[1])["PIXAR_SR"]
+            # Parameters from the fits
+            p_init_cube_cont = ones(size(cube.I)[1:2]..., n_params_cont) .* NaN
+            p_init_cube_lines = ones(size(cube.I)[1:2]..., n_params_lines) .* NaN
+
+            # Filter out dust features
+            df_filt = [(minimum(p_init_cube_λ)-0.5 < dust_features_0.mean[i].value < maximum(p_init_cube_λ)+0.5) for i ∈ 1:length(dust_features_0.mean)]
+            if !isnothing(out[:user_mask])
+                for pair in out[:user_mask]
+                    df_filt .&= [~(pair[1] < dust_features_0.mean[i].value < pair[2]) for i ∈ 1:length(dust_features_0.mean)]
+                end
+            end
+            initcube_dust_features = DustFeatures(dust_features_0.names[df_filt], 
+                                        dust_features_0.profiles[df_filt],
+                                        dust_features_0.mean[df_filt],
+                                        dust_features_0.fwhm[df_filt],
+                                        dust_features_0.index[df_filt],
+                                        dust_features_0.cutoff[df_filt],
+                                        dust_features_0.complexes[df_filt],
+                                        dust_features_0._local[df_filt])
+            # Count how many dust features are in the cube template but not in the current fitting region
+            n_dfparams_left = n_dfparams_right = 0
+            for i in 1:length(initcube_dust_features.names)
+                if initcube_dust_features.mean[i].value < (minimum(λ)-0.5)
+                    if initcube_dust_features.profiles[i] == :Drude
+                        n_dfparams_left += 3
+                    elseif initcube_dust_features.profiles[i] == :PearsonIV
+                        n_dfparams_left += 5
+                    end
+                end
+                if initcube_dust_features.mean[i].value > (maximum(λ)+0.5)
+                    if initcube_dust_features.profiles[i] == :Drude
+                        n_dfparams_right += 3
+                    elseif initcube_dust_features.profiles[i] == :PearsonIV
+                        n_dfparams_right += 5
+                    end
+                end
+            end
+
+            # Repeat for absorption features
+            ab_filt = [(minimum(p_init_cube_λ)-0.5 < abs_features_0.mean[i].value < maximum(p_init_cube_λ)+0.5) for i ∈ 1:length(abs_features_0.mean)]
+            if !isnothing(out[:user_mask])
+                for pair in out[:user_mask]
+                    ab_filt .&= [~(pair[1] < abs_features_0.mean[i].value < pair[2]) for i ∈ 1:length(abs_features_0.mean)]
+                end
+            end
+            initcube_abs_features = DustFeatures(abs_features_0.names[ab_filt],
+                                        abs_features_0.profiles[ab_filt],
+                                        abs_features_0.mean[ab_filt],
+                                        abs_features_0.fwhm[ab_filt],
+                                        abs_features_0.index[ab_filt],
+                                        abs_features_0.cutoff[ab_filt],
+                                        abs_features_0.complexes[ab_filt],
+                                        abs_features_0._local[ab_filt])
+            n_abparams_left = n_abparams_right = 0
+            for i in 1:length(initcube_abs_features.names)
+                if initcube_abs_features.mean[i].value < (minimum(λ)-0.5)
+                    n_abparams_left += 3
+                end
+                if initcube_abs_features.mean[i].value > (maximum(λ)+0.5)
+                    n_abparams_right += 3
+                end
+            end
+
+            # Repeat for emission lines
+            ln_filt = minimum(p_init_cube_λ) .< lines_0.λ₀ .< maximum(p_init_cube_λ)
+            if !isnothing(out[:user_mask])
+                for pair in out[:user_mask]
+                    ln_filt .&= .~(pair[1] .< lines_0.λ₀ .< pair[2])
+                end
+            end
+            # Convert to a vectorized "TransitionLines" object
+            initcube_lines = TransitionLines(lines_0.names[ln_filt], lines_0.latex[ln_filt], lines_0.annotate[ln_filt], lines_0.λ₀[ln_filt], 
+                                    lines_0.profiles[ln_filt, :], lines_0.tied_amp[ln_filt, :], lines_0.tied_voff[ln_filt, :], lines_0.tied_fwhm[ln_filt, :], 
+                                    lines_0.acomp_amp[ln_filt, :], lines_0.voff[ln_filt, :], lines_0.fwhm[ln_filt, :], lines_0.h3[ln_filt, :], 
+                                    lines_0.h4[ln_filt, :], lines_0.η[ln_filt, :], lines_0.combined, lines_0.rel_amp, lines_0.rel_voff, lines_0.rel_fwhm)
+            n_lineparams_left = n_lineparams_right = 0
+            n_initcube_lineparams = 0
+            for i in 1:length(initcube_lines.names)
+                for j in 1:n_comps
+                    if !isnothing(initcube_lines.profiles[i, j])
+                        n_initcube_lineparams += 3
+                        if !isnothing(initcube_lines.tied_voff[i, j]) && flexible_wavesol && isone(j)
+                            n_initcube_lineparams += 1
+                        end
+                        if initcube_lines.profiles[i, j] == :GaussHermite
+                            n_initcube_lineparams += 2
+                        elseif initcube_lines.profiles[i, j] == :Voigt
+                            n_initcube_lineparams += 1
+                        end
+                        if initcube_lines.λ₀[i] < minimum(λ)
+                            n_lineparams_left += 3
+                            if !isnothing(initcube_lines.tied_voff[i, j]) && flexible_wavesol && isone(j)
+                                # individual voff parameter
+                                n_lineparams_left += 1
+                            end
+                            if initcube_lines.profiles[i, j] == :GaussHermite
+                                # extra h3 and h4 parmeters
+                                n_lineparams_left += 2
+                            elseif initcube_lines.profiles[i, j] == :Voigt
+                                # extra mixing parameter
+                                n_lineparams_left += 1
+                            end 
+                        end
+                        if initcube_lines.λ₀[i] > maximum(λ)
+                            n_lineparams_right += 3
+                            if !isnothing(initcube_lines.tied_voff[i, j]) && flexible_wavesol && isone(j)
+                                # individual voff parameter
+                                n_lineparams_right += 1
+                            end
+                            if initcube_lines.profiles[i, j] == :GaussHermite
+                                # extra h3 and h4 parmeters
+                                n_lineparams_right += 2
+                            elseif initcube_lines.profiles[i, j] == :Voigt
+                                # extra mixing parameter
+                                n_lineparams_right += 1
+                            end 
+                        end
+                    end
+                end
+            end
+
+            # Now loop through the spaxels and assign the initial fitting parameters based on the saved results
+            spaxfiles = [f for f in readdir(joinpath(path, "spaxel_binaries")) if contains(f, "spaxel")]
+            for sf in spaxfiles
+                params = readdlm(joinpath(path, "spaxel_binaries", sf), ',', Float64, '\n')[:,1]
+                c1 = (2+4) + 2n_dust_cont + 2n_power_law
+                c2 = c1 + n_abparams_left + 3n_abs_features - n_abparams_right
+                c3 = c2 + n_abparams_right + (out[:fit_sil_emission] ? 6 : 0) + n_templates
+                c4 = c3 + n_dfparams_left + 3sum(dust_features.profiles .== :Drude) + 5sum(dust_features.profiles .== :PearsonIV)
+                c5 = c4 + n_dfparams_right + n_lineparams_left + n_params_lines
+                params_cont1 = params[1:c1]
+                params_ab = params[(1+c1+n_abparams_left):c2]
+                params_cont2 = params[(1+c2+n_abparams_right):c3]
+                params_df = params[(1+c3+n_dfparams_left):c4]
+                params_lines = params[(1+c4+n_dfparams_right+n_lineparams_left):c5]
+                params_cont = [params_cont1; params_ab; params_cont2; params_df]
+
+                @assert length(params_cont) == size(p_init_cube_cont, 3) "Sizes do not match between init cube cont params and current cube params!"
+                @assert length(params_lines) == size(p_init_cube_lines, 3) "Sizes do not match between init cube line params and current cube params!"
+
+                spax = split(replace(sf, ".csv" => ""), "_")[end-1:end]
+                spax_x = parse(Int, spax[1])
+                spax_y = parse(Int, spax[2])
+                p_init_cube_cont[spax_x, spax_y, :] .= params_cont
+                p_init_cube_lines[spax_x, spax_y, :] .= params_lines
+            end
+
+            # Calculate the cube spaxel coordinates in the current WCS frame
+            # Get the coordinates of all spaxels that have fit results
+            coords0 = [float.(c.I) for c in CartesianIndices(size(p_init_cube_cont)[1:2]) if !all(isnan.(p_init_cube_cont[c,:]))]
+            # Transform to coordinates in the WCS of our current frame
+            p_init_cube_coords = [world_to_pix(cube.wcs, pix_to_world(p_init_cube_wcs, [coord..., 1.]))[1:2] for coord in coords0]
+
+        end
+
+
         ctype = isnothing(feii_templates_fft) ? ComplexF64 : eltype(feii_templates_fft)
         new{typeof(z), typeof(n_lines), ctype}(cube, z, name, spectral_region, out[:user_mask], out[:plot_spaxels], out[:plot_maps], out[:plot_range], 
             out[:parallel], out[:save_fits], out[:save_full_model], out[:overwrite], out[:track_memory], out[:track_convergence], out[:make_movies], 
@@ -1180,7 +1363,8 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             abs_features, abs_taus, n_ssps, ssp_λ, ssp_templates, feii_templates_fft, velscale, vsyst_ssp, vsyst_feii, npad_feii, n_lines, n_acomps, n_comps, relative_flags, 
             lines, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, out[:cosmology], flexible_wavesol, out[:n_bootstrap], 
             out[:random_seed], out[:line_test_lines], out[:line_test_threshold], out[:plot_line_test], out[:linemask_delta], out[:linemask_n_inc_thresh], out[:linemask_thresh], 
-            out[:linemask_overrides], out[:map_snr_thresh], p_init_cont, p_init_line, p_init_pahtemp)
+            out[:linemask_overrides], out[:map_snr_thresh], p_init_cont, p_init_line, p_init_pahtemp, p_init_cube_λ, p_init_cube_cont, p_init_cube_lines, p_init_cube_wcs, 
+            p_init_cube_coords, p_init_cube_Ω)
     end
 
 end
@@ -1431,8 +1615,25 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         tau_guess = clamp(tau_10 / ext_10, continuum.τ_97.limits...)
     end
 
+    # Check if cube fitter has initial cube
+    if !isnothing(cube_fitter.p_init_cube_λ) && !init
+
+        pcube_cont = cube_fitter.p_init_cube_cont
+        # Get the coordinates of all spaxels that have fit results
+        coords0 = [float.(c.I) for c in CartesianIndices(size(pcube_cont)[1:2]) if !all(isnan.(pcube_cont[c,:]))]
+        coords = cube_fitter.p_init_cube_coords
+        # Calculate their distances from the current spaxel
+        dist = [hypot(spaxel[1]-c[1], spaxel[2]-c[2]) for c in coords]
+        closest = coords0[argmin(dist)]
+        @debug "Using initial best fit continuum parameters from coordinates $closest --> $(coords[argmin(dist)])"
+
+        p₀ = pcube_cont[Int.(closest)..., :]
+        pᵢ = 3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law + 4 + 3cube_fitter.n_abs_feat + (cube_fitter.fit_sil_emission ? 6 : 0) + cube_fitter.n_templates
+        pahtemp = model_pah_residuals(cube_fitter.cube.λ, p₀[pᵢ:end], cube_fitter.dust_features.profiles, ones(length(cube_fitter.cube.λ)))
+        pah_frac = repeat([maximum(pahtemp)/2], 2)
+
     # Check if the cube fitter has initial fit parameters 
-    if !init
+    elseif !init
 
         @debug "Using initial best fit continuum parameters..."
 
@@ -2276,14 +2477,29 @@ end
 
 
 """
-    get_line_initial_values(cube_fitter, init)
+    get_line_initial_values(cube_fitter, spaxel, init)
 
 Get the vector of starting values and relative step sizes for the line fit for a given CubeFitter object.
 """
-function get_line_initial_values(cube_fitter::CubeFitter, init::Bool)
+function get_line_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, init::Bool)
+
+    # Check if cube fitter has initial cube
+    if !isnothing(cube_fitter.p_init_cube_λ)
+
+        pcube_lines = cube_fitter.p_init_cube_lines
+        # Get the coordinates of all spaxels that have fit results
+        coords0 = [float.(c.I) for c in CartesianIndices(size(pcube_lines)[1:2]) if !all(isnan.(pcube_lines[c,:]))]
+        # Transform to coordinates in the WCS of our current frame
+        coords = cube_fitter.p_init_cube_coords
+        # Calculate their distances from the current spaxel
+        dist = [hypot(spaxel[1]-c[1], spaxel[2]-c[2]) for c in coords]
+        closest = coords0[argmin(dist)]
+        @debug "Using initial best fit line parameters from coordinates $closest --> $(coords[argmin(dist)])"
+
+        ln_pars = pcube_lines[Int.(closest)..., :]
 
     # Check if there are previous best fit parameters
-    if !init
+    elseif !init
 
         @debug "Using initial best fit line parameters..."
 

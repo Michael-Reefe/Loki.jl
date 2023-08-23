@@ -215,7 +215,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         end
         for s in axes(templates_spax, 2)
             m = .~isfinite.(templates_spax[:, s])
-            templates_spax[m, s] .= nanmedian(templates_spax[:, s])
+            templates_spax[m, s] .= nanmedian(templates_spax[.~m, s])
         end
     else
         templates_spax = Matrix{Float64}(undef, 0, 0)
@@ -462,7 +462,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         end
         for s in axes(templates_spax, 2)
             m = .~isfinite.(templates_spax[:, s])
-            templates_spax[m, s] .= nanmedian(templates_spax[:, s])
+            templates_spax[m, s] .= nanmedian(templates_spax[.~m, s])
         end
     else
         templates_spax = Matrix{Float64}(undef, 0, 0) 
@@ -986,7 +986,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     end
 
     plimits, param_lock, param_names, tied_pairs, tied_indices = get_line_plimits(cube_fitter, init || use_ap, ext_curve_norm)
-    p₀, dstep = get_line_initial_values(cube_fitter, init || use_ap)
+    p₀, dstep = get_line_initial_values(cube_fitter, spaxel, init || use_ap)
     lower_bounds = [pl[1] for pl in plimits]
     upper_bounds = [pl[2] for pl in plimits]
 
@@ -1302,7 +1302,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         end
         for s in axes(templates_spax, 2)
             m = .~isfinite.(templates_spax[:, s])
-            templates_spax[m, s] .= nanmedian(templates_spax[:, s])
+            templates_spax[m, s] .= nanmedian(templates_spax[.~m, s])
         end
     else
         templates_spax = cube_fitter.templates
@@ -1344,7 +1344,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     ub_cont = [pl[2] for pl in plims_cont[.~lock_cont]]
 
     plims_lines, lock_lines, names_lines, tied_pairs, tied_indices = get_line_plimits(cube_fitter, init || use_ap)
-    pars_0_lines, dstep_0_lines = get_line_initial_values(cube_fitter, init || use_ap)
+    pars_0_lines, dstep_0_lines = get_line_initial_values(cube_fitter, spaxel, init || use_ap)
     if bootstrap_iter
         pars_0_lines = p1_boots_line
     end
@@ -2245,6 +2245,15 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
         return nothing, nothing
     end
 
+    if (cube_fitter.n_templates > 0)
+        for t in 1:cube_fitter.n_templates
+            if all(.~isfinite.(cube_fitter.templates[spaxel, :, t]))
+                # If a template is fully NaN/Inf, we can't fit 
+                return nothing, nothing
+            end
+        end
+    end
+
     # Perform a cubic spline fit, also obtaining the line mask
     mask_lines, I_spline, σ_spline = continuum_cubic_spline(λ, I, σ, cube_fitter.linemask_Δ, cube_fitter.linemask_n_inc_thresh,
         cube_fitter.linemask_thresh, cube_fitter.linemask_overrides)
@@ -2624,11 +2633,11 @@ function fit_cube!(cube_fitter::CubeFitter)
     """
 
     # Don't repeat if it's already been done, and also dont do the initial fit if we're just fitting in an aperture
-    if all(iszero.(cube_fitter.p_init_cont))
+    if all(iszero.(cube_fitter.p_init_cont)) && isnothing(cube_fitter.p_init_cube_λ)
         fit_stack!(cube_fitter)
     else
         @info "===> Initial fit to the sum of all spaxels is being skipped, either because it has already " *
-            "been performed, or an aperture was specified <==="
+            "been performed, an aperture was specified, or an initial condition was input <==="
     end
 
     # copy the main log file
@@ -2794,8 +2803,8 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
 
             # Convert back to intensity by dividing out the aperture area
             area_sr[1,1,z] = get_area(aperture[z]) * cube_fitter.cube.Ω
-            I[1,1,z] = F_ap / area_sr[z]
-            σ[1,1,z] = eF_ap / area_sr[z]
+            I[1,1,z] = F_ap / area_sr[1,1,z]
+            σ[1,1,z] = eF_ap / area_sr[1,1,z]
         end
     end
     cube_data = (λ=cube_fitter.cube.λ, I=I, σ=σ, area_sr=area_sr)

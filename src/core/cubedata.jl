@@ -276,8 +276,8 @@ function to_vacuum_wavelength!(cube::DataCube; linear_resample::Bool=true)
     if !cube.vacuum_wave
         @debug "Converting the wavelength vector of cube with channel $(cube.channel), band $(cube.band)" *
             " to vacuum wavelengths."
-        # Convert to vacuum wavelengths
-        cube.λ = air_to_vacuum.(cube.λ)
+        # Convert to vacuum wavelengths (airtovac uses Angstroms, 1 Angstrom = 10^-4 μm)
+        cube.λ = airtovac.(cube.λ .* 1e4) .* 1e-4
         # Optionally resample back onto a linear grid
         if linear_resample
             λlin = range(minimum(cube.λ), maximum(cube.λ), length=length(cube.λ))
@@ -1183,11 +1183,12 @@ Perform a 3D interpolation of the given channels such that all spaxels lie on th
 - `output_wcs_frame::Integer=1`: Which WCS frame to project the inputs onto. Defaults to 1 (the first channel in channels).
 - `interpolate_overlaps::Bool=false`: If true, will throw out the overlapping regions between channels/subchannels and replace them
     with cubic spline interpolations using the data to the left/right.
+- `match_psf::Bool=true`: Whether or not to blur channels such that they match the PSF resolution of the worst channel.
 """
 function reproject_channels!(obs::Observation, channels=nothing, concat_type=:full; out_id=0, scrub_output::Bool=false,
     order::Integer=1, rescale_channels::Union{Real,Nothing}=nothing, adjust_wcs_headerinfo::Bool=true, 
     min_λ::Real=-Inf, max_λ::Real=Inf, rescale_limits::Tuple{<:Real,<:Real}=(0.5, 1.5), rescale_snr::Real=10.0, 
-    output_wcs_frame::Integer=1, interpolate_overlaps::Bool=false)
+    output_wcs_frame::Integer=1, interpolate_overlaps::Bool=false, match_psf::Bool=false)
 
     @assert obs.spectral_region == :MIR "The reproject_channels! function is only supported for MIR cubes!"
 
@@ -1209,6 +1210,10 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
 
     # Output angular size
     Ω_out = obs.channels[channels[output_wcs_frame]].Ω
+    # PSF FWHMs in each channel (in arcseconds)
+    psf_fwhms = [maximum(obs.channels[channel].psf) for channel in channels]
+    # Pixel sizes in each channel (in arcseconds)
+    pixel_scales = [sqrt(obs.channels[channel].Ω) * 180/π * 3600 for channel in channels]
 
     # Convert WCS to a 2-dimensional version
     wcs_optimal_3d = obs.channels[channels[output_wcs_frame]].wcs
@@ -1270,6 +1275,20 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
             I_out_ch = I_in
             σI_out_ch = σI_in
             mask_out_temp = mask_in
+
+            if match_psf
+                @showprogress for wi in axes(I_in, 3)
+                    blur_size = sqrt(maximum(psf_fwhms)^2 - obs.channels[ch_in].psf[wi]^2) / pixel_scales[i] / 2.355
+                    if blur_size > 0
+                        # Convolve with a Gaussian kernel with the difference in PSF sizes
+                        I_out_ch[:, :, wi] = imfilter(I_out_ch[:, :, wi], Kernel.gaussian(blur_size) |> reflect)
+                        σ²_temp = imfilter(σI_out_ch[:, :, wi].^2, Kernel.gaussian(blur_size) |> reflect)
+                        σ²_temp[σ²_temp .< 0] .= 0.
+                        σI_out_ch[:, :, wi] .= sqrt.(σ²_temp)
+                    end
+                end
+            end
+
         else
             @showprogress for wi in axes(I_in, 3)
                 # Reproject using interpolation
@@ -1277,6 +1296,18 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
                 σ²_temp, _ = reproject((σI_in[:, :, wi].^2, wcs_channel), wcs_optimal, shape_out=size_optimal, order=order)
                 σ²_temp[σ²_temp .< 0] .= 0.
                 σI_out_ch[:, :, wi] .= sqrt.(σ²_temp)
+
+                # Convolve with a Gaussian kernel with the difference in PSF sizes
+                if match_psf 
+                    blur_size = sqrt(maximum(psf_fwhms)^2 - obs.channels[ch_in].psf[wi]^2) / pixel_scales[i] / 2.355 
+                    if blur_size > 0
+                        I_out_ch[:, :, wi] = imfilter(I_out_ch[:, :, wi], Kernel.gaussian(blur_size) |> reflect)
+                        σ²_temp = imfilter(σI_out_ch[:, :, wi].^2, Kernel.gaussian(blur_size) |> reflect)
+                        σ²_temp[σ²_temp .< 0] .= 0.
+                        σI_out_ch[:, :, wi] .= sqrt.(σ²_temp)
+                    end
+                end
+
                 # Use nearest-neighbor interpolation for the mask since it's a binary 1 or 0
                 mask_out_temp[:, :, wi], _ = reproject((Matrix{Float64}(mask_in[:, :, wi]), wcs_channel), wcs_optimal, shape_out=size_optimal, order=0)
             end
@@ -1434,6 +1465,10 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
     else
         psf_fwhm_out = @. 0.033 * λ_out + 0.106
     end
+    if match_psf
+        psf_fwhm_out = repeat([maximum(psf_fwhms)], length(λ_out))
+    end
+
     # New LSF FWHM function with input in the rest frame
     if obs.rest_frame
         lsf_fwhm_out = parse_resolving("MULTIPLE").(λ_out .* (1 .+ obs.z))

@@ -1246,10 +1246,10 @@ function generate_feii_templates(λ::Vector{<:Real}, lsf::Vector{<:Real})
     na_feii_temp = na_feii_temp[:, 2]
     br_feii_temp = br_feii_temp[:, 2]
 
+    # Convert to vacuum wavelengths
+    feii_λ = airtovac.(feii_λ)
     # Convert to microns
     feii_λ ./= 1e4
-    # Convert to vacuum wavelengths
-    feii_λ = air_to_vacuum.(feii_λ)
     # Linear spacing 
     Δλ = (maximum(feii_λ) - minimum(feii_λ)) / length(feii_λ)
 

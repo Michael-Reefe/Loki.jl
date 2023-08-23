@@ -890,9 +890,9 @@ default = "Voigt"
 # OIII_04960 = ["Voigt"]
 # OIII_05008 = ["Voigt"]
 
-NeVI_7652 = ["Voigt"]
-SIV_10511 = ["Voigt"]
-NeII_12813 = ["Voigt"]
+# NeVI_7652 = ["Voigt"]
+# SIV_10511 = ["Voigt"]
+# NeII_12813 = ["Voigt"]
 
 # optional: add [parameters] key to specify individual line priors that 
 # are different from the defaults
