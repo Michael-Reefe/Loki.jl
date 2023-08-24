@@ -32,7 +32,7 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
     # I know this is long and ugly and looks stupid but it works for now and I'll make it pretty later
     spaxels = CartesianIndices(size(out_params)[1:2])
     prog = Progress(length(spaxels); showspeed=true)
-    @simd for index ∈ spaxels
+    for index ∈ spaxels
 
         # Get the normalization to un-normalized the fitted parameters
         data_index = !isnothing(cube_fitter.cube.voronoi_bins) ? cube_fitter.cube.voronoi_bins[index] : index
@@ -80,18 +80,38 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
         end
 
         # Extinction parameters
-        param_maps.extinction[:tau_9_7][index] = out_params[index, pᵢ]
-        param_errs[1].extinction[:tau_9_7][index] = out_errs[index, pᵢ, 1]
-        param_errs[2].extinction[:tau_9_7][index] = out_errs[index, pᵢ, 2]
-        param_maps.extinction[:tau_ice][index] = out_params[index, pᵢ+1]
-        param_errs[1].extinction[:tau_ice][index] = out_errs[index, pᵢ+1, 1]
-        param_errs[2].extinction[:tau_ice][index] = out_errs[index, pᵢ+1, 2]
-        param_maps.extinction[:tau_ch][index] = out_params[index, pᵢ+2]
-        param_errs[1].extinction[:tau_ch][index] = out_errs[index, pᵢ+2, 1]
-        param_errs[2].extinction[:tau_ch][index] = out_errs[index, pᵢ+2, 2]
-        param_maps.extinction[:beta][index] = out_params[index, pᵢ+3]
-        param_errs[1].extinction[:beta][index] = out_errs[index, pᵢ+3, 1]
-        param_errs[2].extinction[:beta][index] = out_errs[index, pᵢ+3, 2]
+        if cube_fitter.extinction_curve != "decompose"
+            param_maps.extinction[:tau_9_7][index] = out_params[index, pᵢ]
+            param_errs[1].extinction[:tau_9_7][index] = out_errs[index, pᵢ, 1]
+            param_errs[2].extinction[:tau_9_7][index] = out_errs[index, pᵢ, 2]
+            pᵢ += 1
+        else
+            param_maps.extinction[:tau_pah][index] = out_params[index, pᵢ]
+            param_errs[1].extinction[:tau_pah][index] = out_errs[index, pᵢ, 1]
+            param_errs[2].extinction[:tau_pah][index] = out_errs[index, pᵢ, 2]
+            param_maps.extinction[:N_oli][index] = out_params[index, pᵢ+1] > 0 ? log10(out_params[index, pᵢ+1]) : -Inf
+            param_errs[1].extinction[:N_oli][index] = out_params[index, pᵢ+1] > 0 ? out_errs[index, pᵢ+1, 1] / (log(10) * out_params[index, pᵢ+1]) : NaN
+            param_errs[2].extinction[:N_oli][index] = out_params[index, pᵢ+1] > 0 ? out_errs[index, pᵢ+1, 2] / (log(10) * out_params[index, pᵢ+1]) : NaN
+            param_maps.extinction[:N_pyr][index] = out_params[index, pᵢ+2] > 0 ? log10(out_params[index, pᵢ+2]) : -Inf
+            param_errs[1].extinction[:N_pyr][index] = out_params[index, pᵢ+2] > 0 ? out_errs[index, pᵢ+2, 1] / (log(10) * out_params[index, pᵢ+2]) : NaN
+            param_errs[2].extinction[:N_pyr][index] = out_params[index, pᵢ+2] > 0 ? out_errs[index, pᵢ+2, 2] / (log(10) * out_params[index, pᵢ+2]) : NaN
+            param_maps.extinction[:N_for][index] = out_params[index, pᵢ+3] > 0 ? log10(out_params[index, pᵢ+3]) : -Inf
+            param_errs[1].extinction[:N_for][index] = out_params[index, pᵢ+3] > 0 ? out_errs[index, pᵢ+3, 1] / (log(10) * out_params[index, pᵢ+3]) : NaN
+            param_errs[2].extinction[:N_for][index] = out_params[index, pᵢ+3] > 0 ? out_errs[index, pᵢ+3, 2] / (log(10) * out_params[index, pᵢ+3]) : NaN
+            pᵢ += 4
+        end
+        param_maps.extinction[:tau_ice][index] = out_params[index, pᵢ]
+        param_errs[1].extinction[:tau_ice][index] = out_errs[index, pᵢ, 1]
+        param_errs[2].extinction[:tau_ice][index] = out_errs[index, pᵢ, 2]
+        param_maps.extinction[:tau_ch][index] = out_params[index, pᵢ+1]
+        param_errs[1].extinction[:tau_ch][index] = out_errs[index, pᵢ+1, 1]
+        param_errs[2].extinction[:tau_ch][index] = out_errs[index, pᵢ+1, 2]
+        param_maps.extinction[:beta][index] = out_params[index, pᵢ+2]
+        param_errs[1].extinction[:beta][index] = out_errs[index, pᵢ+2, 1]
+        param_errs[2].extinction[:beta][index] = out_errs[index, pᵢ+2, 2]
+        param_maps.extinction[:frac][index] = out_params[index, pᵢ+3]
+        param_errs[1].extinction[:frac][index] = out_errs[index, pᵢ+3, 1]
+        param_errs[2].extinction[:frac][index] = out_errs[index, pᵢ+3, 2]
         pᵢ += 4
 
         for ab ∈ cube_fitter.abs_features.names
@@ -164,7 +184,7 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
         if cube_fitter.save_full_model
             # End of continuum parameters: recreate the continuum model
             I_cont, comps_c = model_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], N, cube_fitter.n_dust_cont, cube_fitter.n_power_law,
-                cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, 
+                cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.κ_abs,
                 cube_fitter.fit_sil_emission, false, cube_fitter.n_templates > 0 ? cube_fitter.templates[index, :, :] : Matrix{Float64}(undef, 0, 0), 
                 true)
         end
@@ -272,7 +292,7 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             # Renormalize
             I_model .*= N
             for comp ∈ keys(comps)
-                if !(comp ∈ ["extinction", "abs_ice", "abs_ch"])
+                if !((comp == "extinction") || contains(comp, "ext_") || contains(comp, "abs_") || contains(comp, "attenuation"))
                     comps[comp] .*= N
                 end
             end
@@ -329,6 +349,8 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             # Set 3D model cube outputs, shifted back to the observed frame
             # Remember the wavelength axis is the first axis here to increase efficiency
             cube_model.model[:, index] .= I_model .* (1 .+ z)
+            cube_model.unobscured_continuum[:, index] .= comps["unobscured_continuum"] .* (1 .+ z)
+            cube_model.obscured_continuum[:, index] .= comps["obscured_continuum"] .* (1 .+ z)
             cube_model.stellar[:, index] .= comps["stellar"] .* (1 .+ z)
             for i ∈ 1:cube_fitter.n_dust_cont
                 cube_model.dust_continuum[:, index, i] .= comps["dust_cont_$i"] .* (1 .+ z)
@@ -355,7 +377,15 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
                     end
                 end
             end
-            cube_model.extinction[:, index] .= comps["extinction"]
+            if cube_fitter.extinction_curve != "decompose"
+                cube_model.extinction[:, index, 1] .= comps["extinction"]
+            else
+                cube_model.extinction[:, index, 1] .= comps["ext_pah"]
+                cube_model.extinction[:, index, 2] .= comps["abs_oli"]
+                cube_model.extinction[:, index, 3] .= comps["abs_pyr"]
+                cube_model.extinction[:, index, 4] .= comps["abs_for"]
+                cube_model.extinction[:, index, 5] .= comps["extinction"]
+            end
             cube_model.abs_ice[:, index] .= comps["abs_ice"]
             cube_model.abs_ch[:, index] .= comps["abs_ch"]
         end
@@ -421,7 +451,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
     # I know this is long and ugly and looks stupid but it works for now and I'll make it pretty later
     spaxels = CartesianIndices(size(out_params)[1:2])
     prog = Progress(length(spaxels); showspeed=true)
-    @simd for index ∈ spaxels
+    for index ∈ spaxels
 
         # Get the normalization to un-normalized the fitted parameters
         data_index = !isnothing(cube_fitter.cube.voronoi_bins) ? cube_fitter.cube.voronoi_bins[index] : index
@@ -639,7 +669,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             # Renormalize
             I_model .*= N
             for comp ∈ keys(comps)
-                if !(comp ∈ ["attenuation_stars", "attenuation_gas"])
+                if !((comp == "extinction") || contains(comp, "ext_") || contains(comp, "abs_") || contains(comp, "attenuation"))
                     comps[comp] .*= N
                 end
             end
@@ -826,9 +856,17 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
             bunit = L"$\tau_{\rm CH}$"
         elseif occursin("9_7", name_i)
             bunit = L"$\tau_{9.7}$"
+        elseif occursin("pah", name_i)
+            bunit = L"$\tau_{\rm PAH}$"
         else
             bunit = L"$\tau$"
         end
+    elseif occursin("N_oli", name_i)
+        bunit = L"$\log_{10}(N_{\rm oli} / $ g cm$^{-2}$)"
+    elseif occursin("N_pyr", name_i)
+        bunit = L"$\log_{10}(N_{\rm pyr} / $ g cm$^{-2}$)"
+    elseif occursin("N_for", name_i)
+        bunit = L"$\log_{10}(N_{\rm for} / $ g cm$^{-2}$)"
     elseif occursin("flux", name_i)
         bunit = L"$\log_{10}(F /$ erg s$^{-1}$ cm$^{-2}$)"
     elseif occursin("eqw", name_i)
@@ -1710,6 +1748,8 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
             write(f, Float32.(cube_data.I .* (1 .+ cube_fitter.z)); name="DATA")                        # Raw data 
             write(f, Float32.(cube_data.σ .* (1 .+ cube_fitter.z)); name="ERROR")                       # Error in the raw data
             write(f, permutedims(cube_model.model, (2,3,1)); name="MODEL")                              # Full intensity model
+            write(f, permutedims(cube_model.obscured_continuum, (2,3,1)); name="CONTINUUM_OBSCURED")    # Obscured continuum
+            write(f, permutedims(cube_model.unobscured_continuum, (2,3,1)); name="CONTINUUM_UNOBSCURED")# Unobscured continuum
             write(f, permutedims(cube_model.stellar, (2,3,1)); name="STELLAR_CONTINUUM")                # Stellar continuum model
             for i ∈ 1:size(cube_model.dust_continuum, 4)
                 write(f, permutedims(cube_model.dust_continuum[:, :, :, i], (2,3,1)); name="DUST_CONTINUUM_$i")   # Dust continua
@@ -1729,7 +1769,11 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
             for (k, line) ∈ enumerate(cube_fitter.lines.names)
                 write(f, permutedims(cube_model.lines[:, :, :, k], (2,3,1)); name=uppercase("$line"))              # Emission line profiles
             end
-            write(f, permutedims(cube_model.extinction, (2,3,1)); name="EXTINCTION")                    # Extinction model
+            ext_names = cube_fitter.extinction_curve == "decompose" ? 
+                ["EXTINCTION_PAH", "ABS_OLIVINE", "ABS_PYROXENE", "ABS_FORSTERITE", "EXTINCTION"] : ["EXTINCTION"]
+            for r ∈ axes(cube_model.extinction, 4)
+                write(f, permutedims(cube_model.extinction[:, :, :, r], (2,3,1)); name=ext_names[r])                    # Extinction model
+            end
             write(f, permutedims(cube_model.abs_ice, (2,3,1)); name="ABS_ICE")                          # Ice Absorption model
             write(f, permutedims(cube_model.abs_ch, (2,3,1)); name="ABS_CH")                            # CH Absorption model
             if cube_fitter.fit_sil_emission
@@ -1744,6 +1788,8 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
             write_key(f["DATA"], "BUNIT", "MJy/sr")
             write_key(f["ERROR"], "BUNIT", "MJy/sr")
             write_key(f["MODEL"], "BUNIT", "MJy/sr")
+            write_key(f["CONTINUUM_OBSCURED"], "BUNIT", "MJy/sr")
+            write_key(f["CONTINUUM_UNOBSCURED"], "BUNIT", "MJy/sr")
             write_key(f["STELLAR_CONTINUUM"], "BUNIT", "MJy/sr")
             for i ∈ 1:size(cube_model.dust_continuum, 4)
                 write_key(f["DUST_CONTINUUM_$i"], "BUNIT", "MJy/sr")
@@ -1755,7 +1801,7 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 write_key(f["$df"], "BUNIT", "MJy/sr")
             end
             for ab ∈ cube_fitter.abs_features.names
-                write_key(f["$ab"], "BUNIT", "unitless")
+                write_key(f["$ab"], "BUNIT", "-")
             end
             for tp ∈ cube_fitter.template_names
                 write_key(f["TEMPLATE_$tp"], "BUNIT", "MJy/sr")
@@ -1763,9 +1809,11 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
             for line ∈ cube_fitter.lines.names
                 write_key(f["$line"], "BUNIT", "MJy/sr")
             end
-            write_key(f["EXTINCTION"], "BUNIT", "unitless")
-            write_key(f["ABS_ICE"], "BUNIT", "unitless")
-            write_key(f["ABS_CH"], "BUNIT", "unitless")
+            for ext_name in ext_names
+                write_key(f[ext_name], "BUNIT", "-")
+            end
+            write_key(f["ABS_ICE"], "BUNIT", "-")
+            write_key(f["ABS_CH"], "BUNIT", "-")
             if cube_fitter.fit_sil_emission
                 write_key(f["HOT_DUST"], "BUNIT", "MJy/sr")
             end
@@ -1787,9 +1835,9 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 data = param_data.stellar_continuum[parameter]
                 name_i = join(["stellar_continuum", parameter], "_")
                 if occursin("amp", name_i)
-                    bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                    bunit = "[erg.s-1.cm-2.Hz-1.sr-1]"
                 elseif occursin("temp", name_i)
-                    bunit = "Kelvin"
+                    bunit = "K"
                 end
                 write(f, data; name=uppercase(name_i))
                 write_key(f[name_i], "BUNIT", bunit)
@@ -1801,9 +1849,9 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.dust_continuum[i][parameter]
                     name_i = join(["dust_continuum", i, parameter], "_")
                     if occursin("amp", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                        bunit = "[erg.s-1.cm-2.Hz-1.sr-1]"
                     elseif occursin("temp", name_i)
-                        bunit = "Kelvin"
+                        bunit = "K"
                     end
                     write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)  
@@ -1816,9 +1864,9 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.power_law[l][parameter]
                     name_i = join(["power_law", l, parameter], "_")
                     if occursin("amp", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                        bunit = "[erg.s-1.cm-2.Hz-1.sr-1]"
                     elseif occursin("index", name_i)
-                        bunit = "unitless"
+                        bunit = "-"
                     end
                     write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
@@ -1831,11 +1879,11 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.hot_dust[parameter]
                     name_i = join(["hot_dust", parameter], "_")
                     if occursin("amp", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                        bunit = "[erg.s-1.cm-2.Hz-1.sr-1]"
                     elseif occursin("temp", name_i)
-                        bunit = "Kelvin"
+                        bunit = "K"
                     elseif occursin("frac", name_i) || occursin("tau", name_i)
-                        bunit = "unitless"
+                        bunit = "-"
                     elseif occursin("peak", name_i)
                         bunit = "um"
                     end
@@ -1850,13 +1898,13 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.dust_features[df][parameter]
                     name_i = join(["dust_features", df, parameter], "_")
                     if occursin("amp", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                        bunit = "[erg.s-1.cm-2.Hz-1.sr-1]"
                     elseif occursin("fwhm", name_i) || occursin("mean", name_i) || occursin("eqw", name_i)
                         bunit = "um"
                     elseif occursin("flux", name_i)
-                        bunit = "log10(F / erg s^-1 cm^-2)"
+                        bunit = "[erg.s-1.cm-2]"
                     elseif occursin("SNR", name_i) || occursin("index", name_i) || occursin("cutoff", name_i)
-                        bunit = "unitless"
+                        bunit = "-"
                     end
                     write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
@@ -1869,7 +1917,7 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.abs_features[ab][parameter]
                     name_i = join(["abs_features", ab, parameter], "_")
                     if occursin("tau", name_i)
-                        bunit = "unitless"
+                        bunit = "-"
                     elseif occursin("fwhm", name_i) || occursin("mean", name_i) || occursin("eqw", name_i)
                         bunit = "um"
                     end
@@ -1882,7 +1930,10 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
             for parameter ∈ keys(param_data.extinction)
                 data = param_data.extinction[parameter]
                 name_i = join(["extinction", parameter], "_")
-                bunit = "unitless"
+                bunit = "-"
+                if occursin("N_oli", name_i) || occursin("N_pyr", name_i) || occursin("N_for", name_i)
+                    bunit = "[g.cm-2]"
+                end
                 write(f, data; name=uppercase(name_i))
                 write_key(f[name_i], "BUNIT", bunit)  
             end
@@ -1892,7 +1943,7 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 for parameter ∈ keys(param_data.templates[temp])
                     data = param_data.templates[temp][parameter]
                     name_i = join(["templates", temp, parameter], "_")
-                    bunit = "unitless"
+                    bunit = "-"
                     write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
                 end
@@ -1904,16 +1955,16 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.lines[line][parameter]
                     name_i = join(["lines", line, parameter], "_")
                     if occursin("amp", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                        bunit = "[erg.s-1.cm-2.Hz-1.sr-1]"
                     elseif occursin("fwhm", name_i) || occursin("voff", name_i)
                         bunit = "km/s"
                     elseif occursin("flux", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2)"
+                        bunit = "[erg.s-1.cm-2]"
                     elseif occursin("eqw", name_i)
                         bunit = "um"
                     elseif occursin("SNR", name_i) || occursin("h3", name_i) || 
                         occursin("h4", name_i) || occursin("mixing", name_i)
-                        bunit = "unitless"
+                        bunit = "-"
                     end
                     write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
@@ -1925,7 +1976,7 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 for parameter ∈ keys(param_data.statistics)
                     data = param_maps.statistics[parameter]
                     name_i = join(["statistics", parameter], "_")
-                    bunit = "unitless"
+                    bunit = "-"
                     write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
                 end
@@ -2075,23 +2126,23 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
 
             # Insert physical units into the headers of each HDU -> MegaJansky per steradian for all except
             # the extinction profile, which is a multiplicative constant
-            write_key(f["DATA"], "BUNIT", "erg/s/cm^2/ang/sr")
-            write_key(f["ERROR"], "BUNIT", "erg/s/cm^2/ang/sr")
-            write_key(f["MODEL"], "BUNIT", "erg/s/cm^2/ang/sr")
+            write_key(f["DATA"], "BUNIT", "erg.s-1.cm-2.ang-1.sr-1")
+            write_key(f["ERROR"], "BUNIT", "erg.s-1.cm-2.ang-1.sr-1")
+            write_key(f["MODEL"], "BUNIT", "erg.s-1.cm-2.ang-1.sr-1")
             for i ∈ 1:size(cube_model.stellar, 4)
-                write_key(f["STELLAR_POPULATION_$i"], "BUNIT", "erg/s/cm^2/ang/sr")
+                write_key(f["STELLAR_POPULATION_$i"], "BUNIT", "erg.s-1.cm-2.ang-1.sr-1")
             end
             if cube_fitter.fit_opt_na_feii
-                write_key(f["NA_FEII"], "BUNIT", "erg/s/cm^2/ang/sr")
+                write_key(f["NA_FEII"], "BUNIT", "erg.s-1.cm-2.ang-1.sr-1")
             end
             if cube_fitter.fit_opt_br_feii
-                write_key(f["BR_FEII"], "BUNIT", "erg/s/cm^2/ang/sr")
+                write_key(f["BR_FEII"], "BUNIT", "erg.s-1.cm-2.ang-1.sr-1")
             end
             for j ∈ 1:size(cube_model.power_law, 4)
-                write_key(f["POWER_LAW_$j"], "BUNIT", "erg/s/cm^2/sr")
+                write_key(f["POWER_LAW_$j"], "BUNIT", "erg.s-1.cm-2.ang-1.sr-1")
             end
-            write_key(f["ATTENUATION_STARS"], "BUNIT", "unitless")
-            write_key(f["ATTENUATION_GAS"], "BUNIT", "unitless")
+            write_key(f["ATTENUATION_STARS"], "BUNIT", "-")
+            write_key(f["ATTENUATION_GAS"], "BUNIT", "-")
         end
     end
 
@@ -2111,11 +2162,11 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.stellar_populations[i][parameter]
                     name_i = join(["stellar_populations", i, parameter], "_")
                     if occursin("mass", name_i)
-                        bunit = "log10(M/Msun)"
+                        bunit = "[Msun]"
                     elseif occursin("age", name_i)
                         bunit = "Gyr"
                     elseif occursin("metallicity", name_i)
-                        bunit = "[M/H]"
+                        bunit = "[-]"
                     end
                     write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
@@ -2138,7 +2189,7 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 if occursin("E_BV", name_i)
                     bunit = "mag"
                 else
-                    bunit = "unitless"
+                    bunit = "-"
                 end
                 write(f, data; name=uppercase(name_i))
                 write_key(f[name_i], "BUNIT", bunit)
@@ -2150,7 +2201,7 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.feii[parameter]
                     name_i = join(["feii", parameter], "_")
                     if occursin("amp", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                        bunit = "[erg.s-1.cm-2.Hz-1.sr-1]"
                     else
                         bunit = "km/s"
                     end
@@ -2165,7 +2216,7 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.power_law[j][parameter]
                     name_i = join(["power_law", j, parameter], "_")
                     if occursin("amp", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                        bunit = "[erg.s-1.cm-2.Hz-1.sr-1]"
                     else
                         bunit = "unitless"
                     end
@@ -2180,16 +2231,16 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.lines[line][parameter]
                     name_i = join(["lines", line, parameter], "_")
                     if occursin("amp", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                        bunit = "[erg.s-1.cm-2.Hz-1.sr-1]"
                     elseif occursin("fwhm", name_i) || occursin("voff", name_i)
                         bunit = "km/s"
                     elseif occursin("flux", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2)"
+                        bunit = "[erg.s-1.cm-2]"
                     elseif occursin("eqw", name_i)
                         bunit = "um"
                     elseif occursin("SNR", name_i) || occursin("h3", name_i) || 
                         occursin("h4", name_i) || occursin("mixing", name_i)
-                        bunit = "unitless"
+                        bunit = "-"
                     end
                     write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
@@ -2201,7 +2252,7 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 for parameter ∈ keys(param_data.statistics)
                     data = param_maps.statistics[parameter]
                     name_i = join(["statistics", parameter], "_")
-                    bunit = "unitless"
+                    bunit = "-"
                     write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
                 end

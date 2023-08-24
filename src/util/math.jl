@@ -877,6 +877,17 @@ end
 
 
 """
+    τ_decompose(λ, N_col, κ_abs)
+
+Calculate the total silicate absorption optical depth given a series of column densities and
+mass absorption coefficients.
+"""
+function τ_decompose(λ::Vector{<:Real}, N_col::Vector{<:Real}, κ_abs::Vector{Spline1D})
+    sum([N_col[i] .* κ_abs[i](λ) for i in eachindex(N_col)])
+end
+
+
+"""
     τ_ice(λ)
 
 Calculate the ice extinction profiles
@@ -1117,13 +1128,15 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `n_abs_feat::Integer`: Number of absorption features to be fit
 - `extinction_curve::String`: The type of extinction curve to use, "kvt" or "d+"
 - `extinction_screen::Bool`: Whether or not to use a screen model for the extinction curve
+- `κ_abs::Vector{Spline1D}`: A series of interpolating functions over wavelength giving the mass absorption coefficients for
+    amorphous olivine, amorphous pyroxene, and crystalline forsterite
 - `fit_sil_emission::Bool`: Whether or not to fit silicate emission with a hot dust continuum component
 - `use_pah_templates::Bool`: Whether or not to use PAH templates to model the PAH emission
 - `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
 function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
-    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, use_pah_templates::Bool, 
+    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, κ_abs::Vector{Spline1D}, fit_sil_emission::Bool, use_pah_templates::Bool, 
     templates::Matrix{<:Real}, return_components::Bool)
 
     # Prepare outputs
@@ -1153,22 +1166,45 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
     # Extinction 
     if extinction_curve == "d+"
         ext_curve = τ_dp(λ, params[pᵢ+3])
+        comps["extinction"] = extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
+        comps["ext_pah"] = comps["extinction"]
+        pᵢ += 1
     elseif extinction_curve == "kvt"
         ext_curve = τ_kvt(λ, params[pᵢ+3])
+        comps["extinction"] = extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
+        comps["ext_pah"] = comps["extinction"]
+        pᵢ += 1
     elseif extinction_curve == "ct"
         ext_curve = τ_ct(λ)
+        comps["extinction"] = extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
+        comps["ext_pah"] = comps["extinction"]
+        pᵢ += 1
     elseif extinction_curve == "ohm"
         ext_curve = τ_ohm(λ)
+        comps["extinction"] = extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
+        comps["ext_pah"] = comps["extinction"]
+        pᵢ += 1
+    elseif extinction_curve == "decompose"
+        comps["ext_pah"] = extinction.(τ_ct(λ), params[pᵢ], screen=extinction_screen)
+        τ_oli = params[pᵢ+1] .* κ_abs[1](λ) 
+        comps["abs_oli"] = extinction.(τ_oli, 1., screen=extinction_screen)
+        τ_pyr = params[pᵢ+2] .* κ_abs[2](λ)
+        comps["abs_pyr"] = extinction.(τ_pyr, 1., screen=extinction_screen)
+        τ_for = params[pᵢ+3] .* κ_abs[3](λ)
+        comps["abs_for"] = extinction.(τ_for, 1., screen=extinction_screen)
+        τ_97 = params[pᵢ+1] * κ_abs[1](9.7) + params[pᵢ+2] * κ_abs[2](9.7) + params[pᵢ+3] * κ_abs[3](9.7)
+        comps["extinction"] = extinction.((1 .- params[pᵢ+6]) .* (τ_oli .+ τ_pyr .+ τ_for) .+ params[pᵢ+6] .* τ_97 .* (9.7./λ).^1.7, 1., screen=extinction_screen)
+        pᵢ += 4
     else
         error("Unrecognized extinction curve: $extinction_curve")
     end
-    comps["extinction"] = extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
 
     # Ice+CH Absorption
     ext_ice = τ_ice(λ)
-    comps["abs_ice"] = extinction.(ext_ice, params[pᵢ+1] * params[pᵢ+2], screen=true)
+    comps["abs_ice"] = extinction.(ext_ice, params[pᵢ] * params[pᵢ+1], screen=true)
     ext_ch = τ_ch(λ)
-    comps["abs_ch"] = extinction.(ext_ch, params[pᵢ+2], screen=true)
+    comps["abs_ch"] = extinction.(ext_ch, params[pᵢ+1], screen=true)
+    Cf = params[pᵢ+3]
     pᵢ += 4
 
     # Other absorption features
@@ -1180,7 +1216,10 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
         pᵢ += 3
     end
 
-    contin .*= comps["extinction"] .* comps["abs_ice"] .* comps["abs_ch"] .* abs_tot
+    # only obscure the part of the continuum that is defined by the covering fraction Cf
+    comps["obscured_continuum"] = @. Cf * contin * comps["extinction"] * comps["abs_ice"] * comps["abs_ch"] * abs_tot
+    comps["unobscured_continuum"] = @. (1 - Cf) * contin
+    contin = comps["obscured_continuum"] .+ comps["unobscured_continuum"]
 
     if fit_sil_emission
         # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
@@ -1199,9 +1238,9 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
 
     if use_pah_templates
         pah3 = Smith3_interp(λ)
-        contin .+= params[pᵢ] .* pah3  ./ maximum(pah3) .* comps["extinction"]
+        contin .+= params[pᵢ] .* pah3  ./ maximum(pah3) .* comps["ext_pah"]
         pah4 = Smith4_interp(λ)
-        contin .+= params[pᵢ+1] .* pah4 ./ maximum(pah4) .* comps["extinction"]
+        contin .+= params[pᵢ+1] .* pah4 ./ maximum(pah4) .* comps["ext_pah"]
     else
         for (j, prof) ∈ enumerate(dust_prof)
             if prof == :Drude
@@ -1211,7 +1250,7 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
                 comps["dust_feat_$j"] = PearsonIV.(λ, params[pᵢ:pᵢ+4]...)
                 pᵢ += 5
             end
-            contin .+= comps["dust_feat_$j"] .* comps["extinction"] 
+            contin .+= comps["dust_feat_$j"] .* comps["ext_pah"] 
         end
     end
 
@@ -1226,7 +1265,8 @@ end
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
 function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
-    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, use_pah_templates::Bool, templates::Matrix{<:Real})
+    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, κ_abs::Vector{Spline1D}, fit_sil_emission::Bool, use_pah_templates::Bool, 
+    templates::Matrix{<:Real})
 
     # Prepare outputs
     out_type = eltype(params)
@@ -1251,22 +1291,45 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
     # Extinction 
     if extinction_curve == "d+"
         ext_curve = τ_dp(λ, params[pᵢ+3])
+        ext = extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
+        ext_pah = ext
+        pᵢ += 1
     elseif extinction_curve == "kvt"
         ext_curve = τ_kvt(λ, params[pᵢ+3])
+        ext = extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
+        ext_pah = ext
+        pᵢ += 1
     elseif extinction_curve == "ct"
         ext_curve = τ_ct(λ)
+        ext = extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
+        ext_pah = ext
+        pᵢ += 1
     elseif extinction_curve == "ohm"
         ext_curve = τ_ohm(λ)
+        ext = extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
+        ext_pah = ext
+        pᵢ += 1
+    elseif extinction_curve == "decompose"
+        ext_pah = extinction.(τ_ct(λ), params[pᵢ], screen=extinction_screen)
+        τ_oli = params[pᵢ+1] .* κ_abs[1](λ)
+        # abs_oli = extinction.(τ_oli, 1., screen=extinction_screen)
+        τ_pyr = params[pᵢ+2] .* κ_abs[2](λ)
+        # abs_pyr = extinction.(τ_pyr, 1., screen=extinction_screen)
+        τ_for = params[pᵢ+3] .* κ_abs[3](λ)
+        # abs_for = extinction.(τ_for, 1., screen=extinction_screen)
+        τ_97 = params[pᵢ+1] * κ_abs[1](9.7) + params[pᵢ+2] * κ_abs[2](9.7) + params[pᵢ+3] * κ_abs[3](9.7)
+        ext = extinction.((1 .- params[pᵢ+6]) .* (τ_oli .+ τ_pyr .+ τ_for) .+ params[pᵢ+6] .* τ_97 .* (9.7./λ).^1.7, 1., screen=extinction_screen)
+        pᵢ += 4
     else
         error("Unrecognized extinction curve: $extinction_curve")
     end
-    ext = extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
 
     # Ice+CH absorption
     ext_ice = τ_ice(λ)
-    abs_ice = extinction.(ext_ice, params[pᵢ+1] * params[pᵢ+2], screen=true)
+    abs_ice = extinction.(ext_ice, params[pᵢ] * params[pᵢ+1], screen=true)
     ext_ch = τ_ch(λ)
-    abs_ch = extinction.(ext_ch, params[pᵢ+2], screen=true)
+    abs_ch = extinction.(ext_ch, params[pᵢ+1], screen=true)
+    Cf = params[pᵢ+3]
     pᵢ += 4
 
     # Other absorption features
@@ -1277,7 +1340,7 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
         pᵢ += 3
     end
     
-    contin .*= ext .* abs_ice .* abs_ch .* abs_tot
+    contin = @. Cf * contin * ext * abs_ice * abs_ch * abs_tot + (1 - Cf) * contin
 
     if fit_sil_emission
         # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
@@ -1294,13 +1357,13 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
 
     if use_pah_templates
         pah3 = Smith3_interp(λ)
-        contin .+= params[pᵢ] .* pah3 ./ maximum(pah3) .* ext
+        contin .+= params[pᵢ] .* pah3 ./ maximum(pah3) .* ext_pah
         pah4 = Smith4_interp(λ)
-        contin .+= params[pᵢ+1] .* pah4 ./ maximum(pah4) .* ext
+        contin .+= params[pᵢ+1] .* pah4 ./ maximum(pah4) .* ext_pah
     else
         if all(dust_prof .== :Drude)
             for j ∈ 1:length(dust_prof) 
-                contin .+= Drude.(λ, params[pᵢ:pᵢ+2]...) .* ext
+                contin .+= Drude.(λ, params[pᵢ:pᵢ+2]...) .* ext_pah
                 pᵢ += 3
             end
         else
@@ -1312,7 +1375,7 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
                     df = PearsonIV.(λ, params[pᵢ:pᵢ+4]...)
                     pᵢ += 5
                 end
-                contin .+= df .* ext
+                contin .+= df .* ext_pah
             end
         end
     end
@@ -1889,7 +1952,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     n_power_law::Integer, n_dust_feat::Integer, dust_profiles::Vector{Symbol}, n_abs_feat::Integer, fit_sil_emission::Bool, 
     n_templates::Integer, n_lines::Integer, n_acomps::Integer, n_comps::Integer, lines::TransitionLines, flexible_wavesol::Bool, 
     lsf::Function, relative_flags::BitVector, popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}, 
-    extinction::Vector{T}, mask_lines::BitVector, continuum::Vector{T}, 
+    extinction_pah::Vector{T}, extinction::Vector{T}, extinction_curve::String, mask_lines::BitVector, continuum::Vector{T}, 
     area_sr::Vector{T}, propagate_err::Bool=true) where {T<:Real}
 
     @debug "Calculating extra parameters"
@@ -1902,7 +1965,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     p_dust_err = zeros(3n_dust_feat)
     pₒ = 1
     # Initial parameter vector index where dust profiles start
-    pᵢ = 3 + 2n_dust_cont + 2n_power_law + 4 + 3n_abs_feat + (fit_sil_emission ? 6 : 0) + n_templates
+    pᵢ = 3 + 2n_dust_cont + 2n_power_law + 4 + (extinction_curve == "decompose" ? 4 : 1) + 3n_abs_feat + (fit_sil_emission ? 6 : 0) + n_templates
     # Extinction normalization factor
     # max_ext = 1 / minimum(extinction)
 
@@ -1929,7 +1992,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
         end
 
         # Get the extinction profile at the center
-        ext = extinction[cent_ind] 
+        ext = extinction_pah[cent_ind] 
 
         prof = dust_profiles[ii]
         if prof == :PearsonIV
@@ -2340,20 +2403,13 @@ function calculate_eqw(λ::Vector{T}, profile::Symbol, comps::Dict, line::Bool,
     propagate_err::Bool=true) where {T<:Real}
 
     contin = zeros(length(λ))
-    contin .+= comps["stellar"]
-    for i ∈ 1:n_dust_cont
-        contin .+= comps["dust_cont_$i"]
-    end
-    for j ∈ 1:n_power_law
-        contin .+= comps["power_law_$j"]
-    end
-    contin .*= comps["extinction"]
+    contin .+= comps["obscured_continuum"] .+ comps["unobscured_continuum"]
     if fit_sil_emission
-        contin .+= comps["hot_dust"]
-    end
-    contin .*= comps["abs_ice"] .* comps["abs_ch"]
-    for k ∈ 1:n_abs_feat
-        contin .*= comps["abs_feat_$k"]
+        abs_tot = ones(length(λ))
+        for k ∈ 1:n_abs_feat
+            abs_tot .*= comps["abs_feat_$k"]
+        end
+        contin .+= comps["hot_dust"] .* comps["abs_ice"] .* comps["abs_ch"] .* abs_tot
     end
     for q ∈ 1:n_templates
         contin .+= comps["templates_$q"]
@@ -2361,7 +2417,7 @@ function calculate_eqw(λ::Vector{T}, profile::Symbol, comps::Dict, line::Bool,
     # For line EQWs, we consider PAHs as part of the "continuum"
     if line
         for l ∈ 1:n_dust_feat
-            contin .+= comps["dust_feat_$l"] .* comps["extinction"]
+            contin .+= comps["dust_feat_$l"] .* comps["ext_pah"]
         end
     end
 

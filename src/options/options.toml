@@ -61,6 +61,14 @@ extinction_curve = "kvt"
 # (1 - e^-tau) / tau (false), following PAHFIT.
 extinction_screen = false
 
+# The following 3 options are only used if extinction_screen = "decompose"
+# Magnesium content for olivine 
+olivine_y = 0.5
+# Magnesium content for pyroxene
+pyroxene_x = 0.5
+# Olivine and pyroxene grain sizes (in microns)
+grain_size = 0.1
+
 # whether or not to fit the stellar continuum (MIR)
 fit_stellar_continuum = true
 

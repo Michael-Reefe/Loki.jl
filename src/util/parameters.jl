@@ -112,9 +112,14 @@ struct MIRContinuum <: Continuum
     T_dc::Vector{Parameter}
     α::Vector{Parameter}
     τ_97::Parameter
+    τ_pah::Parameter
+    N_oli::Parameter
+    N_pyr::Parameter
+    N_for::Parameter
     τ_ice::Parameter
     τ_ch::Parameter
     β::Parameter
+    Cf::Parameter
     T_hot::Parameter
     Cf_hot::Parameter
     τ_warm::Parameter
