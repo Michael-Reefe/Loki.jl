@@ -235,10 +235,10 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     end
 
     # Get the priors and "locked" booleans for each parameter, split up by the 2 steps for the continuum fit
-    plims, lock = get_continuum_plimits(cube_fitter, λ_spax, I_spax, σ_spax, init || use_ap)
+    plims, lock = get_continuum_plimits(cube_fitter, spaxel, λ_spax, I_spax, σ_spax, init || use_ap, templates_spax./N)
 
     # Split up the initial parameter vector into the components that we need for each fitting step
-    pars_0, dstep_0 = get_continuum_initial_values(cube_fitter, spaxel, λ_spax, I_spax, σ_spax, N, init || use_ap)
+    pars_0, dstep_0 = get_continuum_initial_values(cube_fitter, spaxel, λ_spax, I_spax, σ_spax, N, init || use_ap, templates_spax./N)
     if bootstrap_iter
         pars_0 = p1_boots
     end
@@ -482,10 +482,12 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     end
 
     # Get the priors and "locked" booleans for each parameter, split up by the 2 steps for the continuum fit
-    plims_1, plims_2, lock_1, lock_2 = get_continuum_plimits(cube_fitter, λ_spax, I_spax, σ_spax, init || use_ap, split=true)
+    plims_1, plims_2, lock_1, lock_2 = get_continuum_plimits(cube_fitter, spaxel, λ_spax, I_spax, σ_spax, init || use_ap,
+        templates_spax./N, split=true)
 
     # Split up the initial parameter vector into the components that we need for each fitting step
-    pars_1, pars_2, dstep_1, dstep_2 = get_continuum_initial_values(cube_fitter, spaxel, λ_spax, I_spax, σ_spax, N, init || use_ap, split=true)
+    pars_1, pars_2, dstep_1, dstep_2 = get_continuum_initial_values(cube_fitter, spaxel, λ_spax, I_spax, σ_spax, N, init || use_ap, 
+        templates_spax./N, split=true)
     if bootstrap_iter
         pars_1 = vcat(p1_boots[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+3*cube_fitter.n_abs_feat+
             (cube_fitter.fit_sil_emission ? 6 : 0)+cube_fitter.n_templates)], p1_boots[end-1:end])
@@ -1323,10 +1325,11 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     end
 
     # Get the priors and "locked" booleans for each parameter, split up by the 2 steps for the continuum fit
-    plims_cont, lock_cont = get_continuum_plimits(cube_fitter, λ_spax, I_spax, σ_spax, init || use_ap)
+    plims_cont, lock_cont = get_continuum_plimits(cube_fitter, spaxel, λ_spax, I_spax, σ_spax, init || use_ap, templates_spax./N)
 
     # Split up the initial parameter vector into the components that we need for each fitting step
-    pars_0_cont, dstep_0_cont = get_continuum_initial_values(cube_fitter, spaxel, λ_spax, I_spax, σ_spax, N, init || use_ap)
+    pars_0_cont, dstep_0_cont = get_continuum_initial_values(cube_fitter, spaxel, λ_spax, I_spax, σ_spax, N, init || use_ap,
+        templates_spax./N)
     if bootstrap_iter
         pars_0_cont = p1_boots_cont
     end
@@ -2457,6 +2460,9 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
             p_out, p_err
         end
 
+        # Force full garbage collection
+        GC.gc(true)
+
         return p_out, p_err
 
     end
@@ -2468,6 +2474,9 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
 
     # Still need to overwrite the raw errors with the statistical errors
     cube_data.σ[spaxel, :] .= σ
+
+    # Force full garbage collection
+    GC.gc(true)
 
     p_out, p_err
 

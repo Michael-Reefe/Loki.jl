@@ -21,7 +21,7 @@ val = 400.0
 plim = [300.0, 1500.0]
 locked = false
 [[dust_continuum_temps]]
-val = 200.0
+val = 135.0
 plim = [90.0, 300.0]
 locked = false
 [[dust_continuum_temps]]
@@ -67,15 +67,15 @@ locked = false
 # locked = false
 
 # [[power_law_indices]]
-# val = 1.4
+# val = 1.65
 # plim = [-3.0, 3.0]
-# locked = false
+# locked = true
 
 # template_amps: amplitude parameters for each template in the fit
 [[template_amps]]
-val = 0.7
-plim = [0.0, 1.5]
-locked = false
+val = 1.0
+plim = [0.0, 2.0]
+locked = true
 
 # dust_features: each of these specifies a Polycyclic Aromatic 
 # Hydrocarbon (PAH) profile to include in the model. Each of these
@@ -480,10 +480,9 @@ val = 1.655
 plim = [0.9, 1.1]
 locked = false
 
-# Absorption features (also modeled with Drude profiles)
+# Absorption features (modeled with gaussian profiles)
 
 # Spectral leak artifact of the JWST pipeline at ~12.22 microns
-# UPDATE: This has been fixed as of JWST pipeline version 1.11+
 
 # [absorption_features."abs_leak_12.22"]
 # local = true
@@ -502,6 +501,21 @@ locked = false
 # val = 0.133
 # plim = [0.9, 1.1]
 # locked = true
+
+# [absorption_features."abs_9.7".tau]
+# val = 0.1
+# plim = [0.0, 10.0]
+# locked = false
+
+# [absorption_features."abs_9.7".wave]
+# val = 9.64
+# plim = [-0.01, 0.01]
+# locked = false
+
+# [absorption_features."abs_9.7".fwhm]
+# val = 0.210
+# plim = [0.2, 1.0]
+# locked = false
 
 # [absorption_features."abs_C2H2_13.7".wave]
 # val = 13.69

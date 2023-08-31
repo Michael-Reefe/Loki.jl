@@ -132,9 +132,9 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
 
         # Template amplitudes
         for (q, tp) ∈ enumerate(cube_fitter.template_names)
-            param_maps.templates[tp][:amp][index] = out_params[index, pᵢ] 
-            param_errs[1].templates[tp][:amp][index] = out_errs[index, pᵢ, 1]
-            param_errs[2].templates[tp][:amp][index] = out_errs[index, pᵢ, 2]
+            param_maps.templates[tp][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
+            param_errs[1].templates[tp][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
+            param_errs[2].templates[tp][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
             pᵢ += 1
         end
 
@@ -754,52 +754,19 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
 end
 
 
-"""
-    plot_parameter_map(data, name_i, save_path, Ω, z, psf_fwhm, cosmo, python_wcs; 
-        [snr_filter, snr_thresh, cmap, line_latex])
-
-Plotting function for 2D parameter maps which are output by `fit_cube!`
-
-# Arguments
-- `data::Matrix{Float64}`: The 2D array of data to be plotted
-- `name_i::String`: The name of the individual parameter being plotted, i.e. "dust_features_PAH_5.24_amp"
-- `save_path::String`: The file path to save the plot to.
-- `Ω::Float64`: The solid angle subtended by each pixel, in steradians (used for angular scalebar)
-- `z::Float64`: The redshift of the object (used for physical scalebar)
-- `psf_fwhm::Float64`: The FWHM of the point-spread function in arcseconds (used to add a circular patch with this size)
-- `cosmo::Cosmology.AbstractCosmology`: The cosmology to use to calculate distance for the physical scalebar
-- `wcs::WCSTransform`: The WCS object used to project the maps onto RA/Dec space
-- `snr_filter::Union{Nothing,Matrix{Float64}}=nothing`: A 2D array of S/N values to
-    be used to filter out certain spaxels from being plotted - must be the same size as `data` to filter
-- `snr_thresh::Float64=3.`: The S/N threshold below which to cut out any spaxels using the values in snr_filter
-- `cmap::Symbol=:cubehelix`: The colormap used in the plot, defaults to the cubehelix map
-- `line_latex::Union{String,Nothing}=nothing`: LaTeX-formatted label for the emission line to be added to the top-right corner.
-- `disable_axes::Bool=true`: If true, the x/y or RA/Dec axes are turned off, and instead an angular label is added to the scale bar.
-- `disable_colorbar::Bool=false`: If true, turns off the color scale.
-- `modify_ax::Union{Tuple{PyObject,PyObject},Nothing}=nothing`: If one wishes to apply this plotting routine on a pre-existing axis object,
-input the figure and axis objects here as a tuple, and the modified axis object will be returned.
-- `colorscale_limits::Union{Tuple{<:Real,<:Real},Nothing}=nothing`: If specified, gives lower and upper limits for the color scale. Otherwise,
-they will be determined automatically from the data.
-- `custom_bunit::Union{LaTeXString,Nothing}=nothing`: If provided, overwrites the colorbar axis label. Otherwise the label is determined
-automtically using the `name_i` parameter.
-"""
-function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::String, Ω::Float64, z::Float64, psf_fwhm::Float64,
-    cosmo::Cosmology.AbstractCosmology, wcs::Union{WCSTransform,Nothing}; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, 
-    snr_thresh::Float64=3., cmap=py_colormap.cubehelix, line_latex::Union{String,Nothing}=nothing, disable_axes::Bool=true,
-    disable_colorbar::Bool=false, modify_ax=nothing, colorscale_limits=nothing, custom_bunit::Union{LaTeXString,Nothing}=nothing)
-
-    # I know this is ugly but I couldn't figure out a better way to do it lmao
+# I know this is ugly but I couldn't figure out a better way to do it lmao
+function paramstring_to_latex(name_i, cosmo)
     if occursin("amp", name_i)
         if occursin("stellar_continuum", name_i)
             bunit = L"$\log_{10}(A_{*})$" # normalized
         elseif occursin("dust_continuum", name_i)
             bunit = L"$\log_{10}(A_{\rm dust})$" # normalized
         elseif occursin("power_law", name_i)
-            bunit = L"$\log_{10}(A_{\rm pl} / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-2}$)"
+            bunit = L"$\log_{10}(A_{\rm pl} / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1}$)"
         elseif occursin("hot_dust", name_i)
             bunit = L"$\log_{10}(A_{\rm sil})$" # normalized
         elseif occursin("template", name_i)
-            bunit = L"$A_{\rm template}$" # the only amplitude that is NOT log
+            bunit = L"$\log_{10}(A_{\rm template})$"
         else
             bunit = L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$"
         end
@@ -874,11 +841,49 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     elseif occursin("delta_UV", name_i)
         bunit = L"$\delta$"
     end
+    return bunit
+end
+
+
+"""
+    plot_parameter_map(data, name_i, save_path, Ω, z, psf_fwhm, cosmo, python_wcs; 
+        [snr_filter, snr_thresh, cmap, line_latex])
+
+Plotting function for 2D parameter maps which are output by `fit_cube!`
+
+# Arguments
+- `data::Matrix{Float64}`: The 2D array of data to be plotted
+- `name_i::String`: The name of the individual parameter being plotted, i.e. "dust_features_PAH_5.24_amp"
+- `save_path::String`: The file path to save the plot to.
+- `Ω::Float64`: The solid angle subtended by each pixel, in steradians (used for angular scalebar)
+- `z::Float64`: The redshift of the object (used for physical scalebar)
+- `psf_fwhm::Float64`: The FWHM of the point-spread function in arcseconds (used to add a circular patch with this size)
+- `cosmo::Cosmology.AbstractCosmology`: The cosmology to use to calculate distance for the physical scalebar
+- `wcs::WCSTransform`: The WCS object used to project the maps onto RA/Dec space
+- `snr_filter::Union{Nothing,Matrix{Float64}}=nothing`: A 2D array of S/N values to
+    be used to filter out certain spaxels from being plotted - must be the same size as `data` to filter
+- `snr_thresh::Float64=3.`: The S/N threshold below which to cut out any spaxels using the values in snr_filter
+- `cmap::Symbol=:cubehelix`: The colormap used in the plot, defaults to the cubehelix map
+- `line_latex::Union{String,Nothing}=nothing`: LaTeX-formatted label for the emission line to be added to the top-right corner.
+- `disable_axes::Bool=true`: If true, the x/y or RA/Dec axes are turned off, and instead an angular label is added to the scale bar.
+- `disable_colorbar::Bool=false`: If true, turns off the color scale.
+- `modify_ax::Union{Tuple{PyObject,PyObject},Nothing}=nothing`: If one wishes to apply this plotting routine on a pre-existing axis object,
+input the figure and axis objects here as a tuple, and the modified axis object will be returned.
+- `colorscale_limits::Union{Tuple{<:Real,<:Real},Nothing}=nothing`: If specified, gives lower and upper limits for the color scale. Otherwise,
+they will be determined automatically from the data.
+- `custom_bunit::Union{LaTeXString,Nothing}=nothing`: If provided, overwrites the colorbar axis label. Otherwise the label is determined
+automtically using the `name_i` parameter.
+"""
+function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::String, Ω::Float64, z::Float64, psf_fwhm::Float64,
+    cosmo::Cosmology.AbstractCosmology, wcs::Union{WCSTransform,Nothing}; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, 
+    snr_thresh::Float64=3., cmap=py_colormap.cubehelix, line_latex::Union{String,Nothing}=nothing, disable_axes::Bool=true,
+    disable_colorbar::Bool=false, modify_ax=nothing, colorscale_limits=nothing, custom_bunit::Union{LaTeXString,Nothing}=nothing)
+
+    bunit = paramstring_to_latex(name_i, cosmo)
     # Overwrite with input if provided
     if !isnothing(custom_bunit)
         bunit = custom_bunit
     end
-
     @debug "Plotting 2D map of $name_i with units $bunit"
 
     filtered = copy(data)
@@ -1016,16 +1021,139 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     end
 
     # Make directories
-    if !isdir(dirname(save_path))
-        mkpath(dirname(save_path))
+    if (save_path ≠ "") && isnothing(modify_ax)
+        if !isdir(dirname(save_path))
+            mkpath(dirname(save_path))
+        end
+        plt.savefig(save_path, dpi=300, bbox_inches=:tight)
     end
-    plt.savefig(save_path, dpi=300, bbox_inches=:tight)
     if !isnothing(modify_ax)
         return fig, ax, cdata
     end
     plt.close()
 
 end
+
+
+# Line parameters
+"""
+    plot_multiline_parameters(cube_fitter, param_maps, psf_interp[, snr_thresh])
+
+Helper function to plot line parameters on a grid of plots with a consistent color scale. This is useful
+in particular for lines with multiple components. For example, for the flux, if a line has two components, 
+this will make a grid of 3 plots containing the total combined flux, and the flux of each individual component,
+all on the same color scale. Kinematic components such as the velocity don't have an equivalent "total" that is well
+defined, so they would just get 2 plots containing the kinematics of each component.
+"""
+function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMaps, psf_interp::Spline1D, 
+    snr_thresh::Real=3.)
+
+    plotted_lines = []
+    for line ∈ keys(param_maps.lines)
+        # Remove the component index from the line name
+        line_key = Symbol(join(split(string(line), "_")[1:end-1], "_"))
+        # Dont repeat for lines that have multiple components since that's already handled within the body of this loop
+        if line_key in plotted_lines
+            continue
+        end
+
+        # Find the wavelength/index at which to get the PSF FWHM for the circle in the plot
+        line_i = findfirst(cube_fitter.lines.names .== line_key)
+        wave_i = cube_fitter.lines.λ₀[line_i]
+        latex_i = cube_fitter.lines.latex[line_i]
+        n_line_comps = sum(.!isnothing.(cube_fitter.lines.profiles[line_i, :]))
+        component_keys = [Symbol(line_key, "_$(j)") for j in 1:n_line_comps]
+        if n_line_comps < 2
+            # Dont bother for lines with only 1 component
+            continue
+        end
+
+        snr_filter = dropdims(nanmaximum(cat([param_maps.lines[comp][:SNR] for comp in component_keys]..., dims=3), dims=3), dims=3)
+
+        # Get the total flux and eqw for lines with multiple components
+        plot_total = false
+        if n_line_comps > 1
+            plot_total = true
+            total_flux = log10.(sum([exp10.(param_maps.lines[comp][:flux]) for comp in component_keys])) 
+            total_eqw = sum([param_maps.lines[comp][:eqw] for comp in component_keys])
+        end
+
+        for parameter ∈ keys(param_maps.lines[line])
+
+            # Make a combined plot for all of the line components
+            n_subplots = n_line_comps + 1 + (parameter ∈ [:flux, :eqw] && plot_total ? 1 : 0)
+            width_ratios = [[20 for _ in 1:n_subplots-1]; 1]
+
+            # Use gridspec to make the axes proper ratios
+            fig = plt.figure(figsize=(6 * (n_subplots-1), 5.4))
+            gs = fig.add_gridspec(1, n_subplots, width_ratios=width_ratios, height_ratios=(1,), wspace=0.05, hspace=0.05)
+            ax = []
+            for i in 1:n_subplots-1
+                push!(ax, fig.add_subplot(gs[1,i]))
+            end
+            cax = fig.add_subplot(gs[1,n_subplots])
+
+            # Get the minimum/maximum for the color scale based on the combined dataset
+            vmin, vmax = 0., 0.
+            if parameter == :flux && plot_total
+                vmin = quantile(total_flux[isfinite.(total_flux)], 0.01)
+                vmax = quantile(total_flux[isfinite.(total_flux)], 0.99)
+            elseif parameter == :eqw && plot_total
+                vmin = quantile(total_eqw[isfinite.(total_eqw)], 0.01)
+                vmax = quantile(total_eqw[isfinite.(total_eqw)], 0.99)
+            else
+                # Each element of 'minmax' is a tuple with the minimum and maximum for that spaxel
+                minmax = dropdims(nanextrema(cat([param_maps.lines[comp][parameter] for comp in component_keys]..., dims=3), dims=3), dims=3)
+                mindata = [m[1] for m in minmax]
+                maxdata = [m[2] for m in minmax]
+                vmin = quantile(mindata[isfinite.(mindata)], 0.01)
+                vmax = quantile(maxdata[isfinite.(maxdata)], 0.99)
+            end
+
+            cdata = nothing
+            ci = 1
+            if parameter == :flux && plot_total
+                name_i = join([line, "total_flux"], "_")
+                save_path = ""
+                _, _, cdata = plot_parameter_map(total_flux, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
+                    cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh, line_latex=latex_i,
+                    modify_ax=(fig, ax[ci]), disable_colorbar=true, colorscale_limits=(vmin, vmax))
+                ci += 1
+            end
+            if parameter == :eqw && plot_total
+                name_i = join([line, "total_eqw"], "_")
+                save_path = ""
+                _, _, cdata = plot_parameter_map(total_eqw, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
+                    cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh, line_latex=latex_i,
+                    modify_ax=(fig, ax[ci]), disable_colorbar=true, colorscale_limits=(vmin, vmax))
+                ci += 1
+            end
+            for i in 1:n_line_comps
+                data = param_maps.lines[component_keys[i]][parameter]
+                name_i = join([line, parameter], "_")
+                snr_filt = snr_filter
+                if contains(string(parameter), "SNR")
+                    snr_filt = nothing
+                end
+                save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(line_key)", "$(name_i).pdf")
+                _, _, cdata = plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i), 
+                    cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filt, snr_thresh=snr_thresh,
+                    line_latex=latex_i, modify_ax=(fig, ax[ci]), disable_colorbar=true, colorscale_limits=(vmin, vmax))
+                ci += 1
+            end
+            # Save the final figure
+            name_final = join([line_key, parameter], "_")
+            # Add the colorbar to cax
+            fig.colorbar(cdata, cax=cax, label=paramstring_to_latex(name_final, cube_fitter.cosmology))
+            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$line_key", "$(name_final).pdf")
+            plt.savefig(save_path, dpi=300, bbox_inches="tight")
+            plt.close()
+        end
+
+        push!(plotted_lines, line_key)
+    end
+end
+
 
 
 """
@@ -1193,47 +1321,25 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         line_i = findfirst(cube_fitter.lines.names .== line_key)
         wave_i = cube_fitter.lines.λ₀[line_i]
         latex_i = cube_fitter.lines.latex[line_i]
+        n_line_comps = sum(.!isnothing.(cube_fitter.lines.profiles[line_i, :]))
+        snr_filter = dropdims(
+            nanmaximum(cat([param_maps.lines[Symbol(line_key, "_$i")][:SNR] for i in 1:n_line_comps]..., dims=3), dims=3), dims=3)
 
         for parameter ∈ keys(param_maps.lines[line])
             data = param_maps.lines[line][parameter]
             name_i = join([line, parameter], "_")
-            snr_filter = param_maps.lines[line][:SNR]
+            snr_filt = snr_filter
             if contains(string(parameter), "SNR")
-                snr_filter = nothing
+                snr_filt = nothing
             end
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(line_key)", "$(name_i).pdf")
             plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i), 
-                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
+                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filt, snr_thresh=snr_thresh,
                 line_latex=latex_i)
         end
     end
-
-    # Total parameters for lines with multiple components
-    for (k, name) ∈ enumerate(cube_fitter.lines.names)
-        n_line_comps = sum(.!isnothing.(cube_fitter.lines.profiles[k, :]))
-        wave_i = cube_fitter.lines.λ₀[k]
-        if n_line_comps > 1
-            component_keys = [Symbol(name, "_$(j)") for j in 1:n_line_comps]
-            snr_filter = dropdims(maximum(cat([param_maps.lines[comp][:SNR] for comp in component_keys]..., dims=3), dims=3), dims=3)
-
-            # Total flux
-            total_flux = log10.(sum([exp10.(param_maps.lines[comp][:flux]) for comp in component_keys]))
-            name_i = join([name, "total_flux"], "_")
-            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(name)", "$(name_i).pdf")
-            plot_parameter_map(total_flux, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
-                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
-                line_latex=cube_fitter.lines.latex[k])
-
-            # Total equivalent width
-            total_eqw = sum([param_maps.lines[comp][:eqw] for comp in component_keys])
-            name_i = join([name, "total_eqw"], "_")
-            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(name)", "$(name_i).pdf")
-            plot_parameter_map(total_eqw, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
-                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
-                line_latex=cube_fitter.lines.latex[k])
-            
-        end
-    end
+    # Make combined plots for lines with multiple components
+    plot_multiline_parameters(cube_fitter, param_maps, psf_interp, snr_thresh)
 
     # Total parameters for combined lines
     for comb_lines in cube_fitter.lines.combined
@@ -1384,6 +1490,8 @@ function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
     end
 
     # Line parameters
+
+    # Line parameters
     for line ∈ keys(param_maps.lines)
         # Remove the component index from the line name
         line_key = Symbol(join(split(string(line), "_")[1:end-1], "_"))
@@ -1391,20 +1499,25 @@ function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         line_i = findfirst(cube_fitter.lines.names .== line_key)
         wave_i = cube_fitter.lines.λ₀[line_i]
         latex_i = cube_fitter.lines.latex[line_i]
+        n_line_comps = sum(.!isnothing.(cube_fitter.lines.profiles[line_i, :]))
+        snr_filter = dropdims(
+            nanmaximum(cat([param_maps.lines[Symbol(line_key, "_$i")][:SNR] for i in 1:n_line_comps]..., dims=3), dims=3), dims=3)
 
         for parameter ∈ keys(param_maps.lines[line])
             data = param_maps.lines[line][parameter]
             name_i = join([line, parameter], "_")
-            snr_filter = param_maps.lines[line][:SNR]
+            snr_filt = snr_filter
             if contains(string(parameter), "SNR")
-                snr_filter = nothing
+                snr_filt = nothing
             end
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(line_key)", "$(name_i).pdf")
             plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i), 
-                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
+                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filt, snr_thresh=snr_thresh,
                 line_latex=latex_i)
         end
     end
+    # Make combined plots for lines with multiple components
+    plot_multiline_parameters(cube_fitter, param_maps, psf_interp, snr_thresh)
 
     # Total parameters for lines with multiple components
     for (k, name) ∈ enumerate(cube_fitter.lines.names)
@@ -1755,7 +1868,7 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 write_key(f["$df"], "BUNIT", "MJy/sr")
             end
             for ab ∈ cube_fitter.abs_features.names
-                write_key(f["$ab"], "BUNIT", "unitless")
+                write_key(f["$ab"], "BUNIT", "-")
             end
             for tp ∈ cube_fitter.template_names
                 write_key(f["TEMPLATE_$tp"], "BUNIT", "MJy/sr")
@@ -1763,9 +1876,9 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
             for line ∈ cube_fitter.lines.names
                 write_key(f["$line"], "BUNIT", "MJy/sr")
             end
-            write_key(f["EXTINCTION"], "BUNIT", "unitless")
-            write_key(f["ABS_ICE"], "BUNIT", "unitless")
-            write_key(f["ABS_CH"], "BUNIT", "unitless")
+            write_key(f["EXTINCTION"], "BUNIT", "-")
+            write_key(f["ABS_ICE"], "BUNIT", "-")
+            write_key(f["ABS_CH"], "BUNIT", "-")
             if cube_fitter.fit_sil_emission
                 write_key(f["HOT_DUST"], "BUNIT", "MJy/sr")
             end
@@ -1787,9 +1900,9 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 data = param_data.stellar_continuum[parameter]
                 name_i = join(["stellar_continuum", parameter], "_")
                 if occursin("amp", name_i)
-                    bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                    bunit = "log(erg.s-1.cm-2.Hz-1.sr-1)"
                 elseif occursin("temp", name_i)
-                    bunit = "Kelvin"
+                    bunit = "K"
                 end
                 write(f, data; name=uppercase(name_i))
                 write_key(f[name_i], "BUNIT", bunit)
@@ -1801,9 +1914,9 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.dust_continuum[i][parameter]
                     name_i = join(["dust_continuum", i, parameter], "_")
                     if occursin("amp", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                        bunit = "log(erg.s-1.cm-2.Hz-1.sr-1)"
                     elseif occursin("temp", name_i)
-                        bunit = "Kelvin"
+                        bunit = "K"
                     end
                     write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)  
@@ -1816,9 +1929,9 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.power_law[l][parameter]
                     name_i = join(["power_law", l, parameter], "_")
                     if occursin("amp", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                        bunit = "log(erg.s-1.cm-2.Hz-1.sr-1)"
                     elseif occursin("index", name_i)
-                        bunit = "unitless"
+                        bunit = "-"
                     end
                     write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
@@ -1831,11 +1944,11 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.hot_dust[parameter]
                     name_i = join(["hot_dust", parameter], "_")
                     if occursin("amp", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                        bunit = "log(erg.s-1.cm-2.Hz-1.sr-1)"
                     elseif occursin("temp", name_i)
-                        bunit = "Kelvin"
+                        bunit = "K"
                     elseif occursin("frac", name_i) || occursin("tau", name_i)
-                        bunit = "unitless"
+                        bunit = "-"
                     elseif occursin("peak", name_i)
                         bunit = "um"
                     end
@@ -1850,13 +1963,13 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.dust_features[df][parameter]
                     name_i = join(["dust_features", df, parameter], "_")
                     if occursin("amp", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                        bunit = "log(erg.s-1.cm-2.Hz-1.sr-1)"
                     elseif occursin("fwhm", name_i) || occursin("mean", name_i) || occursin("eqw", name_i)
                         bunit = "um"
                     elseif occursin("flux", name_i)
-                        bunit = "log10(F / erg s^-1 cm^-2)"
+                        bunit = "log(erg.s-1.cm-2)"
                     elseif occursin("SNR", name_i) || occursin("index", name_i) || occursin("cutoff", name_i)
-                        bunit = "unitless"
+                        bunit = "-"
                     end
                     write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
@@ -1869,7 +1982,7 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.abs_features[ab][parameter]
                     name_i = join(["abs_features", ab, parameter], "_")
                     if occursin("tau", name_i)
-                        bunit = "unitless"
+                        bunit = "-"
                     elseif occursin("fwhm", name_i) || occursin("mean", name_i) || occursin("eqw", name_i)
                         bunit = "um"
                     end
@@ -1882,7 +1995,7 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
             for parameter ∈ keys(param_data.extinction)
                 data = param_data.extinction[parameter]
                 name_i = join(["extinction", parameter], "_")
-                bunit = "unitless"
+                bunit = "-"
                 write(f, data; name=uppercase(name_i))
                 write_key(f[name_i], "BUNIT", bunit)  
             end
@@ -1892,7 +2005,7 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 for parameter ∈ keys(param_data.templates[temp])
                     data = param_data.templates[temp][parameter]
                     name_i = join(["templates", temp, parameter], "_")
-                    bunit = "unitless"
+                    bunit = "-"
                     write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
                 end
@@ -1904,16 +2017,16 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.lines[line][parameter]
                     name_i = join(["lines", line, parameter], "_")
                     if occursin("amp", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                        bunit = "log(erg.s-1.cm-2.Hz-1.sr-1)"
                     elseif occursin("fwhm", name_i) || occursin("voff", name_i)
                         bunit = "km/s"
                     elseif occursin("flux", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2)"
+                        bunit = "log(erg.s-1.cm-2)"
                     elseif occursin("eqw", name_i)
                         bunit = "um"
                     elseif occursin("SNR", name_i) || occursin("h3", name_i) || 
                         occursin("h4", name_i) || occursin("mixing", name_i)
-                        bunit = "unitless"
+                        bunit = "-"
                     end
                     write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
@@ -1925,7 +2038,7 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 for parameter ∈ keys(param_data.statistics)
                     data = param_maps.statistics[parameter]
                     name_i = join(["statistics", parameter], "_")
-                    bunit = "unitless"
+                    bunit = "-"
                     write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
                 end
@@ -2075,23 +2188,23 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
 
             # Insert physical units into the headers of each HDU -> MegaJansky per steradian for all except
             # the extinction profile, which is a multiplicative constant
-            write_key(f["DATA"], "BUNIT", "erg/s/cm^2/ang/sr")
-            write_key(f["ERROR"], "BUNIT", "erg/s/cm^2/ang/sr")
-            write_key(f["MODEL"], "BUNIT", "erg/s/cm^2/ang/sr")
+            write_key(f["DATA"], "BUNIT", "erg.s-1.cm-2.Angstrom-1.sr-1")
+            write_key(f["ERROR"], "BUNIT", "erg.s-1.cm-2.Angstrom-1.sr-1")
+            write_key(f["MODEL"], "BUNIT", "erg.s-1.cm-2.Angstrom-1.sr-1")
             for i ∈ 1:size(cube_model.stellar, 4)
-                write_key(f["STELLAR_POPULATION_$i"], "BUNIT", "erg/s/cm^2/ang/sr")
+                write_key(f["STELLAR_POPULATION_$i"], "BUNIT", "erg.s-1.cm-2.Angstrom-1.sr-1")
             end
             if cube_fitter.fit_opt_na_feii
-                write_key(f["NA_FEII"], "BUNIT", "erg/s/cm^2/ang/sr")
+                write_key(f["NA_FEII"], "BUNIT", "erg.s-1.cm-2.Angstrom-1.sr-1")
             end
             if cube_fitter.fit_opt_br_feii
-                write_key(f["BR_FEII"], "BUNIT", "erg/s/cm^2/ang/sr")
+                write_key(f["BR_FEII"], "BUNIT", "erg.s-1.cm-2.Angstrom-1.sr-1")
             end
             for j ∈ 1:size(cube_model.power_law, 4)
-                write_key(f["POWER_LAW_$j"], "BUNIT", "erg/s/cm^2/sr")
+                write_key(f["POWER_LAW_$j"], "BUNIT", "erg.s-1.cm-2.Angstrom-1.sr-1")
             end
-            write_key(f["ATTENUATION_STARS"], "BUNIT", "unitless")
-            write_key(f["ATTENUATION_GAS"], "BUNIT", "unitless")
+            write_key(f["ATTENUATION_STARS"], "BUNIT", "-")
+            write_key(f["ATTENUATION_GAS"], "BUNIT", "-")
         end
     end
 
@@ -2111,11 +2224,11 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.stellar_populations[i][parameter]
                     name_i = join(["stellar_populations", i, parameter], "_")
                     if occursin("mass", name_i)
-                        bunit = "log10(M/Msun)"
+                        bunit = "log(solMass)"
                     elseif occursin("age", name_i)
                         bunit = "Gyr"
                     elseif occursin("metallicity", name_i)
-                        bunit = "[M/H]"
+                        bunit = "-"
                     end
                     write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
@@ -2138,7 +2251,7 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 if occursin("E_BV", name_i)
                     bunit = "mag"
                 else
-                    bunit = "unitless"
+                    bunit = "-"
                 end
                 write(f, data; name=uppercase(name_i))
                 write_key(f[name_i], "BUNIT", bunit)
@@ -2150,7 +2263,7 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.feii[parameter]
                     name_i = join(["feii", parameter], "_")
                     if occursin("amp", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                        bunit = "log(erg.s-1.cm-2.Hz-1.sr-1)"
                     else
                         bunit = "km/s"
                     end
@@ -2165,9 +2278,9 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.power_law[j][parameter]
                     name_i = join(["power_law", j, parameter], "_")
                     if occursin("amp", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                        bunit = "log(erg.s-1.cm-2.Hz-1.sr-1)"
                     else
-                        bunit = "unitless"
+                        bunit = "-"
                     end
                     write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
@@ -2180,16 +2293,16 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.lines[line][parameter]
                     name_i = join(["lines", line, parameter], "_")
                     if occursin("amp", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                        bunit = "log(erg.s-1.cm-2.Hz-1.sr-1)"
                     elseif occursin("fwhm", name_i) || occursin("voff", name_i)
                         bunit = "km/s"
                     elseif occursin("flux", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2)"
+                        bunit = "log(erg.s-1.cm-2)"
                     elseif occursin("eqw", name_i)
                         bunit = "um"
                     elseif occursin("SNR", name_i) || occursin("h3", name_i) || 
                         occursin("h4", name_i) || occursin("mixing", name_i)
-                        bunit = "unitless"
+                        bunit = "-"
                     end
                     write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
@@ -2201,7 +2314,7 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 for parameter ∈ keys(param_data.statistics)
                     data = param_maps.statistics[parameter]
                     name_i = join(["statistics", parameter], "_")
-                    bunit = "unitless"
+                    bunit = "-"
                     write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
                 end

@@ -1417,19 +1417,20 @@ end
 
 
 """
-    get_continuum_plimits(cube_fitter, λ, I, σ, init; split)
+    get_continuum_plimits(cube_fitter, spaxel, λ, I, σ, init; split)
 
 Get the continuum limits vector for a given CubeFitter object, possibly split up by the 2 continuum fitting steps.
 Also returns a boolean vector for which parameters are allowed to vary.
 """
-get_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vector{<:Real}, init::Bool; 
-    split::Bool=false) = cube_fitter.spectral_region == :MIR ? 
-    get_mir_continuum_plimits(cube_fitter, I, σ, init; split=split) : 
+get_continuum_plimits(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vector{<:Real},
+    init::Bool, templates_spax::Matrix{<:Real}; split::Bool=false) = cube_fitter.spectral_region == :MIR ? 
+    get_mir_continuum_plimits(cube_fitter, spaxel, I, σ, init, templates_spax; split=split) : 
     get_opt_continuum_plimits(cube_fitter, λ, I, init)
 
 
 # MIR implementation of the get_continuum_plimits function
-function get_mir_continuum_plimits(cube_fitter::CubeFitter, I::Vector{<:Real}, σ::Vector{<:Real}, init::Bool; split::Bool=false)
+function get_mir_continuum_plimits(cube_fitter::CubeFitter, spaxel::CartesianIndex, I::Vector{<:Real}, σ::Vector{<:Real}, 
+    init::Bool, templates_spax::Matrix{<:Real}; split::Bool=false)
 
     dust_features = cube_fitter.dust_features
     abs_features = cube_fitter.abs_features
@@ -1469,6 +1470,15 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, I::Vector{<:Real}, �
     # Also lock if the continuum is within 1 std dev of 0
     if nanmedian(I) ≤ nanmedian(σ)
         ext_lock[1:4] .= true
+    end
+    if !init
+        for t in 1:cube_fitter.n_templates
+            m = minimum(I .- templates_spax[:, t])
+            if m < nanmedian(σ)
+                ext_lock[1:4] .= true
+                ab_lock .= true
+            end
+        end
     end
 
     hd_plim = cube_fitter.fit_sil_emission ? [amp_dc_plim, continuum.T_hot.limits, continuum.Cf_hot.limits, 
@@ -1565,14 +1575,14 @@ Get the vectors of starting values and relative step sizes for the continuum fit
 Again, the vector may be split up by the 2 continuum fitting steps in the MIR case.
 """
 get_continuum_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real},
-    σ::Vector{<:Real}, N::Real, init::Bool; split::Bool=false) = cube_fitter.spectral_region == :MIR ? 
-    get_mir_continuum_initial_values(cube_fitter, spaxel, λ, I, σ, N, init, split=split) :
+    σ::Vector{<:Real}, N::Real, init::Bool, templates_spax::Matrix{<:Real}; split::Bool=false) = cube_fitter.spectral_region == :MIR ? 
+    get_mir_continuum_initial_values(cube_fitter, spaxel, λ, I, σ, N, init, templates_spax, split=split) :
     get_opt_continuum_initial_values(cube_fitter, spaxel, λ, I, N, init)
 
 
 # MIR implementation of the get_continuum_initial_values function
 function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
-    σ::Vector{<:Real}, N::Real, init::Bool; split::Bool=false)
+    σ::Vector{<:Real}, N::Real, init::Bool, templates_spax::Matrix{<:Real}; split::Bool=false)
 
     continuum = cube_fitter.continuum
 
@@ -1670,10 +1680,21 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         p₀[pᵢ] = max(cube_fitter.continuum.τ_97.value, p₀[pᵢ])
 
         # Set τ_9.7 and τ_CH to 0 if the continuum is within 1 std dev of 0
+        lock_abs = false
         if nanmedian(I) ≤ nanmedian(σ)
             p₀[pᵢ] = 0.
             p₀[pᵢ+2] = 0.
+            lock_abs = true
         end
+        for t in 1:cube_fitter.n_templates
+            m = minimum(I .- templates_spax[:, t])
+            if m < nanmedian(σ)
+                p₀[pᵢ] = 0.
+                p₀[pᵢ+2] = 0.
+                lock_abs = true
+            end
+        end
+
         # Set τ_9.7 to the guess if the guess_tau flag is set
         if !isnothing(cube_fitter.guess_tau)
             p₀[pᵢ] = tau_guess
@@ -1692,7 +1713,13 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         end
 
         # Do not adjust absorption feature amplitudes since they are multiplicative
-        pᵢ += 4 + 3*cube_fitter.n_abs_feat
+        pᵢ += 4
+        for _ ∈ 1:cube_fitter.n_abs_feat
+            if lock_abs
+                p₀[pᵢ] = 0.
+            end
+            pᵢ += 3
+        end
 
         # Hot dust amplitude (rescaled)
         if cube_fitter.fit_sil_emission

@@ -1347,39 +1347,80 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
             _, i1 = findmin(abs.(λ_out[1:jump] .- wave_left))
             _, i2 = findmin(abs.(λ_out[jump+1:end] .- wave_right))
             i2 += jump
+            # Get the flux in the left and right channels
+            I_left = I_out[:, :, i1:jump]
+            I_right = resample_conserving_flux(λ_out[i1:jump], λ_out[jump+1:i2], I_out[:, :, jump+1:i2])
+            # Get the ratios of the left/right flux
+            scale_left = I_right ./ I_left
+            scale_right = I_left ./ I_right
             # get the median fluxes from both channels over the full region
             med_left = dropdims(nanmedian(I_out[:, :, i1:jump], dims=3), dims=3)
             med_right = dropdims(nanmedian(I_out[:, :, jump+1:i2], dims=3), dims=3)
             # Check for any medians close to or below 0 and dont rescale them
             thresh_left = dropdims(nanstd(I_out[:, :, i1:jump], dims=3), dims=3)
             thresh_right = dropdims(nanstd(I_out[:, :, jump+1:i2], dims=3), dims=3)
-            med_left[(med_left .< thresh_left) .| (med_right .< thresh_right)] .= 1.
-            med_right[(med_left .< thresh_left) .| (med_right .< thresh_right)] .= 1.
-            # Also check for non-finite values or zeros
-            med_left[.~isfinite.(med_left) .| .~isfinite.(med_right)] .= 1.
-            med_right[.~isfinite.(med_left) .| .~isfinite.(med_right)] .= 1.
-            med_left[iszero.(med_left) .| iszero.(med_right)] .= 1.
-            med_right[iszero.(med_left) .| iszero.(med_right)] .= 1.
+            mask_left_right = (med_left .< thresh_left) .| (med_right .< thresh_right)
+            scale_left[mask_left_right, :] .= 1.
+            scale_right[mask_left_right, :] .= 1.
+            # Check for non-finite values or zeros
+            scale_left[(scale_left .≤ 0.) .| .~isfinite.(scale_left)] .= 1.
+            scale_right[(scale_right .≤ 0.) .| .~isfinite.(scale_right)] .= 1.
             # Do not rescale masked spaxels
-            med_left[mask2d] .= 1.
-            med_right[mask2d] .= 1.
+            scale_left[mask2d, :] .= 1.
+            scale_right[mask2d, :] .= 1.
             # Do not rescale low S/N spaxels
             SN = dropdims(nanmedian(I_out ./ σ_out, dims=3), dims=3)
-            med_left[SN .< rescale_snr, :] .= 1.
-            med_right[SN .< rescale_snr, :] .= 1.
-            # rescale the flux to match between the channels, using the given reference point
+            scale_left[SN .< rescale_snr, :] .= 1.
+            scale_right[SN .< rescale_snr, :] .= 1.
+
+            # Take the median along the wavelength axis
+            scale_left = dropdims(nanmedian(scale_left, dims=3), dims=3)
+            scale_right = dropdims(nanmedian(scale_right, dims=3), dims=3)
+
+            # Clamp within the limits
+            scale_left = clamp.(scale_left, rescale_limits...)
+            scale_right = clamp.(scale_right, rescale_limits...)
+
+            # Apply the scale factors
             if wave_left < rescale_channels
-                scale = clamp.(med_right ./ med_left, rescale_limits...)
-                I_out[:, :, 1:jump] .*= scale
-                σ_out[:, :, 1:jump] .*= scale
-                @info "Minimum/Maximum scale factor for channel $(i+1): $(nanextrema(scale))"
+                I_out[:, :, 1:jump] .*= scale_left
+                σ_out[:, :, 1:jump] .*= scale_left
+                scale_factors[i+1] = scale_left
+                @info "Minimum/Maximum scale factor for channel $(i+1): $(nanextrema(scale_left))"
             else
-                scale = clamp.(med_left ./ med_right, rescale_limits...)
-                I_out[:, :, jump+1:end] .*= scale
-                σ_out[:, :, jump+1:end] .*= scale
-                @info "Minimum/Maximum scale factor for channel $(i+1): $(nanextrema(scale))"
+                I_out[:, :, jump+1:end] .*= scale_right
+                σ_out[:, :, jump+1:end] .*= scale_right
+                scale_factors[i+1] = scale_right
+                @info "Minimum/Maximum scale factor for channel $(i+1): $(nanextrema(scale_right))"
             end
-            scale_factors[i+1] = scale
+
+            # med_left[(med_left .< thresh_left) .| (med_right .< thresh_right)] .= 1.
+            # med_right[(med_left .< thresh_left) .| (med_right .< thresh_right)] .= 1.
+            # # Also check for non-finite values or zeros
+            # med_left[.~isfinite.(med_left) .| .~isfinite.(med_right)] .= 1.
+            # med_right[.~isfinite.(med_left) .| .~isfinite.(med_right)] .= 1.
+            # med_left[iszero.(med_left) .| iszero.(med_right)] .= 1.
+            # med_right[iszero.(med_left) .| iszero.(med_right)] .= 1.
+            # # Do not rescale masked spaxels
+            # med_left[mask2d] .= 1.
+            # med_right[mask2d] .= 1.
+            # Do not rescale low S/N spaxels
+            # SN = dropdims(nanmedian(I_out ./ σ_out, dims=3), dims=3)
+            # med_left[SN .< rescale_snr, :] .= 1.
+            # med_right[SN .< rescale_snr, :] .= 1.
+            # rescale the flux to match between the channels, using the given reference point
+            # if wave_left < rescale_channels
+            #     scale = clamp.(med_right ./ med_left, rescale_limits...)
+            #     I_out[:, :, 1:jump] .*= scale
+            #     σ_out[:, :, 1:jump] .*= scale
+            #     @info "Minimum/Maximum scale factor for channel $(i+1): $(nanextrema(scale))"
+            # else
+            #     scale = clamp.(med_left ./ med_right, rescale_limits...)
+            #     I_out[:, :, jump+1:end] .*= scale
+            #     σ_out[:, :, jump+1:end] .*= scale
+            #     @info "Minimum/Maximum scale factor for channel $(i+1): $(nanextrema(scale))"
+            # end
+            # scale_factors[i+1] = scale
             push!(ww, (wave_left, wave_right))
         end
     end

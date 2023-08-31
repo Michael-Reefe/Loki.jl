@@ -205,7 +205,7 @@ def rotate_and_shift(psf, in_wcs, out_wcs, out_shape, shift_to=None, shift_wcs=N
     return psf_rotshift
 
 
-def calculate_extended_emission(ifu_cubes, params, line_dict):
+def calculate_extended_emission(ifu_cubes, params, line_dict, psf_path):
     """
     Loop through all line fluxes in the parameter maps and calculate separated nuclear (point-like) flux from
     extended flux using the PSF. Creates new HDUs for both of the separated fluxes.
@@ -217,9 +217,12 @@ def calculate_extended_emission(ifu_cubes, params, line_dict):
         The parameter maps containing the line fluxes that should be corrected.
     :param line_dict: dict
         A dictionary containing the rest wavelengths of the lines.
+    :param psf_path: str
+        Location to PSF model file
     """
 
     z = params[0].header['REDSHIFT']
+    psfhdu = fits.open(psf_path)
     
     ch_dict = {'1A': (4.90, 5.74),
                '1B': (5.66, 6.63),
@@ -273,29 +276,36 @@ def calculate_extended_emission(ifu_cubes, params, line_dict):
                 wave_slice = np.nanargmin(np.abs(wave_full - line_wave))
                 # centroid_frame1 = np.unravel_index(np.nanargmax(flux), flux.shape)[::-1]
                 centroid_frame1 = photutils.centroids.centroid_2dg(flux, mask=~np.isfinite(flux))
-                centroid_frame2 = WCS(ifu_cubes[key][1].header)[0].world_to_pixel(out_wcs.pixel_to_world(*centroid_frame1))
-                centroids.append(centroid_frame2)
+                # centroid_frame2 = WCS(ifu_cubes[key][1].header)[0].world_to_pixel(out_wcs.pixel_to_world(*centroid_frame1))
+                centroids.append(centroid_frame1)
 
         # Generate PSFs for each channel/band
-        psfs = []
-        print(f'Calculating {len(chbands)} PSFs for LINES_{line_name.upper()}_1_{line_param}')
-        for (centroid, chband) in zip(centroids, chbands):
-            psf = calculate_mrs_psf(ifu_cubes[chband], centroid=None, wave=line_wave, out_wcs=out_wcs, out_shape=out_shape, 
-                                    shift_to=ifu_cubes[chband][1].data[max(0,wave_slice-50):min(wave_slice+50,ifu_cubes[chband][1].data.shape[0]), :, :], 
-                                    shift_wcs=WCS(ifu_cubes[chband][1].header)[0])
-            psfs.append(psf)
+        # psfs = []
+        # print(f'Calculating {len(chbands)} PSFs for LINES_{line_name.upper()}_1_{line_param}')
+        # for (centroid, chband) in zip(centroids, chbands):
+        #     psf = calculate_mrs_psf(ifu_cubes[chband], centroid=None, wave=line_wave, out_wcs=out_wcs, out_shape=out_shape, 
+        #                             shift_to=ifu_cubes[chband][1].data[max(0,wave_slice-50):min(wave_slice+50,ifu_cubes[chband][1].data.shape[0]), :, :], 
+        #                             shift_wcs=WCS(ifu_cubes[chband][1].header)[0])
+        #     psfs.append(psf)
+        # # For lines that happen to fall on the channel boundaries, average the two PSFs
+        # if len(psfs) > 1:
+        #     psf = np.nanmean(psfs, axis=0)
+        # else:
+        #     psf = psfs[0]
+        # # Renormalize the PSF
+        # psf /= np.nanmax(psf)
 
-        # For lines that happen to fall on the channel boundaries, average the two PSFs
-        if len(psfs) > 1:
-            psf = np.nanmean(psfs, axis=0)
-        else:
-            psf = psfs[0]
-
-        # Renormalize the PSF
-        psf /= np.nanmax(psf)
+        psf = psfhdu[1].data[wave_slice, :, :]
+        psf_centroid = photutils.centroids.centroid_2dg(psf[10:-10, 10:-10]) + (10, 10)
+        dx = centroids[0] - psf_centroid
+        psf = ndimage.shift(psf, dx[::-1], order=1, mode='constant', cval=np.nan)
 
         # Apply PSF correction and redo the log
         flux_nuc = np.nanmax(flux)
+        # c = photutils.centroids.centroid_2dg(psf)
+        # psf_fwhm = (0.033 * line_wave + 0.106) / np.sqrt(hdr['PIXAR_A2'])
+        # ap_nuc = photutils.aperture.CircularAperture(c, psf_fwhm/2)
+        # flux_nuc = photutils.aperture.aperture_photometry(flux, ap_nuc, mask=~np.isfinite(flux))['aperture_sum'][0] / ap_nuc.area
         flux_point = np.log10(psf*flux_nuc)
         flux_ext = np.log10(flux - psf*flux_nuc)
 
@@ -324,9 +334,14 @@ if __name__ == '__main__':
     ifu_path = sys.argv[1]
     param_path = sys.argv[2]
     try:
-        just_psf = sys.argv[3]
+        psf_path = sys.argv[3]
     except:
-        just_psf = ''
+        psf_path = ''
+
+    if psf_path in ('1A', '1B', '1C', '2A', '2B', '2C', '3A', '3B', '3C', '4A', '4B', '4C'):
+        just_psf = True
+    else:
+        just_psf = False
 
     line_dict_path = os.path.join(os.path.dirname(__file__), '..', 'src', 'options', 'lines.toml')
 
@@ -351,19 +366,19 @@ if __name__ == '__main__':
     line_dict = toml.load(line_dict_path)
 
     if just_psf:
-        if not os.path.exists(f'psf_model_ch{just_psf}_norm.fits'):
+        if not os.path.exists(f'psf_model_ch{psf_path}_norm.fits'):
             # Calculate the PSFs
-            psfs = calculate_mrs_psf(ifu_cubes[just_psf])
+            psfs = calculate_mrs_psf(ifu_cubes[psf_path])
             # Save as FITS file
-            hdul = fits.HDUList([fits.PrimaryHDU(psfs, ifu_cubes[just_psf][1].header)])
-            hdul.writeto(f'psf_model_ch{just_psf}_norm.fits', overwrite=True)
+            hdul = fits.HDUList([fits.PrimaryHDU(psfs, ifu_cubes[psf_path][1].header)])
+            hdul.writeto(f'psf_model_ch{psf_path}_norm.fits', overwrite=True)
             hdul.close()
         else:
-            psfs = fits.open(f'psf_model_ch{just_psf}_norm.fits')[0].data
+            psfs = fits.open(f'psf_model_ch{psf_path}_norm.fits')[0].data
 
-        in_wcs = WCS(ifu_cubes[just_psf][1].header)[0]
+        in_wcs = WCS(ifu_cubes[psf_path][1].header)[0]
         out_wcs = WCS(params[1].header)[0]
-        out_shape = (ifu_cubes[just_psf][1].data.shape[0], *params[1].data.shape[1:])
+        out_shape = (ifu_cubes[psf_path][1].data.shape[0], *params[1].data.shape[1:])
 
         psfs_rotshift = rotate_and_shift(psfs, in_wcs, out_wcs, out_shape, shift_to=params['SCI'].data)
         hdul = fits.HDUList([fits.PrimaryHDU(header=params[0].header)])
@@ -375,11 +390,11 @@ if __name__ == '__main__':
         # lsfcol = fits.Column(name='lsf', format='1D', array=params['AUX'].data['lsf'])
         # cols = fits.ColDefs([wavecol, psfcol, lsfcol])
         # hdul.append(fits.BinTableHDU.from_columns(cols))
-        hdul.writeto(f'psf_model_ch{just_psf}_norm_rot_shift.fits', overwrite=True, output_verify='warn')
+        hdul.writeto(f'psf_model_ch{psf_path}_norm_rot_shift.fits', overwrite=True, output_verify='warn')
         hdul.close()
 
     else:
-        params = calculate_extended_emission(ifu_cubes, params, line_dict)
+        params = calculate_extended_emission(ifu_cubes, params, line_dict, psf_path)
 
         # Write changes to the file and close
         params.flush()

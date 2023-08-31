@@ -58,6 +58,7 @@ function plot_decomposed_flux_maps(path::String)
 
         # Loop over total, pointlike, and extended emission
         cdata = nothing
+        n_comps = 1
         for (line_param, ax) ∈ zip(("flux", "flux_point", "flux_extended"), (ax1, ax2, ax3))
             data = zeros(size(read(params[2])))
             j = 1
@@ -72,12 +73,15 @@ function plot_decomposed_flux_maps(path::String)
                     exists = false
                 end
             end
+            if line_param == "flux"
+                n_comps = j
+            end
             data = log10.(data)
             save_path = ""
             if contains(line_param, "point")
                 snr_filter = nothing
             else
-                snr_filter = dropdims(nanmaximum(cat([read(params[join(["lines", line, jj, "SNR"], "_")]) for jj in 1:(j-1)]..., dims=3), dims=3), dims=3)
+                snr_filter = dropdims(nanmaximum(cat([read(params[join(["lines", line, jj, "SNR"], "_")]) for jj in 1:(n_comps-1)]..., dims=3), dims=3), dims=3)
             end
             if contains(line_param, "point")
                 data[mask] .= NaN
@@ -88,7 +92,7 @@ function plot_decomposed_flux_maps(path::String)
                 vmax = quantile(nandata, 0.99)
             end
             _, _, cdata = plot_parameter_map(data, join(["lines", line, line_param]), save_path, Ω, z, psf_fwhm, cosmo, nothing; snr_filter=snr_filter,
-                snr_thresh=3., line_latex=line_latex, modify_ax=(fig, ax), disable_colorbar=true, colorscale_limits=(vmin, vmax))
+                snr_thresh=2., line_latex=line_latex, modify_ax=(fig, ax), disable_colorbar=true, colorscale_limits=(vmin, vmax))
         end
         plt.colorbar(cdata, cax=cax, label=L"$\log_{10}(F /$ erg s$^{-1}$ cm$^{-2})$")
 
