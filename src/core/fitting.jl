@@ -813,30 +813,48 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
                 break
             end
 
-            fit_func_test = (x, p) -> model_line_residuals(x, p, 1, np, line_object, cube_fitter.flexible_wavesol,
-                ones(sum(region)), lsf_interp_func, cube_fitter.relative_flags, false)
-
             # Stop index
             pstop = pstart + sum(pcomps[1:np]) - 1
 
             # Parameters
             parameters = p₀[pstart:pstop]
+            plock = param_lock[pstart:pstop]
+            pfree = parameters[.~plock]
+
+            function fit_func_test(x, pfree) 
+                p = zeros(length(parameters))
+                p[.~plock] .= pfree
+                p[plock] .= parameters[plock]
+                model_line_residuals(x, p, 1, np, line_object, cube_fitter.flexible_wavesol,
+                    ones(sum(region)), lsf_interp_func, cube_fitter.relative_flags, false)
+            end
+
+            fit_func_lnL = p -> -ln_likelihood(Inorm[region], fit_func_test(λnorm[region], p), σnorm[region])
+            x_tol = 1e-5
+            f_tol = abs(fit_func_lnL(pfree) - fit_func_lnL(pfree .* (1 .- x_tol)))
 
             # Parameter info
-            parinfo_test = CMPFit.Parinfo(pstop-pstart+1)
-            for i in 1:(pstop-pstart+1)
-                parinfo_test[i].fixed = param_lock[pstart+i-1]
-                parinfo_test[i].limited = (1,1)
-                parinfo_test[i].limits = (lower_bounds[pstart+i-1], upper_bounds[pstart+i-1])
-            end
-            config_test = CMPFit.Config()
+            # parinfo_test = CMPFit.Parinfo(pstop-pstart+1)
+            # for i in 1:(pstop-pstart+1)
+            #     parinfo_test[i].fixed = param_lock[pstart+i-1]
+            #     parinfo_test[i].limited = (1,1)
+            #     parinfo_test[i].limits = (lower_bounds[pstart+i-1], upper_bounds[pstart+i-1])
+            # end
+            # config_test = CMPFit.Config()
 
-            res_test = cmpfit(λnorm[region], Inorm[region], σnorm[region], fit_func_test, parameters, 
-                                parinfo=parinfo_test, config=config_test)
+            # res_test = cmpfit(λnorm[region], Inorm[region], σnorm[region], fit_func_test, parameters, 
+            #                     parinfo=parinfo_test, config=config_test)
+
+            # Fit with simulated annealing
+            res_test = Optim.optimize(fit_func_lnL, lower_bounds[pstart:pstop][.~plock], upper_bounds[pstart:pstop][.~plock], pfree,
+                SAMIN(;rt=0.9, nt=5, ns=5, neps=5, x_tol=x_tol, f_tol=f_tol, verbosity=0), Optim.Options(iterations=10^6))
 
             # Save the reduced chi2 values
-            test_model = fit_func_test(λnorm[region], res_test.param)
-            test_chi2 = res_test.bestnorm / res_test.dof
+            test_model = fit_func_test(λnorm[region], res_test.minimizer)
+            χ² = sum((Inorm[region] .- test_model).^2 ./ σnorm[region].^2)
+            dof = length(λnorm[region]) - sum(.~plock)
+            test_chi2 = χ² / dof
+
             chi2_A = round(last_chi2, digits=3)
             chi2_B = round(test_chi2, digits=3)
             test_stat = 1.0 - test_chi2/last_chi2

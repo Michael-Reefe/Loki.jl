@@ -1819,8 +1819,8 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
             @debug "Writing 3D model FITS HDUs"
             # Permute the wavelength axis here back to the third axis to be consistent with conventions
 
-            write(f, Vector{Int}(); header=hdr)                                                         # Primary HDU (empty)
-            write(f, Float32.(cube_data.I .* (1 .+ cube_fitter.z)); name="DATA")                        # Raw data 
+            write(f, Vector{Int}())                                                                     # Primary HDU (empty)
+            write(f, Float32.(cube_data.I .* (1 .+ cube_fitter.z)); name="DATA", header=hdr)            # Raw data 
             write(f, Float32.(cube_data.σ .* (1 .+ cube_fitter.z)); name="ERROR")                       # Error in the raw data
             write(f, permutedims(cube_model.model, (2,3,1)); name="MODEL")                              # Full intensity model
             write(f, permutedims(cube_model.stellar, (2,3,1)); name="STELLAR_CONTINUUM")                # Stellar continuum model
@@ -1893,10 +1893,10 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
 
             @debug "Writing 2D parameter map FITS HDUs"
 
-            write(f, Vector{Int}(), header=hdr)  # Primary HDU (empty)
+            write(f, Vector{Int}())  # Primary HDU (empty)
 
             # Stellar continuum parameters
-            for parameter ∈ keys(param_data.stellar_continuum)
+            for (i, parameter) ∈ enumerate(keys(param_data.stellar_continuum))
                 data = param_data.stellar_continuum[parameter]
                 name_i = join(["stellar_continuum", parameter], "_")
                 if occursin("amp", name_i)
@@ -1904,7 +1904,7 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 elseif occursin("temp", name_i)
                     bunit = "K"
                 end
-                write(f, data; name=uppercase(name_i))
+                write(f, data; name=uppercase(name_i), header=i==1 ? hdr : nothing)
                 write_key(f[name_i], "BUNIT", bunit)
             end
 
@@ -2162,8 +2162,8 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
             @debug "Writing 3D model FITS HDUs"
             # Permute the wavelength axis here back to the third axis to be consistent with conventions
 
-            write(f, Vector{Int}(); header=hdr)                                                         # Primary HDU (empty)
-            write(f, Float32.(cube_data.I ./ (1 .+ cube_fitter.z)); name="DATA")                        # Raw data 
+            write(f, Vector{Int}())                                                                     # Primary HDU (empty)
+            write(f, Float32.(cube_data.I ./ (1 .+ cube_fitter.z)); name="DATA", header=hdr)           # Raw data 
             write(f, Float32.(cube_data.σ ./ (1 .+ cube_fitter.z)); name="ERROR")                       # Error in the raw data
             write(f, permutedims(cube_model.model, (2,3,1)); name="MODEL")                              # Full intensity model
             for i ∈ 1:size(cube_model.stellar, 4)
@@ -2216,11 +2216,11 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
 
             @debug "Writing 2D parameter map FITS HDUs"
 
-            write(f, Vector{Int}(), header=hdr)  # Primary HDU (empty)
+            write(f, Vector{Int}())  # Primary HDU (empty)
 
             # Stellar population parameters
             for i ∈ keys(param_data.stellar_populations)
-                for parameter ∈ keys(param_data.stellar_populations[i])
+                for (j, parameter) ∈ enumerate(keys(param_data.stellar_populations[i]))
                     data = param_data.stellar_populations[i][parameter]
                     name_i = join(["stellar_populations", i, parameter], "_")
                     if occursin("mass", name_i)
@@ -2230,7 +2230,7 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     elseif occursin("metallicity", name_i)
                         bunit = "-"
                     end
-                    write(f, data; name=uppercase(name_i))
+                    write(f, data; name=uppercase(name_i), header=j==1 ? hdr : nothing)
                     write_key(f[name_i], "BUNIT", bunit)
                 end
             end

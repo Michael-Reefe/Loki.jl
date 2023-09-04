@@ -1166,7 +1166,7 @@ Perform a 3D interpolation of the given channels such that all spaxels lie on th
 - `concat_type=:full`: Should be :full for overall channels or :sub for subchannels (bands).
 - `out_id=0`: The dictionary key corresponding to the newly rebinned cube, defaults to 0.
 - `scrub_output::Bool=true`: Whether or not to delete the individual channels that were interpolated after assigning the new interpolated channel.
-- `order::Integer=1`: The order of interpolation for the reprojection. 
+- `order::Union{Integer,String}=1`: The order of interpolation for the reprojection. 
         -1 = do not do any reprojection (all input channels must be on the same WCS grid)
         0 = nearest-neighbor
         1 = linear
@@ -1186,9 +1186,10 @@ Perform a 3D interpolation of the given channels such that all spaxels lie on th
 - `match_psf::Bool=true`: Whether or not to blur channels such that they match the PSF resolution of the worst channel.
 """
 function reproject_channels!(obs::Observation, channels=nothing, concat_type=:full; out_id=0, scrub_output::Bool=false,
-    order::Integer=1, rescale_channels::Union{Real,Nothing}=nothing, adjust_wcs_headerinfo::Bool=true, 
+    order::Union{Integer,String}=1, rescale_channels::Union{Real,Nothing}=nothing, adjust_wcs_headerinfo::Bool=true, 
     min_λ::Real=-Inf, max_λ::Real=Inf, rescale_limits::Tuple{<:Real,<:Real}=(0.5, 1.5), rescale_snr::Real=10.0, 
-    output_wcs_frame::Integer=1, interpolate_overlaps::Bool=false, match_psf::Bool=false)
+    rescale_factors::Union{Dict,Nothing}=nothing, output_wcs_frame::Integer=1, interpolate_overlaps::Bool=false, 
+    match_psf::Bool=false)
 
     @assert obs.spectral_region == :MIR "The reproject_channels! function is only supported for MIR cubes!"
 
@@ -1277,7 +1278,7 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
             mask_out_temp = mask_in
 
             if match_psf
-                @showprogress for wi in axes(I_in, 3)
+                for wi in axes(I_in, 3)
                     blur_size = sqrt(maximum(psf_fwhms)^2 - obs.channels[ch_in].psf[wi]^2) / pixel_scales[i] / 2.355
                     if blur_size > 0
                         # Convolve with a Gaussian kernel with the difference in PSF sizes
@@ -1347,50 +1348,68 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
             _, i1 = findmin(abs.(λ_out[1:jump] .- wave_left))
             _, i2 = findmin(abs.(λ_out[jump+1:end] .- wave_right))
             i2 += jump
-            # Get the flux in the left and right channels
-            I_left = I_out[:, :, i1:jump]
-            I_right = resample_conserving_flux(λ_out[i1:jump], λ_out[jump+1:i2], I_out[:, :, jump+1:i2])
-            # Get the ratios of the left/right flux
-            scale_left = I_right ./ I_left
-            scale_right = I_left ./ I_right
-            # get the median fluxes from both channels over the full region
-            med_left = dropdims(nanmedian(I_out[:, :, i1:jump], dims=3), dims=3)
-            med_right = dropdims(nanmedian(I_out[:, :, jump+1:i2], dims=3), dims=3)
-            # Check for any medians close to or below 0 and dont rescale them
-            thresh_left = dropdims(nanstd(I_out[:, :, i1:jump], dims=3), dims=3)
-            thresh_right = dropdims(nanstd(I_out[:, :, jump+1:i2], dims=3), dims=3)
-            mask_left_right = (med_left .< thresh_left) .| (med_right .< thresh_right)
-            scale_left[mask_left_right, :] .= 1.
-            scale_right[mask_left_right, :] .= 1.
-            # Check for non-finite values or zeros
-            scale_left[(scale_left .≤ 0.) .| .~isfinite.(scale_left)] .= 1.
-            scale_right[(scale_right .≤ 0.) .| .~isfinite.(scale_right)] .= 1.
-            # Do not rescale masked spaxels
-            scale_left[mask2d, :] .= 1.
-            scale_right[mask2d, :] .= 1.
-            # Do not rescale low S/N spaxels
-            SN = dropdims(nanmedian(I_out ./ σ_out, dims=3), dims=3)
-            scale_left[SN .< rescale_snr, :] .= 1.
-            scale_right[SN .< rescale_snr, :] .= 1.
 
-            # Take the median along the wavelength axis
-            scale_left = dropdims(nanmedian(scale_left, dims=3), dims=3)
-            scale_right = dropdims(nanmedian(scale_right, dims=3), dims=3)
+            if isnothing(rescale_factors)
+                # Get the flux in the left and right channels
+                I_left = I_out[:, :, i1:jump]
+                I_right = resample_conserving_flux(λ_out[i1:jump], λ_out[jump+1:i2], I_out[:, :, jump+1:i2])
 
-            # Clamp within the limits
-            scale_left = clamp.(scale_left, rescale_limits...)
-            scale_right = clamp.(scale_right, rescale_limits...)
+                # Get the ratios of the left/right flux
+                scale_left = I_right ./ I_left
+                scale_right = I_left ./ I_right
+                # get the median fluxes from both channels over the full region
+                med_left = dropdims(nanmedian(I_out[:, :, i1:jump], dims=3), dims=3)
+                med_right = dropdims(nanmedian(I_out[:, :, jump+1:i2], dims=3), dims=3)
+                # Check for any medians close to or below 0 and dont rescale them
+                thresh_left = dropdims(nanstd(I_out[:, :, i1:jump], dims=3), dims=3)
+                thresh_right = dropdims(nanstd(I_out[:, :, jump+1:i2], dims=3), dims=3)
+                mask_left_right = (med_left .< thresh_left) .| (med_right .< thresh_right)
+                scale_left[mask_left_right, :] .= 1.
+                scale_right[mask_left_right, :] .= 1.
+                # Check for any median differences smaller than the RMS
+                # thresh_both = dropdims(nanmean(cat(thresh_left, thresh_right, dims=3), dims=3), dims=3)
+                # mask_left_right = abs.(med_left .- med_right) .< 2thresh_both
+                # scale_left[mask_left_right, :] .= 1.
+                # scale_right[mask_left_right, :] .= 1.
+                # Check for non-finite values or zeros
+                scale_left[(scale_left .≤ 0.) .| .~isfinite.(scale_left)] .= 1.
+                scale_right[(scale_right .≤ 0.) .| .~isfinite.(scale_right)] .= 1.
+                # Do not rescale masked spaxels
+                scale_left[mask2d, :] .= 1.
+                scale_right[mask2d, :] .= 1.
+                # Do not rescale low S/N spaxels
+                SN_left = dropdims(nanmedian(I_out[:, :, i1:jump] ./ σ_out[:, :, i1:jump], dims=3), dims=3)
+                SN_right = dropdims(nanmedian(I_out[:, :, jump+1:i2] ./ σ_out[:, :, jump+1:i2], dims=3), dims=3)
+                SN = dropdims(nanminimum(cat(SN_left, SN_right, dims=3), dims=3), dims=3)
+                scale_left[SN .< rescale_snr, :] .= 1.
+                scale_right[SN .< rescale_snr, :] .= 1.
+
+                # Take the median along the wavelength axis
+                scale_left = dropdims(nanmedian(scale_left, dims=3), dims=3)
+                scale_right = dropdims(nanmedian(scale_right, dims=3), dims=3)
+
+                # Clamp within the limits
+                scale_left = clamp.(scale_left, rescale_limits...)
+                scale_right = clamp.(scale_right, rescale_limits...)
+
+            else
+                # Load in rescaling factors directly
+                scale_left = scale_right = rescale_factors[i+1]
+
+            end
 
             # Apply the scale factors
             if wave_left < rescale_channels
                 I_out[:, :, 1:jump] .*= scale_left
                 σ_out[:, :, 1:jump] .*= scale_left
                 scale_factors[i+1] = scale_left
+                @info "Rescaling LEFT channel"
                 @info "Minimum/Maximum scale factor for channel $(i+1): $(nanextrema(scale_left))"
             else
                 I_out[:, :, jump+1:end] .*= scale_right
                 σ_out[:, :, jump+1:end] .*= scale_right
                 scale_factors[i+1] = scale_right
+                @info "Rescaling RIGHT channel"
                 @info "Minimum/Maximum scale factor for channel $(i+1): $(nanextrema(scale_right))"
             end
 
