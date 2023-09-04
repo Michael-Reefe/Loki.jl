@@ -16,10 +16,10 @@ locked = true
 # dust_continuum_temps: the blackbody temperatures of the dust
 # continuum components of the model. Defaults: 300, 200, 135,
 # 90, 65, 50, 40, and 35 K.
-[[dust_continuum_temps]]
-val = 400.0
-plim = [300.0, 1500.0]
-locked = false
+# [[dust_continuum_temps]]
+# val = 400.0
+# plim = [300.0, 1500.0]
+# locked = false
 [[dust_continuum_temps]]
 val = 135.0
 plim = [90.0, 300.0]
@@ -74,8 +74,8 @@ locked = false
 # template_amps: amplitude parameters for each template in the fit
 [[template_amps]]
 val = 1.0
-plim = [0.0, 2.0]
-locked = true
+plim = [0.5, 2.0]
+locked = false
 
 # dust_features: each of these specifies a Polycyclic Aromatic 
 # Hydrocarbon (PAH) profile to include in the model. Each of these

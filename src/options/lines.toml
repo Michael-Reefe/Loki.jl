@@ -901,48 +901,48 @@ default = "Voigt"
 # OIII_04960 = ["Voigt"]
 # OIII_05008 = ["Voigt"]
 
-ArIII_8991 = ["Voigt"]
-NeVI_7652 = ["Voigt"]
-SIV_10511 = ["Voigt"]
-FeVII_9527 = ["Voigt"]
+# ArIII_8991 = ["Voigt"]
+# NeVI_7652 = ["Voigt"]
+# SIV_10511 = ["Voigt"]
+# FeVII_9527 = ["Voigt"]
 # NeII_12813 = ["Voigt"]
 
 # optional: add [parameters] key to specify individual line priors that 
 # are different from the defaults
 
 # In channel 3A, 1 pixel ~ 61 km/s
-[parameters.ArIII_8991]
-voff_init = -117.1
-voff_plim = [-178.1, -56.1]
-fwhm_init = 1001.5
-fwhm_plim = [900.0, 1100.0]
-acomp_fwhm_init = 100.0
-acomp_fwhm_plim = [[0.0, 800.0]]
+# [parameters.ArIII_8991]
+# voff_init = -117.1
+# voff_plim = [-178.1, -56.1]
+# fwhm_init = 1001.5
+# fwhm_plim = [900.0, 1100.0]
+# acomp_fwhm_init = 100.0
+# acomp_fwhm_plim = [[0.0, 800.0]]
 
-[parameters.NeVI_7652]
-voff_init = -55.7
-voff_plim = [-116.7, 6.7]
-fwhm_init = 1408.1
-fwhm_plim = [1300.0, 1500.0]
-# fwhm_plim = [[1267.3, 1548.9]]
-acomp_fwhm_init = 100.0
-acomp_fwhm_plim = [[0.0, 800.0]]
+# [parameters.NeVI_7652]
+# voff_init = -55.7
+# voff_plim = [-116.7, 6.7]
+# fwhm_init = 1408.1
+# fwhm_plim = [1300.0, 1500.0]
+# # fwhm_plim = [[1267.3, 1548.9]]
+# acomp_fwhm_init = 100.0
+# acomp_fwhm_plim = [[0.0, 800.0]]
 
-[parameters.SIV_10511]
-voff_init = -2.5
-voff_plim = [-63.5, 59.5]
-fwhm_init = 972.3
-fwhm_plim = [870.0, 1070.0]
-acomp_fwhm_init = 100.0
-acomp_fwhm_plim = [[0.0, 700.0]]
+# [parameters.SIV_10511]
+# voff_init = -2.5
+# voff_plim = [-63.5, 59.5]
+# fwhm_init = 972.3
+# fwhm_plim = [870.0, 1070.0]
+# acomp_fwhm_init = 100.0
+# acomp_fwhm_plim = [[0.0, 700.0]]
 
-[parameters.FeVII_9527]
-voff_init = -192.3
-voff_plim = [-253.3, -131.3]
-fwhm_init = 1055.7
-fwhm_plim = [950.0, 1150.0]
-acomp_fwhm_init = 100.0
-acomp_fwhm_plim = [[0.0, 800.0]]
+# [parameters.FeVII_9527]
+# voff_init = -192.3
+# voff_plim = [-253.3, -131.3]
+# fwhm_init = 1055.7
+# fwhm_plim = [950.0, 1150.0]
+# acomp_fwhm_init = 100.0
+# acomp_fwhm_plim = [[0.0, 800.0]]
 
 # [parameters.OIII_04960]
 # acomp_amp_init = 0.0
