@@ -84,6 +84,10 @@ const CCM_optPoly_b = Polynomial([0.0, 1.952, 2.908, -3.989, -7.985, 11.102, 5.4
 const CCM_fuvPoly_a = Polynomial([-1.703, -0.628, 0.137, -0.070])
 const CCM_fuvPoly_b = Polynomial([13.670, 4.257, -0.420, 0.374])
 
+# Polynomials for calculating the Calzetti et al. (2000) extinction curve
+const Calz_poly_a = Polynomial([-1.857, 1.040])
+const Calz_poly_b = Polynomial([-2.156, 1.509, -0.198, 0.011])
+
 ########################################### UTILITY FUNCTIONS ###############################################
 
 
@@ -210,29 +214,40 @@ julia> Doppler_width_λ(0, 10)
     convolveGaussian1D(flux, σ)
 
 Convolve a spectrum by a Gaussian with different sigma for every pixel.
-Extension of scipy.ndimage.gaussian_filter1d originally written by Michele Cappellari for pPXF.
+The concept for this function was based off of a similar function from the `pPXF`
+python code, however the implementation is different.
 """
 function convolveGaussian1D(flux::Vector{<:Real}, σ::Vector{<:Real})
-    # Impose a minimum width of 0.01 pixels
-    σ_conv = clamp.(σ, 0.01, Inf)
 
-    # Kernel size
-    p = ceil(Int, maximum(3σ_conv))
-    m = 2p+1
-    x2 = range(-p, p, length=m).^2
-    # Fill in the kernel with shifted copies of the data
-    n = length(flux)
-    kernel = zeros(m, n)
-    for j in 1:m
-        kernel[j, 1+p:end-p] = flux[j:n-m+j]
+    # clamp with a minimum of 0.01 so as to not cause problems with Gaussians with 0 std dev
+    σ_clamped = clamp.(σ, 0.01, Inf)
+
+    # Prepare output array
+    flux_convolved = zeros(eltype(flux), length(flux))
+
+    # Pad edges of the input array with 0s
+    pad_size = ceil(Int, maximum(3σ_clamped))
+    flux_padded = [zeros(eltype(flux), pad_size); flux; zeros(eltype(flux), pad_size)]
+
+    # Loop through pixels
+    for i ∈ (1+pad_size):(length(flux_padded)-pad_size)
+
+        ii = i - pad_size
+        # Create a normal distribution kernel of the corresponding size
+        pixel = ceil(Int, 3σ_clamped[ii])
+        x = -pixel:1:pixel
+        kernel = Gaussian.(x, 1.0, 0.0, 2√(2log(2)) * σ_clamped[ii])
+
+        tot_kernel = 0.
+        for j ∈ eachindex(x)
+            flux_convolved[ii] += kernel[j] * flux_padded[i+x[j]]
+            tot_kernel += kernel[j]
+        end
+        # Make sure to normalize by the kernel
+        flux_convolved[ii] /= tot_kernel
     end
-    # Normalized gaussian component
-    gauss = exp.(.-x2 ./ (2 .* repeat(reshape(σ_conv, (1,length(σ_conv))), outer=(length(x2),1)).^2))
-    gauss ./= sum(gauss, dims=1)
 
-    conv_flux = sumdim(kernel .* gauss, 1)
-
-    conv_flux, p
+    return flux_convolved
 end
 
 
@@ -487,9 +502,9 @@ Convolve a set of stellar population templates with a line-of-sight velocity dis
 to produce templates according to the fitted stellar kinematics. Uses the Fourier Transforms of 
 the templates and the LOSVD to quickly calculate the convolution.
 
-Adapted and simplified from the pPXF and BADASS python codes.
-Cappellari (2017): http://adsabs.harvard.edu/abs/2017MNRAS.466..798C
-Sexton et al. (2021): https://ui.adsabs.harvard.edu/abs/2021MNRAS.500.2871S/abstract 
+Adapted and simplified from the pPXF and BADASS python codes. See:
+- Cappellari (2017): http://adsabs.harvard.edu/abs/2017MNRAS.466..798C
+- Sexton et al. (2021): https://ui.adsabs.harvard.edu/abs/2021MNRAS.500.2871S/abstract 
 """
 function convolve_losvd(_templates::AbstractArray{T}, vsyst::Real, v::Real, σ::Real, velscale::Real, npix::Integer;
     temp_fft::Bool=false, npad_in::Integer=0) where {T<:Number}
@@ -497,11 +512,6 @@ function convolve_losvd(_templates::AbstractArray{T}, vsyst::Real, v::Real, σ::
     if temp_fft
         @assert npad_in > 0 "npad_in must be specified for inputs that are already FFT'ed!"
     end
-
-    # Normalize velocities to pixel units
-    vsysts = vsyst / velscale
-    vs = v / velscale
-    σs = σ / velscale
 
     templates = copy(_templates)
     if ndims(_templates) == 1
@@ -526,37 +536,40 @@ function convolve_losvd(_templates::AbstractArray{T}, vsyst::Real, v::Real, σ::
 
     # Calculate the Fourier transform of the LOSVD
     nl = size(temp_rfft, 1)
-    lvd_rfft = losvd_rfft(vsysts, vs, σs, nl, σ_diff=0., factor=1.)
+    # Remember to normalize velocities and sigmas by the velocity scale
+    ft_losvd = analytic_ft_losvd(vsyst/velscale, v/velscale, σ/velscale, nl)
 
     # Calculate the inverse Fourier transform of the resultant distribution
-    conv_temp = irfft(temp_rfft .* lvd_rfft, npad, 1)
+    template_convolved = irfft(temp_rfft .* ft_losvd, npad, 1)
 
     # Take only enough pixels to match the length of the input spectrum
-    conv_temp[1:npix, :]
+    template_convolved[1:npix, :]
 
 end
 
 
 """
-    losvd_rfft(vsyst, v, σ, nl, σ_diff=0., factor=1.)
+    analytic_ft_losvd(vsyst, v, σ, nl)
 
-Analytic Fourier Transform (of real input) of the Gauss-Hermite LOSVD.
-Equation (38) of Cappellari M., 2017, MNRAS, 466, 798
+Calculate the analytic Fourier Transform of the LOSVD using 
+equation (38) from Cappellari (2017), MNRAS, 466, 798:
+
 http://adsabs.harvard.edu/abs/2017MNRAS.466..798C
 
 Adapted and simplified from the pPXF and BADASS python codes.
 Only supports 2 moments (v and σ) and 1-sided fitting.
 """
-function losvd_rfft(vsyst::Real, v::Real, σ::Real, nl::Integer; σ_diff::Real=0., factor::Real=1.)
+function analytic_ft_losvd(vsyst::Real, v::Real, σ::Real, nl::Integer)
 
     # Prepare quantities
-    a = (vsyst + v)/σ
-    b = σ_diff/σ
-    ω = isfinite(σ) ? range(0., π*σ*factor, nl) : ones(typeof(v), nl) .* NaN  # handle cases where the spaxel isn't fit 
-    # Calculate Fourier transform
-    lvd_rfft = @. exp(1im*a*ω - 0.5*(1-b^2)*ω^2)
+    V = vsyst + v
+    ω = range(0., π, nl)
+
+    # Calculate analytic Fourier transform
+    ft_losvd = @. exp(1im*ω*V - σ^2*ω^2/2)
+
     # Take complex conjugate
-    conj(lvd_rfft)
+    conj(ft_losvd)
 
 end
 
@@ -564,47 +577,45 @@ end
 """
     attenuation_calzetti(λ, E_BV, δ=nothing, f_nodust=nothing, uv_bump=nothing)
 
-Adapted from pPXF (Cappellari 2017), original docstring below:
+Calculate dust attenuation fraction using the Calzetti et al. (2000) attenuation law:
+http://ui.adsabs.harvard.edu/abs/2000ApJ...533..682C.  Optional `uv_bump` and `δ` arguments
+allow one to specify the strength and slope of the UV bump characterized by Kriek & Conroy (2013):
+https://ui.adsabs.harvard.edu/abs/2013ApJ...775L..16K.
 
-Combines the attenuation curves from    
-`Kriek & Conroy (2013) <https://ui.adsabs.harvard.edu/abs/2013ApJ...775L..16K>`_
-hereafter KC13, 
-`Calzetti et al. (2000) <http://ui.adsabs.harvard.edu/abs/2000ApJ...533..682C>`_
-hereafter C+00,
-`Noll et al. (2009) <https://ui.adsabs.harvard.edu/abs/2009A%26A...499...69N>`_,
-and `Lower et al. (2022) <https://ui.adsabs.harvard.edu/abs/2022ApJ...931...14L>`_.
-
-When ``delta = uv_bump = f_nodust = None`` this function returns the C+00 
-reddening curve. When ``uv_bump = f_nodust = None`` this function uses the 
-``delta - uv_bump`` relation by KC13. The parametrization of the UV bump 
-comes from Noll+09. The modelling of the attenuated fraction follows Lower+22.
+This function is based on and adapted from pPXF (Cappellari 2017).
 
 """
 function attenuation_calzetti(λ::Vector{<:Real}, E_BV::Real; δ::Union{Real,Nothing}=nothing,
     f_nodust::Union{Real,Nothing}=nothing, uv_bump::Union{Real,Nothing}=nothing, Rv::Real=4.05)
 
-    # C+00 equations (3)-(4) but extrapolate for lam < 0.12 or lam > 2.2
-    k₁ = @. Rv + ifelse(λ > 0.63, 2.76536/λ - 4.93776, ((0.029249/λ - 0.526482)/λ + 4.01243)/λ - 5.7328)
-    
+    # equation (4) from Calzetti et al. (2000)
+    kprime = zeros(length(λ))
+    good = λ .≥ 0.63
+    kprime[good] .= 2.659 .* Calz_poly_a.(1 ./ λ) .+ Rv
+    good = λ .< 0.63
+    kprime[good] .= 2.659 .* Calz_poly_b.(1 ./ λ) .+ Rv
+
     if isnothing(δ) && isnothing(uv_bump)
-        aλ = E_BV .* k₁
+        aλ = E_BV .* kprime
     else
-        if isnothing(uv_bump)
-            uv_bump = 0.85 - 1.9*δ  # eq.(3) KC13
+        if !isnothing(δ) && isnothing(uv_bump)
+            # Kriek & Conroy (2013) equation (3)
+            uv_bump = 0.85 - 1.9*δ
+        elseif !isnothing(uv_bump) && isnothing(δ)
+            error("Cannot specify uv_bump without specifying δ!")
         end
-        λ0 = 0.2175                  # Peak wavelength of UV bump in micron
-        δλ = 0.035                   # Width of UV bump in micron
-        dλ = @. uv_bump*(λ*δλ)^2 / ((λ^2 - λ0^2)^2 + (λ*δλ)^2)    # eq.(2) KC13
-        λv = 0.55                    # Effective V-band wavelength in micron
-        aλ = @. E_BV*(k₁ + dλ)*(λ/λv)^δ      
+        # Create a Drude profile for the UV bump -- Kriek & Conroy (2013) equation (2)
+        D = Drude.(λ, uv_bump, 0.2175, 0.035)
+        # Kriek & Conroy (2013) equation (1)
+        aλ = @. E_BV * (kprime + D) * (λ / 0.55)^δ 
     end
     
-    frac = @. 10^(-0.4 * clamp(aλ, 0., Inf))
+    atten = @. 10^(-0.4 * clamp(aλ, 0., Inf))
     if !isnothing(f_nodust)
-        frac = @. f_nodust + (1 - f_nodust)*frac
+        atten = @. f_nodust + (1 - f_nodust)*atten
     end
 
-    frac
+    atten
 end
 
 

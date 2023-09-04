@@ -65,6 +65,7 @@ const py_anchored_artists::PyObject = PyNULL()
 const py_ticker::PyObject = PyNULL()
 const py_colormap::PyObject = PyNULL()
 const py_animation::PyObject = PyNULL()
+
 const py_lineidplot::PyObject = PyNULL()
 
 # Voronoi binning
