@@ -61,7 +61,7 @@ const CT_prof = silicate_ct()
 const CT_interp = Spline1D(CT_prof[1], CT_prof[2]; k=3)
 
 # Save the KVT profile as a constant
-const KVT_interp = Spline1D(kvt_prof[:, 1], kvt_prof[:, 2], k=1, bc="nearest")
+const KVT_interp = Spline1D(kvt_prof[:, 1], kvt_prof[:, 2], k=2, bc="nearest")
 const KVT_interp_end = Spline1D([kvt_prof[end, 1], kvt_prof[end, 1]+2], [kvt_prof[end, 2], 0.], k=1, bc="nearest")
 
 # Save the OHM 1992 profile as a constant
@@ -204,30 +204,6 @@ julia> Doppler_width_λ(0, 10)
 ```
 """
 @inline Doppler_width_λ(Δv, λ₀) = Δv / C_KMS * λ₀
-
-
-"""
-    air_to_vacuum(λair)
-
-Convert an air wavelength to a vacuum wavelength, correcting for the index of refraction of air.
-Only converts wavelengths > 2000 angstroms.
-
-Reference: FIREFLY code, Kyle B. Westfall, https://www.icg.port.ac.uk/firefly/
-"""
-function air_to_vacuum(λair::Real)
-    # Do not modify < 2000 angstroms
-    if λair < 0.2
-        return λair
-    end
-    λvac = λair
-    for _ in 1:3
-        # wavenumber squared
-        s² = (1/λvac)^2
-        n = 1.0 + 5.792105e-2/(238.0185 - s²) + 1.67917e-3/(57.362 - s²)
-        λvac = λair * n
-    end
-    λvac
-end
 
 
 """
@@ -433,7 +409,7 @@ Return the Blackbody function Bν (per unit FREQUENCY) in MJy/sr,
 given a wavelength in μm and a temperature in Kelvins.
 """
 @inline function Blackbody_ν(λ::Real, Temp::Real)
-    Bν_1/λ^3 / (exp(Bν_2/(λ*Temp))-1)
+    Bν_1/λ^3 / expm1(Bν_2/(λ*Temp))
 end
 
 
@@ -1086,11 +1062,11 @@ function resample_conserving_flux(new_wave::AbstractVector, old_wave::AbstractVe
             new_fluxes[.., j] ./= sum(old_widths[start:stop])
 
             if !isnothing(err)
-                # e_widths = old_widths[start:stop] .* permutedims(err[.., start:stop], (ndims(err), range(1, ndims(err)-1)...))
-                # new_errs[.., j] .= .√(sumdim(e_widths.^2, 1, nan=false))   # -> preserve NaNs
-                # new_errs[.., j] ./= sum(old_widths[start:stop])
-                e_widths = permutedims(err[.., start:stop], (ndims(err), range(1, ndims(err)-1)...))
-                new_errs[.., j] .= dropdims(median(e_widths, dims=1), dims=1)
+                e_widths = old_widths[start:stop] .* permutedims(err[.., start:stop], (ndims(err), range(1, ndims(err)-1)...))
+                new_errs[.., j] .= .√(sumdim(e_widths.^2, 1, nan=false))   # -> preserve NaNs
+                new_errs[.., j] ./= sum(old_widths[start:stop])
+                # e_widths = permutedims(err[.., start:stop], (ndims(err), range(1, ndims(err)-1)...))
+                # new_errs[.., j] .= dropdims(median(e_widths, dims=1), dims=1)
             end
 
             # Put the old bin widths back to their initial values
@@ -1148,7 +1124,7 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 """
 function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
     n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, use_pah_templates::Bool, 
-    return_components::Bool)
+    templates::Matrix{<:Real}, return_components::Bool)
 
     # Prepare outputs
     out_type = eltype(params)
@@ -1198,7 +1174,7 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
     # Other absorption features
     abs_tot = one(out_type)
     for k ∈ 1:n_abs_feat
-        prof = Drude.(λ, 1.0, params[pᵢ+1:pᵢ+2]...)
+        prof = Gaussian.(λ, 1.0, params[pᵢ+1:pᵢ+2]...)
         comps["abs_feat_$k"] = extinction.(prof, params[pᵢ], screen=true)
         abs_tot = abs_tot .* comps["abs_feat_$k"]
         pᵢ += 3
@@ -1212,6 +1188,13 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
         comps["hot_dust"] = silicate_emission(λ, params[pᵢ:pᵢ+5]...) ./ N
         contin .+= comps["hot_dust"] .* comps["abs_ice"] .* comps["abs_ch"] .* abs_tot
         pᵢ += 6
+    end
+
+    # Add generic templates with a normalization parameter
+    for i in axes(templates, 2)
+        comps["templates_$i"] = params[pᵢ] .* templates[:, i] ./ N
+        contin .+= comps["templates_$i"]
+        pᵢ += 1
     end
 
     if use_pah_templates
@@ -1243,7 +1226,7 @@ end
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
 function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
-    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, use_pah_templates::Bool)
+    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, fit_sil_emission::Bool, use_pah_templates::Bool, templates::Matrix{<:Real})
 
     # Prepare outputs
     out_type = eltype(params)
@@ -1289,7 +1272,7 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
     # Other absorption features
     abs_tot = one(out_type)
     for k ∈ 1:n_abs_feat
-        prof = Drude.(λ, 1.0, params[pᵢ+1:pᵢ+2]...)
+        prof = Gaussian.(λ, 1.0, params[pᵢ+1:pᵢ+2]...)
         abs_tot = abs_tot .* extinction.(prof, params[pᵢ], screen=true)
         pᵢ += 3
     end
@@ -1301,6 +1284,12 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
         # Ref: Gallimore et al. 2010
         contin .+= silicate_emission(λ, params[pᵢ:pᵢ+5]...) ./ N .* abs_ice .* abs_ch .* abs_tot
         pᵢ += 6
+    end
+
+    # Add generic templates with a normalization parameter
+    for i in axes(templates, 2)
+        contin .+= params[pᵢ] .* templates[:, i] ./ N
+        pᵢ += 1
     end
 
     if use_pah_templates
@@ -1673,7 +1662,7 @@ end
 
 """
     model_line_residuals(λ, params, n_lines, n_comps, lines, flexible_wavesol, ext_curve, lsf,
-        return_components) 
+        relative_flags, return_components) 
 
 Create a model of the emission lines at the given wavelengths `λ`, given the parameter vector `params`.
 
@@ -1690,16 +1679,21 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 wavelength solution in the data
 - `ext_curve::Vector{<:Real}`: The extinction curve fit with model_{mir|opt}_continuum
 - `lsf::Function`: A function giving the FWHM of the line-spread function in km/s as a function of rest-frame wavelength in microns.
+- `relative_flags::BitVector`: BitVector giving flags for whether the amp, voff, and fwhm of additional line profiles should be
+    parametrized relative to the main profile or not.
 - `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
 addition to the overall fit
 """
 function model_line_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, n_lines::S, n_comps::S, lines::TransitionLines, 
-    flexible_wavesol::Bool, ext_curve::Vector{<:Real}, lsf::Function, return_components::Bool) where {S<:Integer}
+    flexible_wavesol::Bool, ext_curve::Vector{<:Real}, lsf::Function, relative_flags::BitVector, return_components::Bool) where {S<:Integer}
 
     # Prepare outputs
     out_type = eltype(params)
     comps = Dict{String, Vector{out_type}}()
     contin = zeros(out_type, length(λ))
+
+    # Flags for additional components being relative
+    rel_amp, rel_voff, rel_fwhm = relative_flags
 
     pᵢ = 1
     # Add emission lines
@@ -1736,12 +1730,18 @@ function model_line_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, n_line
                     amp_1 = amp
                     voff_1 = voff
                     fwhm_1 = fwhm
-                # For the additional components, we parametrize them this way to essentially give them soft constraints
+                # For the additional components, we (optionally) parametrize them this way to essentially give them soft constraints
                 # relative to the primary component
                 else
-                    amp *= amp_1
-                    voff += voff_1
-                    fwhm *= fwhm_1
+                    if rel_amp
+                        amp *= amp_1
+                    end
+                    if rel_voff
+                        voff += voff_1
+                    end
+                    if rel_fwhm
+                        fwhm *= fwhm_1
+                    end
                 end
 
                 # Broaden the FWHM by the instrumental FWHM at the location of the line
@@ -1786,11 +1786,14 @@ end
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
 function model_line_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, n_lines::S, n_comps::S, lines::TransitionLines, 
-    flexible_wavesol::Bool, ext_curve::Vector{<:Real}, lsf::Function) where {S<:Integer}
+    flexible_wavesol::Bool, ext_curve::Vector{<:Real}, lsf::Function, relative_flags::BitVector) where {S<:Integer}
 
     # Prepare outputs
     out_type = eltype(params)
     contin = zeros(out_type, length(λ))
+
+    # Flags for additional components being relative
+    rel_amp, rel_voff, rel_fwhm = relative_flags
 
     pᵢ = 1
     # Add emission lines
@@ -1827,12 +1830,18 @@ function model_line_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, n_line
                     amp_1 = amp
                     voff_1 = voff
                     fwhm_1 = fwhm
-                # For the additional components, we parametrize them this way to essentially give them soft constraints
+                # For the additional components, we (optionally) parametrize them this way to essentially give them soft constraints
                 # relative to the primary component
                 else
-                    amp *= amp_1
-                    voff += voff_1
-                    fwhm *= fwhm_1
+                    if rel_amp
+                        amp *= amp_1
+                    end
+                    if rel_voff
+                        voff += voff_1
+                    end
+                    if rel_fwhm
+                        fwhm *= fwhm_1
+                    end
                 end
 
                 # Broaden the FWHM by the instrumental FWHM at the location of the line
@@ -1878,8 +1887,8 @@ Currently this includes the integrated intensity, equivalent width, and signal t
 """
 function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, comps::Dict, n_dust_cont::Integer,
     n_power_law::Integer, n_dust_feat::Integer, dust_profiles::Vector{Symbol}, n_abs_feat::Integer, fit_sil_emission::Bool, 
-    n_lines::Integer, n_acomps::Integer, n_comps::Integer, lines::TransitionLines, flexible_wavesol::Bool, 
-    lsf::Function, popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}, 
+    n_templates::Integer, n_lines::Integer, n_acomps::Integer, n_comps::Integer, lines::TransitionLines, flexible_wavesol::Bool, 
+    lsf::Function, relative_flags::BitVector, popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}, 
     extinction::Vector{T}, mask_lines::BitVector, continuum::Vector{T}, 
     area_sr::Vector{T}, propagate_err::Bool=true) where {T<:Real}
 
@@ -1893,7 +1902,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     p_dust_err = zeros(3n_dust_feat)
     pₒ = 1
     # Initial parameter vector index where dust profiles start
-    pᵢ = 3 + 2n_dust_cont + 2n_power_law + 4 + 3n_abs_feat + (fit_sil_emission ? 6 : 0)
+    pᵢ = 3 + 2n_dust_cont + 2n_power_law + 4 + 3n_abs_feat + (fit_sil_emission ? 6 : 0) + n_templates
     # Extinction normalization factor
     # max_ext = 1 / minimum(extinction)
 
@@ -1937,7 +1946,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
         
         # Calculate the equivalent width using the utility function
         eqw, e_err = calculate_eqw(λ, prof, comps, false, n_dust_cont, n_power_law, n_abs_feat, n_dust_feat, fit_sil_emission,
-            A*N, A_err*N, μ, μ_err, fwhm, fwhm_err, m=m, m_err=m_err, ν=ν, ν_err=ν_err, propagate_err=propagate_err)
+            n_templates, A*N, A_err*N, μ, μ_err, fwhm, fwhm_err, m=m, m_err=m_err, ν=ν, ν_err=ν_err, propagate_err=propagate_err)
         
         snr = A*N*ext / std(I[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)] .- continuum[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)])
 
@@ -1968,6 +1977,10 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     # Loop through lines
     p_lines = zeros(3n_lines+3n_acomps)
     p_lines_err = zeros(3n_lines+3n_acomps)
+
+    # Unpack the relative flags
+    rel_amp, rel_voff, rel_fwhm = relative_flags
+
     pₒ = pᵢ = 1
     for (k, λ0) ∈ enumerate(lines.λ₀)
         amp_1 = amp_1_err = voff_1 = voff_1_err = fwhm_1 = fwhm_1_err = nothing
@@ -2021,14 +2034,18 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                 # For the additional components, we parametrize them this way to essentially give them soft constraints
                 # relative to the primary component
                 else
-                    amp_err = propagate_err ? hypot(amp_1_err*amp, amp_err*amp_1) : 0.
-                    amp *= amp_1
-                    
-                    voff_err = propagate_err ? hypot(voff_err, voff_1_err) : 0.
-                    voff += voff_1
-
-                    fwhm_err = propagate_err ? hypot(fwhm_1_err*fwhm, fwhm_err*fwhm_1) : 0.
-                    fwhm *= fwhm_1
+                    if rel_amp
+                        amp_err = propagate_err ? hypot(amp_1_err*amp, amp_err*amp_1) : 0.
+                        amp *= amp_1
+                    end
+                    if rel_voff 
+                        voff_err = propagate_err ? hypot(voff_err, voff_1_err) : 0.
+                        voff += voff_1
+                    end
+                    if rel_fwhm
+                        fwhm_err = propagate_err ? hypot(fwhm_1_err*fwhm, fwhm_err*fwhm_1) : 0.
+                        fwhm *= fwhm_1
+                    end
                 end
 
                 # Broaden the FWHM by the instrumental FWHM at the location of the line
@@ -2075,7 +2092,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                 
                 # Calculate equivalent width using the helper function
                 p_lines[pₒ+1], p_lines_err[pₒ+1] = calculate_eqw(λ, lines.profiles[k, j], comps, true, n_dust_cont, n_power_law, n_abs_feat,
-                    n_dust_feat, fit_sil_emission, amp*N, amp_err*N, mean_μm, mean_μm_err, fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, 
+                    n_dust_feat, fit_sil_emission, n_templates, amp*N, amp_err*N, mean_μm, mean_μm_err, fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, 
                     h4=h4, h4_err=h4_err, η=η, η_err=η_err, propagate_err=propagate_err)
 
                 # SNR
@@ -2104,8 +2121,8 @@ Currently this includes the integrated intensity, equivalent width, and signal t
 """
 function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, comps::Dict, n_ssps::Integer,
     n_power_law::Integer, fit_opt_na_feii::Bool, fit_opt_br_feii::Bool, n_lines::Integer, n_acomps::Integer, n_comps::Integer, 
-    lines::TransitionLines, flexible_wavesol::Bool, lsf::Function, popt_l::Vector{T}, perr_l::Vector{T}, extinction::Vector{T}, 
-    mask_lines::BitVector, continuum::Vector{T}, area_sr::Vector{T}, propagate_err::Bool=true) where {T<:Real}
+    lines::TransitionLines, flexible_wavesol::Bool, lsf::Function, relative_flags::BitVector, popt_l::Vector{T}, perr_l::Vector{T}, 
+    extinction::Vector{T}, mask_lines::BitVector, continuum::Vector{T}, area_sr::Vector{T}, propagate_err::Bool=true) where {T<:Real}
 
     @debug "Calculating extra parameters"
 
@@ -2118,6 +2135,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     # Loop through lines
     p_lines = zeros(3n_lines+3n_acomps)
     p_lines_err = zeros(3n_lines+3n_acomps)
+    rel_amp, rel_voff, rel_fwhm = relative_flags
     pₒ = pᵢ = 1
     for (k, λ0) ∈ enumerate(lines.λ₀)
         amp_1 = amp_1_err = voff_1 = voff_1_err = fwhm_1 = fwhm_1_err = nothing
@@ -2170,14 +2188,18 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                 # For the additional components, we parametrize them this way to essentially give them soft constraints
                 # relative to the primary component
                 else
-                    amp_err = propagate_err ? hypot(amp_1_err*amp, amp_err*amp_1) : 0.
-                    amp *= amp_1
-                    
-                    voff_err = propagate_err ? hypot(voff_err, voff_1_err) : 0.
-                    voff += voff_1
-
-                    fwhm_err = propagate_err ? hypot(fwhm_1_err*fwhm, fwhm_err*fwhm_1) : 0.
-                    fwhm *= fwhm_1
+                    if rel_amp
+                        amp_err = propagate_err ? hypot(amp_1_err*amp, amp_err*amp_1) : 0.
+                        amp *= amp_1
+                    end
+                    if rel_voff 
+                        voff_err = propagate_err ? hypot(voff_err, voff_1_err) : 0.
+                        voff += voff_1
+                    end
+                    if rel_fwhm
+                        fwhm_err = propagate_err ? hypot(fwhm_1_err*fwhm, fwhm_err*fwhm_1) : 0.
+                        fwhm *= fwhm_1
+                    end
                 end
 
                 # Broaden the FWHM by the instrumental FWHM at the location of the line
@@ -2309,7 +2331,7 @@ integral of the ratio of the feature profile to the underlying continuum.
 """
 function calculate_eqw(λ::Vector{T}, profile::Symbol, comps::Dict, line::Bool,
     n_dust_cont::Integer, n_power_law::Integer, n_abs_feat::Integer, n_dust_feat::Integer, 
-    fit_sil_emission::Bool, amp::T, amp_err::T, peak::T, peak_err::T, fwhm::T, fwhm_err::T; 
+    fit_sil_emission::Bool, n_templates::Integer, amp::T, amp_err::T, peak::T, peak_err::T, fwhm::T, fwhm_err::T; 
     h3::Union{T,Nothing}=nothing, h3_err::Union{T,Nothing}=nothing, 
     h4::Union{T,Nothing}=nothing, h4_err::Union{T,Nothing}=nothing, 
     η::Union{T,Nothing}=nothing, η_err::Union{T,Nothing}=nothing, 
@@ -2332,6 +2354,9 @@ function calculate_eqw(λ::Vector{T}, profile::Symbol, comps::Dict, line::Bool,
     contin .*= comps["abs_ice"] .* comps["abs_ch"]
     for k ∈ 1:n_abs_feat
         contin .*= comps["abs_feat_$k"]
+    end
+    for q ∈ 1:n_templates
+        contin .+= comps["templates_$q"]
     end
     # For line EQWs, we consider PAHs as part of the "continuum"
     if line

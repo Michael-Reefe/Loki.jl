@@ -18,17 +18,23 @@ using EllipsisNotation
 using SpecialFunctions
 using FFTW
 using Polynomials
+using NLsolve
 
 # Optimization packages
 using Optim
 using CMPFit
 
 # Astronomy packages
+using AstroLib
 using FITSIO
+using Photometry
 using Cosmology
 using AstroAngles
-using Unitful
-using UnitfulAstro
+using SkyCoords
+using WCS
+using Reproject
+using ImageFiltering
+using Unitful, UnitfulAstro
 
 # File I/O
 using TOML
@@ -49,13 +55,9 @@ using Dates
 using InteractiveUtils
 using ColorSchemes
 using LaTeXStrings
-using Pipe: @pipe
 
 # PyCall needed for some matplotlib modules
 using PyCall
-
-# Warnings
-const py_warnings::PyObject = PyNULL()
 
 # Matplotlib modules
 const plt::PyObject = PyNULL()
@@ -63,15 +65,10 @@ const py_anchored_artists::PyObject = PyNULL()
 const py_ticker::PyObject = PyNULL()
 const py_colormap::PyObject = PyNULL()
 const py_animation::PyObject = PyNULL()
-
-# Astropy modules
-const py_wcs::PyObject = PyNULL()
-const py_coords::PyObject = PyNULL()
-const py_units::PyObject = PyNULL()
-const py_photutils::PyObject = PyNULL()
-const py_reproject::PyObject = PyNULL()
-const py_mosaicking::PyObject = PyNULL()
 const py_lineidplot::PyObject = PyNULL()
+
+# Voronoi binning
+const py_vorbin::PyObject = PyNULL()
 
 # FSPS Library
 const py_fsps::PyObject = PyNULL()
@@ -107,17 +104,9 @@ function __init__()
     # python package for adjusting matplotlib text so it doesn't overlap
     copy!(py_lineidplot, pyimport_conda("lineid_plot", "lineid_plot"))
 
-    # Import the WCS, photutils, and reproject packages from astropy
-    copy!(py_wcs, pyimport_conda("astropy.wcs", "astropy"))
-    copy!(py_coords, pyimport_conda("astropy.coordinates", "astropy"))
-    copy!(py_units, pyimport_conda("astropy.units", "astropy"))
-    copy!(py_photutils, pyimport_conda("photutils", "photutils"))
-    copy!(py_reproject, pyimport_conda("reproject", "reproject"))
-    copy!(py_mosaicking, pyimport_conda("reproject.mosaicking", "reproject"))
-
-    # Warnings
-    copy!(py_warnings, pyimport_conda("warnings", "warnings"))
-
+    # Voronoi binning package
+    copy!(py_vorbin, pyimport_conda("vorbin.voronoi_2d_binning", "vorbin"))
+    
     try
         copy!(py_fsps, pyimport_conda("fsps", "fsps"))
     catch
@@ -136,9 +125,6 @@ function __init__()
     plt.rc("text", usetex=true)                # use LaTeX for things like axis labels
     plt.rc("text.latex", preamble="\\usepackage{siunitx}")   # use the siunitx LaTeX package
     plt.rc("font", family="Times New Roman")   # use Times New Roman font
-
-    # Filter annoying FITS fixed warnings from astropy
-    py_warnings.filterwarnings("ignore", category=py_wcs.FITSFixedWarning)
 
     ###### SETTING UP A GLOBAL LOGGER ######
 
@@ -167,9 +153,10 @@ export DataCube,   # DataCube struct
        log_rebin!,
        correct!, 
        interpolate_nans!, 
+       calculate_statistical_errors!,
+       voronoi_rebin!,
        plot_2d, 
        plot_1d,
-       make_aperture,
 
        # Observation struct
        Observation, 
@@ -178,8 +165,6 @@ export DataCube,   # DataCube struct
        save_fits,
        adjust_wcs_alignment!, 
        reproject_channels!, 
-       # psf_kernel, 
-       convolve_psf!,
 
        # Parameter structs
        Parameter,
@@ -218,13 +203,15 @@ export DataCube,   # DataCube struct
        write_fits,
 
        # Utility functions that the user may wish to take advantage of
+       get_area,
+       get_patches,
+       centroid_com,
+       make_aperture,
        frebin,
        fshift,
-       make_python_wcs,
        attenuation_calzetti,
        attenuation_cardelli,  # (AKA ccm_unred)
        resample_conserving_flux,
-       air_to_vacuum,
        extend,
        sumdim,
        Doppler_shift_v,
@@ -243,12 +230,6 @@ include("core/cubefit.jl")
 include("core/fitting.jl")
 include("core/output.jl")
 
-#####################
-#= WELCOME TO LOKI =#
-#####################
-
-# Namespace:
-# First-class => most of cubefit.jl and cubedata.jl
-# "Loki" => utils.jl, parameters.jl
+include("util/aperture_utils.jl")
 
 end

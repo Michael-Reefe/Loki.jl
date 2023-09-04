@@ -11,28 +11,37 @@ fill them with the maximum likelihood values and errors given by out_params and 
 spaxels.
 """
 assign_outputs(out_params::Array{<:Real}, out_errs::Array{<:Real}, cube_fitter::CubeFitter, 
-    cube_data::NamedTuple, spaxels::CartesianIndices, z::Real, aperture::Bool=false) = 
+    cube_data::NamedTuple, z::Real, aperture::Bool=false) = 
     cube_fitter.spectral_region == :MIR ? 
-        assign_outputs_mir(out_params, out_errs, cube_fitter, cube_data, spaxels, z, aperture) : 
-        assign_outputs_opt(out_params, out_errs, cube_fitter, cube_data, spaxels, z, aperture)
+        assign_outputs_mir(out_params, out_errs, cube_fitter, cube_data, z, aperture) : 
+        assign_outputs_opt(out_params, out_errs, cube_fitter, cube_data, z, aperture)
 
 
 # MIR implementation of the assign_outputs function
 function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, cube_fitter::CubeFitter,
-    cube_data::NamedTuple, spaxels::CartesianIndices, z::Real, aperture::Bool=false)
+    cube_data::NamedTuple, z::Real, aperture::Bool=false)
 
     # Create the CubeModel and ParamMaps structs to be filled in
     cube_model = generate_cubemodel(cube_fitter, aperture)
     param_maps, param_errs = generate_parammaps(cube_fitter, aperture)
 
+    # Unpack relative flags for lines
+    rel_amp, rel_voff, rel_fwhm = cube_fitter.relative_flags
+
     # Loop over each spaxel and fill in the associated fitting parameters into the ParamMaps and CubeModel
     # I know this is long and ugly and looks stupid but it works for now and I'll make it pretty later
+    spaxels = CartesianIndices(size(out_params)[1:2])
     prog = Progress(length(spaxels); showspeed=true)
     @simd for index ∈ spaxels
 
         # Get the normalization to un-normalized the fitted parameters
-        N = Float64(abs(nanmaximum(cube_data.I[index, :])))
-        N = N ≠ 0. ? N : 1.
+        data_index = !isnothing(cube_fitter.cube.voronoi_bins) ? cube_fitter.cube.voronoi_bins[index] : index
+        if Tuple(data_index)[1] > 0
+            N = Float64(abs(nanmaximum(cube_data.I[data_index, :])))
+            N = N ≠ 0. ? N : 1.
+        else
+            N = 1.
+        end
 
         # Set the 2D parameter map outputs
 
@@ -121,6 +130,14 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             pᵢ += 6
         end
 
+        # Template amplitudes
+        for (q, tp) ∈ enumerate(cube_fitter.template_names)
+            param_maps.templates[tp][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
+            param_errs[1].templates[tp][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
+            param_errs[2].templates[tp][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
+            pᵢ += 1
+        end
+
         # Dust feature log(amplitude), mean, FWHM
         for (k, df) ∈ enumerate(cube_fitter.dust_features.names)
             param_maps.dust_features[df][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]*(1+z)*N)-17 : -Inf
@@ -148,7 +165,8 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             # End of continuum parameters: recreate the continuum model
             I_cont, comps_c = model_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], N, cube_fitter.n_dust_cont, cube_fitter.n_power_law,
                 cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, 
-                cube_fitter.fit_sil_emission, false, true)
+                cube_fitter.fit_sil_emission, false, cube_fitter.n_templates > 0 ? cube_fitter.templates[index, :, :] : Matrix{Float64}(undef, 0, 0), 
+                true)
         end
 
         # Save marker of the point where the continuum parameters end and the line parameters begin
@@ -162,7 +180,7 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
                     ln = Symbol(cube_fitter.lines.names[k], "_$(j)")
                     amp = out_params[index, pᵢ]
                     amp_err = out_errs[index, pᵢ, :]
-                    if isone(j)
+                    if isone(j) || !rel_amp
                         param_maps.lines[ln][:amp][index] = amp
                         param_errs[1].lines[ln][:amp][index] = amp_err[1]
                         param_errs[2].lines[ln][:amp][index] = amp_err[2]
@@ -177,7 +195,7 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
                     # Voff parameter
                     voff = out_params[index, pᵢ+1]
                     voff_err = out_errs[index, pᵢ+1, :]
-                    if isone(j)
+                    if isone(j) || !rel_voff
                         param_maps.lines[ln][:voff][index] = voff
                         param_errs[1].lines[ln][:voff][index] = voff_err[1]
                         param_errs[2].lines[ln][:voff][index] = voff_err[2]
@@ -206,7 +224,7 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
                     end
 
                     # FWHM parameter
-                    if isone(j)
+                    if isone(j) || !rel_fwhm
                         param_maps.lines[ln][:fwhm][index] = fwhm
                         param_errs[1].lines[ln][:fwhm][index] = fwhm_err[1]
                         param_errs[2].lines[ln][:fwhm][index] = fwhm_err[2]
@@ -245,7 +263,7 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
 
             # End of line parameters: recreate the un-extincted (intrinsic) line model
             I_line, comps_l = model_line_residuals(cube_fitter.cube.λ, out_params[index, vᵢ:pᵢ-1], cube_fitter.n_lines, cube_fitter.n_comps,
-                cube_fitter.lines, cube_fitter.flexible_wavesol, comps_c["extinction"], lsf_interp_func, true)
+                cube_fitter.lines, cube_fitter.flexible_wavesol, comps_c["extinction"], lsf_interp_func, cube_fitter.relative_flags, true)
 
             # Combine the continuum and line models
             I_model = I_cont .+ I_line
@@ -327,6 +345,9 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             if cube_fitter.fit_sil_emission
                 cube_model.hot_dust[:, index] .= comps["hot_dust"] .* (1 .+ z)
             end
+            for q ∈ 1:cube_fitter.n_templates
+                cube_model.templates[:, index, q] .= comps["templates_$q"] .* (1 .+ z)
+            end
             for j ∈ 1:cube_fitter.n_comps
                 for k ∈ 1:cube_fitter.n_lines
                     if !isnothing(cube_fitter.lines.profiles[k, j])
@@ -387,20 +408,29 @@ end
 
 # Optical implementation of the assign_outputs function
 function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, cube_fitter::CubeFitter,
-    cube_data::NamedTuple, spaxels::CartesianIndices, z::Real, aperture::Bool=false)
+    cube_data::NamedTuple, z::Real, aperture::Bool=false)
 
     # Create the CubeModel and ParamMaps structs to be filled in
     cube_model = generate_cubemodel(cube_fitter, aperture)
     param_maps, param_errs = generate_parammaps(cube_fitter, aperture)
 
+    # Unpack relative flags for lines
+    rel_amp, rel_voff, rel_fwhm = cube_fitter.relative_flags
+
     # Loop over each spaxel and fill in the associated fitting parameters into the ParamMaps and CubeModel
     # I know this is long and ugly and looks stupid but it works for now and I'll make it pretty later
+    spaxels = CartesianIndices(size(out_params)[1:2])
     prog = Progress(length(spaxels); showspeed=true)
     @simd for index ∈ spaxels
 
         # Get the normalization to un-normalized the fitted parameters
-        N = Float64(abs(nanmaximum(cube_data.I[index, :])))
-        N = N ≠ 0. ? N : 1.
+        data_index = !isnothing(cube_fitter.cube.voronoi_bins) ? cube_fitter.cube.voronoi_bins[index] : index
+        if Tuple(data_index)[1] > 0
+            N = Float64(abs(nanmaximum(cube_data.I[data_index, :])))
+            N = N ≠ 0. ? N : 1.
+        else
+            N = 1.
+        end
 
         # Set the 2D parameter map outputs
 
@@ -517,7 +547,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
                     ln = Symbol(cube_fitter.lines.names[k], "_$(j)")
                     amp = out_params[index, pᵢ]
                     amp_err = out_errs[index, pᵢ, :]
-                    if isone(j)
+                    if isone(j) || !rel_amp
                         param_maps.lines[ln][:amp][index] = amp
                         param_errs[1].lines[ln][:amp][index] = amp_err[1]
                         param_errs[2].lines[ln][:amp][index] = amp_err[2]
@@ -532,7 +562,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
                     # Voff parameter
                     voff = out_params[index, pᵢ+1]
                     voff_err = out_errs[index, pᵢ+1, :]
-                    if isone(j)
+                    if isone(j) || !rel_voff
                         param_maps.lines[ln][:voff][index] = voff
                         param_errs[1].lines[ln][:voff][index] = voff_err[1]
                         param_errs[2].lines[ln][:voff][index] = voff_err[2]
@@ -561,7 +591,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
                     end
 
                     # FWHM parameter
-                    if isone(j)
+                    if isone(j) || !rel_fwhm
                         param_maps.lines[ln][:fwhm][index] = fwhm
                         param_errs[1].lines[ln][:fwhm][index] = fwhm_err[1]
                         param_errs[2].lines[ln][:fwhm][index] = fwhm_err[2]
@@ -600,7 +630,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
 
             # End of line parameters: recreate the un-extincted (intrinsic) line model
             I_line, comps_l = model_line_residuals(cube_fitter.cube.λ, out_params[index, vᵢ:pᵢ-1], cube_fitter.n_lines, cube_fitter.n_comps,
-                cube_fitter.lines, cube_fitter.flexible_wavesol, comps_c["attenuation_gas"], lsf_interp_func, true)
+                cube_fitter.lines, cube_fitter.flexible_wavesol, comps_c["attenuation_gas"], lsf_interp_func, cube_fitter.relative_flags, true)
 
             # Combine the continuum and line models
             I_model = I_cont .+ I_line
@@ -724,51 +754,19 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
 end
 
 
-"""
-    plot_parameter_map(data, name_i, save_path, Ω, z, psf_fwhm, cosmo, python_wcs; 
-        [snr_filter, snr_thresh, cmap, line_latex])
-
-Plotting function for 2D parameter maps which are output by `fit_cube!`
-
-# Arguments
-- `data::Matrix{Float64}`: The 2D array of data to be plotted
-- `name_i::String`: The name of the individual parameter being plotted, i.e. "dust_features_PAH_5.24_amp"
-- `save_path::String`: The file path to save the plot to.
-- `Ω::Float64`: The solid angle subtended by each pixel, in steradians (used for angular scalebar)
-- `z::Float64`: The redshift of the object (used for physical scalebar)
-- `psf_fwhm::Float64`: The FWHM of the point-spread function in arcseconds (used to add a circular patch with this size)
-- `cosmo::Cosmology.AbstractCosmology`: The cosmology to use to calculate distance for the physical scalebar
-- `python_wcs::PyObject`: The astropy WCS object used to project the maps onto RA/Dec space
-- `snr_filter::Union{Nothing,Matrix{Float64}}=nothing`: A 2D array of S/N values to
-    be used to filter out certain spaxels from being plotted - must be the same size as `data` to filter
-- `snr_thresh::Float64=3.`: The S/N threshold below which to cut out any spaxels using the values in snr_filter
-- `cmap::Symbol=:cubehelix`: The colormap used in the plot, defaults to the cubehelix map
-- `line_latex::Union{String,Nothing}=nothing`: LaTeX-formatted label for the emission line to be added to the top-right corner.
-- `disable_axes::Bool=true`: If true, the x/y or RA/Dec axes are turned off, and instead an angular label is added to the scale bar.
-- `disable_colorbar::Bool=false`: If true, turns off the color scale.
-- `modify_ax::Union{Tuple{PyObject,PyObject},Nothing}=nothing`: If one wishes to apply this plotting routine on a pre-existing axis object,
-input the figure and axis objects here as a tuple, and the modified axis object will be returned.
-- `colorscale_limits::Union{Tuple{<:Real,<:Real},Nothing}=nothing`: If specified, gives lower and upper limits for the color scale. Otherwise,
-they will be determined automatically from the data.
-- `custom_bunit::Union{LaTeXString,Nothing}=nothing`: If provided, overwrites the colorbar axis label. Otherwise the label is determined
-automtically using the `name_i` parameter.
-"""
-function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::String, Ω::Float64, z::Float64, psf_fwhm::Float64,
-    cosmo::Cosmology.AbstractCosmology, python_wcs::Union{PyObject,Nothing}; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, 
-    snr_thresh::Float64=3., cmap::PyObject=py_colormap.cubehelix, line_latex::Union{String,Nothing}=nothing, disable_axes::Bool=true,
-    disable_colorbar::Bool=false, modify_ax::Union{Tuple{PyObject,PyObject},Nothing}=nothing, 
-    colorscale_limits::Union{Tuple{<:Real,<:Real},Nothing}=nothing, custom_bunit::Union{LaTeXString,Nothing}=nothing)
-
-    # I know this is ugly but I couldn't figure out a better way to do it lmao
+# I know this is ugly but I couldn't figure out a better way to do it lmao
+function paramstring_to_latex(name_i, cosmo)
     if occursin("amp", name_i)
         if occursin("stellar_continuum", name_i)
             bunit = L"$\log_{10}(A_{*})$" # normalized
         elseif occursin("dust_continuum", name_i)
             bunit = L"$\log_{10}(A_{\rm dust})$" # normalized
         elseif occursin("power_law", name_i)
-            bunit = L"$\log_{10}(A_{\rm pl} / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-2}$)"
+            bunit = L"$\log_{10}(A_{\rm pl} / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1}$)"
         elseif occursin("hot_dust", name_i)
             bunit = L"$\log_{10}(A_{\rm sil})$" # normalized
+        elseif occursin("template", name_i)
+            bunit = L"$\log_{10}(A_{\rm template})$"
         else
             bunit = L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$"
         end
@@ -843,11 +841,49 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     elseif occursin("delta_UV", name_i)
         bunit = L"$\delta$"
     end
+    return bunit
+end
+
+
+"""
+    plot_parameter_map(data, name_i, save_path, Ω, z, psf_fwhm, cosmo, python_wcs; 
+        [snr_filter, snr_thresh, cmap, line_latex])
+
+Plotting function for 2D parameter maps which are output by `fit_cube!`
+
+# Arguments
+- `data::Matrix{Float64}`: The 2D array of data to be plotted
+- `name_i::String`: The name of the individual parameter being plotted, i.e. "dust_features_PAH_5.24_amp"
+- `save_path::String`: The file path to save the plot to.
+- `Ω::Float64`: The solid angle subtended by each pixel, in steradians (used for angular scalebar)
+- `z::Float64`: The redshift of the object (used for physical scalebar)
+- `psf_fwhm::Float64`: The FWHM of the point-spread function in arcseconds (used to add a circular patch with this size)
+- `cosmo::Cosmology.AbstractCosmology`: The cosmology to use to calculate distance for the physical scalebar
+- `wcs::WCSTransform`: The WCS object used to project the maps onto RA/Dec space
+- `snr_filter::Union{Nothing,Matrix{Float64}}=nothing`: A 2D array of S/N values to
+    be used to filter out certain spaxels from being plotted - must be the same size as `data` to filter
+- `snr_thresh::Float64=3.`: The S/N threshold below which to cut out any spaxels using the values in snr_filter
+- `cmap::Symbol=:cubehelix`: The colormap used in the plot, defaults to the cubehelix map
+- `line_latex::Union{String,Nothing}=nothing`: LaTeX-formatted label for the emission line to be added to the top-right corner.
+- `disable_axes::Bool=true`: If true, the x/y or RA/Dec axes are turned off, and instead an angular label is added to the scale bar.
+- `disable_colorbar::Bool=false`: If true, turns off the color scale.
+- `modify_ax::Union{Tuple{PyObject,PyObject},Nothing}=nothing`: If one wishes to apply this plotting routine on a pre-existing axis object,
+input the figure and axis objects here as a tuple, and the modified axis object will be returned.
+- `colorscale_limits::Union{Tuple{<:Real,<:Real},Nothing}=nothing`: If specified, gives lower and upper limits for the color scale. Otherwise,
+they will be determined automatically from the data.
+- `custom_bunit::Union{LaTeXString,Nothing}=nothing`: If provided, overwrites the colorbar axis label. Otherwise the label is determined
+automtically using the `name_i` parameter.
+"""
+function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::String, Ω::Float64, z::Float64, psf_fwhm::Float64,
+    cosmo::Cosmology.AbstractCosmology, wcs::Union{WCSTransform,Nothing}; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, 
+    snr_thresh::Float64=3., cmap=py_colormap.cubehelix, line_latex::Union{String,Nothing}=nothing, disable_axes::Bool=true,
+    disable_colorbar::Bool=false, modify_ax=nothing, colorscale_limits=nothing, custom_bunit::Union{LaTeXString,Nothing}=nothing)
+
+    bunit = paramstring_to_latex(name_i, cosmo)
     # Overwrite with input if provided
     if !isnothing(custom_bunit)
         bunit = custom_bunit
     end
-
     @debug "Plotting 2D map of $name_i with units $bunit"
 
     filtered = copy(data)
@@ -871,7 +907,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
 
     if isnothing(modify_ax)
         fig = plt.figure()
-        ax = fig.add_subplot(111, projection=python_wcs) 
+        ax = fig.add_subplot(111) 
     else
         fig, ax = modify_ax
     end
@@ -921,8 +957,8 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         cdata = ax.imshow(filtered', origin=:lower, cmap=cmap, vmin=colorscale_limits[1], vmax=colorscale_limits[2])
     end
     ax.tick_params(which="both", axis="both", direction="in", color=text_color)
-    ax.set_xlabel(isnothing(python_wcs) ? L"$x$ (spaxels)" : "R.A.")
-    ax.set_ylabel(isnothing(python_wcs) ? L"$y$ (spaxels)" : "Dec.")
+    ax.set_xlabel(L"$x$ (spaxels)")
+    ax.set_ylabel(L"$y$ (spaxels)")
     if disable_axes
         ax.axis(:off)
     end
@@ -985,16 +1021,139 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     end
 
     # Make directories
-    if !isdir(dirname(save_path))
-        mkpath(dirname(save_path))
+    if (save_path ≠ "") && isnothing(modify_ax)
+        if !isdir(dirname(save_path))
+            mkpath(dirname(save_path))
+        end
+        plt.savefig(save_path, dpi=300, bbox_inches=:tight)
     end
-    plt.savefig(save_path, dpi=300, bbox_inches=:tight)
     if !isnothing(modify_ax)
-        return fig, ax
+        return fig, ax, cdata
     end
     plt.close()
 
 end
+
+
+# Line parameters
+"""
+    plot_multiline_parameters(cube_fitter, param_maps, psf_interp[, snr_thresh])
+
+Helper function to plot line parameters on a grid of plots with a consistent color scale. This is useful
+in particular for lines with multiple components. For example, for the flux, if a line has two components, 
+this will make a grid of 3 plots containing the total combined flux, and the flux of each individual component,
+all on the same color scale. Kinematic components such as the velocity don't have an equivalent "total" that is well
+defined, so they would just get 2 plots containing the kinematics of each component.
+"""
+function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMaps, psf_interp::Spline1D, 
+    snr_thresh::Real=3.)
+
+    plotted_lines = []
+    for line ∈ keys(param_maps.lines)
+        # Remove the component index from the line name
+        line_key = Symbol(join(split(string(line), "_")[1:end-1], "_"))
+        # Dont repeat for lines that have multiple components since that's already handled within the body of this loop
+        if line_key in plotted_lines
+            continue
+        end
+
+        # Find the wavelength/index at which to get the PSF FWHM for the circle in the plot
+        line_i = findfirst(cube_fitter.lines.names .== line_key)
+        wave_i = cube_fitter.lines.λ₀[line_i]
+        latex_i = cube_fitter.lines.latex[line_i]
+        n_line_comps = sum(.!isnothing.(cube_fitter.lines.profiles[line_i, :]))
+        component_keys = [Symbol(line_key, "_$(j)") for j in 1:n_line_comps]
+        if n_line_comps < 2
+            # Dont bother for lines with only 1 component
+            continue
+        end
+
+        snr_filter = dropdims(nanmaximum(cat([param_maps.lines[comp][:SNR] for comp in component_keys]..., dims=3), dims=3), dims=3)
+
+        # Get the total flux and eqw for lines with multiple components
+        plot_total = false
+        if n_line_comps > 1
+            plot_total = true
+            total_flux = log10.(sum([exp10.(param_maps.lines[comp][:flux]) for comp in component_keys])) 
+            total_eqw = sum([param_maps.lines[comp][:eqw] for comp in component_keys])
+        end
+
+        for parameter ∈ keys(param_maps.lines[line])
+
+            # Make a combined plot for all of the line components
+            n_subplots = n_line_comps + 1 + (parameter ∈ [:flux, :eqw] && plot_total ? 1 : 0)
+            width_ratios = [[20 for _ in 1:n_subplots-1]; 1]
+
+            # Use gridspec to make the axes proper ratios
+            fig = plt.figure(figsize=(6 * (n_subplots-1), 5.4))
+            gs = fig.add_gridspec(1, n_subplots, width_ratios=width_ratios, height_ratios=(1,), wspace=0.05, hspace=0.05)
+            ax = []
+            for i in 1:n_subplots-1
+                push!(ax, fig.add_subplot(gs[1,i]))
+            end
+            cax = fig.add_subplot(gs[1,n_subplots])
+
+            # Get the minimum/maximum for the color scale based on the combined dataset
+            vmin, vmax = 0., 0.
+            if parameter == :flux && plot_total
+                vmin = quantile(total_flux[isfinite.(total_flux)], 0.01)
+                vmax = quantile(total_flux[isfinite.(total_flux)], 0.99)
+            elseif parameter == :eqw && plot_total
+                vmin = quantile(total_eqw[isfinite.(total_eqw)], 0.01)
+                vmax = quantile(total_eqw[isfinite.(total_eqw)], 0.99)
+            else
+                # Each element of 'minmax' is a tuple with the minimum and maximum for that spaxel
+                minmax = dropdims(nanextrema(cat([param_maps.lines[comp][parameter] for comp in component_keys]..., dims=3), dims=3), dims=3)
+                mindata = [m[1] for m in minmax]
+                maxdata = [m[2] for m in minmax]
+                vmin = quantile(mindata[isfinite.(mindata)], 0.01)
+                vmax = quantile(maxdata[isfinite.(maxdata)], 0.99)
+            end
+
+            cdata = nothing
+            ci = 1
+            if parameter == :flux && plot_total
+                name_i = join([line, "total_flux"], "_")
+                save_path = ""
+                _, _, cdata = plot_parameter_map(total_flux, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
+                    cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh, line_latex=latex_i,
+                    modify_ax=(fig, ax[ci]), disable_colorbar=true, colorscale_limits=(vmin, vmax))
+                ci += 1
+            end
+            if parameter == :eqw && plot_total
+                name_i = join([line, "total_eqw"], "_")
+                save_path = ""
+                _, _, cdata = plot_parameter_map(total_eqw, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
+                    cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh, line_latex=latex_i,
+                    modify_ax=(fig, ax[ci]), disable_colorbar=true, colorscale_limits=(vmin, vmax))
+                ci += 1
+            end
+            for i in 1:n_line_comps
+                data = param_maps.lines[component_keys[i]][parameter]
+                name_i = join([line, parameter], "_")
+                snr_filt = snr_filter
+                if contains(string(parameter), "SNR")
+                    snr_filt = nothing
+                end
+                save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(line_key)", "$(name_i).pdf")
+                _, _, cdata = plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i), 
+                    cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filt, snr_thresh=snr_thresh,
+                    line_latex=latex_i, modify_ax=(fig, ax[ci]), disable_colorbar=true, colorscale_limits=(vmin, vmax))
+                ci += 1
+            end
+            # Save the final figure
+            name_final = join([line_key, parameter], "_")
+            # Add the colorbar to cax
+            fig.colorbar(cdata, cax=cax, label=paramstring_to_latex(name_final, cube_fitter.cosmology))
+            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$line_key", "$(name_final).pdf")
+            plt.savefig(save_path, dpi=300, bbox_inches="tight")
+            plt.close()
+        end
+
+        push!(plotted_lines, line_key)
+    end
+end
+
 
 
 """
@@ -1091,6 +1250,7 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         # Get the components that make up the complex
         indiv_inds = findall(cube_fitter.dust_features.complexes .== dust_complex)
         indivs = [cube_fitter.dust_features.names[i] for i ∈ indiv_inds]
+        snr = dropdims(nanmaximum(cat([param_maps.dust_features[df][:SNR] for df ∈ indivs]..., dims=3), dims=3), dims=3)
 
         # Sum up individual component fluxes
         total_flux = log10.(sum([exp10.(param_maps.dust_features[df][:flux]) for df ∈ indivs]))
@@ -1100,14 +1260,14 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         comp_name = "PAH $dust_complex " * L"$\mu$m"
         save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "dust_features", "$(name_i).pdf")
         plot_parameter_map(total_flux, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
-            cube_fitter.cosmology, cube_fitter.cube.wcs, line_latex=comp_name)
+            cube_fitter.cosmology, cube_fitter.cube.wcs, line_latex=comp_name, snr_filter=snr, snr_thresh=snr_thresh)
 
         # Repeat for equivalent width
         total_eqw = sum([param_maps.dust_features[df][:eqw] for df ∈ indivs])
         name_i = "complex_$(dust_complex)_total_eqw"
         save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "dust_features", "$(name_i).pdf")
         plot_parameter_map(total_eqw, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
-            cube_fitter.cosmology, cube_fitter.cube.wcs, line_latex=comp_name)
+            cube_fitter.cosmology, cube_fitter.cube.wcs, line_latex=comp_name, snr_filter=snr, snr_thresh=snr_thresh)
     end
 
     # Absorption feature parameters
@@ -1142,6 +1302,17 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         end
     end
 
+    # Template parameters
+    for temp ∈ keys(param_maps.templates)
+        for parameter ∈ keys(param_maps.templates[temp])
+            data = param_maps.templates[temp][parameter]
+            name_i = join(["template", temp, parameter], "_")
+            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "continuum", "$(name_i).pdf")
+            plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf),
+                cube_fitter.cosmology, cube_fitter.cube.wcs)
+        end
+    end
+
     # Line parameters
     for line ∈ keys(param_maps.lines)
         # Remove the component index from the line name
@@ -1150,47 +1321,25 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         line_i = findfirst(cube_fitter.lines.names .== line_key)
         wave_i = cube_fitter.lines.λ₀[line_i]
         latex_i = cube_fitter.lines.latex[line_i]
+        n_line_comps = sum(.!isnothing.(cube_fitter.lines.profiles[line_i, :]))
+        snr_filter = dropdims(
+            nanmaximum(cat([param_maps.lines[Symbol(line_key, "_$i")][:SNR] for i in 1:n_line_comps]..., dims=3), dims=3), dims=3)
 
         for parameter ∈ keys(param_maps.lines[line])
             data = param_maps.lines[line][parameter]
             name_i = join([line, parameter], "_")
-            snr_filter = param_maps.lines[line][:SNR]
+            snr_filt = snr_filter
             if contains(string(parameter), "SNR")
-                snr_filter = nothing
+                snr_filt = nothing
             end
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(line_key)", "$(name_i).pdf")
             plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i), 
-                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
+                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filt, snr_thresh=snr_thresh,
                 line_latex=latex_i)
         end
     end
-
-    # Total parameters for lines with multiple components
-    for (k, name) ∈ enumerate(cube_fitter.lines.names)
-        n_line_comps = sum(.!isnothing.(cube_fitter.lines.profiles[k, :]))
-        wave_i = cube_fitter.lines.λ₀[k]
-        snr_filter = param_maps.lines[Symbol(name, "_1")][:SNR]
-        if n_line_comps > 1
-            component_keys = [Symbol(name, "_$(j)") for j in 1:n_line_comps]
-
-            # Total flux
-            total_flux = log10.(sum([exp10.(param_maps.lines[comp][:flux]) for comp in component_keys]))
-            name_i = join([name, "total_flux"], "_")
-            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(name)", "$(name_i).pdf")
-            plot_parameter_map(total_flux, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
-                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
-                line_latex=cube_fitter.lines.latex[k])
-
-            # Total equivalent width
-            total_eqw = sum([param_maps.lines[comp][:eqw] for comp in component_keys])
-            name_i = join([name, "total_eqw"], "_")
-            save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(name)", "$(name_i).pdf")
-            plot_parameter_map(total_eqw, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
-                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
-                line_latex=cube_fitter.lines.latex[k])
-            
-        end
-    end
+    # Make combined plots for lines with multiple components
+    plot_multiline_parameters(cube_fitter, param_maps, psf_interp, snr_thresh)
 
     # Total parameters for combined lines
     for comb_lines in cube_fitter.lines.combined
@@ -1341,6 +1490,8 @@ function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
     end
 
     # Line parameters
+
+    # Line parameters
     for line ∈ keys(param_maps.lines)
         # Remove the component index from the line name
         line_key = Symbol(join(split(string(line), "_")[1:end-1], "_"))
@@ -1348,28 +1499,33 @@ function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         line_i = findfirst(cube_fitter.lines.names .== line_key)
         wave_i = cube_fitter.lines.λ₀[line_i]
         latex_i = cube_fitter.lines.latex[line_i]
+        n_line_comps = sum(.!isnothing.(cube_fitter.lines.profiles[line_i, :]))
+        snr_filter = dropdims(
+            nanmaximum(cat([param_maps.lines[Symbol(line_key, "_$i")][:SNR] for i in 1:n_line_comps]..., dims=3), dims=3), dims=3)
 
         for parameter ∈ keys(param_maps.lines[line])
             data = param_maps.lines[line][parameter]
             name_i = join([line, parameter], "_")
-            snr_filter = param_maps.lines[line][:SNR]
+            snr_filt = snr_filter
             if contains(string(parameter), "SNR")
-                snr_filter = nothing
+                snr_filt = nothing
             end
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(line_key)", "$(name_i).pdf")
             plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i), 
-                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
+                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filt, snr_thresh=snr_thresh,
                 line_latex=latex_i)
         end
     end
+    # Make combined plots for lines with multiple components
+    plot_multiline_parameters(cube_fitter, param_maps, psf_interp, snr_thresh)
 
     # Total parameters for lines with multiple components
     for (k, name) ∈ enumerate(cube_fitter.lines.names)
         n_line_comps = sum(.!isnothing.(cube_fitter.lines.profiles[k, :]))
         wave_i = cube_fitter.lines.λ₀[k]
-        snr_filter = param_maps.lines[Symbol(name, "_1")][:SNR]
         if n_line_comps > 1
             component_keys = [Symbol(name, "_$(j)") for j in 1:n_line_comps]
+            snr_filter = dropdims(maximum(cat([param_maps.lines[comp][:SNR] for comp in component_keys]..., dims=3), dims=3), dims=3)
 
             # Total flux
             total_flux = log10.(sum([exp10.(param_maps.lines[comp][:flux]) for comp in component_keys]))
@@ -1562,7 +1718,7 @@ Save the best fit results for the cube into two FITS files: one for the full 3D 
 individual model components, and one for 2D parameter maps of the best-fit parameters for each spaxel in the cube.
 """
 write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel, param_maps::ParamMaps, 
-    param_errs::Vector{<:ParamMaps}; aperture::Union{Vector{PyObject},Nothing}=nothing) =
+    param_errs::Vector{<:ParamMaps}; aperture::Union{Vector{<:Aperture.AbstractAperture},String,Nothing}=nothing) =
     cube_fitter.spectral_region == :MIR ?
     write_fits_mir(cube_fitter, cube_data, cube_model, param_maps, param_errs; aperture=aperture) :
     write_fits_opt(cube_fitter, cube_data, cube_model, param_maps, param_errs; aperture=aperture)
@@ -1570,76 +1726,90 @@ write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel
 
 # MIR implementation of the write_fits function
 function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel, param_maps::ParamMaps, 
-    param_errs::Vector{<:ParamMaps}; aperture::Union{Vector{PyObject},Nothing}=nothing)
+    param_errs::Vector{<:ParamMaps}; aperture::Union{Vector{<:Aperture.AbstractAperture},String,Nothing}=nothing)
 
     aperture_keys = []
     aperture_vals = []
     aperture_comments = []
     # If using an aperture, extract its properties 
-    if !isnothing(aperture)
-        # Get the RA and Dec of the centroid
-        sky_aperture = aperture[1].to_sky(cube_fitter.cube.wcs)
-        sky_cent = sky_aperture.positions
-        ra_cent = format_angle(ha2hms(sky_cent.ra[1]/15); delim=["h","m","s"])
-        dec_cent = format_angle(deg2dms(sky_cent.dec[1]); delim=["d","m","s"])
+    if typeof(aperture) <: Aperture.AbstractAperture
 
         # Get the name (giving the shape of the aperture: circular, elliptical, or rectangular)
-        ap_shape = aperture[1].__class__.__name__
+        ap_shape = string(typeof(aperture))
 
-        aperture_keys = ["AP_SHAPE", "AP_RA", "AP_DEC"]
-        aperture_vals = Any[ap_shape, ra_cent, dec_cent]
-        aperture_comments = ["The shape of the spectrum extraction aperture", "The RA of the aperture",
-            "The dec of the aperture"]
+        aperture_keys = ["AP_SHAPE", "AP_X", "AP_Y"]
+        aperture_vals = Any[ap_shape, aperture.x, aperture.y]
+        aperture_comments = ["The shape of the spectrum extraction aperture", "The x coordinate of the aperture",
+            "The y coordinate of the aperture"]
 
         # Get the properties, i.e. radius for circular 
-        if ap_shape == "CircularAperture"
-            append!(aperture_keys, ["AP_RADIUS"])
-            append!(aperture_vals, sky_aperture.r[1])
-            append!(aperture_comments, ["Radius of aperture in arcsec"])
-        elseif ap_shape == "EllipticalAperture"
-            append!(aperture_keys, ["AP_A", "AP_B", "AP_PA"])
-            append!(aperture_vals, [sky_aperture.a[1], sky_aperture.b[1], sky_aperture.theta[1]])
-            append!(aperture_comments, ["Semimajor axis of aperture in arcsec", 
-                "Semiminor axis of aperture in arcsec", "Aperture position angle in rad."])
-        elseif ap_shape == "RectangularAperture"
-            append!(aperture_keys, ["AP_W", "AP_H", "AP_PA"])
-            append!(aperture_vals, [sky_aperture.w[1], sky_aperture.h[1], sky_aperture.theta[1]])
-            append!(aperture_comments, ["Width of aperture in arcsec", 
-                "Height of aperture in arcsec", "Aperture position angle in rad."])
+        if contains(ap_shape, "CircularAperture")
+            push!(aperture_keys, "AP_RADIUS")
+            push!(aperture_vals, aperture.r)
+            push!(aperture_comments, "Radius of aperture (pixels)")
+        elseif contains(ap_shape, "EllipticalAperture")
+            append!(aperture_keys, ["AP_A", "AP_B", "AP_ANGLE"])
+            append!(aperture_vals, [aperture.a, aperture.b, aperture.θ])
+            append!(aperture_comments, ["Semimajor axis of aperture (pixels)", 
+                "Semiminor axis of aperture (pixels)", "Aperture angle in deg."])
+        elseif contains(ap_shape, "RectangularAperture")
+            append!(aperture_keys, ["AP_W", "AP_H", "AP_ANGLE"])
+            append!(aperture_vals, [aperture.w, aperture.h, aperture.θ])
+            append!(aperture_comments, ["Width of aperture (pixels)", 
+                "Height of aperture (pixels)", "Aperture angle in deg."])
+        elseif contains(ap_shape, "CircularAnnulus")
+            append!(aperture_keys, ["AP_R_IN", "AP_R_OUT"])
+            append!(aperture_vals, [aperture.r_in, aperture.r_out])
+            append!(aperture_comments, ["Inner radius of annulus (pixels)", "Outer radius of annulus (pixels)"])
+        elseif contains(ap_shape, "EllipticalAnnulus")
+            append!(aperture_keys, ["AP_A_IN", "AP_A_OUT", "AP_B_IN", "AP_B_OUT", "AP_ANGLE"])
+            append!(aperture_vals, [aperture.a_in, aperture.a_out, aperture.b_in, aperture.b_out, aperture.θ])
+            append!(aperture_comments, ["Inner semimajor axis of annulus (pixels)", "Outer semimajor axis of annulus (pixels)",
+                "Inner semiminor axis of annulus (pixels)", "Outer semiminor axis of annulus (pixels)", "Annulus angle in deg."])
+        elseif contains(ap_shape, "RectangularAnnulus")
+            append!(aperture_keys, ["AP_W_IN", "AP_W_OUT", "AP_H_IN", "AP_H_OUT", "AP_ANGLE"])
+            append!(aperture_vals, [aperture.w_in, aperture.w_out, aperture.h_in, aperture.h_out, aperture.θ])
+            append!(aperture_comments, ["Inner width of annulus (pixels)", "Outer width of annulus (pixels)",
+                "Inner height of annulus (pixels)", "Outer height of annulus (pixels)", "Aperture angle in deg."])    
         end
 
         # Also append the aperture area
-        append!(aperture_keys, ["AP_AR_SR"])
-        append!(aperture_vals, [cube_data.area_sr[1]])
-        append!(aperture_comments, ["Area of aperture in steradians"])
+        push!(aperture_keys, "AP_AREA")
+        push!(aperture_vals, get_area(aperture))
+        push!(aperture_comments, "Area of aperture in pixels")
+    
+    elseif aperture isa String
+
+        n_pix = [sum(.~cube_fitter.cube.mask[:, :, i]) for i in axes(cube_fitter.cube.mask, 3)]
+        aperture_keys = ["AP_SHAPE", "AP_AREA"]
+        aperture_vals = Any["full_cube", median(n_pix[isfinite.(n_pix)])]
+
     end
 
     # Header information
     hdr = FITSHeader(
         Vector{String}(cat(["TARGNAME", "REDSHIFT", "CHANNEL", "BAND", "PIXAR_SR", "RA", "DEC", "WCSAXES",
-            "CDELT1", "CDELT2", "CTYPE1", "CTYPE2", "CRPIX1", "CRPIX2", "CRVAL1", "CRVAL2", "CUNIT1", "CUNIT2", 
-            "PC1_1", "PC1_2", "PC2_1", "PC2_2"], aperture_keys, dims=1)),
+            "CDELT1", "CDELT2", "CDELT3", "CTYPE1", "CTYPE2", "CTYPE3", "CRPIX1", "CRPIX2", "CRPIX3", 
+            "CRVAL1", "CRVAL2", "CRVAL3", "CUNIT1", "CUNIT2", "CUNIT3", "PC1_1", "PC1_2", "PC1_3", 
+            "PC2_1", "PC2_2", "PC2_3", "PC3_1", "PC3_2", "PC3_3"], aperture_keys, dims=1)),
 
         cat([cube_fitter.name, cube_fitter.z, cube_fitter.cube.channel, cube_fitter.cube.band, cube_fitter.cube.Ω, 
-         cube_fitter.cube.α, cube_fitter.cube.δ, cube_fitter.cube.wcs.wcs.naxis, 
-         cube_fitter.cube.wcs.wcs.cdelt[1], cube_fitter.cube.wcs.wcs.cdelt[2], 
-         cube_fitter.cube.wcs.wcs.ctype[1], cube_fitter.cube.wcs.wcs.ctype[2], 
-         cube_fitter.cube.wcs.wcs.crpix[1], cube_fitter.cube.wcs.wcs.crpix[2], 
-         cube_fitter.cube.wcs.wcs.crval[1], cube_fitter.cube.wcs.wcs.crval[2], 
-         cube_fitter.cube.wcs.wcs.cunit[1].name, cube_fitter.cube.wcs.wcs.cunit[2].name, 
-         cube_fitter.cube.wcs.wcs.pc[1,1], cube_fitter.cube.wcs.wcs.pc[1,2], 
-         cube_fitter.cube.wcs.wcs.pc[2,1], cube_fitter.cube.wcs.wcs.pc[2,2]], aperture_vals, dims=1),
+         cube_fitter.cube.α, cube_fitter.cube.δ, cube_fitter.cube.wcs.naxis],
+         cube_fitter.cube.wcs.cdelt, cube_fitter.cube.wcs.ctype, cube_fitter.cube.wcs.crpix,
+         cube_fitter.cube.wcs.crval, cube_fitter.cube.wcs.cunit, reshape(cube_fitter.cube.wcs.pc, (9,)), aperture_vals, dims=1),
 
         Vector{String}(cat(["Target name", "Target redshift", "MIRI channel", "MIRI band",
         "Solid angle per pixel (rad.)", "Right ascension of target (deg.)", "Declination of target (deg.)",
         "number of World Coordinate System axes", 
-        "first axis increment per pixel", "second axis increment per pixel",
-        "first axis coordinate type", "second axis coordinate type",
-        "axis 1 coordinate of the reference pixel", "axis 2 coordinate of the reference pixel",
-        "first axis value at the reference pixel", "second axis value at the reference pixel",
-        "first axis units", "second axis units",
-        "linear transformation matrix element", "linear transformation matrix element",
-        "linear transformation matrix element", "linear transformation matrix element"], aperture_comments, dims=1))
+        "first axis increment per pixel", "second axis increment per pixel", "third axis increment per pixel",
+        "first axis coordinate type", "second axis coordinate type", "third axis coordinate type",
+        "axis 1 coordinate of the reference pixel", "axis 2 coordinate of the reference pixel", "axis 3 coordinate of the reference pixel",
+        "first axis value at the reference pixel", "second axis value at the reference pixel", "third axis value at the reference pixel",
+        "first axis units", "second axis units", "third axis units",
+        "linear transformation matrix element", "linear transformation matrix element", "linear transformation matrix element",
+        "linear transformation matrix element", "linear transformation matrix element", "linear transformation matrix element",
+        "linear transformation matrix element", "linear transformation matrix element", "linear transformation matrix element"], 
+        aperture_comments, dims=1))
     )
 
     if cube_fitter.save_full_model
@@ -1649,8 +1819,8 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
             @debug "Writing 3D model FITS HDUs"
             # Permute the wavelength axis here back to the third axis to be consistent with conventions
 
-            write(f, Vector{Int}(); header=hdr)                                                         # Primary HDU (empty)
-            write(f, Float32.(cube_data.I .* (1 .+ cube_fitter.z)); name="DATA")                        # Raw data 
+            write(f, Vector{Int}())                                                                     # Primary HDU (empty)
+            write(f, Float32.(cube_data.I .* (1 .+ cube_fitter.z)); name="DATA", header=hdr)            # Raw data 
             write(f, Float32.(cube_data.σ .* (1 .+ cube_fitter.z)); name="ERROR")                       # Error in the raw data
             write(f, permutedims(cube_model.model, (2,3,1)); name="MODEL")                              # Full intensity model
             write(f, permutedims(cube_model.stellar, (2,3,1)); name="STELLAR_CONTINUUM")                # Stellar continuum model
@@ -1661,13 +1831,16 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 write(f, permutedims(cube_model.power_law[:, :, :, l], (2,3,1)); name="POWER_LAW_$l")
             end
             for (j, df) ∈ enumerate(cube_fitter.dust_features.names)
-                write(f, permutedims(cube_model.dust_features[:, :, :, j], (2,3,1)); name="$df")        # Dust feature profiles
+                write(f, permutedims(cube_model.dust_features[:, :, :, j], (2,3,1)); name=uppercase("$df"))        # Dust feature profiles
             end
             for (m, ab) ∈ enumerate(cube_fitter.abs_features.names)                                     
-                write(f, permutedims(cube_model.abs_features[:, :, :, m], (2,3,1)); name="$ab")         # Absorption feature profiles
+                write(f, permutedims(cube_model.abs_features[:, :, :, m], (2,3,1)); name=uppercase("$ab"))         # Absorption feature profiles
+            end
+            for (q, tp) ∈ enumerate(cube_fitter.template_names)
+                write(f, permutedims(cube_model.templates[:, :, :, q], (2,3,1)); name=uppercase("TEMPLATE_$tp"))   # Template profiles
             end
             for (k, line) ∈ enumerate(cube_fitter.lines.names)
-                write(f, permutedims(cube_model.lines[:, :, :, k], (2,3,1)); name="$line")              # Emission line profiles
+                write(f, permutedims(cube_model.lines[:, :, :, k], (2,3,1)); name=uppercase("$line"))              # Emission line profiles
             end
             write(f, permutedims(cube_model.extinction, (2,3,1)); name="EXTINCTION")                    # Extinction model
             write(f, permutedims(cube_model.abs_ice, (2,3,1)); name="ABS_ICE")                          # Ice Absorption model
@@ -1695,14 +1868,17 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 write_key(f["$df"], "BUNIT", "MJy/sr")
             end
             for ab ∈ cube_fitter.abs_features.names
-                write_key(f["$ab"], "BUNIT", "unitless")
+                write_key(f["$ab"], "BUNIT", "-")
+            end
+            for tp ∈ cube_fitter.template_names
+                write_key(f["TEMPLATE_$tp"], "BUNIT", "MJy/sr")
             end
             for line ∈ cube_fitter.lines.names
                 write_key(f["$line"], "BUNIT", "MJy/sr")
             end
-            write_key(f["EXTINCTION"], "BUNIT", "unitless")
-            write_key(f["ABS_ICE"], "BUNIT", "unitless")
-            write_key(f["ABS_CH"], "BUNIT", "unitless")
+            write_key(f["EXTINCTION"], "BUNIT", "-")
+            write_key(f["ABS_ICE"], "BUNIT", "-")
+            write_key(f["ABS_CH"], "BUNIT", "-")
             if cube_fitter.fit_sil_emission
                 write_key(f["HOT_DUST"], "BUNIT", "MJy/sr")
             end
@@ -1717,18 +1893,18 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
 
             @debug "Writing 2D parameter map FITS HDUs"
 
-            write(f, Vector{Int}(), header=hdr)  # Primary HDU (empty)
+            write(f, Vector{Int}())  # Primary HDU (empty)
 
             # Stellar continuum parameters
-            for parameter ∈ keys(param_data.stellar_continuum)
+            for (i, parameter) ∈ enumerate(keys(param_data.stellar_continuum))
                 data = param_data.stellar_continuum[parameter]
                 name_i = join(["stellar_continuum", parameter], "_")
                 if occursin("amp", name_i)
-                    bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                    bunit = "log(erg.s-1.cm-2.Hz-1.sr-1)"
                 elseif occursin("temp", name_i)
-                    bunit = "Kelvin"
+                    bunit = "K"
                 end
-                write(f, data; name=name_i)
+                write(f, data; name=uppercase(name_i), header=i==1 ? hdr : nothing)
                 write_key(f[name_i], "BUNIT", bunit)
             end
 
@@ -1738,11 +1914,11 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.dust_continuum[i][parameter]
                     name_i = join(["dust_continuum", i, parameter], "_")
                     if occursin("amp", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                        bunit = "log(erg.s-1.cm-2.Hz-1.sr-1)"
                     elseif occursin("temp", name_i)
-                        bunit = "Kelvin"
+                        bunit = "K"
                     end
-                    write(f, data; name=name_i)
+                    write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)  
                 end
             end
@@ -1753,11 +1929,11 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.power_law[l][parameter]
                     name_i = join(["power_law", l, parameter], "_")
                     if occursin("amp", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                        bunit = "log(erg.s-1.cm-2.Hz-1.sr-1)"
                     elseif occursin("index", name_i)
-                        bunit = "unitless"
+                        bunit = "-"
                     end
-                    write(f, data; name=name_i)
+                    write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
                 end
             end
@@ -1768,15 +1944,15 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.hot_dust[parameter]
                     name_i = join(["hot_dust", parameter], "_")
                     if occursin("amp", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                        bunit = "log(erg.s-1.cm-2.Hz-1.sr-1)"
                     elseif occursin("temp", name_i)
-                        bunit = "Kelvin"
+                        bunit = "K"
                     elseif occursin("frac", name_i) || occursin("tau", name_i)
-                        bunit = "unitless"
+                        bunit = "-"
                     elseif occursin("peak", name_i)
                         bunit = "um"
                     end
-                    write(f, data; name=name_i)
+                    write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
                 end
             end
@@ -1787,15 +1963,15 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.dust_features[df][parameter]
                     name_i = join(["dust_features", df, parameter], "_")
                     if occursin("amp", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                        bunit = "log(erg.s-1.cm-2.Hz-1.sr-1)"
                     elseif occursin("fwhm", name_i) || occursin("mean", name_i) || occursin("eqw", name_i)
                         bunit = "um"
                     elseif occursin("flux", name_i)
-                        bunit = "log10(F / erg s^-1 cm^-2)"
+                        bunit = "log(erg.s-1.cm-2)"
                     elseif occursin("SNR", name_i) || occursin("index", name_i) || occursin("cutoff", name_i)
-                        bunit = "unitless"
+                        bunit = "-"
                     end
-                    write(f, data; name=name_i)
+                    write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
                 end
             end
@@ -1806,11 +1982,11 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.abs_features[ab][parameter]
                     name_i = join(["abs_features", ab, parameter], "_")
                     if occursin("tau", name_i)
-                        bunit = "unitless"
+                        bunit = "-"
                     elseif occursin("fwhm", name_i) || occursin("mean", name_i) || occursin("eqw", name_i)
                         bunit = "um"
                     end
-                    write(f, data; name=name_i)
+                    write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
                 end
             end
@@ -1819,9 +1995,20 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
             for parameter ∈ keys(param_data.extinction)
                 data = param_data.extinction[parameter]
                 name_i = join(["extinction", parameter], "_")
-                bunit = "unitless"
-                write(f, data; name=name_i)
+                bunit = "-"
+                write(f, data; name=uppercase(name_i))
                 write_key(f[name_i], "BUNIT", bunit)  
+            end
+
+            # Template parameters
+            for temp ∈ keys(param_data.templates)
+                for parameter ∈ keys(param_data.templates[temp])
+                    data = param_data.templates[temp][parameter]
+                    name_i = join(["templates", temp, parameter], "_")
+                    bunit = "-"
+                    write(f, data; name=uppercase(name_i))
+                    write_key(f[name_i], "BUNIT", bunit)
+                end
             end
 
             # Line parameters
@@ -1830,18 +2017,18 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.lines[line][parameter]
                     name_i = join(["lines", line, parameter], "_")
                     if occursin("amp", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                        bunit = "log(erg.s-1.cm-2.Hz-1.sr-1)"
                     elseif occursin("fwhm", name_i) || occursin("voff", name_i)
                         bunit = "km/s"
                     elseif occursin("flux", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2)"
+                        bunit = "log(erg.s-1.cm-2)"
                     elseif occursin("eqw", name_i)
                         bunit = "um"
                     elseif occursin("SNR", name_i) || occursin("h3", name_i) || 
                         occursin("h4", name_i) || occursin("mixing", name_i)
-                        bunit = "unitless"
+                        bunit = "-"
                     end
-                    write(f, data; name=name_i)
+                    write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
                 end
             end
@@ -1851,10 +2038,15 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 for parameter ∈ keys(param_data.statistics)
                     data = param_maps.statistics[parameter]
                     name_i = join(["statistics", parameter], "_")
-                    bunit = "unitless"
-                    write(f, data; name=name_i)
+                    bunit = "-"
+                    write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
                 end
+            end
+              
+            # Add another HDU for the voronoi bin map, if applicable
+            if !isnothing(cube_fitter.cube.voronoi_bins)
+                write(f, cube_fitter.cube.voronoi_bins; name="VORONOI_BINS")
             end
         end
     end
@@ -1863,77 +2055,92 @@ end
 
 # Optical implementation of the write_fits function
 function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel, param_maps::ParamMaps, 
-    param_errs::Vector{<:ParamMaps}; aperture::Union{Vector{PyObject},Nothing}=nothing)
+    param_errs::Vector{<:ParamMaps}; aperture::Union{Vector{Aperture.AbstractAperture},Nothing}=nothing)
 
     aperture_keys = []
     aperture_vals = []
     aperture_comments = []
     # If using an aperture, extract its properties 
-    if !isnothing(aperture)
-        # Get the RA and Dec of the centroid
-        sky_aperture = aperture[1].to_sky(cube_fitter.cube.wcs)
-        sky_cent = sky_aperture.positions
-        ra_cent = format_angle(ha2hms(sky_cent.ra[1]/15); delim=["h","m","s"])
-        dec_cent = format_angle(deg2dms(sky_cent.dec[1]); delim=["d","m","s"])
+    if typeof(aperture) <: Aperture.AbstractAperture
 
         # Get the name (giving the shape of the aperture: circular, elliptical, or rectangular)
-        ap_shape = aperture[1].__class__.__name__
+        ap_shape = string(typeof(aperture))
 
-        aperture_keys = ["AP_SHAPE", "AP_RA", "AP_DEC"]
-        aperture_vals = Any[ap_shape, ra_cent, dec_cent]
-        aperture_comments = ["The shape of the spectrum extraction aperture", "The RA of the aperture",
-            "The dec of the aperture"]
+        aperture_keys = ["AP_SHAPE", "AP_X", "AP_Y"]
+        aperture_vals = Any[ap_shape, aperture.x, aperture.y]
+        aperture_comments = ["The shape of the spectrum extraction aperture", "The x coordinate of the aperture",
+            "The y coordinate of the aperture"]
 
         # Get the properties, i.e. radius for circular 
-        if ap_shape == "CircularAperture"
-            append!(aperture_keys, ["AP_RADIUS"])
-            append!(aperture_vals, sky_aperture.r[1])
-            append!(aperture_comments, ["Radius of aperture in arcsec"])
-        elseif ap_shape == "EllipticalAperture"
-            append!(aperture_keys, ["AP_A", "AP_B", "AP_PA"])
-            append!(aperture_vals, [sky_aperture.a[1], sky_aperture.b[1], sky_aperture.theta[1]])
-            append!(aperture_comments, ["Semimajor axis of aperture in arcsec", 
-                "Semiminor axis of aperture in arcsec", "Aperture position angle in rad."])
-        elseif ap_shape == "RectangularAperture"
-            append!(aperture_keys, ["AP_W", "AP_H", "AP_PA"])
-            append!(aperture_vals, [sky_aperture.w[1], sky_aperture.h[1], sky_aperture.theta[1]])
-            append!(aperture_comments, ["Width of aperture in arcsec", 
-                "Height of aperture in arcsec", "Aperture position angle in rad."])
+        if contains(ap_shape, "CircularAperture")
+            push!(aperture_keys, "AP_RADIUS")
+            push!(aperture_vals, aperture.r)
+            push!(aperture_comments, "Radius of aperture (pixels)")
+        elseif contains(ap_shape, "EllipticalAperture")
+            append!(aperture_keys, ["AP_A", "AP_B", "AP_ANGLE"])
+            append!(aperture_vals, [aperture.a, aperture.b, aperture.θ])
+            append!(aperture_comments, ["Semimajor axis of aperture (pixels)", 
+                "Semiminor axis of aperture (pixels)", "Aperture angle in deg."])
+        elseif contains(ap_shape, "RectangularAperture")
+            append!(aperture_keys, ["AP_W", "AP_H", "AP_ANGLE"])
+            append!(aperture_vals, [aperture.w, aperture.h, aperture.θ])
+            append!(aperture_comments, ["Width of aperture (pixels)", 
+                "Height of aperture (pixels)", "Aperture angle in deg."])
+        elseif contains(ap_shape, "CircularAnnulus")
+            append!(aperture_keys, ["AP_R_IN", "AP_R_OUT"])
+            append!(aperture_vals, [aperture.r_in, aperture.r_out])
+            append!(aperture_comments, ["Inner radius of annulus (pixels)", "Outer radius of annulus (pixels)"])
+        elseif contains(ap_shape, "EllipticalAnnulus")
+            append!(aperture_keys, ["AP_A_IN", "AP_A_OUT", "AP_B_IN", "AP_B_OUT", "AP_ANGLE"])
+            append!(aperture_vals, [aperture.a_in, aperture.a_out, aperture.b_in, aperture.b_out, aperture.θ])
+            append!(aperture_comments, ["Inner semimajor axis of annulus (pixels)", "Outer semimajor axis of annulus (pixels)",
+                "Inner semiminor axis of annulus (pixels)", "Outer semiminor axis of annulus (pixels)", "Annulus angle in deg."])
+        elseif contains(ap_shape, "RectangularAnnulus")
+            append!(aperture_keys, ["AP_W_IN", "AP_W_OUT", "AP_H_IN", "AP_H_OUT", "AP_ANGLE"])
+            append!(aperture_vals, [aperture.w_in, aperture.w_out, aperture.h_in, aperture.h_out, aperture.θ])
+            append!(aperture_comments, ["Inner width of annulus (pixels)", "Outer width of annulus (pixels)",
+                "Inner height of annulus (pixels)", "Outer height of annulus (pixels)", "Aperture angle in deg."])   
         end
 
         # Also append the aperture area
-        append!(aperture_keys, ["AP_AR_SR"])
-        append!(aperture_vals, [cube_data.area_sr[1]])
-        append!(aperture_comments, ["Area of aperture in steradians"])
-    end
+        push!(aperture_keys, "AP_AREA")
+        push!(aperture_vals, get_area(aperture))
+        push!(aperture_comments, "Area of aperture in pixels")
+    
+    elseif aperture isa String
 
+        n_pix = [sum(.~cube_fitter.cube.mask[:, :, i]) for i in axes(cube_fitter.cube.mask, 3)]
+        aperture_keys = ["AP_SHAPE", "AP_AREA"]
+        aperture_vals = Any["full_cube", median(n_pix[isfinite.(n_pix)])]
+
+    end
+    
     # Header information
     if !isnothing(cube_fitter.cube.wcs)
+
         hdr = FITSHeader(
             Vector{String}(cat(["TARGNAME", "REDSHIFT", "CHANNEL", "BAND", "PIXAR_SR", "RA", "DEC", "WCSAXES",
-                "CDELT1", "CDELT2", "CTYPE1", "CTYPE2", "CRPIX1", "CRPIX2", "CRVAL1", "CRVAL2", "CUNIT1", "CUNIT2", 
-                "PC1_1", "PC1_2", "PC2_1", "PC2_2"], aperture_keys, dims=1)),
+                "CDELT1", "CDELT2", "CDELT3", "CTYPE1", "CTYPE2", "CTYPE3", "CRPIX1", "CRPIX2", "CRPIX3", 
+                "CRVAL1", "CRVAL2", "CRVAL3", "CUNIT1", "CUNIT2", "CUNIT3", "PC1_1", "PC1_2", "PC1_3", 
+                "PC2_1", "PC2_2", "PC2_3", "PC3_1", "PC3_2", "PC3_3"], aperture_keys, dims=1)),
 
             cat([cube_fitter.name, cube_fitter.z, cube_fitter.cube.channel, cube_fitter.cube.band, cube_fitter.cube.Ω, 
-            cube_fitter.cube.α, cube_fitter.cube.δ, cube_fitter.cube.wcs.wcs.naxis, 
-            cube_fitter.cube.wcs.wcs.cdelt[1], cube_fitter.cube.wcs.wcs.cdelt[2], 
-            cube_fitter.cube.wcs.wcs.ctype[1], cube_fitter.cube.wcs.wcs.ctype[2], 
-            cube_fitter.cube.wcs.wcs.crpix[1], cube_fitter.cube.wcs.wcs.crpix[2], 
-            cube_fitter.cube.wcs.wcs.crval[1], cube_fitter.cube.wcs.wcs.crval[2], 
-            cube_fitter.cube.wcs.wcs.cunit[1].name, cube_fitter.cube.wcs.wcs.cunit[2].name, 
-            cube_fitter.cube.wcs.wcs.pc[1,1], cube_fitter.cube.wcs.wcs.pc[1,2], 
-            cube_fitter.cube.wcs.wcs.pc[2,1], cube_fitter.cube.wcs.wcs.pc[2,2]], aperture_vals, dims=1),
+            cube_fitter.cube.α, cube_fitter.cube.δ, cube_fitter.cube.wcs.naxis],
+            cube_fitter.cube.wcs.cdelt, cube_fitter.cube.wcs.ctype, cube_fitter.cube.wcs.crpix,
+            cube_fitter.cube.wcs.crval, cube_fitter.cube.wcs.cunit, reshape(cube_fitter.cube.wcs.pc, (9,)), aperture_vals, dims=1),
 
             Vector{String}(cat(["Target name", "Target redshift", "MIRI channel", "MIRI band",
             "Solid angle per pixel (rad.)", "Right ascension of target (deg.)", "Declination of target (deg.)",
             "number of World Coordinate System axes", 
-            "first axis increment per pixel", "second axis increment per pixel",
-            "first axis coordinate type", "second axis coordinate type",
-            "axis 1 coordinate of the reference pixel", "axis 2 coordinate of the reference pixel",
-            "first axis value at the reference pixel", "second axis value at the reference pixel",
-            "first axis units", "second axis units",
-            "linear transformation matrix element", "linear transformation matrix element",
-            "linear transformation matrix element", "linear transformation matrix element"], aperture_comments, dims=1))
+            "first axis increment per pixel", "second axis increment per pixel", "third axis increment per pixel",
+            "first axis coordinate type", "second axis coordinate type", "third axis coordinate type",
+            "axis 1 coordinate of the reference pixel", "axis 2 coordinate of the reference pixel", "axis 3 coordinate of the reference pixel",
+            "first axis value at the reference pixel", "second axis value at the reference pixel", "third axis value at the reference pixel",
+            "first axis units", "second axis units", "third axis units",
+            "linear transformation matrix element", "linear transformation matrix element", "linear transformation matrix element",
+            "linear transformation matrix element", "linear transformation matrix element", "linear transformation matrix element",
+            "linear transformation matrix element", "linear transformation matrix element", "linear transformation matrix element"], 
+            aperture_comments, dims=1))
         )
     else
         hdr = FITSHeader(
@@ -1955,8 +2162,8 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
             @debug "Writing 3D model FITS HDUs"
             # Permute the wavelength axis here back to the third axis to be consistent with conventions
 
-            write(f, Vector{Int}(); header=hdr)                                                         # Primary HDU (empty)
-            write(f, Float32.(cube_data.I ./ (1 .+ cube_fitter.z)); name="DATA")                        # Raw data 
+            write(f, Vector{Int}())                                                                     # Primary HDU (empty)
+            write(f, Float32.(cube_data.I ./ (1 .+ cube_fitter.z)); name="DATA", header=hdr)           # Raw data 
             write(f, Float32.(cube_data.σ ./ (1 .+ cube_fitter.z)); name="ERROR")                       # Error in the raw data
             write(f, permutedims(cube_model.model, (2,3,1)); name="MODEL")                              # Full intensity model
             for i ∈ 1:size(cube_model.stellar, 4)
@@ -1972,7 +2179,7 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 write(f, permutedims(cube_model.power_law[:, :, :, j], (2,3,1)); name="POWER_LAW_$j")   # Power laws
             end
             for (k, line) ∈ enumerate(cube_fitter.lines.names)
-                write(f, permutedims(cube_model.lines[:, :, :, k], (2,3,1)); name="$line")              # Emission line profiles
+                write(f, permutedims(cube_model.lines[:, :, :, k], (2,3,1)); name=uppercase("$line"))   # Emission line profiles
             end
             write(f, permutedims(cube_model.attenuation_stars, (2,3,1)); name="ATTENUATION_STARS")      # Starlight attenuation model
             write(f, permutedims(cube_model.attenuation_gas, (2,3,1)); name="ATTENUATION_GAS")          # Gas attenuation model
@@ -1981,23 +2188,23 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
 
             # Insert physical units into the headers of each HDU -> MegaJansky per steradian for all except
             # the extinction profile, which is a multiplicative constant
-            write_key(f["DATA"], "BUNIT", "erg/s/cm^2/ang/sr")
-            write_key(f["ERROR"], "BUNIT", "erg/s/cm^2/ang/sr")
-            write_key(f["MODEL"], "BUNIT", "erg/s/cm^2/ang/sr")
+            write_key(f["DATA"], "BUNIT", "erg.s-1.cm-2.Angstrom-1.sr-1")
+            write_key(f["ERROR"], "BUNIT", "erg.s-1.cm-2.Angstrom-1.sr-1")
+            write_key(f["MODEL"], "BUNIT", "erg.s-1.cm-2.Angstrom-1.sr-1")
             for i ∈ 1:size(cube_model.stellar, 4)
-                write_key(f["STELLAR_POPULATION_$i"], "BUNIT", "erg/s/cm^2/ang/sr")
+                write_key(f["STELLAR_POPULATION_$i"], "BUNIT", "erg.s-1.cm-2.Angstrom-1.sr-1")
             end
             if cube_fitter.fit_opt_na_feii
-                write_key(f["NA_FEII"], "BUNIT", "erg/s/cm^2/ang/sr")
+                write_key(f["NA_FEII"], "BUNIT", "erg.s-1.cm-2.Angstrom-1.sr-1")
             end
             if cube_fitter.fit_opt_br_feii
-                write_key(f["BR_FEII"], "BUNIT", "erg/s/cm^2/ang/sr")
+                write_key(f["BR_FEII"], "BUNIT", "erg.s-1.cm-2.Angstrom-1.sr-1")
             end
             for j ∈ 1:size(cube_model.power_law, 4)
-                write_key(f["POWER_LAW_$j"], "BUNIT", "erg/s/cm^2/sr")
+                write_key(f["POWER_LAW_$j"], "BUNIT", "erg.s-1.cm-2.Angstrom-1.sr-1")
             end
-            write_key(f["ATTENUATION_STARS"], "BUNIT", "unitless")
-            write_key(f["ATTENUATION_GAS"], "BUNIT", "unitless")
+            write_key(f["ATTENUATION_STARS"], "BUNIT", "-")
+            write_key(f["ATTENUATION_GAS"], "BUNIT", "-")
         end
     end
 
@@ -2009,21 +2216,21 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
 
             @debug "Writing 2D parameter map FITS HDUs"
 
-            write(f, Vector{Int}(), header=hdr)  # Primary HDU (empty)
+            write(f, Vector{Int}())  # Primary HDU (empty)
 
             # Stellar population parameters
             for i ∈ keys(param_data.stellar_populations)
-                for parameter ∈ keys(param_data.stellar_populations[i])
+                for (j, parameter) ∈ enumerate(keys(param_data.stellar_populations[i]))
                     data = param_data.stellar_populations[i][parameter]
                     name_i = join(["stellar_populations", i, parameter], "_")
                     if occursin("mass", name_i)
-                        bunit = "log10(M/Msun)"
+                        bunit = "log(solMass)"
                     elseif occursin("age", name_i)
                         bunit = "Gyr"
                     elseif occursin("metallicity", name_i)
-                        bunit = "[M/H]"
+                        bunit = "-"
                     end
-                    write(f, data; name=name_i)
+                    write(f, data; name=uppercase(name_i), header=j==1 ? hdr : nothing)
                     write_key(f[name_i], "BUNIT", bunit)
                 end
             end
@@ -2033,7 +2240,7 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 data = param_data.stellar_kinematics[parameter]
                 name_i = join(["stellar_kinematics", parameter], "_")
                 bunit = "km/s"
-                write(f, data; name=name_i)
+                write(f, data; name=uppercase(name_i))
                 write_key(f[name_i], "BUNIT", bunit)
             end
 
@@ -2044,9 +2251,9 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 if occursin("E_BV", name_i)
                     bunit = "mag"
                 else
-                    bunit = "unitless"
+                    bunit = "-"
                 end
-                write(f, data; name=name_i)
+                write(f, data; name=uppercase(name_i))
                 write_key(f[name_i], "BUNIT", bunit)
             end
 
@@ -2056,11 +2263,11 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.feii[parameter]
                     name_i = join(["feii", parameter], "_")
                     if occursin("amp", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                        bunit = "log(erg.s-1.cm-2.Hz-1.sr-1)"
                     else
                         bunit = "km/s"
                     end
-                    write(f, data; name=name_i)
+                    write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
                 end
             end
@@ -2071,11 +2278,11 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.power_law[j][parameter]
                     name_i = join(["power_law", j, parameter], "_")
                     if occursin("amp", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                        bunit = "log(erg.s-1.cm-2.Hz-1.sr-1)"
                     else
-                        bunit = "unitless"
+                        bunit = "-"
                     end
-                    write(f, data; name=name_i)
+                    write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
                 end
             end
@@ -2086,18 +2293,18 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     data = param_data.lines[line][parameter]
                     name_i = join(["lines", line, parameter], "_")
                     if occursin("amp", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2 Hz^-1 sr^-1)"
+                        bunit = "log(erg.s-1.cm-2.Hz-1.sr-1)"
                     elseif occursin("fwhm", name_i) || occursin("voff", name_i)
                         bunit = "km/s"
                     elseif occursin("flux", name_i)
-                        bunit = "log10(I / erg s^-1 cm^-2)"
+                        bunit = "log(erg.s-1.cm-2)"
                     elseif occursin("eqw", name_i)
                         bunit = "um"
                     elseif occursin("SNR", name_i) || occursin("h3", name_i) || 
                         occursin("h4", name_i) || occursin("mixing", name_i)
-                        bunit = "unitless"
+                        bunit = "-"
                     end
-                    write(f, data; name=name_i)
+                    write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
                 end
             end
@@ -2107,10 +2314,15 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 for parameter ∈ keys(param_data.statistics)
                     data = param_maps.statistics[parameter]
                     name_i = join(["statistics", parameter], "_")
-                    bunit = "unitless"
-                    write(f, data; name=name_i)
+                    bunit = "-"
+                    write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)
                 end
+            end
+
+            # Add another HDU for the voronoi bin map, if applicable
+            if !isnothing(cube_fitter.cube.voronoi_bins)
+                write(f, cube_fitter.cube.voronoi_bins; name="VORONOI_BINS")
             end
         end
     end

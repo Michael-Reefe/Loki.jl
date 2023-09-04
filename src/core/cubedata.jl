@@ -52,7 +52,7 @@ mutable struct DataCube
     psf::Vector{<:Real}
     lsf::Vector{<:Real}
 
-    wcs::Union{PyObject,Nothing}
+    wcs::Union{WCSTransform,Nothing}
 
     channel::String
     band::String
@@ -66,11 +66,13 @@ mutable struct DataCube
     masked::Bool
     vacuum_wave::Bool
 
+    voronoi_bins::Union{Matrix{<:Integer},Nothing}
+
     # This is the constructor for the DataCube struct; see the DataCube docstring for details
     function DataCube(λ::Vector{<:Real}, I::Array{<:Real,3}, σ::Array{<:Real,3}, mask::Union{BitArray{3},Nothing}=nothing, 
         Ω::Real=NaN, α::Real=NaN, δ::Real=NaN, psf::Union{Vector{<:Real},Nothing}=nothing, lsf::Union{Vector{<:Real},Nothing}=nothing, 
-        wcs::Union{PyObject,Nothing}=nothing, channel::String="Generic Channel", band::String="Generic Band", spectral_region::Symbol=:MIR, 
-        rest_frame::Bool=false, masked::Bool=false, vacuum_wave::Bool=true)
+        wcs::Union{WCSTransform,Nothing}=nothing, channel::String="Generic Channel", band::String="Generic Band", spectral_region::Symbol=:MIR, 
+        rest_frame::Bool=false, masked::Bool=false, vacuum_wave::Bool=true, voronoi_bins::Union{Matrix{<:Integer},Nothing}=nothing)
 
         # Make sure inputs have the right dimensions
         @assert ndims(λ) == 1 "Wavelength vector must be 1-dimensional!"
@@ -94,7 +96,7 @@ mutable struct DataCube
         end
 
         # Return a new instance of the DataCube struct
-        new(λ, I, σ, mask, Ω, α, δ, psf, lsf, wcs, channel, band, nx, ny, nz, spectral_region, rest_frame, masked, vacuum_wave)
+        new(λ, I, σ, mask, Ω, α, δ, psf, lsf, wcs, channel, band, nx, ny, nz, spectral_region, rest_frame, masked, vacuum_wave, voronoi_bins)
     end
 
 end
@@ -139,17 +141,8 @@ function from_fits_jwst(filename::String)::DataCube
 
     @debug "FITS data dimensions: ($nx, $ny, $nz), solid angle per spaxel: $Ω"
 
-    # Construct 3D World coordinate system to convert from pixels to (RA,Dec,wave)
-    # wcs = py_wcs.WCS(naxis=3)
-    # wcs.wcs.cdelt = [hdr["CDELT1"], hdr["CDELT2"], hdr["CDELT3"]]
-    # wcs.wcs.ctype = [hdr["CTYPE1"], hdr["CTYPE2"], hdr["CTYPE3"]]
-    # wcs.wcs.crpix = [hdr["CRPIX1"], hdr["CRPIX2"], hdr["CRPIX3"]]
-    # wcs.wcs.crval = [hdr["CRVAL1"], hdr["CRVAL2"], hdr["CRVAL3"]]
-    # wcs.wcs.cunit = [hdr["CUNIT1"], hdr["CUNIT2"], hdr["CUNIT3"]]
-    # wcs.wcs.pc = [hdr["PC1_1"] hdr["PC1_2"] hdr["PC1_3"]; hdr["PC2_1"] hdr["PC2_2"] hdr["PC2_3"]; hdr["PC3_1"] hdr["PC3_2"] hdr["PC3_3"]]
-
-    # Only save the spatial axes as the WCS since we create the spectral axis separately
-    wcs = py_wcs.WCS(read_header(hdu["SCI"], String), naxis=2)
+    # Construct 3D World coordinate system to convert from pixels to (RA,Dec,wave) and vice versa
+    wcs = WCS.from_header(read_header(hdu["SCI"], String))[1]
 
     # Wavelength vector
     λ = try
@@ -283,8 +276,8 @@ function to_vacuum_wavelength!(cube::DataCube; linear_resample::Bool=true)
     if !cube.vacuum_wave
         @debug "Converting the wavelength vector of cube with channel $(cube.channel), band $(cube.band)" *
             " to vacuum wavelengths."
-        # Convert to vacuum wavelengths
-        cube.λ = air_to_vacuum.(cube.λ)
+        # Convert to vacuum wavelengths (airtovac uses Angstroms, 1 Angstrom = 10^-4 μm)
+        cube.λ = airtovac.(cube.λ .* 1e4) .* 1e-4
         # Optionally resample back onto a linear grid
         if linear_resample
             λlin = range(minimum(cube.λ), maximum(cube.λ), length=length(cube.λ))
@@ -420,95 +413,152 @@ function interpolate_nans!(cube::DataCube)
 end
 
 
-######################################### APERTURE PHOTOMETRY ###############################################
-
-
 """
-    make_aperture(cube, type, ra, dec, params...; [auto_centroid, scale_psf, box_size])
+    calculate_statistical_errors!(cube)
 
-Create an aperture using python's photutils library.
-
-# Arguments
-- `cube::DataCube`: The DataCube struct to create the aperture for
-- `type::Symbol`: Must be one of :Circular, :Elliptical, or :Rectangular
-- `ra::String`: Right ascension in sexagesimal hours
-- `dec::String`: Declination in sexagesimal degrees
-- `params...`: Varying number of parameters for the aperture depending on `type`.
-    For circular apertures, the only parameter is the radius in arcseconds.
-    For elliptical apertures, the parameters are the semimajor and semiminor axes in arcseconds, and the position angle in degrees
-    For rectangular apertures, the parameters are the width and height in arcseconds, and the position angle in degrees
-- `auto_centroid::Bool=false`: if true, adjusts the center (ra,dec) to the closest peak in brightness 
-- `scale_psf::Bool=false`: if true, creates a vector of apertures that scale up in radius at the same rate that the PSF scales up
-- `box_size::Integer=11`: if `auto_centroid` is true, this gives the box size to search for a local peak in brightness, in pixels
+This function calculates the 'statistical' errors of the given IFU cube, replacing its error cube.
+The statistical errors are defined as the standard deviation of the residuals between the flux and a cubic spline
+fit to the flux, within a small window (60 pixels). Emission lines are masked out during this process.
 """
-function make_aperture(cube::DataCube, type::Symbol, ra::String, dec::String, params...; auto_centroid=false,
-    scale_psf::Bool=false, box_size::Integer=11)
+function calculate_statistical_errors!(cube::DataCube, Δ::Union{Integer,Nothing}=nothing, 
+    n_inc_thresh::Union{Integer,Nothing}=nothing, thresh::Union{Real,Nothing}=nothing,
+    overrides::Vector{Tuple{T,T}}=Vector{Tuple{Real,Real}}(); median::Bool=false) where {T<:Real}
 
-    @info "Creating a(n) $type aperture at $ra, $dec"
-
-    # Get the WCS frame from the datacube
-    frame = lowercase(cube.wcs.wcs.radesys)
-    p = (params[1] * py_units.arcsec,)
-    if length(params) > 1
-        p = (p..., params[2] * py_units.arcsec)
+    λ = cube.λ
+    if isnothing(Δ)
+        Δ = cube.spectral_region == :MIR ? 3 : 20
     end
-    if length(params) > 2
-        p = (p..., params[3] * py_units.deg)
+    if isnothing(n_inc_thresh)
+        n_inc_thresh = cube.spectral_region == :MIR ? 3 : 7
     end
-
-    # Get the correct aperture type
-    ap_dict = Dict(:Circular => py_photutils.aperture.SkyCircularAperture,
-                   :Elliptical => py_photutils.aperture.SkyEllipticalAperture,
-                   :Rectangular => py_photutils.aperture.SkyRectangularAperture)
-
-    # Assume "center" units are parsable with AstroAngles
-    sky_center = py_coords.SkyCoord(ra=(parse_hms(ra) |> hms2ha) * py_units.hourangle, 
-                                    dec=(parse_dms(dec) |> dms2deg) * py_units.deg,
-                                    frame=frame)
-    # Turn into sky aperture
-    sky_ap = ap_dict[type](sky_center, p...)
-
-    # Convert the sky aperture into a pixel aperture using the cube's WCS
-    pix_ap = sky_ap.to_pixel(cube.wcs)
-    
-    # If auto_centroid is true, readjust the center of the aperture to the peak in the local brightness
-    if auto_centroid
-        data = sumdim(cube.I, 3)
-        err = sqrt.(sumdim(cube.σ.^2, 3))
-        mask = trues(size(data))
-        p0 = round.(Int, pix_ap.positions)
-        box_half = fld(box_size, 2)
-        mask[p0[1]-box_half:p0[1]+box_half, p0[2]-box_half:p0[2]+box_half] .= 0
-        # Find the centroid using photutils' 2D-gaussian fitting
-        # NOTE 1: Make sure to transpose the data array because of numpy's reversed axis order
-        # NOTE 2: Add 1 because of python's 0-based indexing
-        x_cent, y_cent = py_photutils.centroids.centroid_2dg(data', error=err', mask=mask')
-        pix_ap.positions = (x_cent, y_cent)
-        ra_cent, dec_cent = cube.wcs.all_pix2world([[x_cent,y_cent]], 1)'
-        @info "Aperture centroid adjusted to $(format_angle(ha2hms(ra_cent/15); delim=["h","m","s"])), " *
-            "$(format_angle(deg2dms(dec_cent); delim=["d","m","s"]))"
-
+    if isnothing(thresh)
+        thresh = 3.0
     end
 
-    if scale_psf
-        # Scale the aperture size based on the change in the PSF size
-        pix_aps = Vector{PyObject}(undef, length(cube.λ))
-        for i ∈ eachindex(pix_aps)
-            pix_aps[i] = pix_ap.copy()
-            if type == :Circular
-                pix_aps[i].r *= cube.psf[i] / cube.psf[1]
-            elseif type == :Elliptical
-                pix_aps[i].a *= cube.psf[i] / cube.psf[1]
-                pix_aps[i].b *= cube.psf[i] / cube.psf[1]
-            elseif type == :Rectangular
-                pix_aps[i].w *= cube.psf[i] / cube.psf[1]
-                pix_aps[i].h *= cube.psf[i] / cube.psf[1]
-            end
+    println("Calculating statistical errors for each spaxel...")
+    @showprogress for spaxel ∈ CartesianIndices(size(cube.I)[1:2])
+        # Get the flux/error for this spaxel
+        I = cube.I[spaxel, :]
+        σ = cube.σ[spaxel, :]
+        # Perform a cubic spline fit, also obtaining the line mask
+        mask_lines, I_spline, _ = continuum_cubic_spline(λ, I, σ, Δ, n_inc_thresh, thresh, overrides)
+        mask_bad = cube.mask[spaxel, :]
+        mask = mask_lines .| mask_bad
+
+        l_mask = sum(.~mask)
+        if iszero(l_mask)
+            continue
         end
-        return pix_aps
+        # Statistical uncertainties based on the local RMS of the residuals with a cubic spline fit
+        σ_stat = zeros(l_mask)
+        for i in 1:l_mask
+            indices = sortperm(abs.((1:l_mask) .- i))[1:min(60,l_mask)]
+            σ_stat[i] = std(I[.~mask][indices] .- I_spline[.~mask][indices])
+        end
+        # We insert at the locations of the lines since the cubic spline does not include them
+        l_all = length(λ)
+        line_inds = (1:l_all)[mask]
+        for line_ind ∈ line_inds
+            insert!(σ_stat, line_ind, σ_stat[max(line_ind-1, 1)])
+        end
+        @debug "Statistical uncertainties for spaxel $spaxel: ($(σ_stat[1]) - $(σ_stat[end]))"
+        # σ = hypot.(σ, σ_stat)
+
+        # Replace the cube's error with the statistical errors
+        if median
+            σ_stat .= nanmedian(σ_stat)
+        end
+        cube.σ[spaxel, :] .= σ_stat
     end
 
-    pix_ap
+end 
+
+
+"""
+    voronoi_rebin!(cube, target_SN)
+
+Calculate Voronoi bins for the cube such that each bin has a signal to noise ratio roughly equal to `target_SN`.
+Modifies the cube object in-place with the `voronoi_bins` attribute, which is a 2D array that gives unique integer
+labels to each voronoi bin.
+"""
+function voronoi_rebin!(cube::DataCube, target_SN::Real)
+
+    @info "Performing Voronoi rebinning with target S/N=$target_SN"
+    # Get the signal and noise 
+    signal = dropdims(nanmedian(cube.I, dims=3), dims=3)
+    noise = dropdims(nanmedian(cube.σ, dims=3), dims=3)
+    # x/y coordinate arrays
+    x = [i for i in axes(signal,1), _ in axes(signal,2)]
+    y = [j for _ in axes(signal,1), j in axes(signal,2)]
+    # mask out bad spaxels
+    mask = (.~isfinite.(signal)) .| (.~isfinite.(noise))
+    # flatten arrays
+    signal = signal[.~mask]
+    noise = noise[.~mask]
+    x = x[.~mask]
+    y = y[.~mask]
+    # make sure signals are nonnegative
+    signal = clamp.(signal, 0., Inf)
+    # perform voronoi rebinning
+    bin_numbers, _, _, _, _, _, _, _ = py_vorbin.voronoi_2d_binning(x, y, signal, noise, target_SN, pixelsize=1.0, 
+        cvt=true, wvt=true, plot=false)
+    # reformat bin numbers as a 2D array so that we don't need the x/y vectors anymore
+    voronoi_bins = zeros(Int, size(cube.I)[1:2])
+    for i in eachindex(bin_numbers)
+        voronoi_bins[x[i], y[i]] = bin_numbers[i] + 1  # python 0-based indexing -> julia 1-based indexing
+    end
+    # Set the voronoi_bins value in the cube object
+    cube.voronoi_bins = voronoi_bins
+
+end
+
+
+function get_physical_scales(data::DataCube, cosmo::Union{Cosmology.AbstractCosmology,Nothing}=nothing, z::Union{Real,Nothing}=nothing)
+    
+    if !isnothing(cosmo) && !isnothing(z)
+        # Angular and physical scalebars
+        pix_as = sqrt(data.Ω) * 180/π * 3600
+        n_pix = 1/pix_as
+        @debug "Using angular diameter distance $(angular_diameter_dist(cosmo, z))"
+        # Calculate in pc
+        dA = angular_diameter_dist(u"pc", cosmo, z)
+        # Remove units
+        dA = uconvert(NoUnits, dA/u"pc")
+        # l = d * theta (") where theta is chosen as 1/4 the horizontal extent of the image
+        l = dA * (size(data.I, 1) * pix_as / 4) * π/180 / 3600  
+        # Round to a nice even number
+        l = Int(round(l, sigdigits=1))
+        # new angular size for this scale
+        θ = l / dA
+        θ_as = round(θ * 180/π * 3600, digits=1)  # should be close to the original theta, by definition
+        n_pix = 1/sqrt(data.Ω) * θ   # number of pixels = (pixels per radian) * radians
+        unit = "pc"
+        # convert to kpc if l is more than 1000 pc
+        if l ≥ 10^3
+            l = Int(l / 10^3)
+            unit = "kpc"
+        elseif l ≥ 10^6
+            l = Int(l / 10^6)
+            unit = "Mpc"
+        elseif l ≥ 10^9
+            l = Int(l / 10^9)
+            unit = "Gpc"
+        end
+        scalebar_text_dist = cosmo.h ≈ 1.0 ? L"%$l$h^{-1}$ %$unit" : L"%$l %$unit"
+    else
+        pix_as = sqrt(data.Ω) * 180/π * 3600
+        n_pix = 1/pix_as
+        θ_as = round(size(data.I, 1) * pix_as / 4, digits=1)
+        n_pix = 1/sqrt(data.Ω) * θ_as / 3600 * π/180
+        scalebar_text_dist = ""
+    end
+    scalebar_text_ang = L"$\ang[angle-symbol-over-decimal]{;;%$θ_as}$"
+    if θ_as > 60
+        θ_as = round(θ_as/60, digits=1)  # convert to arcminutes
+        scalebar_text_ang = L"$\ang[angle-symbol-over-decimal]{;%$θ_as;}$"
+    end
+
+    n_pix, scalebar_text_dist, scalebar_text_ang
 end
 
 
@@ -536,14 +586,14 @@ A plotting utility function for 2D maps of the raw intensity / error
 - `z::Union{Real,Nothing}=nothing`: The redshift of the source, used to calculate 
     the distance and thus the spatial scale in kpc.
 - `cosmo::Union{AbstractCosmology,Nothing}=nothing`: Cosmology object for calculating physical distance scales
-- `aperture::Union{PyObject,Nothing}=nothing`: Aperture object that may be plotted to show its location/size
+- `aperture::Union{Aperture.AbstractAperture,Nothing}=nothing`: Aperture object that may be plotted to show its location/size
 
 See also [`DataCube`](@ref), [`plot_1d`](@ref)
 """
 function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=true, logᵢ::Union{Integer,Nothing}=10,
     logₑ::Union{Integer,Nothing}=nothing, colormap::Symbol=:cubehelix, name::Union{String,Nothing}=nothing, 
     slice::Union{Integer,Nothing}=nothing, z::Union{Real,Nothing}=nothing, cosmo::Union{Cosmology.AbstractCosmology,Nothing}=nothing, 
-    aperture::Union{PyObject,Nothing}=nothing)
+    aperture::Union{Aperture.AbstractAperture,Nothing}=nothing)
 
     @debug "Plotting 2D intensity/error map for cube with channel $(data.channel), band $(data.band)"
 
@@ -584,51 +634,27 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
 
     # 1D, no NaNs/Infs
     pix_as = sqrt(data.Ω) * 180/π * 3600
-    if !isnothing(z) && !isnothing(cosmo)
-        # Angular and physical scalebars
-        n_pix = 1/pix_as
-        @debug "Using angular diameter distance $(angular_diameter_dist(cosmo, z))"
-        # Calculate in Mpc
-        dA = angular_diameter_dist(u"pc", cosmo, z)
-        # Remove units
-        dA = uconvert(NoUnits, dA/u"pc")
-        l = dA * π/180 / 3600  # l = d * theta (1")
-        # Round to a nice even number
-        l = Int(round(l, sigdigits=1))
-        # new angular size for this scale
-        θ = l / dA
-        n_pix = 1/sqrt(data.Ω) * θ   # number of pixels = (pixels per radian) * radians
-        unit = "pc"
-        # convert to kpc if l is more than 1000 pc
-        if l ≥ 1000
-            l = Int(l / 1000)
-            unit = "kpc"
-        end
-    end
+    n_pix, scalebar_text_dist, scalebar_text_ang = get_physical_scales(data, cosmo, z)
 
     fig = plt.figure(figsize=intensity && err ? (12, 6) : (12,12))
     if intensity
         # Plot intensity on a 2D map
-        ax1 = fig.add_subplot(121, projection=data.wcs)
+        ax1 = fig.add_subplot(121)
         ax1.set_title(isnothing(name) ? "" : name)
         cdata = ax1.imshow(I', origin=:lower, cmap=colormap, vmin=nanquantile(I, 0.01), vmax=nanquantile(I, 0.99))
         fig.colorbar(cdata, ax=ax1, fraction=0.046, pad=0.04, 
             label=(isnothing(logᵢ) ? "" : L"$\log_{%$logᵢ}$(") * L"$I_{%$sub}\,/\,$" * unit_str * (isnothing(logᵢ) ? "" : ")"))
-        # ax1.axis(:off)
+        ax1.axis(:off)
         ax1.tick_params(which="both", axis="both", direction="in")
-        ax1.set_xlabel("R.A.")
-        ax1.set_ylabel("Dec.")
         
         if !isnothing(z) && !isnothing(cosmo)
-            if cosmo.h ≈ 1.0
-                scalebar = py_anchored_artists.AnchoredSizeBar(ax1.transData, n_pix, L"%$l$h^{-1}$ %$unit", "lower left", pad=1, color=:black, 
-                    frameon=false, size_vertical=0.4, label_top=false)
-            else
-                scalebar = py_anchored_artists.AnchoredSizeBar(ax1.transData, n_pix, "$l $unit", "lower left", pad=1, color=:black,
-                    frameon=false, size_vertical=0.4, label_top=false)
-            end
-            ax1.add_artist(scalebar)
+            scalebar_1 = py_anchored_artists.AnchoredSizeBar(ax1.transData, n_pix, scalebar_text_dist, "upper center", pad=0, borderpad=0, 
+                color="k", frameon=false, size_vertical=0.1, label_top=false, bbox_to_anchor=(0.17, 0.1), bbox_transform=ax1.transAxes)
+            ax1.add_artist(scalebar_1)
         end
+        scalebar_2 = py_anchored_artists.AnchoredSizeBar(ax1.transData, n_pix, scalebar_text_ang, "lower center", pad=0, borderpad=0, 
+            color="k", frameon=false, size_vertical=0.1, label_top=true, bbox_to_anchor=(0.17, 0.1), bbox_transform=ax1.transAxes)
+        ax1.add_artist(scalebar_2)
 
         psf = plt.Circle(size(I) .* 0.9, (isnothing(slice) ? median(data.psf) : data.psf[slice]) / pix_as / 2, color="k")
         ax1.add_patch(psf)
@@ -636,33 +662,32 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
             bbox=Dict(:facecolor => "white", :edgecolor => "white", :pad => 5.0))    
 
         if !isnothing(aperture)
-            aperture.plot(ax1, color="k", lw=2)
+            patches = get_patches(aperture)
+            for patch in patches
+                ax1.add_patch(patch)
+            end
         end
 
     end
 
     if err
         # Plot error on a 2D map
-        ax2 = fig.add_subplot(122, projection=data.wcs)
+        ax2 = fig.add_subplot(122)
         ax2.set_title(isnothing(name) ? "" : name)
         cdata = ax2.imshow(σ', origin=:lower, cmap=colormap, vmin=nanquantile(σ, 0.01), vmax=nanquantile(σ, 0.99))
         fig.colorbar(cdata, ax=ax2, fraction=0.046, pad=0.04,
             label=isnothing(logₑ) ? L"$\sigma_{I_{%$sub}}\,/\,$" * unit_str : L"$\sigma_{\log_{%$logᵢ}I_{%$sub}}$")
-        # ax2.axis(:off)
+        ax2.axis(:off)
         ax2.tick_params(which="both", axis="both", direction="in")
-        ax2.set_xlabel("R.A.")
-        ax2.set_ylabel("Dec.")
 
         if !isnothing(z) && !isnothing(cosmo)
-            if cosmo.h ≈ 1.0
-                scalebar = py_anchored_artists.AnchoredSizeBar(ax2.transData, n_pix, L"%$l$h^{-1}$ %$unit", "lower left", pad=1, color=:black, 
-                    frameon=false, size_vertical=0.4, label_top=false)
-            else
-                scalebar = py_anchored_artists.AnchoredSizeBar(ax2.transData, n_pix, "$l $unit", "lower left", pad=1, color=:black,
-                    frameon=false, size_vertical=0.4, label_top=false)
-            end
-            ax2.add_artist(scalebar)
+            scalebar_1 = py_anchored_artists.AnchoredSizeBar(ax2.transData, n_pix, scalebar_text_dist, "upper center", pad=0, borderpad=0, 
+                color="k", frameon=false, size_vertical=0.1, label_top=false, bbox_to_anchor=(0.17, 0.1), bbox_transform=ax2.transAxes)
+            ax2.add_artist(scalebar_1)
         end
+        scalebar_2 = py_anchored_artists.AnchoredSizeBar(ax2.transData, n_pix, scalebar_text_ang, "lower center", pad=0, borderpad=0, 
+            color="k", frameon=false, size_vertical=0.1, label_top=true, bbox_to_anchor=(0.17, 0.1), bbox_transform=ax2.transAxes)
+        ax2.add_artist(scalebar_2)
 
         psf = plt.Circle(size(I) .* 0.9, (isnothing(slice) ? median(data.psf) : data.psf[slice]) / pix_as / 2, color="k")
         ax1.add_patch(psf)
@@ -670,7 +695,10 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
             bbox=Dict(:facecolor => "white", :edgecolor => "white", :pad => 5.0))
 
         if !isnothing(aperture)
-            aperture.plot(ax2, color="k", lw=2)
+            patches = get_patches(aperture)
+            for patch in patches
+                ax2.add_patch(patch)
+            end
         end
 
     end
@@ -843,32 +871,35 @@ function save_fits(path::String, obs::Observation, channels::Vector)
         # Header information
         hdr = FITSHeader(
             Vector{String}(["TARGNAME", "REDSHIFT", "CHANNEL", "BAND", "PIXAR_SR", "TARG_RA", "TARG_DEC", "INSTRUME", "DETECTOR", 
-                "SPECREG", "RESTFRAM", "MASKED", "VACWAVE", "DATAMODL", "NAXIS1", "NAXIS2", "NAXIS3", "WCSAXES", "CDELT1", "CDELT2", "CTYPE1", 
-                "CTYPE2", "CRPIX1", "CRPIX2", "CRVAL1", "CRVAL2", "CUNIT1", "CUNIT2", "PC1_1", "PC1_2", "PC2_1", "PC2_2"]),
+                "SPECREG", "RESTFRAM", "MASKED", "VACWAVE", "DATAMODL", "NAXIS1", "NAXIS2", "NAXIS3", "WCSAXES", "CDELT1", "CDELT2", "CDELT3", 
+                "CTYPE1", "CTYPE2", "CTYPE3", "CRPIX1", "CRPIX2", "CRPIX3", "CRVAL1", "CRVAL2", "CRVAL3", "CUNIT1", "CUNIT2", "CUNIT3", 
+                "PC1_1", "PC1_2", "PC1_3", "PC2_1", "PC2_2", "PC2_3", "PC3_1", "PC3_2", "PC3_3"]),
 
             [obs.name, obs.z, string(channel), obs.channels[channel].band, obs.channels[channel].Ω, 
                 obs.α, obs.δ, obs.instrument, obs.detector, string(obs.spectral_region), obs.rest_frame, obs.masked, obs.vacuum_wave, 
-                "IFUCubeModel", obs.channels[channel].nx, obs.channels[channel].ny, obs.channels[channel].nz, obs.channels[channel].wcs.wcs.naxis, 
-                obs.channels[channel].wcs.wcs.cdelt[1], obs.channels[channel].wcs.wcs.cdelt[2], 
-                obs.channels[channel].wcs.wcs.ctype[1], obs.channels[channel].wcs.wcs.ctype[2], 
-                obs.channels[channel].wcs.wcs.crpix[1], obs.channels[channel].wcs.wcs.crpix[2], 
-                obs.channels[channel].wcs.wcs.crval[1], obs.channels[channel].wcs.wcs.crval[2], 
-                obs.channels[channel].wcs.wcs.cunit[1].name, obs.channels[channel].wcs.wcs.cunit[2].name, 
-                obs.channels[channel].wcs.wcs.pc[1,1], obs.channels[channel].wcs.wcs.pc[1,2], 
-                obs.channels[channel].wcs.wcs.pc[2,1], obs.channels[channel].wcs.wcs.pc[2,2]],
+                "IFUCubeModel", obs.channels[channel].nx, obs.channels[channel].ny, obs.channels[channel].nz, obs.channels[channel].wcs.naxis, 
+                obs.channels[channel].wcs.cdelt[1], obs.channels[channel].wcs.cdelt[2], obs.channels[channel].wcs.cdelt[3],
+                obs.channels[channel].wcs.ctype[1], obs.channels[channel].wcs.ctype[2], obs.channels[channel].wcs.ctype[3],
+                obs.channels[channel].wcs.crpix[1], obs.channels[channel].wcs.crpix[2], obs.channels[channel].wcs.crpix[3],
+                obs.channels[channel].wcs.crval[1], obs.channels[channel].wcs.crval[2], obs.channels[channel].wcs.crval[3],
+                obs.channels[channel].wcs.cunit[1], obs.channels[channel].wcs.cunit[2], obs.channels[channel].wcs.cunit[3],
+                obs.channels[channel].wcs.pc[1,1], obs.channels[channel].wcs.pc[1,2], obs.channels[channel].wcs.pc[1,3],
+                obs.channels[channel].wcs.pc[2,1], obs.channels[channel].wcs.pc[2,2], obs.channels[channel].wcs.pc[2,3],
+                obs.channels[channel].wcs.pc[3,1], obs.channels[channel].wcs.pc[3,2], obs.channels[channel].wcs.pc[3,3]],
 
             Vector{String}(["Target name", "Target redshift", "Channel", "Band",
                 "Solid angle per pixel (rad.)", "Right ascension of target (deg.)", "Declination of target (deg.)",
                 "Instrument name", "Detector name", "spectral region", "data in rest frame", "data masked", "vacuum wavelengths", "data model",
                 "length of the first axis", "length of the second axis", "length of the third axis",
                 "number of World Coordinate System axes", 
-                "first axis increment per pixel", "second axis increment per pixel",
-                "first axis coordinate type", "second axis coordinate type",
-                "axis 1 coordinate of the reference pixel", "axis 2 coordinate of the reference pixel",
-                "first axis value at the reference pixel", "second axis value at the reference pixel",
-                "first axis units", "second axis units",
-                "linear transformation matrix element", "linear transformation matrix element",
-                "linear transformation matrix element", "linear transformation matrix element"])
+                "first axis increment per pixel", "second axis increment per pixel", "third axis increment per pixel",
+                "first axis coordinate type", "second axis coordinate type", "third axis coordinate type",
+                "axis 1 coordinate of the reference pixel", "axis 2 coordinate of the reference pixel", "axis 3 coordinate of the reference pixel",
+                "first axis value at the reference pixel", "second axis value at the reference pixel", "third axis value at the reference pixel",
+                "first axis units", "second axis units", "third axis units",
+                "linear transformation matrix element", "linear transformation matrix element", "linear transformation matrix element",
+                "linear transformation matrix element", "linear transformation matrix element", "linear transformation matrix element",
+                "linear transformation matrix element", "linear transformation matrix element", "linear transformation matrix element"])
         )
         FITS(joinpath(path, "$(replace(obs.name, " " => "_")).channel$(channel)$(obs.rest_frame ? ".rest_frame" : "").fits"), "w") do f
             @info "Writing FITS file from Observation object"
@@ -1076,17 +1107,13 @@ function adjust_wcs_alignment!(obs::Observation, channels; box_size::Integer=11)
 
         for filter in filters
             data = sumdim(ch_data.I[:, :, filter], 3)
-            err = sqrt.(sumdim(ch_data.σ[:, :, filter].^2, 3))
             wcs = ch_data.wcs
             # Find the peak brightness pixels and place boxes around them
             peak = argmax(data)
             box_half = fld(box_size, 2)
             mask = trues(size(data))
             mask[peak[1]-box_half:peak[1]+box_half, peak[2]-box_half:peak[2]+box_half] .= 0
-            # Find the centroid using photutils' 2D-gaussian fitting
-            # NOTE 1: Make sure to transpose the data array because of numpy's reversed axis order
-            # NOTE 2: Add 1 because of python's 0-based indexing
-            x_cent, y_cent = py_photutils.centroids.centroid_2dg(data', error=err', mask=mask') .+ 1
+            x_cent, y_cent = centroid_com(data, mask)
 
             fig, ax = plt.subplots()
             data[data .≤ 0] .= NaN
@@ -1097,9 +1124,9 @@ function adjust_wcs_alignment!(obs::Observation, channels; box_size::Integer=11)
             plt.savefig(nm * "_centroid_$(channel)_$k.pdf", dpi=300, bbox_inches=:tight)
             plt.close()
 
-            # Convert pixel coordinates to physical coordinates using the WCS transformation with the argument for 1-based indexing
-            c_coords[k, :] .= wcs.all_pix2world([[x_cent, y_cent]], 1)'
-            @debug "The centroid location of channel $channel is ($x_cent, $y_cent) pixels " *
+            # Convert pixel coordinates to physical coordinates using the WCS transformation 
+            c_coords[k, :] .= pix_to_world(wcs, [x_cent; y_cent; 1.0])[1:2]
+             @debug "The centroid location of channel $channel is ($x_cent, $y_cent) pixels " *
                 "or $c_coords in RA (deg), dec (deg)"
             k += 1
         end
@@ -1120,7 +1147,7 @@ function adjust_wcs_alignment!(obs::Observation, channels; box_size::Integer=11)
     for (i, channel) ∈ enumerate(channels)
         ch_data = obs.channels[channel]
         offset = sumdim(offsets[1:i, :], 1)
-        ch_data.wcs.wcs.crval = ch_data.wcs.wcs.crval .- offset
+        ch_data.wcs.crval = [ch_data.wcs.crval[1:2] .- offset; ch_data.wcs.crval[3]]
         @info "The centroid offset relative to channel $(channels[1]) for channel $channel is $(offset)"
     end
 
@@ -1136,14 +1163,33 @@ Perform a 3D interpolation of the given channels such that all spaxels lie on th
 `S<:Integer`
 - `obs::Observation`: The Observation object to rebin
 - `channels=nothing`: The list of channels to be rebinned. If nothing, rebin all channels.
+- `concat_type=:full`: Should be :full for overall channels or :sub for subchannels (bands).
 - `out_id=0`: The dictionary key corresponding to the newly rebinned cube, defaults to 0.
 - `scrub_output::Bool=true`: Whether or not to delete the individual channels that were interpolated after assigning the new interpolated channel.
-- `rescale_subchannels::Bool=false`: Whether or not to rescale the flux of subchannels so that they match at the overlapping regions.
-    The procedure is the same as for full channels, but this is off by default since *theoretically* the WCS adjustment should take care
-    of most of the differences between subchannel flux levels.
+- `order::Union{Integer,String}=1`: The order of interpolation for the reprojection. 
+        -1 = do not do any reprojection (all input channels must be on the same WCS grid)
+        0 = nearest-neighbor
+        1 = linear
+        2 = quadratic
+- `rescale_channels::Union{Real,Nothing}=nothing`: Whether or not to rescale the flux of subchannels so that they match at the overlapping regions.
+    If a real number is provided, this is interpreted as an observed-frame wavelength to choose the reference channel that all other channels
+    are rescaled to match.
+- `adjust_wcs_headerinfo::Bool=true`: Whether or not to try to automatically adjust the WCS header info of the channels by 
+    calculating centroids at the boundaries between the channels and forcing them to match.  On by default.
+- `min_λ::Real=-Inf`: Minimum wavelength cutoff for the output cube.
+- `max_λ::Real=Inf`: Maximum wavelength cutoff for the output cube.
+- `rescale_limits::Tuple{<:Real,<:Real}=(0.5, 1.5)`: Lower/upper limits on the rescaling factor between channels.
+- `rescale_snr::Real=10.0`: SNR threshold that a spaxel must pass before being rescaled.
+- `output_wcs_frame::Integer=1`: Which WCS frame to project the inputs onto. Defaults to 1 (the first channel in channels).
+- `interpolate_overlaps::Bool=false`: If true, will throw out the overlapping regions between channels/subchannels and replace them
+    with cubic spline interpolations using the data to the left/right.
+- `match_psf::Bool=true`: Whether or not to blur channels such that they match the PSF resolution of the worst channel.
 """
 function reproject_channels!(obs::Observation, channels=nothing, concat_type=:full; out_id=0, scrub_output::Bool=false,
-    method=:adaptive, rescale_subchannels::Bool=false)
+    order::Union{Integer,String}=1, rescale_channels::Union{Real,Nothing}=nothing, adjust_wcs_headerinfo::Bool=true, 
+    min_λ::Real=-Inf, max_λ::Real=Inf, rescale_limits::Tuple{<:Real,<:Real}=(0.5, 1.5), rescale_snr::Real=10.0, 
+    rescale_factors::Union{Dict,Nothing}=nothing, output_wcs_frame::Integer=1, interpolate_overlaps::Bool=false, 
+    match_psf::Bool=false)
 
     @assert obs.spectral_region == :MIR "The reproject_channels! function is only supported for MIR cubes!"
 
@@ -1159,22 +1205,28 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
     end
 
     # First and foremost -- adjust the WCS alignment of each channel so that they are consistent with each other
-    adjust_wcs_alignment!(obs, channels; box_size=11)
+    if adjust_wcs_headerinfo
+        adjust_wcs_alignment!(obs, channels; box_size=11)
+    end
 
     # Output angular size
-    Ω_out = minimum([obs.channels[channel].Ω for channel ∈ channels])
+    Ω_out = obs.channels[channels[output_wcs_frame]].Ω
+    # PSF FWHMs in each channel (in arcseconds)
+    psf_fwhms = [maximum(obs.channels[channel].psf) for channel in channels]
+    # Pixel sizes in each channel (in arcseconds)
+    pixel_scales = [sqrt(obs.channels[channel].Ω) * 180/π * 3600 for channel in channels]
 
-    if concat_type == :sub
-        # Find the optimal output WCS using the reproject python package
-        shapes = [size(obs.channels[channel].I)[1:2] for channel ∈ channels]
-        wcs2ds = [obs.channels[channel].wcs for channel ∈ channels]
-        wcs_optimal, size_optimal = py_mosaicking.find_optimal_celestial_wcs([(reverse(shapes[i]), wcs2ds[i]) 
-            for i ∈ 1:length(channels)], resolution=sqrt(Ω_out) * py_units.rad, projection="TAN")
-        size_optimal = reverse(size_optimal)
-    else
-        wcs_optimal = obs.channels[channels[1]].wcs
-        size_optimal = size(obs.channels[channels[1]].I)[1:2]
-    end
+    # Convert WCS to a 2-dimensional version
+    wcs_optimal_3d = obs.channels[channels[output_wcs_frame]].wcs
+    wcs_optimal = WCSTransform(2; 
+                               cdelt=wcs_optimal_3d.cdelt[1:2],
+                               crpix=wcs_optimal_3d.crpix[1:2],
+                               crval=wcs_optimal_3d.crval[1:2],
+                               ctype=wcs_optimal_3d.ctype[1:2],
+                               cunit=wcs_optimal_3d.cunit[1:2],
+                               pc=wcs_optimal_3d.pc[1:2, 1:2],
+                               radesys=wcs_optimal_3d.radesys)
+    size_optimal = size(obs.channels[channels[output_wcs_frame]].I)[1:2]
 
     # Output wavelength is just the individual wavelength vectors concatenated (for now -- will be interpolated later)
     λ_out = vcat([obs.channels[ch_i].λ for ch_i ∈ channels]...)
@@ -1195,60 +1247,79 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
 
         # Get the intensity and error arrays
         # NOTE 1: Dont forget to permute and re-permute the dimensions from the numpy row-major order back to the julia column-major order
-        # NOTE 2: We need to resample the FLUX, not the intensity, because the pixel sizes may be different between the input and output images,
+        # NOTE 2: We need to resample the INTENSITY, not the flux, because the pixel sizes may be different between the input and output images,
         #          and flux scales with the pixel size whereas intensity does not (assuming it's an extended source).
-        F_in = permutedims(obs.channels[ch_in].I .* obs.channels[ch_in].Ω, (3,2,1))
-        σF_in = permutedims(obs.channels[ch_in].σ .* obs.channels[ch_in].Ω, (3,2,1))
-        mask_in = permutedims(obs.channels[ch_in].mask, (3,2,1))
+        I_in = obs.channels[ch_in].I 
+        σI_in = obs.channels[ch_in].σ
+        mask_in = obs.channels[ch_in].mask
 
         # Replace NaNs with 0s for the interpolation
-        F_in[.!isfinite.(F_in)] .= 0.
-        σF_in[.!isfinite.(σF_in)] .= 0.
+        I_in[.!isfinite.(I_in)] .= 0.
+        σI_in[.!isfinite.(σI_in)] .= 0.
 
-        # Use the adaptive DeForest (2004) algorithm for resampling the cubes onto the same WCS grid
-        # - Conserves flux if the option is enabled
-        # - Can use the Hann or Gaussian kernels
-        # - Boundary mode determines what to do when some or all of the output region is masked 
-        if method == :adaptive
-            F_out = permutedims(py_reproject.reproject_adaptive((F_in, obs.channels[ch_in].wcs), wcs_optimal, 
-                (size(F_in, 1), size_optimal[2], size_optimal[1]), conserve_flux=true, kernel="gaussian", boundary_mode="strict",
-                return_footprint=false), (3,2,1))
-            σF_out = permutedims(py_reproject.reproject_adaptive((σF_in, obs.channels[ch_in].wcs), wcs_optimal, 
-                (size(σF_in, 1), size_optimal[2], size_optimal[1]), conserve_flux=true, kernel="gaussian", boundary_mode="strict",
-                return_footprint=false), (3,2,1))
-        elseif method == :interp
-            @warn "The interp method is currently experimental and produces less robust results than the adaptive method!"
-            F_out = permutedims(py_reproject.reproject_interp((F_in, obs.channels[ch_in].wcs), wcs_optimal, 
-                (size(F_in, 1), size_optimal[2], size_optimal[1]), order=3, block_size=(10,10),
-                return_footprint=false), (3,2,1))
-            σF_out = permutedims(py_reproject.reproject_interp((σF_in, obs.channels[ch_in].wcs), wcs_optimal, 
-                (size(σF_in, 1), size_optimal[2], size_optimal[1]), order=3, block_size=(10,10),
-                return_footprint=false), (3,2,1))
-            # Flux conservation
-            for wi ∈ 1:wi_size
-                F_out[:, :, wi] .*= nansum(F_in[wi, :, :]) ./ nansum(F_out[:, :, wi])
-                σF_out[:, :, wi] .*= nansum(σF_in[wi, :, :]) ./ nansum(σF_out[:, :, wi])
+        # Get 2D WCS representation
+        wcs_channel = WCSTransform(2; 
+                                   cdelt=obs.channels[ch_in].wcs.cdelt[1:2],
+                                   crpix=obs.channels[ch_in].wcs.crpix[1:2],
+                                   crval=obs.channels[ch_in].wcs.crval[1:2],
+                                   ctype=obs.channels[ch_in].wcs.ctype[1:2],
+                                   cunit=obs.channels[ch_in].wcs.cunit[1:2],
+                                   pc=obs.channels[ch_in].wcs.pc[1:2, 1:2],
+                                   radesys=obs.channels[ch_in].wcs.radesys)
+
+        I_out_ch = zeros(size_optimal..., size(I_in, 3))
+        σI_out_ch = zeros(size_optimal..., size(I_in, 3))
+        mask_out_temp = zeros(size_optimal..., size(I_in, 3))
+
+        if (order == -1) || (i == output_wcs_frame)
+            @assert size(I_in)[1:2] == size_optimal
+            I_out_ch = I_in
+            σI_out_ch = σI_in
+            mask_out_temp = mask_in
+
+            if match_psf
+                for wi in axes(I_in, 3)
+                    blur_size = sqrt(maximum(psf_fwhms)^2 - obs.channels[ch_in].psf[wi]^2) / pixel_scales[i] / 2.355
+                    if blur_size > 0
+                        # Convolve with a Gaussian kernel with the difference in PSF sizes
+                        I_out_ch[:, :, wi] = imfilter(I_out_ch[:, :, wi], Kernel.gaussian(blur_size) |> reflect)
+                        σ²_temp = imfilter(σI_out_ch[:, :, wi].^2, Kernel.gaussian(blur_size) |> reflect)
+                        σ²_temp[σ²_temp .< 0] .= 0.
+                        σI_out_ch[:, :, wi] .= sqrt.(σ²_temp)
+                    end
+                end
             end
-        elseif method == :exact
-            @warn "The exact method is currently experimental and produces less robust results than the adaptive method!"
-            F_out = permutedims(py_reproject.reproject_exact((F_in, obs.channels[ch_in].wcs), wcs_optimal, 
-                (size(F_in, 1), size_optimal[2], size_optimal[1]), return_footprint=false), (3,2,1))
-            σF_out = permutedims(py_reproject.reproject_exact((σF_in, obs.channels[ch_in].wcs), wcs_optimal, 
-                (size(σF_in, 1), size_optimal[2], size_optimal[1]), return_footprint=false), (3,2,1))
+
+        else
+            @showprogress for wi in axes(I_in, 3)
+                # Reproject using interpolation
+                I_out_ch[:, :, wi], _ = reproject((I_in[:, :, wi], wcs_channel), wcs_optimal, shape_out=size_optimal, order=order)
+                σ²_temp, _ = reproject((σI_in[:, :, wi].^2, wcs_channel), wcs_optimal, shape_out=size_optimal, order=order)
+                σ²_temp[σ²_temp .< 0] .= 0.
+                σI_out_ch[:, :, wi] .= sqrt.(σ²_temp)
+
+                # Convolve with a Gaussian kernel with the difference in PSF sizes
+                if match_psf 
+                    blur_size = sqrt(maximum(psf_fwhms)^2 - obs.channels[ch_in].psf[wi]^2) / pixel_scales[i] / 2.355 
+                    if blur_size > 0
+                        I_out_ch[:, :, wi] = imfilter(I_out_ch[:, :, wi], Kernel.gaussian(blur_size) |> reflect)
+                        σ²_temp = imfilter(σI_out_ch[:, :, wi].^2, Kernel.gaussian(blur_size) |> reflect)
+                        σ²_temp[σ²_temp .< 0] .= 0.
+                        σI_out_ch[:, :, wi] .= sqrt.(σ²_temp)
+                    end
+                end
+
+                # Use nearest-neighbor interpolation for the mask since it's a binary 1 or 0
+                mask_out_temp[:, :, wi], _ = reproject((Matrix{Float64}(mask_in[:, :, wi]), wcs_channel), wcs_optimal, shape_out=size_optimal, order=0)
+            end
         end
-
-        # Convert back to intensity
-        I_out[:, :, wsum+1:wsum+wi_size] .= F_out ./ Ω_out
-        σ_out[:, :, wsum+1:wsum+wi_size] .= σF_out ./ Ω_out
-
-        # Use nearest-neighbor interpolation for the mask since it's a binary 1 or 0
-        mask_out_temp = permutedims(py_reproject.reproject_interp((mask_in, obs.channels[ch_in].wcs), 
-            wcs_optimal, (size(mask_in, 1), size_optimal[2], size_optimal[1]), order="nearest-neighbor", return_footprint=false), (3,2,1))
+        I_out[:, :, wsum+1:wsum+wi_size] .= I_out_ch
+        σ_out[:, :, wsum+1:wsum+wi_size] .= σI_out_ch
 
         # Set all NaNs to 1s for the mask (i.e. they are masked out)
         mask_out_temp[.!isfinite.(mask_out_temp) .| .!isfinite.(I_out[:, :, wsum+1:wsum+wi_size]) .| 
             .!isfinite.(σ_out[:, :, wsum+1:wsum+wi_size])] .= 1
-        mask_out[:, :, wsum+1:wsum+wi_size] .= mask_out_temp
+        mask_out[:, :, wsum+1:wsum+wi_size] .= BitArray(mask_out_temp)
     end
     
     # If an entire channel is masked out, we want to throw away all channels
@@ -1266,14 +1337,10 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
 
     # Need an additional correction (fudge) factor for overall channels
     jumps = findall(diff(λ_out) .< 0.)
-    if concat_type == :full
-        λ_con = zeros(eltype(λ_out), 0)
-        I_con = zeros(eltype(I_out), size(I_out)[1:2]..., 0)
-        σ_con = zeros(eltype(σ_out), size(σ_out)[1:2]..., 0)
-        mask_con = falses(size(mask_out)[1:2]..., 0)
-        prev_i2 = 1
-    end
-    if (concat_type == :full) || rescale_subchannels
+    scale_factors = Dict{Int, Matrix{Float64}}()
+    ww = []
+    if !isnothing(rescale_channels)
+        mask2d = [all(mask_out[i,j,:]) for i in axes(mask_out,1), j in axes(mask_out,2)]
         # rescale channels so the flux level is continuous
         for (i, jump) ∈ enumerate(jumps)
             # find the full scale of the overlapping region
@@ -1281,38 +1348,128 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
             _, i1 = findmin(abs.(λ_out[1:jump] .- wave_left))
             _, i2 = findmin(abs.(λ_out[jump+1:end] .- wave_right))
             i2 += jump
-            # get the median fluxes from both channels over the full region
-            med_left = dropdims(nanmedian(I_out[:, :, i1:jump], dims=3), dims=3)
-            med_right = dropdims(nanmedian(I_out[:, :, jump+1:i2], dims=3), dims=3)
-            # rescale the flux to match between the channels, using the channel at 8 um (2A) as the reference point
-            if wave_left < 8.0 / (1 + obs.z)
-                scale = clamp.(med_right ./ med_left, 0.5, 1.5)
-                I_out[:, :, 1:jump] .*= scale
-                σ_out[:, :, 1:jump] .*= scale
-                @info "Minimum/Maximum scale factor for channel $(i+1): ($(nanminimum(med_right./med_left)), $(nanmaximum(med_right./med_left)))"
+
+            if isnothing(rescale_factors)
+                # Get the flux in the left and right channels
+                I_left = I_out[:, :, i1:jump]
+                I_right = resample_conserving_flux(λ_out[i1:jump], λ_out[jump+1:i2], I_out[:, :, jump+1:i2])
+
+                # Get the ratios of the left/right flux
+                scale_left = I_right ./ I_left
+                scale_right = I_left ./ I_right
+                # get the median fluxes from both channels over the full region
+                med_left = dropdims(nanmedian(I_out[:, :, i1:jump], dims=3), dims=3)
+                med_right = dropdims(nanmedian(I_out[:, :, jump+1:i2], dims=3), dims=3)
+                # Check for any medians close to or below 0 and dont rescale them
+                thresh_left = dropdims(nanstd(I_out[:, :, i1:jump], dims=3), dims=3)
+                thresh_right = dropdims(nanstd(I_out[:, :, jump+1:i2], dims=3), dims=3)
+                mask_left_right = (med_left .< thresh_left) .| (med_right .< thresh_right)
+                scale_left[mask_left_right, :] .= 1.
+                scale_right[mask_left_right, :] .= 1.
+                # Check for any median differences smaller than the RMS
+                # thresh_both = dropdims(nanmean(cat(thresh_left, thresh_right, dims=3), dims=3), dims=3)
+                # mask_left_right = abs.(med_left .- med_right) .< 2thresh_both
+                # scale_left[mask_left_right, :] .= 1.
+                # scale_right[mask_left_right, :] .= 1.
+                # Check for non-finite values or zeros
+                scale_left[(scale_left .≤ 0.) .| .~isfinite.(scale_left)] .= 1.
+                scale_right[(scale_right .≤ 0.) .| .~isfinite.(scale_right)] .= 1.
+                # Do not rescale masked spaxels
+                scale_left[mask2d, :] .= 1.
+                scale_right[mask2d, :] .= 1.
+                # Do not rescale low S/N spaxels
+                SN_left = dropdims(nanmedian(I_out[:, :, i1:jump] ./ σ_out[:, :, i1:jump], dims=3), dims=3)
+                SN_right = dropdims(nanmedian(I_out[:, :, jump+1:i2] ./ σ_out[:, :, jump+1:i2], dims=3), dims=3)
+                SN = dropdims(nanminimum(cat(SN_left, SN_right, dims=3), dims=3), dims=3)
+                scale_left[SN .< rescale_snr, :] .= 1.
+                scale_right[SN .< rescale_snr, :] .= 1.
+
+                # Take the median along the wavelength axis
+                scale_left = dropdims(nanmedian(scale_left, dims=3), dims=3)
+                scale_right = dropdims(nanmedian(scale_right, dims=3), dims=3)
+
+                # Clamp within the limits
+                scale_left = clamp.(scale_left, rescale_limits...)
+                scale_right = clamp.(scale_right, rescale_limits...)
+
             else
-                scale = clamp.(med_left ./ med_right, 0.5, 1.5)
-                I_out[:, :, jump+1:end] .*= scale
-                σ_out[:, :, jump+1:end] .*= scale
-                @info "Minimum/Maximum scale factor for channel $(i+1): ($(nanminimum(med_left./med_right)), $(nanmaximum(med_left./med_right)))"
+                # Load in rescaling factors directly
+                scale_left = scale_right = rescale_factors[i+1]
+
             end
-            if concat_type == :full
-                # resample fluxes in the overlapping regions
-                λ_res = median([diff(λ_out[i1:jump])[1], diff(λ_out[jump+1:i2])[1]])
-                λ_resamp = λ_out[i1]:λ_res:(λ_out[i2]-eps())
-                ss = sortperm(λ_out[i1:i2])
-                I_resamp, σ_resamp, mask_resamp = resample_conserving_flux(λ_resamp, 
-                    λ_out[i1:i2][ss], I_out[:, :, (i1:i2)[ss]], σ_out[:, :, (i1:i2)[ss]], mask_out[:, :, (i1:i2)[ss]])
-                # replace overlapping regions in outputs
-                λ_con = [λ_con; λ_out[prev_i2:i1-1]; λ_resamp]
-                I_con = cat(I_con, I_out[:, :, prev_i2:i1-1], I_resamp, dims=3)
-                σ_con = cat(σ_con, σ_out[:, :, prev_i2:i1-1], σ_resamp, dims=3)
-                mask_con =cat(mask_con, mask_out[:, :, prev_i2:i1-1], mask_resamp, dims=3)
-                prev_i2 = i2
+
+            # Apply the scale factors
+            if wave_left < rescale_channels
+                I_out[:, :, 1:jump] .*= scale_left
+                σ_out[:, :, 1:jump] .*= scale_left
+                scale_factors[i+1] = scale_left
+                @info "Rescaling LEFT channel"
+                @info "Minimum/Maximum scale factor for channel $(i+1): $(nanextrema(scale_left))"
+            else
+                I_out[:, :, jump+1:end] .*= scale_right
+                σ_out[:, :, jump+1:end] .*= scale_right
+                scale_factors[i+1] = scale_right
+                @info "Rescaling RIGHT channel"
+                @info "Minimum/Maximum scale factor for channel $(i+1): $(nanextrema(scale_right))"
             end
+
+            # med_left[(med_left .< thresh_left) .| (med_right .< thresh_right)] .= 1.
+            # med_right[(med_left .< thresh_left) .| (med_right .< thresh_right)] .= 1.
+            # # Also check for non-finite values or zeros
+            # med_left[.~isfinite.(med_left) .| .~isfinite.(med_right)] .= 1.
+            # med_right[.~isfinite.(med_left) .| .~isfinite.(med_right)] .= 1.
+            # med_left[iszero.(med_left) .| iszero.(med_right)] .= 1.
+            # med_right[iszero.(med_left) .| iszero.(med_right)] .= 1.
+            # # Do not rescale masked spaxels
+            # med_left[mask2d] .= 1.
+            # med_right[mask2d] .= 1.
+            # Do not rescale low S/N spaxels
+            # SN = dropdims(nanmedian(I_out ./ σ_out, dims=3), dims=3)
+            # med_left[SN .< rescale_snr, :] .= 1.
+            # med_right[SN .< rescale_snr, :] .= 1.
+            # rescale the flux to match between the channels, using the given reference point
+            # if wave_left < rescale_channels
+            #     scale = clamp.(med_right ./ med_left, rescale_limits...)
+            #     I_out[:, :, 1:jump] .*= scale
+            #     σ_out[:, :, 1:jump] .*= scale
+            #     @info "Minimum/Maximum scale factor for channel $(i+1): $(nanextrema(scale))"
+            # else
+            #     scale = clamp.(med_left ./ med_right, rescale_limits...)
+            #     I_out[:, :, jump+1:end] .*= scale
+            #     σ_out[:, :, jump+1:end] .*= scale
+            #     @info "Minimum/Maximum scale factor for channel $(i+1): $(nanextrema(scale))"
+            # end
+            # scale_factors[i+1] = scale
+            push!(ww, (wave_left, wave_right))
         end
     end
     if concat_type == :full
+        λ_con = zeros(eltype(λ_out), 0)
+        I_con = zeros(eltype(I_out), size(I_out)[1:2]..., 0)
+        σ_con = zeros(eltype(σ_out), size(σ_out)[1:2]..., 0)
+        mask_con = falses(size(mask_out)[1:2]..., 0)
+        prev_i2 = 1
+
+        for (i, jump) ∈ enumerate(jumps)
+            # find the full scale of the overlapping region
+            wave_left, wave_right = λ_out[jump+1], λ_out[jump]
+            _, i1 = findmin(abs.(λ_out[1:jump] .- wave_left))
+            _, i2 = findmin(abs.(λ_out[jump+1:end] .- wave_right))
+            i2 += jump
+            # resample fluxes in the overlapping regions
+            λ_res = median([diff(λ_out[i1:jump])[1], diff(λ_out[jump+1:i2])[1]])
+            λ_resamp = λ_out[i1]:λ_res:(λ_out[i2]-eps())
+            ss = sortperm(λ_out[i1:i2])
+            I_resamp, σ_resamp, mask_resamp = resample_conserving_flux(λ_resamp, 
+                λ_out[i1:i2][ss], I_out[:, :, (i1:i2)[ss]], σ_out[:, :, (i1:i2)[ss]], mask_out[:, :, (i1:i2)[ss]])
+            # replace overlapping regions in outputs
+            λ_con = [λ_con; λ_out[prev_i2:i1-1]; λ_resamp]
+            I_con = cat(I_con, I_out[:, :, prev_i2:i1-1], I_resamp, dims=3)
+            σ_con = cat(σ_con, σ_out[:, :, prev_i2:i1-1], σ_resamp, dims=3)
+            mask_con =cat(mask_con, mask_out[:, :, prev_i2:i1-1], mask_resamp, dims=3)
+            prev_i2 = i2
+        end
+
         λ_out = [λ_con; λ_out[prev_i2:end]]
         I_out = cat(I_con, I_out[:, :, prev_i2:end], dims=3)
         σ_out = cat(σ_con, σ_out[:, :, prev_i2:end], dims=3)
@@ -1326,6 +1483,23 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
     σ_out = σ_out[:, :, ss]
     mask_out = mask_out[:, :, ss]
 
+    if interpolate_overlaps && !isnothing(rescale_channels)
+        for wwi in ww
+            # Smoothly extend the function from the left/right 
+            _, i1 = findmin(abs.(λ_out .- wwi[1]))
+            _, i2 = findmin(abs.(λ_out .- wwi[2]))
+            for xi in axes(I_out,1), yi in axes(I_out,2)
+                wave_window = [λ_out[1:i1-1]; λ_out[i2+1:end]]
+                I_window = [I_out[xi, yi, 1:i1-1]; I_out[xi, yi, i2+1:end]]
+                mask_window = [mask_out[xi, yi, 1:i1-1]; mask_out[xi, yi, i2+1:end]]
+                if sum(.~mask_window) < 3
+                    continue
+                end
+                I_out[xi, yi, i1:i2] = Spline1D(wave_window[.~mask_window], I_window[.~mask_window], k=3)(λ_out[i1:i2])
+            end
+        end
+    end
+
     # Now we interpolate the wavelength dimension using a flux-conserving approach
     Δλ = median(diff(λ_out))
     if concat_type == :sub
@@ -1338,12 +1512,23 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
               "Only overlapping regions between channels have been resampled to a median resolution!"
     end
 
+    # Cut off at large wavelength, if specified
+    λmask = min_λ .≤ λ_out .≤ max_λ
+    λ_out = λ_out[λmask]
+    I_out = I_out[:, :, λmask]
+    σ_out = σ_out[:, :, λmask]
+    mask_out = mask_out[:, :, λmask]
+
     # New PSF FWHM function with input in the rest frame
     if obs.rest_frame
         psf_fwhm_out = @. 0.033 * λ_out * (1 + obs.z) + 0.106
     else
         psf_fwhm_out = @. 0.033 * λ_out + 0.106
     end
+    if match_psf
+        psf_fwhm_out = repeat([maximum(psf_fwhms)], length(λ_out))
+    end
+
     # New LSF FWHM function with input in the rest frame
     if obs.rest_frame
         lsf_fwhm_out = parse_resolving("MULTIPLE").(λ_out .* (1 .+ obs.z))
@@ -1358,7 +1543,7 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
     end
 
     # Define the interpolated cube as the zeroth channel (since this is not taken up by anything else)
-    obs.channels[out_id] = DataCube(λ_out, I_out, σ_out, mask_out, Ω_out, obs.α, obs.δ, psf_fwhm_out, lsf_fwhm_out, wcs_optimal, 
+    obs.channels[out_id] = DataCube(λ_out, I_out, σ_out, mask_out, Ω_out, obs.α, obs.δ, psf_fwhm_out, lsf_fwhm_out, wcs_optimal_3d,
         "MULTIPLE", "MULTIPLE", obs.spectral_region, obs.rest_frame, obs.masked, obs.vacuum_wave)
     
     # Delete all of the individual channels
@@ -1370,7 +1555,8 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
     end
 
     @info "Done!"
-    obs.channels[out_id]
+
+    return scale_factors
 
 end
 
@@ -1530,10 +1716,8 @@ function frebin(array::AbstractArray, nsout::S, nlout::S=1; total::Bool=false) w
 
     # Contraction by an integral amount
     if (sbox == round(Int, sbox)) && (lbox == round(Int, lbox)) && (ns % nsout == 0) && (nl % nlout == 0)
-        return @pipe array |> 
-            reshape(_, (Int(sbox), nsout, Int(lbox), nlout)) |> 
-            (total ? sum : mean)(_, dims=(1,3)) |>
-            dropdims(_, dims=(1,3))
+        array_shaped = reshape(array, (Int(sbox), nsout, Int(lbox), nlout))
+        return dropdims((total ? sum : mean)(array_shaped, dims=(1,3)), dims=(1,3))
     end
 
     # Expansion by an integral amount
@@ -1616,183 +1800,33 @@ function frebin(array::AbstractArray, nsout::S, nlout::S=1; total::Bool=false) w
 end
 
 
-function make_python_wcs(x_cent::T, y_cent::T, ra_cent::T, dec_cent::T, x_scale::T, y_scale::T) where {T<:Real}
+# function reproject_lanczos(data::Matrix{<:Real}, wcs_in::WCSTransform, wcs_out::WCSTransform, 
+#     shape_out::Tuple; a::Integer=2, pad::Real=NaN)
 
-    wcs = py_wcs.WCS(naxis=2)
+#     coordinate_transform(x_out, y_out) = world_to_pix(wcs_in, pix_to_world(wcs_out, [Float64(x_out), Float64(y_out)]))
+#     # Reproject using sinc interpolation
+#     kernel(x,y) = (abs(x) ≤ a) && (abs(y) ≤ a) ? sinc(x) * sinc(x/a) * sinc(y) * sinc(y/a) : 0.
+#     # Pad with 0s
+#     data_padded = zeros(size(data).+2a)
+#     data_padded[1+a:end-a, 1+a:end-a] .= data
 
-    # First set the coordinate system
-    wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+#     data_out = zeros(shape_out)
 
-    # Central coordinate in pixel space and RA/Dec space
-    wcs.wcs.crpix = [x_cent, y_cent]
-    wcs.wcs.crval = [ra_cent, dec_cent]
+#     for x_out in axes(data_out,1), y_out in axes(data_out,2)
+#         x_in, y_in = coordinate_transform(x_out, y_out)
+#         # Convolve with the kernel
+#         xmin = floor(Int, x_in)-a+1
+#         xmax = floor(Int, x_in)+a
+#         ymin = floor(Int, y_in)-a+1
+#         ymax = floor(Int, y_in)+a
+#         if (1-a ≤ xmin ≤ size(data,1)+a) && (1-a ≤ xmax ≤ size(data,1)+a) && 
+#             (1-a ≤ ymin ≤ size(data,2)+a) && (1-a ≤ ymax ≤ size(data,2)+a)
+#             data_out[x_out, y_out] = sum(data_padded[(xmin:xmax) .+ a, (ymin:ymax) .+ a] .* 
+#                 [kernel(xx,yy) for xx in x_in .- (xmin:xmax), yy in y_in .- (ymin:ymax)])
+#         else
+#             data_out[x_out, y_out] = pad
+#         end
+#     end
 
-    # Scale in deg/pix
-    wcs.wcs.cdelt = [x_scale, y_scale]
-
-    # Units 
-    wcs.wcs.cunit = ["deg", "deg"]
-
-    # Coordinate transform matrix 
-    # (negative in the first position because RA increases to the left)
-    wcs.wcs.pc = [-1.0 0.0; 0.0 1.0]
-
-    wcs
-
-end
-
-
-
-############## DEPRECATED FUNCTIONS ##############
-
-"""
-    psf_kernel(cube; psf_scale, kernel_size)
-    
-Compute the kernel that will be convolved with the IFU cube to extract individual spaxels while still respecting
-the PSF FWHM of the observations.
-"""
-function psf_kernel(cube::DataCube; aperture_scale::Real=1., kernel_size::Union{Integer,Nothing}=nothing, kernel_type::Symbol=:Tophat)
-
-    @debug "Creating the PSF kernel..."
-
-    # Make sure kernel size is odd
-    if !isnothing(kernel_size)
-        @assert kernel_size % 2 == 1 "The kernel size must be an odd integer!"
-    end
-
-    # Pixel scale in arcseconds
-    pix_as = sqrt(cube.Ω) * 180/π * 3600
-    # Find the PSF FWHM distance in pixel units (cube value is in arcseconds)
-    psf_fwhm_pix = cube.psf ./ pix_as
-    # ap_pix is the HWHM of the aperture being used (or in the tophat case, the radius)
-    # aperture_scale is essentially a scaling factor for how much larger the aperture should be compared to the PSF FWHM
-    ap_pix = aperture_scale .* psf_fwhm_pix
-
-    @debug "PSF FWHM in arcseconds: $(cube.psf[1]) at $(cube.λ[1]) microns"
-    @debug "PSF FWHM in pixels: $(psf_fwhm_pix[1]) at $(cube.λ[1]) microns"
-    @debug "Aperture radius in pixels (scale = x$(aperture_scale)): $(ap_pix[1]) at $(cube.λ[1]) microns"
-
-    if isnothing(kernel_size)
-        if kernel_type == :Gaussian
-            # Require the kernel size to cover 1-sigma (68%) of the PSF distribution
-            kernel_size = Int(ceil(2 * maximum(ap_pix) / (√(2log(2)))))
-        elseif kernel_type == :Tophat
-            # The diameter of the kernel is 2x the PSF FWHM for an aperture_scale of 1
-            kernel_size = Int(ceil(2 * maximum(ap_pix)))
-        end
-        # Make sure the size is odd so the center position covers the spaxel being convolved
-        if kernel_size % 2 == 0
-            kernel_size += 1
-        end
-        @debug "Using kernel size of $kernel_size pixels"
-    end
-
-    # Initialize kernel
-    kernel = zeros(kernel_size, kernel_size, length(cube.λ))
-    # Get the coordinate of the center of the kernel (i.e. [2,2] for a kernel size of 3)
-    c = cld(kernel_size, 2)
-    f = fld(kernel_size, 2)
-
-    # Loop through each wavelength point
-    for wi ∈ 1:length(cube.λ)
-
-        if kernel_type == :Gaussian
-            # For each pixel in the kernel, calculate the distance from the center (in pixels)
-            # and calculate the value of the normal distribution at that point
-            for xᵢ ∈ 1:kernel_size, yᵢ ∈ 1:kernel_size
-                # Set the kernel to the normal probability distribution function at the given coordinates
-                dist = hypot(xᵢ-c, yᵢ-c)
-                # (This is not normalized properly but it doesnt matter because we divide out the normalization anyways)
-                kernel[xᵢ, yᵢ, wi] = Gaussian(dist, 1., 0., 2*ap_pix[wi])
-            end
-        elseif kernel_type == :Tophat
-            kernel[:, :, wi] .= py_photutils.geometry.circular_overlap_grid(-f-0.5, f+0.5, -f-0.5, f+0.5, kernel_size, kernel_size, 
-                ap_pix[wi], true, 5)'
-        end
-
-        # Renormalize such that it integrates to 1
-        kernel[:,:,wi] ./= sum(kernel[:,:,wi])
-
-    end
-
-    kernel
-
-end
-
-
-"""
-    convolve_psf!(cube, psf_kernel)
-
-Convolve the flux and error cubes with the PSF kernel to obtain a cube that has been smoothed out by the PSF
-"""
-function convolve_psf!(cube::DataCube; aperture_scale::Real=1., kernel_size::Union{Integer,Nothing}=nothing, kernel_type::Symbol=:Tophat)
-
-    kernel = psf_kernel(cube; aperture_scale=aperture_scale, kernel_size=kernel_size, kernel_type=kernel_type)
-
-    kernel_size = size(kernel)[1]
-    kernel_cent = cld(kernel_size, 2)
-    kernel_len = fld(kernel_size, 2)
-
-    @info "The median PSF FWHM is $(median(cube.psf)) arcseconds"
-    @info "Convolving the IFU data with a $(kernel_size)x$(kernel_size) $(kernel_type) PSF FWHM kernel with a median " *
-          "$(kernel_type == :Tophat ? "diameter" : "FWHM") of $(2*aperture_scale*median(cube.psf)) arcseconds"
-
-    # Step along the spatial directions and apply the kernel at each pixel
-    @showprogress for xᵢ ∈ 1:size(cube.I,1), yᵢ ∈ 1:size(cube.I,2)
-
-        if any(cube.mask[xᵢ, yᵢ, :])
-            # Do not convolve spaxels that are masked
-            continue
-        end
-
-        # Copy the kernel
-        k = copy(kernel)
-
-        # Min/max indices to consider
-        xmin = xᵢ - kernel_len
-        xmax = xᵢ + kernel_len
-        ymin = yᵢ - kernel_len
-        ymax = yᵢ + kernel_len
-
-        # Truncate the kernel if we're at one of the bounds
-        if xmin < 1
-            k = k[kernel_cent:end, :, :]
-            xmin = xᵢ
-        elseif xmax > size(cube.I,1)
-            k = k[1:kernel_cent, :, :]
-            xmax = xᵢ
-        end
-        if ymin < 1
-            k = k[:, kernel_cent:end, :]
-            ymin = yᵢ
-        elseif ymax > size(cube.I,2)
-            k = k[:, 1:kernel_cent, :]
-            ymax = yᵢ
-        end
-
-        # Check if any of the spaxels that would be covered by the kernel are masked
-        mask_reg = [any(cube.mask[xx, yy, :]) for xx ∈ xmin:xmax, yy ∈ ymin:ymax] 
-        # If so, renormalize the kernel such that only the unmasked spaxels are weighted
-        k[mask_reg, :] .= 0.
-        if iszero(sum(k))
-            # If every spaxel in the region is masked out, we dont need to do any convolving
-            continue
-        end
-        for wi ∈ axes(k, 3)
-            k[:, :, wi] ./= sum(k[:, :, wi])
-        end
-
-        # Perform the convolution with the kernel
-        I = cube.I[xmin:xmax, ymin:ymax, :]
-        cube.I[xᵢ, yᵢ, :] .= sumdim(k .* I, (1,2))
-
-        # Same for the error
-        σ = cube.σ[xmin:xmax, ymin:ymax, :]
-        cube.σ[xᵢ, yᵢ, :] .= .√(sumdim(k .* σ.^2, (1,2)))
-
-    end
-
-    cube
-
-end
-
+#     data_out
+# end

@@ -18,7 +18,7 @@ kinematic_group_H2 = [
 # # Case B recombination amplitude ratios
 # tie_amp_Balmer = [0.105, 0.158, 0.256, 0.466, 1.0, 2.87]
 
-# # Tie ALL recombination lines together
+# Tie ALL recombination lines together
 kinematic_group_HI = [
     "HI_"
 ]
@@ -59,20 +59,24 @@ kinematic_group_MgV = [
 combined_maps = [["OII_03727", "OII_03729"]]
 
 # Line voff and FWHM limits
-voff_plim = [-500.0, 500.0]              # -500 to 500 km/s from the rest wavelength
-fwhm_plim = [0.0, 1000.0]                # 0 to 1000 km/s FWHM velocity of the line -- this is the *intrinsic* FWHM,
+voff_plim = [-700.0, 700.0]              # -1000 to 1000 km/s from the rest wavelength
+fwhm_plim = [0.0, 1500.0]                # 0 to 1000 km/s FWHM velocity of the line -- this is the *intrinsic* FWHM,
                                          #    i.e. the FWHM after the instrumental FWHM has been subtracted in quadrature
 h3_plim = [-0.5, 0.5]                    # skewness (3rd moment): limits (-0.5, 0.5), to remain mostly gaussian
 h4_plim = [-0.5, 0.5]                    # kurtosis (4th moment): limits (-0.5, 0.5), to remain mostly gaussian
 eta_plim = [0.0, 1.0]                    # mixing parameter for Voigt profiles: limits (0.0, 1.0)
+eta_init = 1.0                           # start the mixing ratio fully Gaussian
+eta_locked = true                        # the MIRI/MRS line-spread function should essentially be purely Gaussian
 
 # Additional line components
 n_acomps = 1
-acomp_amp_plim = [[0.0, 1.0]]
-acomp_voff_plim = [[-1000.0, 1000.0]]    # additive factor with the main line voff -> i.e. the additional component
-                                         # is allowed to have a voff up to +/-1000 km/s from the main component 
-acomp_fwhm_plim = [[1.0, 5.0]]           # multiplicative factor with the main line FWHM -> i.e. the additional component
-                                         # is allowed to have a FWHM from 1-5x the main component (it must be wider)
+rel_amp = false
+rel_voff = false 
+rel_fwhm = false
+
+acomp_amp_plim = [[0.0, 1.0]]            # if rel_amp is true: multiplicative factor with the main line amp
+acomp_voff_plim = [[-700.0, 700.0]]      # if rel_voff is true: additive factor with the main line voff
+acomp_fwhm_plim = [[0.0, 1500.0]]      # if rel_fwhm is true: multiplicative factor with the main line FWHM
 
 # Uncertainty in the wavelength solution of the data
 flexible_wavesol = false                 # allow tied voffs to vary slightly based on wavelength solution uncertainty
@@ -117,12 +121,12 @@ annotate = true
 [lines.HI_H_epsilon]
 wave = 0.3971202
 latex = "H$\\varepsilon$"
-annotate = false
+annotate = true
 
 [lines.HI_H_zeta]
 wave = 0.3890166
 latex = "H$\\zeta$"
-annotate = false
+annotate = true
 
 # Helium lines
 [lines.HeI_03889]
@@ -262,12 +266,12 @@ annotate = true
 [lines.SII_04069]
 wave = 0.4069749
 latex = "[S II]"
-annotate = false
+annotate = true
 
 [lines.SII_04077]
 wave = 0.4077500
 latex = "[S II]"
-annotate = false
+annotate = true
 
 [lines.SIII_06314]
 wave = 0.6313806
@@ -309,73 +313,84 @@ annotate = true
 
 ####################################### MIR LINES ##################################################
 
+# Tentative lines:
+# [lines.Unknown_9388]
+# wave = 9.388188
+# latex = "Unknown 1"
+# annotate = false
+
+# [lines.Unknown_9474]
+# wave = 9.47358
+# latex = "Unknown 2"
+# annotate = false
+
 # Brackett Series (Hydrogen, n -> 4) Lines
-[lines.HI_Br_alpha]
-wave = 4.05225
-latex = "Br$\\alpha$"
-annotate = false
+# [lines.HI_Br_alpha]
+# wave = 4.05225
+# latex = "Br$\\alpha$"
+# annotate = true
 
-[lines.HI_Br_beta]
-wave = 2.6259
-latex = "Br$\\beta$"
-annotate = false
+# [lines.HI_Br_beta]
+# wave = 2.6259
+# latex = "Br$\\beta$"
+# annotate = true
 
-[lines.HI_Br_gamma]
-wave = 2.1661
-latex = "Br$\\gamma$"
-annotate = false
+# [lines.HI_Br_gamma]
+# wave = 2.1661
+# latex = "Br$\\gamma$"
+# annotate = true
 
 # Pfund Series (Hydrogen, n -> 5) Lines
 [lines.HI_Pf_alpha]
 wave = 7.4599
 latex = "Pf$\\alpha$"
-annotate = false
+annotate = true
 
-[lines.HI_Pf_beta]
-wave = 4.6538
-latex = "Pf$\\beta$"
-annotate = false
+# [lines.HI_Pf_beta]
+# wave = 4.6538
+# latex = "Pf$\\beta$"
+# annotate = true
 
-[lines.HI_Pf_gamma]
-wave = 3.7405
-latex = "Pf$\\gamma$"
-annotate = false
+# [lines.HI_Pf_gamma]
+# wave = 3.7405
+# latex = "Pf$\\gamma$"
+# annotate = true
 
-[lines.HI_Pf_delta]
-wave = 3.2970
-latex = "Pf$\\delta$"
-annotate = false
+# [lines.HI_Pf_delta]
+# wave = 3.2970
+# latex = "Pf$\\delta$"
+# annotate = true
 
-[lines.HI_Pf_epsilon]
-wave = 3.0392
-latex = "Pf$\\varepsilon$"
-annotate = false
+# [lines.HI_Pf_epsilon]
+# wave = 3.0392
+# latex = "Pf$\\varepsilon$"
+# annotate = true
 
 # Humphreys Series (Hydrogen, n -> 6) Lines
-[lines.HI_Hu_alpha]
-wave = 12.372
-latex = "Hu$\\alpha$"
-annotate = false
+# [lines.HI_Hu_alpha]
+# wave = 12.372
+# latex = "Hu$\\alpha$"
+# annotate = true
 
-[lines.HI_Hu_beta]
-wave = 7.503
-latex = "Hu$\\beta$"
-annotate = false
+# [lines.HI_Hu_beta]
+# wave = 7.503
+# latex = "Hu$\\beta$"
+# annotate = true
 
-[lines.HI_Hu_gamma]
-wave = 5.908
-latex = "Hu$\\gamma$"
-annotate = false
+# [lines.HI_Hu_gamma]
+# wave = 5.908
+# latex = "Hu$\\gamma$"
+# annotate = true
 
-[lines.HI_Hu_delta]
-wave = 5.129
-latex = "Hu$\\delta$"
-annotate = false
+# [lines.HI_Hu_delta]
+# wave = 5.129
+# latex = "Hu$\\delta$"
+# annotate = true
 
-[lines.HI_Hu_epsilon]
-wave = 4.673
-latex = "Hu$\\varepsilon$"
-annotate = false
+# [lines.HI_Hu_epsilon]
+# wave = 4.673
+# latex = "Hu$\\varepsilon$"
+# annotate = true
 
 # Argon Lines
 [lines.ArII_6985]
@@ -383,37 +398,37 @@ wave = 6.985274
 latex = "[Ar II]"
 annotate = true
 
-[lines.ArV_7901]
-wave = 7.901600
-latex = "[Ar V]"
-annotate = false
+# [lines.ArV_7901]
+# wave = 7.901600
+# latex = "[Ar V]"
+# annotate = true
 
 [lines.ArIII_8991]
 wave = 8.991380
 latex = "[Ar III]"
 annotate = true
 
-[lines.ArV_13102]
-wave = 13.102200
-latex = "[Ar V]"
-annotate = true
+# [lines.ArV_13102]
+# wave = 13.102200
+# latex = "[Ar V]"
+# annotate = true
 
 # Chlorine Lines
-[lines.ClII_14368]
-wave = 14.367800
-latex = "[Cl II]"
-annotate = false
+# [lines.ClII_14368]
+# wave = 14.367800
+# latex = "[Cl II]"
+# annotate = true
 
 # Iron Lines
-[lines.FeII_4889]
-wave = 4.889137
-latex = "[Fe II]"
-annotate = false
+# [lines.FeII_4889]
+# wave = 4.889137
+# latex = "[Fe II]"
+# annotate = true
 
-[lines.FeII_5062]
-wave = 5.062350
-latex = "[Fe II]"
-annotate = false
+# [lines.FeII_5062]
+# wave = 5.062350
+# latex = "[Fe II]"
+# annotate = true
 
 [lines.FeII_5340]
 wave = 5.340169
@@ -423,65 +438,65 @@ annotate = true
 [lines.FeVIII_5447]
 wave = 5.4466
 latex = "[Fe VIII]"
-annotate = false
+annotate = true
 
-[lines.FeII_6721]
-wave = 6.721283
-latex = "[Fe II]"
-annotate = false
+# [lines.FeII_6721]
+# wave = 6.721283
+# latex = "[Fe II]"
+# annotate = true
 
-[lines.FeVII_7814]
-wave = 7.814500
-latex = "[Fe VII]"
-annotate = false
+# [lines.FeVII_7814]
+# wave = 7.814500
+# latex = "[Fe VII]"
+# annotate = true
 
 [lines.FeVII_9527]
 wave = 9.526700
 latex = "[Fe VII]"
-annotate = false
+annotate = true
 
 [lines.FeII_17936]
 wave = 17.935950
 latex = "[Fe II]"
-annotate = false
+annotate = true
 
 [lines.FeIII_22925]
 wave = 22.925000
 latex = "[Fe III]"
-annotate = false
+annotate = true
 
 [lines.FeII_25988]
 wave = 25.988290
 latex = "[Fe II]"
-annotate = false
+annotate = true
 
 # Helium Lines
-[lines.HeII_5228]
-wave = 5.2279972
-latex = "He II"
-annotate = false
+# [lines.HeII_5228]
+# wave = 5.2279972
+# latex = "He II"
+# annotate = true
 
 # Magnesium Lines
 [lines.MgVII_5503]
 wave = 5.503200
 latex = "[Mg VII]"
-annotate = false
+annotate = true
 
 [lines.MgV_5609]
 wave = 5.609850
 latex = "[Mg V]"
 annotate = true
 
-[lines.MgV_13521]
-wave = 13.521300
-latex = "[Mg V]"
-annotate = false
+# [lines.MgV_13521]
+# wave = 13.521300
+# latex = "[Mg V]"
+# annotate = true
 
 # Sodium Lines
-[lines.NaIII_7318]
-wave = 7.317700
-latex = "[Na III]"
-annotate = false
+# [lines.NaIII_7318]
+# wave = 7.317700
+# latex = "[Na III]"
+# annotate = true
 
 # Neon Lines
 [lines.NeVI_7652]
@@ -510,10 +525,10 @@ latex = "[Ne V]"
 annotate = true
 
 # Nickel Lines
-[lines.NiII_6636]
-wave = 6.636000
-latex = "[Ni II]"
-annotate = false
+# [lines.NiII_6636]
+# wave = 6.636000
+# latex = "[Ni II]"
+# annotate = true
 
 # Oxygen Lines
 [lines.OIV_25890]
@@ -525,7 +540,7 @@ annotate = true
 [lines.PIII_17885]
 wave = 17.885000
 latex = "[P III]"
-annotate = false
+annotate = true
 
 # Sulfur Lines
 [lines.SIV_10511]
@@ -886,16 +901,56 @@ default = "Voigt"
 # OIII_04960 = ["Voigt"]
 # OIII_05008 = ["Voigt"]
 
-# NeVI_7652 = ["Voigt"]
-# NeII_12813 = ["Voigt"]
-# NeIII_15555 = ["Voigt"]
-# NeV_14322 = ["Voigt"]
 # ArIII_8991 = ["Voigt"]
+# NeVI_7652 = ["Voigt"]
 # SIV_10511 = ["Voigt"]
-
+# FeVII_9527 = ["Voigt"]
+# NeII_12813 = ["Voigt"]
 
 # optional: add [parameters] key to specify individual line priors that 
 # are different from the defaults
+
+# In channel 3A, 1 pixel ~ 61 km/s
+# [parameters.ArIII_8991]
+# voff_init = -117.1
+# voff_plim = [-178.1, -56.1]
+# fwhm_init = 1001.5
+# fwhm_plim = [900.0, 1100.0]
+# acomp_fwhm_init = 100.0
+# acomp_fwhm_plim = [[0.0, 800.0]]
+
+# [parameters.NeVI_7652]
+# voff_init = -55.7
+# voff_plim = [-116.7, 6.7]
+# fwhm_init = 1408.1
+# fwhm_plim = [1300.0, 1500.0]
+# # fwhm_plim = [[1267.3, 1548.9]]
+# acomp_fwhm_init = 100.0
+# acomp_fwhm_plim = [[0.0, 800.0]]
+
+# [parameters.SIV_10511]
+# voff_init = -2.5
+# voff_plim = [-63.5, 59.5]
+# fwhm_init = 972.3
+# fwhm_plim = [870.0, 1070.0]
+# acomp_fwhm_init = 100.0
+# acomp_fwhm_plim = [[0.0, 700.0]]
+
+# [parameters.FeVII_9527]
+# voff_init = -192.3
+# voff_plim = [-253.3, -131.3]
+# fwhm_init = 1055.7
+# fwhm_plim = [950.0, 1150.0]
+# acomp_fwhm_init = 100.0
+# acomp_fwhm_plim = [[0.0, 800.0]]
+
+# [parameters.OIII_04960]
+# acomp_amp_init = 0.0
+# acomp_amp_locked = true
+
+# [parameters.OIII_05008]
+# acomp_amp_init = 0.0
+# acomp_amp_locked = true
 
 # [parameters.NeII_12813]
 # acomp_amp_plim = [[0.0, 0.5]]

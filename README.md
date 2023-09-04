@@ -1043,19 +1043,23 @@ reproject_channels!(obs, [1,2,3], out_id=0, method=:adaptive)
 ```
 5. Bad pixels can then be interpolated using the "interpolate_nans!" function on the desired channels. These pixels will be ignored during the fitting, but this step is necessary because the minimizer cannot deal with NaNs and Infs. 
 ```julia
-interpolate_nans!(obs.channels[0], obs.z)
+interpolate_nans!(obs.channels[0])
 ```
-5. Create the CubeFitter object, which contains all of the fitting data and options for fitting a cube. Here you can overwrite any options from the `options.toml` file, which will otherwise be the defaults when creating any CubeFitter object:
+6. (Optional) The errors in the cube can be replaced with the "statistical errors", which are calculated as the standard deviation of the residuals between the flux and a cubic spline fit to the flux (with emission lines masked out) within a small window (60 pixels) around each pixel.  This is performed with the "calculate_statistical_errors!" function.
+```julia
+calculate_statistical_errors!(obs.channels[0])
+```
+7. Create the CubeFitter object, which contains all of the fitting data and options for fitting a cube. Here you can overwrite any options from the `options.toml` file, which will otherwise be the defaults when creating any CubeFitter object:
 ```julia
 cube_fitter = CubeFitter(obs.channels[0], obs.z, name; parallel=true, plot_spaxels=:pyplot, plot_maps=true, 
     save_fits=true)
 ```
 - Additionally, there is also an `extinction_map` keyword argument where one may input a 2D map of extinction values. I.e. for MIR spectra, these will be interpreted as $\tau_{9.7}$ values, whereas for optical spectra they will be interpreted as $E(B-V)$ values. In either case, these maps will lock the extinction values to the given values in the map corresponding to each spaxel. This is useful if, for example, one wishes to fit a small part of the spectrum where it would otherwise be difficult to constrain the extinction with the other continuum parameters.
-6. If fitting each spaxel individually, simply call the "fit_cube!" function on the CubeFitter object
+8. If fitting each spaxel individually, simply call the "fit_cube!" function on the CubeFitter object
 ```julia
 fit_cube!(cube_fitter)
 ```
-7. If fitting an integrated spectrum within an aperture, first create the aperture with the "make_aperture" function, then call the "fit_cube!" function with the aperture. Apertures can be specified as `:Circular`, `:Rectangular`, or `:Elliptical`. The following two arguments are the R.A. in sexagesimal hours and the Dec. in sexagesimal degrees of the center of the aperture. Then, if the aperture is circular, the next argument is the radius of the aperture in arcseconds. For rectangular apertures, there are 3 arguments for the width and height in arcseconds and rotation angle in degrees. For elliptical apertures, there are 3 arguments for the semimajor and semiminor axes in arcseconds and rotation angle in degrees. The `auto_centroid` option will automatically adjust the centroid of the aperture to the local flux peak. The `scale_psf` argument creates a list of apertures with increasing sizes that scale up at the same rate as the FWHM of the PSF scales up over the input wavelength range.
+9. If fitting an integrated spectrum within an aperture, first create the aperture with the "make_aperture" function, then call the "fit_cube!" function with the aperture. Apertures can be specified as `:Circular`, `:Rectangular`, or `:Elliptical`. The following two arguments are the R.A. in sexagesimal hours and the Dec. in sexagesimal degrees of the center of the aperture. Then, if the aperture is circular, the next argument is the radius of the aperture in arcseconds. For rectangular apertures, there are 3 arguments for the width and height in arcseconds and rotation angle in degrees. For elliptical apertures, there are 3 arguments for the semimajor and semiminor axes in arcseconds and rotation angle in degrees. The `auto_centroid` option will automatically adjust the centroid of the aperture to the local flux peak. The `scale_psf` argument creates a list of apertures with increasing sizes that scale up at the same rate as the FWHM of the PSF scales up over the input wavelength range.
 ```julia
 ap = make_aperture(obs.channels[0], :Circular, "23:03:15.610", "+8:52:26.10", 0.5, auto_centroid=true, scale_psf=false)
 fit_cube!(cube_fitter, ap)

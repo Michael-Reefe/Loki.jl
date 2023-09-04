@@ -79,7 +79,7 @@ function parse_resolving(channel::String)
     # taking an input wi in the OBSERVED frame
     interp_R = Spline1D(wave, R, k=1)
 
-    # The line-spread function in km/s
+    # The line-spread function in km/s - reduce by 25% from the pre-flight data
     lsf = wi -> C_KMS / interp_R(wi)
     
     lsf
@@ -213,6 +213,18 @@ function parse_dust()
         α = []
     end
 
+    # Template amplitudes
+    if haskey(dust, "template_amps")
+        temp_A = [from_dict(dust["template_amps"][i]) for i ∈ eachindex(dust["template_amps"])]
+        msg = "Template amplitudes:"
+        for Ai ∈ temp_A
+            msg *= "\n$Ai"
+        end
+        @debug msg
+    else
+        temp_A = []
+    end
+
     # Dust feature central wavelengths and FWHMs
     cent_vals = zeros(length(dust["dust_features"]))
     name = Vector{String}(undef, length(dust["dust_features"]))
@@ -324,7 +336,7 @@ function parse_dust()
     @debug msg
 
     # Create continuum object
-    continuum = MIRContinuum(T_s, T_dc, α, τ_97, τ_ice, τ_ch, β, T_hot, Cf, τ_warm, τ_cold, sil_peak)
+    continuum = MIRContinuum(T_s, T_dc, α, τ_97, τ_ice, τ_ch, β, T_hot, Cf, τ_warm, τ_cold, sil_peak, temp_A)
 
     continuum, dust_features, abs_features, abs_taus
 end
@@ -578,7 +590,7 @@ function parse_lines()
         end
 
         # Determine the initial values for the additional components
-        acomp_amp_init = haskey(lines, "acomp_amp_init") ? lines["acomp_amp_init"] : repeat([0.25], lines["n_acomps"])
+        acomp_amp_init = haskey(lines, "acomp_amp_init") ? lines["acomp_amp_init"] : repeat([0.1], lines["n_acomps"])
         acomp_fwhm_init = haskey(lines, "acomp_fwhm_init") ? lines["acomp_fwhm_init"] : repeat([fwhm_init], lines["n_acomps"])
         acomp_voff_init = haskey(lines, "acomp_voff_init") ? lines["acomp_voff_init"] : repeat([voff_init], lines["n_acomps"])
         acomp_h3_init = haskey(lines, "acomp_h3_init") ? lines["acomp_h3_init"] : repeat([h3_init], lines["n_acomps"])
@@ -637,6 +649,13 @@ function parse_lines()
                         paramvars[param_str][3] = lines["parameters"][line]["$(param_str)_init"]
                     end
                 end
+                # Unpack paramvars back into the appropriate variables
+                voff_plim, voff_locked, voff_init = paramvars["voff"]
+                fwhm_plim, fwhm_locked, fwhm_init = paramvars["fwhm"]
+                h3_plim, h3_locked, h3_init = paramvars["h3"]
+                h4_plim, h4_locked, h4_init = paramvars["h4"]
+                η_plim, η_locked, η_init = paramvars["eta"]
+
                 # Repeat for acomp parameters
                 acomp_paramvars = Dict("acomp_amp" => [acomp_amp_plims, acomp_amp_locked, acomp_amp_init],
                                        "acomp_voff" => [acomp_voff_plims, acomp_voff_locked, acomp_voff_init],
@@ -664,6 +683,8 @@ function parse_lines()
                         end
                     end
                 end
+                # Dont need to unpack acomp_paramvars since they are vectors (modified in-place) and not individual variables
+
             end
         end
 
@@ -851,11 +872,22 @@ function parse_lines()
         combined = [[Symbol(ln) for ln in c] for c in combined]
     end
 
+    rel_amp = rel_voff = rel_fwhm = false
+    if haskey(lines, "rel_amp")
+        rel_amp = lines["rel_amp"]
+    end
+    if haskey(lines, "rel_voff")
+        rel_voff = lines["rel_voff"]
+    end
+    if haskey(lines, "rel_fwhm")
+        rel_fwhm = lines["rel_fwhm"]
+    end
+
     # create vectorized object for all the line data
     lines_out = TransitionLines(names[ss], latex[ss], annotate[ss], cent_vals[ss], hcat(prof_out[ss], acomp_prof_out[ss, :]), 
         hcat(tied_amp[ss], acomp_tied_amp[ss, :]), hcat(tied_voff[ss], acomp_tied_voff[ss, :]), hcat(tied_fwhm[ss], acomp_tied_fwhm[ss, :]), 
         acomp_amps[ss, :], hcat(voffs[ss], acomp_voffs[ss, :]), hcat(fwhms[ss], acomp_fwhms[ss, :]), hcat(h3s[ss], acomp_h3s[ss, :]), 
-        hcat(h4s[ss], acomp_h4s[ss, :]), hcat(ηs[ss], acomp_ηs[ss, :]), combined)
+        hcat(h4s[ss], acomp_h4s[ss, :]), hcat(ηs[ss], acomp_ηs[ss, :]), combined, rel_amp, rel_voff, rel_fwhm)
 
     @debug "#######################################################"
 
@@ -958,7 +990,8 @@ function parse_lines()
     if lines["tie_voigt_mixing"]
         η_init = haskey(lines, "eta_init") ? lines["eta_init"] : 0.5       # Voigts start half gaussian, half lorentzian
         η_plim = (lines["eta_plim"]...,)
-        voigt_mix_tied = Parameter(η_init, false, η_plim)
+        η_locked = haskey(lines, "eta_locked") ? lines["eta_locked"] : false
+        voigt_mix_tied = Parameter(η_init, η_locked, η_plim)
         @debug "voigt_mix_tied $voigt_mix_tied (tied)"
     else
         voigt_mix_tied = nothing
@@ -1054,7 +1087,7 @@ function silicate_dp()
     # Get optical depth
     τ_DS = log10.(cubic_spline_irs.(λ_irs) ./ F_irs)
     # Smooth data and remove features < ~7.5 um
-    τ_smooth = movmean(τ_DS, 10)
+    τ_smooth = movmean(τ_DS, 5)
     v1, p1 = findmin(τ_DS[λ_irs .< 6])
     v2, p2 = findmin(τ_DS[7 .< λ_irs .< 8])
     slope_beg = (v2 - v1) / (λ_irs[7 .< λ_irs .< 8][p2] - λ_irs[λ_irs .< 6][p1])
@@ -1213,10 +1246,10 @@ function generate_feii_templates(λ::Vector{<:Real}, lsf::Vector{<:Real})
     na_feii_temp = na_feii_temp[:, 2]
     br_feii_temp = br_feii_temp[:, 2]
 
+    # Convert to vacuum wavelengths
+    feii_λ = airtovac.(feii_λ)
     # Convert to microns
     feii_λ ./= 1e4
-    # Convert to vacuum wavelengths
-    feii_λ = air_to_vacuum.(feii_λ)
     # Linear spacing 
     Δλ = (maximum(feii_λ) - minimum(feii_λ)) / length(feii_λ)
 
