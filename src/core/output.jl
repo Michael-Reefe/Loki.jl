@@ -489,7 +489,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
         # Fe II emission
         if cube_fitter.fit_opt_na_feii
             λ0_na_feii = 1e4 * (1+z) * cube_data.λ[argmax(convolve_losvd(cube_fitter.feii_templates_fft[:, 1], cube_fitter.vsyst_feii, 
-                out_params[index, pᵢ+1], out_params[index, pᵢ+2], cube_fitter.velscale, length(cube_data.λ), temp_fft=true, npad_in=cube_fitter.npad_feii))]
+                out_params[index, pᵢ+1], out_params[index, pᵢ+2], cube_fitter.vres, length(cube_data.λ), temp_fft=true, npad_in=cube_fitter.npad_feii))]
             param_maps.feii[:na_amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ] * N * λ0_na_feii^2/(C_KMS * 1e13) / (1+z)) : -Inf
             param_errs[1].feii[:na_amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
             param_errs[2].feii[:na_amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
@@ -503,7 +503,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
         end
         if cube_fitter.fit_opt_br_feii
             λ0_br_feii = 1e4 * (1+z) * cube_data.λ[argmax(convolve_losvd(cube_fitter.feii_templates_fft[:, 2], cube_fitter.vsyst_feii,
-                out_params[index, pᵢ+1], out_params[index, pᵢ+2], cube_fitter.velscale, length(cube_data.λ), temp_fft=true, npad_in=cube_fitter.npad_feii))]
+                out_params[index, pᵢ+1], out_params[index, pᵢ+2], cube_fitter.vres, length(cube_data.λ), temp_fft=true, npad_in=cube_fitter.npad_feii))]
             param_maps.feii[:br_amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ] * N * λ0_br_feii^2/(C_KMS * 1e13) / (1+z)) : -Inf
             param_errs[1].feii[:br_amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
             param_errs[2].feii[:br_amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
@@ -530,7 +530,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
 
         if cube_fitter.save_full_model
             # End of continuum parameters: recreate the continuum model
-            I_cont, comps_c = model_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], N, cube_fitter.velscale, cube_fitter.vsyst_ssp,
+            I_cont, comps_c = model_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], N, cube_fitter.vres, cube_fitter.vsyst_ssp,
                 cube_fitter.vsyst_feii, cube_fitter.npad_feii, cube_fitter.n_ssps, cube_fitter.ssp_λ, cube_fitter.ssp_templates, 
                 cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, 
                 cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve, true)

@@ -312,7 +312,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         ptot = zeros(Float64, length(pars_0))
         ptot[.~lock] = pfree
         ptot[lock] .= pfix
-        model_continuum(x, ptot, N, cube_fitter.velscale, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
+        model_continuum(x, ptot, N, cube_fitter.vres, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
             cube_fitter.n_ssps, cube_fitter.ssp_λ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, 
             cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, 
             cube_fitter.extinction_curve)
@@ -381,7 +381,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
             cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, false,
             templates_full,  true)
     else
-        I_model, comps = model_continuum(λ, popt, N, cube_fitter.velscale, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
+        I_model, comps = model_continuum(λ, popt, N, cube_fitter.vres, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
             cube_fitter.n_ssps, cube_fitter.ssp_λ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, 
             cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve, true)
     end
@@ -1536,26 +1536,31 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         pₑ = 1 + 3cube_fitter.n_ssps + 2
         E_BV = ptot_cont[pₑ]
         E_BV_factor = ptot_cont[pₑ+1]
-        δ_UV = f_nodust = nothing
+        δ_UV = nothing
+        Cf_dust = 0.
         if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
             δ_UV = ptot_cont[pₑ+2]
             pₑ += 1
         end
         if cube_fitter.fit_covering_frac && cube_fitter.extinction_curve == "calzetti"
-            f_nodust = ptot_cont[pₑ+2]
+            Cf_dust = ptot_cont[pₑ+2]
             pₑ += 1
         end
         # E(B-V)_stars = 0.44E(B-V)_gas
         if cube_fitter.extinction_curve == "ccm"
             ext_curve_gas = attenuation_cardelli(x, E_BV)
         elseif cube_fitter.extinction_curve == "calzetti"
-            ext_curve_gas = attenuation_calzetti(x, E_BV, δ=δ_UV, f_nodust=f_nodust)
+            if isnothing(δ_UV)
+                ext_curve_gas = attenuation_calzetti(x, E_BV, Cf=Cf_dust)
+            else
+                ext_curve_gas = attenuation_calzetti(x, E_BV, δ_UV, Cf=Cf_dust)
+            end
         else
             error("Unrecognized extinction curve $(cube_fitter.extinction_curve)")
         end
         
         # Generate the models
-        Icont = model_continuum(x, ptot_cont, N, cube_fitter.velscale, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
+        Icont = model_continuum(x, ptot_cont, N, cube_fitter.vres, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
             cube_fitter.n_ssps, cube_fitter.ssp_λ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, 
             cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve)
         Ilines = model_line_residuals(x, ptot_lines, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol,
@@ -1572,13 +1577,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     upper_bounds = [ub_cont; ubfree_lines_tied]
     dstep = [dstep_cont; dfree_lines_tied]
 
-    # Force skip SAMIN fitting if the extinction has been locked to 0
-    override = false
-    if (cube_fitter.spectral_region == :OPT) && iszero(pars_0_cont[1 + 3cube_fitter.n_ssps + 2]) && lock_cont[1 + 3cube_fitter.n_ssps + 2] && !init
-        override = true
-    end
-
-    if (init || use_ap || cube_fitter.fit_all_samin) && !bootstrap_iter && !override
+    if (init || use_ap || cube_fitter.fit_all_samin) && !bootstrap_iter
     # if false
         @debug "Beginning joint continuum+line fitting with Simulated Annealing:"
 
@@ -1713,7 +1712,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
             templates_full, true)
         ext_key = "extinction"
     else
-        Icont, comps_cont = model_continuum(λ, popt_cont, N, cube_fitter.velscale, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
+        Icont, comps_cont = model_continuum(λ, popt_cont, N, cube_fitter.vres, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
             cube_fitter.n_ssps, cube_fitter.ssp_λ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, 
             cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve, true)
         ext_key = "attenuation_gas"
@@ -2400,7 +2399,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                         cube_fitter.fit_sil_emission, false, cube_fitter.n_templates > 0 ? cube_fitter.templates[spaxel, :, :] : Matrix{Float64}(undef, 0, 0), true)
                     ext_key = "extinction"
                 else
-                    I_boot_cont, comps_boot_cont = model_continuum(λ, p_out[1:split1], norm, cube_fitter.velscale, cube_fitter.vsyst_ssp, 
+                    I_boot_cont, comps_boot_cont = model_continuum(λ, p_out[1:split1], norm, cube_fitter.vres, cube_fitter.vsyst_ssp, 
                         cube_fitter.vsyst_feii, cube_fitter.npad_feii, cube_fitter.n_ssps, cube_fitter.ssp_λ, cube_fitter.ssp_templates,
                          cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, 
                          cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve, true)

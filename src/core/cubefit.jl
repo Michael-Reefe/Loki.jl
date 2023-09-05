@@ -615,7 +615,7 @@ This object will obviously be different depending on if the spectral region is :
 - `ssp_templates::Union{Vector{Spline2D},Nothing}`: A vector of interpolating functions for the simple stellar populations
 at each point in the wavelength grid.
 - `feii_templates_fft::Union{Matrix{C},Nothing}`: A matrix of the Fourier transforms of the narrow and broad Fe II templates
-- `velscale::T`: The constant velocity scale of the wavelength grid, which assumes logarithmic spacing, in km/s/pixel.
+- `vres::T`: The constant velocity resolution of the wavelength grid, which assumes logarithmic spacing, in km/s/pixel.
 - `vsyst_ssp::T`: The systemic velocity offset between the input wavelength grid and the SSP template wavelength grid.
 - `vsyst_feii::T`: The systemic velocity offset between the input wavelength grid and the Fe II template wavelength grid.
 - `npad_feii::S`: The length of the Fe II templates (NOT the length of the Fourier transformed templates).
@@ -731,7 +731,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     ssp_λ::Union{Vector{T},Nothing}
     ssp_templates::Union{Vector{Spline2D},Nothing}
     feii_templates_fft::Union{Matrix{C},Nothing}
-    velscale::T
+    vres::T
     vsyst_ssp::T
     vsyst_feii::T
     npad_feii::S
@@ -972,7 +972,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             n_ssps = 0
             n_templates = size(out[:templates], 4)
             ssp_λ = ssp_templates = feii_templates_fft = nothing
-            npad_feii = velscale = vsyst_ssp = vsyst_feii = 0
+            npad_feii = vres = vsyst_ssp = vsyst_feii = 0
 
             if n_templates == 0
                 # Ignore any template amplitude entries in the dust.toml options if there are no templates
@@ -1011,7 +1011,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             @debug msg
 
             # Calculate velocity scale and systemic velocity offset b/w templates and input
-            velscale = log(λ[2]/λ[1]) * C_KMS
+            vres = log(λ[2]/λ[1]) * C_KMS
             vsyst_ssp = log(ssp_λ[1]/λ[1]) * C_KMS
             vsyst_feii = log(feii_λ[1]/λ[1]) * C_KMS
 
@@ -1360,7 +1360,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             out[:extinction_curve], out[:extinction_screen], extinction_map, out[:fit_stellar_continuum], out[:fit_sil_emission], out[:guess_tau], out[:fit_opt_na_feii], 
             out[:fit_opt_br_feii], out[:fit_all_samin], out[:use_pah_templates], pah_template_map, out[:fit_joint], out[:fit_uv_bump], out[:fit_covering_frac], 
             continuum, n_dust_cont, n_power_law, n_dust_features, n_abs_features, n_templates, out[:templates], out[:template_names], dust_features, 
-            abs_features, abs_taus, n_ssps, ssp_λ, ssp_templates, feii_templates_fft, velscale, vsyst_ssp, vsyst_feii, npad_feii, n_lines, n_acomps, n_comps, relative_flags, 
+            abs_features, abs_taus, n_ssps, ssp_λ, ssp_templates, feii_templates_fft, vres, vsyst_ssp, vsyst_feii, npad_feii, n_lines, n_acomps, n_comps, relative_flags, 
             lines, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, out[:cosmology], flexible_wavesol, out[:n_bootstrap], 
             out[:random_seed], out[:line_test_lines], out[:line_test_threshold], out[:plot_line_test], out[:linemask_delta], out[:linemask_n_inc_thresh], out[:linemask_thresh], 
             out[:linemask_overrides], out[:map_snr_thresh], p_init_cont, p_init_line, p_init_pahtemp, p_init_cube_λ, p_init_cube_cont, p_init_cube_lines, p_init_cube_wcs, 
@@ -2342,9 +2342,14 @@ function get_line_plimits(cube_fitter::CubeFitter, init::Bool, ext_curve::Union{
         elseif cube_fitter.extinction_curve == "ccm"
             max_amp = 1 / attenuation_cardelli([cube_fitter.cube.λ[1]], cube_fitter.continuum.E_BV.limits[2])[1]
         elseif cube_fitter.extinction_curve == "calzetti"
-            max_amp = 1 / attenuation_calzetti([cube_fitter.cube.λ[1]], cube_fitter.continuum.E_BV.limits[2],
-                δ=cube_fitter.fit_uv_bump ? cube_fitter.continuum.δ_uv : nothing, 
-                f_nodust=cube_fitter.fit_covering_frac ? cube_fitter.continuum.frac : nothing)[1]
+            Cf_dust = cube_fitter.fit_covering_frac ? cube_fitter.continuum.frac : 0.
+            if cube_fitter.fit_uv_bump 
+                max_amp = 1 / attenuation_calzetti([cube_fitter.cube.λ[1]], cube_fitter.continuum.E_BV.limits[2],
+                    cube_fitter.continuum.δ_uv, Cf=Cf_dust)[1]
+            else
+                max_amp = 1 / attenuation_calzetti([cube_fitter.cube.λ[1]], cube_fitter.continuum.E_BV.limits[2],
+                    Cf=Cf_dust)[1]
+            end
         end 
         amp_plim = (0., clamp(max_amp, 1., Inf))
     end

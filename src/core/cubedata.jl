@@ -281,7 +281,7 @@ function to_vacuum_wavelength!(cube::DataCube; linear_resample::Bool=true)
         # Optionally resample back onto a linear grid
         if linear_resample
             λlin = range(minimum(cube.λ), maximum(cube.λ), length=length(cube.λ))
-            cube.I, cube.σ, cube.mask = resample_conserving_flux(λlin, cube.λ, cube.I, cube.σ, cube.mask)
+            cube.I, cube.σ, cube.mask = resample_flux_permuted3D(λlin, cube.λ, cube.I, cube.σ, cube.mask)
             cube.λ = collect(λlin)
         end
         cube.vacuum_wave = true
@@ -339,8 +339,10 @@ function log_rebin!(cube::DataCube)
 
     # rebin onto a logarithmically spaced wavelength grid
     if !log_check
-        lnλ = get_logarithmic_λ([minimum(cube.λ), maximum(cube.λ)], length(cube.λ), oversample=1)
-        cube.I, cube.σ, cube.mask = resample_conserving_flux(lnλ, cube.λ, cube.I, cube.σ, cube.mask)
+        dλ = (maximum(cube.λ) - minimum(cube.λ)) / length(cube.λ)
+        linλ = minimum(cube.λ):dλ:maximum(cube.λ)
+        lnλ = get_logarithmic_λ(linλ)
+        cube.I, cube.σ, cube.mask = resample_flux_permuted3D(lnλ, cube.λ, cube.I, cube.σ, cube.mask)
         cube.λ = lnλ
     else
         @warn "Cube is already log-rebinned! Will not be rebinned again."
@@ -1352,7 +1354,7 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
             if isnothing(rescale_factors)
                 # Get the flux in the left and right channels
                 I_left = I_out[:, :, i1:jump]
-                I_right = resample_conserving_flux(λ_out[i1:jump], λ_out[jump+1:i2], I_out[:, :, jump+1:i2])
+                I_right = resample_flux_permuted3D(λ_out[i1:jump], λ_out[jump+1:i2], I_out[:, :, jump+1:i2])
 
                 # Get the ratios of the left/right flux
                 scale_left = I_right ./ I_left
@@ -1460,7 +1462,7 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
             λ_res = median([diff(λ_out[i1:jump])[1], diff(λ_out[jump+1:i2])[1]])
             λ_resamp = λ_out[i1]:λ_res:(λ_out[i2]-eps())
             ss = sortperm(λ_out[i1:i2])
-            I_resamp, σ_resamp, mask_resamp = resample_conserving_flux(λ_resamp, 
+            I_resamp, σ_resamp, mask_resamp = resample_flux_permuted3D(λ_resamp, 
                 λ_out[i1:i2][ss], I_out[:, :, (i1:i2)[ss]], σ_out[:, :, (i1:i2)[ss]], mask_out[:, :, (i1:i2)[ss]])
             # replace overlapping regions in outputs
             λ_con = [λ_con; λ_out[prev_i2:i1-1]; λ_resamp]
@@ -1505,7 +1507,7 @@ function reproject_channels!(obs::Observation, channels=nothing, concat_type=:fu
     if concat_type == :sub
         @info "Resampling wavelength onto a uniform, monotonic grid"
         λ_lin = collect(λ_out[1]:Δλ:λ_out[end])
-        I_out, σ_out, mask_out = resample_conserving_flux(λ_lin, λ_out, I_out, σ_out, mask_out)
+        I_out, σ_out, mask_out = resample_flux_permuted3D(λ_lin, λ_out, I_out, σ_out, mask_out)
         λ_out = λ_lin
     else
         @warn "The wavelength dimension has not be resampled to be linear when concatenating multiple full channels! " *

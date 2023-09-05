@@ -35,6 +35,7 @@ using WCS
 using Reproject
 using ImageFiltering
 using Unitful, UnitfulAstro
+using SpectralResampling
 
 # File I/O
 using TOML

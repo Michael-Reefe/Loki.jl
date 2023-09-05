@@ -1130,7 +1130,7 @@ to a spectral resolution given by `lsf` (in km/s). The redshift `z` and cosmolog
 calculate a luminosity distance so that the templates can be normalized into units of erg/s/cm^2/ang/Msun.
 
 The templates are generated using the Python version of Charlie Conroy's Flexible Stellar Population Synthesis (FSPS)
-package, converted to Python by Dan Foreman-Mackey.
+package, converted to Python by Dan Foreman-Mackey (and callable within Julia using PyCall).
 
 Returns 1D arrays for the wavelengths, ages, and metals that the templates are evaluated at, as well as the
 3D array of templates. Note that some of the templates may be filled with 0s if the grid space is not fully
@@ -1151,6 +1151,7 @@ function generate_stellar_populations(λ::Vector{<:Real}, lsf::Vector{<:Real}, z
 
     # Cut off the templates a little bit before/after the input spectrum
     λleft, λright = minimum(λ)*0.98, maximum(λ)*1.02
+
     # Dummy population
     ssp0 = py_fsps.StellarPopulation()
     # Get the wavelength grid that FSPS uses
@@ -1158,7 +1159,8 @@ function generate_stellar_populations(λ::Vector{<:Real}, lsf::Vector{<:Real}, z
     # Convert from angstroms to microns
     ssp_λ ./= 1e4
     @assert (λleft ≥ minimum(ssp_λ)) && (λright ≤ maximum(ssp_λ)) "The extended input spectrum range of ($λleft, $λright) um " * 
-        "is outside the template range of ($(minimum(ssp_λ)), $(maximum(ssp_λ))) um. Please adjust the input spectrum accordingly."
+        "is outside the FSPS template range of ($(minimum(ssp_λ)), $(maximum(ssp_λ))) um. Please adjust the input spectrum accordingly."
+
     # Mask to a range around the input spectrum
     mask = λleft .< ssp_λ .< λright
     ssp_λ = ssp_λ[mask]
@@ -1172,11 +1174,11 @@ function generate_stellar_populations(λ::Vector{<:Real}, lsf::Vector{<:Real}, z
     ssp_lsf = Spline1D(ssp_λ, abs.(ssp0.resolutions[mask]), k=1, bc="nearest")(ssp_λlin)
     ssp_fwhm = ssp_lsf ./ C_KMS .* ssp_λlin .* 2√(2log(2))
     # Difference in resolutions between the input spectrum and SSP templates, in pixels
-    σ_diff = sqrt.(clamp.(inp_fwhm.^2 .- ssp_fwhm.^2, 0., Inf)) ./ (2√(2log(2))) ./ Δλ 
+    dfwhm = sqrt.(clamp.(inp_fwhm.^2 .- ssp_fwhm.^2, 0., Inf)) ./ Δλ 
 
     # Logarithmically rebinned wavelengths
     logscale = log(λ[2]/λ[1])
-    ssp_lnλ = get_logarithmic_λ([minimum(ssp_λlin), maximum(ssp_λlin)], length(ssp_λlin), logscale=logscale)
+    ssp_lnλ = get_logarithmic_λ(ssp_λlin, logscale)
 
     # Calculate luminosity distance in cm in preparation to convert luminosity to flux
     dL = luminosity_dist(u"cm", cosmo, z).val
@@ -1201,12 +1203,10 @@ function generate_stellar_populations(λ::Vector{<:Real}, lsf::Vector{<:Real}, z
             ssp_flux = ssp_LperA[mask] .* 3.846e33 ./ (4π .* dL.^2)
             # Resample onto the linear wavelength grid
             ssp_flux = Spline1D(ssp_λ, ssp_flux, k=1, bc="nearest")(ssp_λlin)
-            # ssp_flux = resample_conserving_flux(ssp_λlin, ssp_λ, ssp_flux; fill=0.)
             # Convolve with gaussian kernels to degrade the spectrum to match the input spectrum's resolution
-            ssp_flux, _ = convolveGaussian1D(ssp_flux, σ_diff)
+            ssp_flux, _ = convolveGaussian1D(ssp_flux, dfwhm)
             # Resample again, this time onto the logarithmic wavelength grid
             ssp_flux = Spline1D(ssp_λlin, ssp_flux, k=1, bc="nearest")(ssp_lnλ)
-            # ssp_flux = resample_conserving_flux(ssp_lnλ, ssp_λlin, ssp_flux; fill=0.)
             # Add to the templates array
             ssp_templates[age_ind, z_ind, :] .= ssp_flux
             next!(prog)
@@ -1282,15 +1282,15 @@ function generate_feii_templates(λ::Vector{<:Real}, lsf::Vector{<:Real})
     # FWHM resolution of the Fe II templates in um
     feii_fwhm = 1.0/1e4
     # Difference in resolutions between the input spectrum and SSP templates, in pixels
-    σ_diff = sqrt.(clamp.(inp_fwhm.^2 .- feii_fwhm.^2, 0., Inf)) ./ (2√(2log(2))) ./ Δλ
+    dfwhm = sqrt.(clamp.(inp_fwhm.^2 .- feii_fwhm.^2, 0., Inf)) ./ Δλ
 
     # Convolve the templates to match the resolution of the input spectrum
-    na_feii_temp, _ = convolveGaussian1D(na_feii_temp, σ_diff)
-    br_feii_temp, _ = convolveGaussian1D(br_feii_temp, σ_diff)
+    na_feii_temp, _ = convolveGaussian1D(na_feii_temp, dfwhm)
+    br_feii_temp, _ = convolveGaussian1D(br_feii_temp, dfwhm)
 
     # Logarithmically rebinned wavelengths
     logscale = log(λ[2]/λ[1])
-    feii_lnλ = get_logarithmic_λ([minimum(feii_λlin), maximum(feii_λlin)], length(feii_λlin), logscale=logscale)
+    feii_lnλ = get_logarithmic_λ(feii_λlin, logscale)
     na_feii_temp = Spline1D(feii_λlin, na_feii_temp, k=1, bc="nearest")(feii_lnλ)
     br_feii_temp = Spline1D(feii_λlin, br_feii_temp, k=1, bc="nearest")(feii_lnλ)
 

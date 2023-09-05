@@ -211,32 +211,36 @@ julia> Doppler_width_λ(0, 10)
 
 
 """
-    convolveGaussian1D(flux, σ)
+    convolveGaussian1D(flux, fwhm)
 
-Convolve a spectrum by a Gaussian with different sigma for every pixel.
-The concept for this function was based off of a similar function from the `pPXF`
-python code, however the implementation is different.
+Convolve a spectrum by a Gaussian with different FWHM for every pixel.
+This function simply loops through each pixel in the array and applies a convolution
+with a Gaussian kernel of FWHM given by the corresponding value in the `fwhm` vector.
+
+The concept for this function was based on a similar function in the pPXF python code
+(Cappellari 2017, https://ui.adsabs.harvard.edu/abs/2017MNRAS.466..798C/abstract),
+however the implementation is different.
 """
-function convolveGaussian1D(flux::Vector{<:Real}, σ::Vector{<:Real})
+function convolveGaussian1D(flux::Vector{<:Real}, fwhm::Vector{<:Real})
 
     # clamp with a minimum of 0.01 so as to not cause problems with Gaussians with 0 std dev
-    σ_clamped = clamp.(σ, 0.01, Inf)
+    fwhm_clamped = clamp.(fwhm, 0.01, Inf)
 
     # Prepare output array
     flux_convolved = zeros(eltype(flux), length(flux))
 
     # Pad edges of the input array with 0s
-    pad_size = ceil(Int, maximum(3σ_clamped))
+    pad_size = ceil(Int, maximum(2fwhm_clamped))
     flux_padded = [zeros(eltype(flux), pad_size); flux; zeros(eltype(flux), pad_size)]
 
     # Loop through pixels
-    for i ∈ (1+pad_size):(length(flux_padded)-pad_size)
+    @inbounds for i ∈ (1+pad_size):(length(flux_padded)-pad_size)
 
         ii = i - pad_size
         # Create a normal distribution kernel of the corresponding size
-        pixel = ceil(Int, 3σ_clamped[ii])
+        pixel = ceil(Int, 2fwhm_clamped[ii])
         x = -pixel:1:pixel
-        kernel = Gaussian.(x, 1.0, 0.0, 2√(2log(2)) * σ_clamped[ii])
+        kernel = Gaussian.(x, 1.0, 0.0, fwhm_clamped[ii])
 
         tot_kernel = 0.
         for j ∈ eachindex(x)
@@ -502,11 +506,12 @@ Convolve a set of stellar population templates with a line-of-sight velocity dis
 to produce templates according to the fitted stellar kinematics. Uses the Fourier Transforms of 
 the templates and the LOSVD to quickly calculate the convolution.
 
-Adapted and simplified from the pPXF and BADASS python codes. See:
+The idea for this function was based on similar functions in the pPXF and BADASS python codes, but
+the specific implementation is different. See:
 - Cappellari (2017): http://adsabs.harvard.edu/abs/2017MNRAS.466..798C
 - Sexton et al. (2021): https://ui.adsabs.harvard.edu/abs/2021MNRAS.500.2871S/abstract 
 """
-function convolve_losvd(_templates::AbstractArray{T}, vsyst::Real, v::Real, σ::Real, velscale::Real, npix::Integer;
+function convolve_losvd(_templates::AbstractArray{T}, vsyst::Real, v::Real, σ::Real, vres::Real, npix::Integer;
     temp_fft::Bool=false, npad_in::Integer=0) where {T<:Number}
 
     if temp_fft
@@ -528,94 +533,97 @@ function convolve_losvd(_templates::AbstractArray{T}, vsyst::Real, v::Real, σ::
             temps[1:s[1], j] = templates[:, j]
         end
         # Calculate the Fourier transform of the templates
+        # Note: in general we cannot calculate this a priori because the templates may be different for each iteration of the fit
+        #       if the user is marginalizing over the stellar ages or metallicities. The `temp_fft` option is mainly for usage with
+        #       the Fe II templates, which do not have any such parameters that can be marginalized over.
         temp_rfft = rfft(temps, 1)
     else
         npad = npad_in
         temp_rfft = templates
     end
 
-    # Calculate the Fourier transform of the LOSVD
-    nl = size(temp_rfft, 1)
-    # Remember to normalize velocities and sigmas by the velocity scale
-    ft_losvd = analytic_ft_losvd(vsyst/velscale, v/velscale, σ/velscale, nl)
+    n_ft = size(temp_rfft, 1)
 
-    # Calculate the inverse Fourier transform of the resultant distribution
+    # Remember to normalize velocities and sigmas by the velocity resolution
+    V = (vsyst + v)/vres
+    Σ = σ/vres
+    ω = range(0, π, n_ft)
+
+    # Calculate the analytic Fourier transform of the LOSVD: See Cappellari (2017) eq. (38)
+    ft_losvd = conj.(exp.(1im .* ω .* V .- Σ.^2 .* ω.^2 ./ 2))
+
+    # Calculate the inverse Fourier transform of the resultant distribution to get the convolution
+    # see, i.e. https://en.wikipedia.org/wiki/Convolution_theorem
     template_convolved = irfft(temp_rfft .* ft_losvd, npad, 1)
 
     # Take only enough pixels to match the length of the input spectrum
     template_convolved[1:npix, :]
-
 end
 
 
 """
-    analytic_ft_losvd(vsyst, v, σ, nl)
+    _calzetti_kprime_curve(λ, E_BV, Rv)
 
-Calculate the analytic Fourier Transform of the LOSVD using 
-equation (38) from Cappellari (2017), MNRAS, 466, 798:
-
-http://adsabs.harvard.edu/abs/2017MNRAS.466..798C
-
-Adapted and simplified from the pPXF and BADASS python codes.
-Only supports 2 moments (v and σ) and 1-sided fitting.
+A small helper function to calculate the k'(λ) attenuation curve from Calzetti et al. (2000).
+This function is used by the different methods in `attenuation_calzetti` to reduce repetition,
+since all methods include this same calculation.
 """
-function analytic_ft_losvd(vsyst::Real, v::Real, σ::Real, nl::Integer)
+function _calzetti_kprime_curve(λ::Vector{<:Real}, E_BV::Real, Rv::Real)
 
-    # Prepare quantities
-    V = vsyst + v
-    ω = range(0., π, nl)
-
-    # Calculate analytic Fourier transform
-    ft_losvd = @. exp(1im*ω*V - σ^2*ω^2/2)
-
-    # Take complex conjugate
-    conj(ft_losvd)
-
-end
-
-
-"""
-    attenuation_calzetti(λ, E_BV, δ=nothing, f_nodust=nothing, uv_bump=nothing)
-
-Calculate dust attenuation fraction using the Calzetti et al. (2000) attenuation law:
-http://ui.adsabs.harvard.edu/abs/2000ApJ...533..682C.  Optional `uv_bump` and `δ` arguments
-allow one to specify the strength and slope of the UV bump characterized by Kriek & Conroy (2013):
-https://ui.adsabs.harvard.edu/abs/2013ApJ...775L..16K.
-
-This function is based on and adapted from pPXF (Cappellari 2017).
-
-"""
-function attenuation_calzetti(λ::Vector{<:Real}, E_BV::Real; δ::Union{Real,Nothing}=nothing,
-    f_nodust::Union{Real,Nothing}=nothing, uv_bump::Union{Real,Nothing}=nothing, Rv::Real=4.05)
-
-    # equation (4) from Calzetti et al. (2000)
-    kprime = zeros(length(λ))
+    # eq. (4) from Calzetti et al. (2000)
+    kprime = zeros(eltype(E_BV), length(λ))
     good = λ .≥ 0.63
     kprime[good] .= 2.659 .* Calz_poly_a.(1 ./ λ) .+ Rv
-    good = λ .< 0.63
-    kprime[good] .= 2.659 .* Calz_poly_b.(1 ./ λ) .+ Rv
+    kprime[.~good] .= 2.659 .* Calz_poly_b.(1 ./ λ) .+ Rv
 
-    if isnothing(δ) && isnothing(uv_bump)
-        aλ = E_BV .* kprime
-    else
-        if !isnothing(δ) && isnothing(uv_bump)
-            # Kriek & Conroy (2013) equation (3)
-            uv_bump = 0.85 - 1.9*δ
-        elseif !isnothing(uv_bump) && isnothing(δ)
-            error("Cannot specify uv_bump without specifying δ!")
-        end
-        # Create a Drude profile for the UV bump -- Kriek & Conroy (2013) equation (2)
-        D = Drude.(λ, uv_bump, 0.2175, 0.035)
-        # Kriek & Conroy (2013) equation (1)
-        aλ = @. E_BV * (kprime + D) * (λ / 0.55)^δ 
-    end
-    
-    atten = @. 10^(-0.4 * clamp(aλ, 0., Inf))
-    if !isnothing(f_nodust)
-        atten = @. f_nodust + (1 - f_nodust)*atten
-    end
+    kprime
+end
 
-    atten
+
+"""
+    attenuation_calzetti(λ, E_BV[, δ_uv]; Cf=0., Rv=4.05)
+
+Calculate dust attenuation factor using the Calzetti et al. (2000) attenuation law:
+http://ui.adsabs.harvard.edu/abs/2000ApJ...533..682C.  
+
+If the `δ_uv` parameter is specified, a UV bump with a slope of `δ_uv` will be added following the
+prescription by Kriek & Conroy (2013):
+https://ui.adsabs.harvard.edu/abs/2013ApJ...775L..16K.
+
+One may also specify a dust covering fraction `Cf` to apply a partial covering of dust
+for more complitcated geometries.
+
+This idea for this function was based on a similar function from pPXF (Cappellari 2017), but
+the implementation is different.
+"""
+function attenuation_calzetti(λ::Vector{<:Real}, E_BV::Real; Cf::Real=0., Rv::Real=4.05)
+
+    # Get the actual extinction curve
+    kprime = _calzetti_kprime_curve(λ, E_BV, Rv)
+
+    # dust attenuation factor using E(B-V) in magnitudes
+    atten = @. 10^(-0.4 * E_BV * kprime)
+
+    # apply covering fraction
+    @. Cf + (1 - Cf)*atten
+end
+
+function attenuation_calzetti(λ::Vector{<:Real}, E_BV::Real, δ_uv::Real; Cf::Real=0., Rv::Real=4.05)
+
+    # Get the actual extinction curve
+    kprime = _calzetti_kprime_curve(λ, E_BV, Rv)
+
+    # Calculate the UV bump 
+    # Kriek & Conroy (2013) eq. (3): relation between UV bump amplitude Eb and slope δ_uv
+    Eb = 0.85 - 1.9*δ_uv
+    # Drude profile parametrizes the UV bump (Kriek & Conroy 2013, eq. (2))
+    Dλ = Drude.(λ, Eb, 0.2175, 0.035)
+
+    # Kriek & Conroy (2013) eq. (1) 
+    atten = @. 10^(-0.4 * E_BV * (kprime + Dλ) * (λ / 0.55)^δ_uv)
+
+    # apply covering fraction
+    @. Cf + (1 - Cf)*atten
 end
 
 
@@ -637,7 +645,8 @@ in turn has been adapted from the IDL Astrolib library.
 # Returns
 - `Vector{<:Real}`: The extinction factor, 10^(-0.4*A(V)*(a(λ)+b(λ)/R(V)))
 
-Notes from the original docstring have been pasted below:
+Notes from the original function (Copyright (c) 2014, Wayne Landsman)
+have been pasted below:
 
 1. This function was converted from the IDL Astrolib procedure
    last updated in April 1998. All notes from that function
@@ -933,177 +942,37 @@ end
 
 
 """
-    make_bins(array)
+    resample_flux_permuted3D(new_wave, old_wave, flux[, err, mask])
 
-Calculate the bin edges and bin widths for an array given the distances between each entry
-
-NOTES:
-This function has been taken and adapted from the SpectRes python package, https://github.com/ACCarnall/SpectRes
+This is a wrapper around SpectralResampling.jl's `resample_conserving_flux` function that applies a
+permutation such that the third axis of the inputs is interpreted as the wavelength axis. The outputs
+are also permuted such that they have the same shape as the inputs. This is useful since most datacube arrays
+in this code have the wavelength axis as the third axis.
 """
-function make_bins(array::AbstractArray)
-    # Get the bin edges 
-    edges = zeros(size(array,1)+1)
-    edges[1] = array[1] - (array[2] - array[1])/2
-    edges[end] = array[end] + (array[end] - array[end-1])/2
-    edges[2:end-1] .= (array[2:end] + array[1:end-1])/2
-    # Get the bin widths
-    widths = zeros(size(array,1))
-    widths[end] = array[end] - array[end-1]
-    widths[1:end-1] = edges[2:end-1] - edges[1:end-2]
-    # Return the edges and widths
-    edges, widths
-end
+function resample_flux_permuted3D(new_wave::AbstractVector, old_wave::AbstractVector, flux::AbstractArray,
+    err::Union{AbstractArray,Nothing}=nothing, mask::Union{AbstractArray,Nothing}=nothing)
 
-
-
-"""
-    get_logarithmic_λ(λlim, n, logscale=nothing, oversample=1)
-
-Calculate a logarithmically spaced wavelength grid with limits of (λlim[1], λlim[2]) with a number of samples
-either given by a scaling factor `logscale` between points, or an `oversample` factor based on the input number of points `n`.
-"""
-function get_logarithmic_λ(λlim::Vector{<:Real}, n::Integer; logscale::Union{Real,Nothing}=nothing, oversample::Integer=1)
-    @assert length(λlim) == 2 "λlim must have exactly 2 elements"
-    @assert λlim[2] > λlim[1] "λlim must satisfty λlim[2] > λlim[1]"
-    m = n * oversample
-
-    dλ = diff(λlim)[1] / (n - 1)              # assume constant dlam
-    lnlim = log.(λlim ./ dλ .+ [-0.5, 0.5])   # all in units of dlam
-
-    if isnothing(logscale)
-        logscale = diff(lnlim)/m
-    else
-        m = floor(Int, diff(lnlim)[1]/logscale)
-        lnlim[2] = lnlim[1] + m*logscale
-    end
-    new_borders = exp.(range(lnlim..., length=m+1))
-    lnλ = .√(new_borders[2:end] .* new_borders[1:end-1]) .* dλ  # geometric mean
-
-    # return logarithmically spaced wavelength vector according to either logscale or oversample
-    lnλ
-end
-
-
-"""
-    resample_conserving_flux(new_wave, old_wave, flux, err=nothing, mask=nothing; fill=NaN)
-
-Resample a spectrum (and optionally errors) onto a new wavelength grid, while convserving the flux.
-
-NOTES:
-This function has been taken and adapted from the SpectRes python package, https://github.com/ACCarnall/SpectRes
-"""
-function resample_conserving_flux(new_wave::AbstractVector, old_wave::AbstractVector, flux::AbstractArray, 
-    err::Union{AbstractArray,Nothing}=nothing, mask::Union{AbstractArray,Nothing}=nothing; fill::Real=NaN)
-
-    # Find the edges and widths of the new wavelength bins given the old ones
-    old_edges, old_widths = make_bins(old_wave)
-    new_edges, new_widths = make_bins(new_wave)
-
-    # Instantiate flux and error arrays with zeros
-    new_fluxes = zeros((size(flux[.., 1])..., size(new_wave)...))
+    # permute the third axis to the first axis for each input
+    fluxp = permutedims(flux, (3,1,2))
+    errp = nothing
     if !isnothing(err)
-        if size(err) ≠ size(flux)
-            error("error must be the same shape as flux")
-        else
-            new_errs = copy(new_fluxes)
-        end
+        errp = permutedims(err, (3,1,2))
     end
+    maskp = nothing
     if !isnothing(mask)
-        if size(mask) ≠ size(flux)
-            error("mask must be the same shape as flux")
-        else
-            new_mask = falses(size(new_fluxes))
-        end
+        maskp = permutedims(mask, (3,1,2))
     end
 
-    start = 1
-    stop = 1
-    warned = false
-
-    # Calculate new flux and uncertainty values, looping over new bins
-    for j ∈ 1:size(new_wave, 1)
-        # Add filler values if new_wavs extends outside of spec_wavs
-        if (new_edges[j] < old_edges[1]) || (new_edges[j+1] > old_edges[end])
-            new_fluxes[.., j] .= fill
-            if !isnothing(err)
-                new_errs[.., j] .= fill
-            end
-            if !isnothing(mask)
-                new_mask[.., j] .= 1
-            end
-            if (j == 1 || j == size(new_wave, 1)) && !warned
-                @debug "\nSpectres: new_wave contains values outside the range " *
-                      "in old_wave, new_fluxes and new_errs will be filled " *
-                      "with the value set in the 'fill' keyword argument. \n"
-                warned = true
-            end
-            continue
-        end
+    # apply the function from SpectralResampling.jl
+    out = resample_conserving_flux(new_wave, old_wave, fluxp, errp, maskp)
     
-        # Find first old bin which is partially covered by the new bin
-        while old_edges[start+1] ≤ new_edges[j]
-            start += 1
-        end
-
-        # Find last old bin which is partially covered by the new bin
-        while old_edges[stop+1] < new_edges[j+1]
-            stop += 1
-        end
-
-        # If new bin is fully inside an old bin start and stop are equal
-        if start == stop
-            new_fluxes[.., j] .= flux[.., start]
-            if !isnothing(err)
-                new_errs[.., j] .= err[.., start]
-            end
-            if !isnothing(mask)
-                new_mask[.., j] .= mask[.., start]
-            end
-        # Otherwise multiply the first and last old bin widths by P_ij
-        else
-            start_factor = (old_edges[start+1] - new_edges[j]) / (old_edges[start+1] - old_edges[start])
-            stop_factor = (new_edges[j+1] - old_edges[stop]) / (old_edges[stop+1] - old_edges[stop])
-
-            old_widths[start] *= start_factor
-            old_widths[stop] *= stop_factor
-
-            # Populate new fluxes and errors
-            f_widths = old_widths[start:stop] .* permutedims(flux[.., start:stop], (ndims(flux), range(1, ndims(flux)-1)...))
-            new_fluxes[.., j] .= sumdim(f_widths, 1, nan=false)            # -> preserve NaNs
-            new_fluxes[.., j] ./= sum(old_widths[start:stop])
-
-            if !isnothing(err)
-                e_widths = old_widths[start:stop] .* permutedims(err[.., start:stop], (ndims(err), range(1, ndims(err)-1)...))
-                new_errs[.., j] .= .√(sumdim(e_widths.^2, 1, nan=false))   # -> preserve NaNs
-                new_errs[.., j] ./= sum(old_widths[start:stop])
-                # e_widths = permutedims(err[.., start:stop], (ndims(err), range(1, ndims(err)-1)...))
-                # new_errs[.., j] .= dropdims(median(e_widths, dims=1), dims=1)
-            end
-
-            # Put the old bin widths back to their initial values
-            old_widths[start] /= start_factor
-            old_widths[stop] /= stop_factor
-
-            # Combine the mask data with a bitwise or
-            if !isnothing(mask)
-                new_mask[.., j] .= [any(mask[xi, start:stop]) for xi ∈ CartesianIndices(selectdim(mask, 3, j))]
-            end
-        end
+    # premute the first axis back to the third axis for each output
+    for i in eachindex(out)
+        out[i] = permutedims(out[i], (2,3,1))
     end
-
-    # Only return the quantities that were given in the input
-    if !isnothing(err) && !isnothing(mask)
-        new_fluxes, new_errs, new_mask
-    elseif !isnothing(err)
-        new_fluxes, new_errs
-    elseif !isnothing(mask)
-        new_fluxes, new_mask
-    else
-        new_fluxes
-    end
+    return out
 
 end
-
 
 ############################################## FITTING FUNCTIONS #############################################
 
@@ -1334,7 +1203,7 @@ end
 
 
 """
-    model_continuum(λ, params, N, velscale, vsyst_ssp, vsyst_feii, npad_feii, n_ssps, ssp_λ, ssp_templates,
+    model_continuum(λ, params, N, vres, vsyst_ssp, vsyst_feii, npad_feii, n_ssps, ssp_λ, ssp_templates,
         feii_templates_fft, n_power_law, fit_uv_bump, fit_covering_frac, fit_opt_na_feii, fit_opt_br_feii,
         extinction_curve, return_components)
 
@@ -1345,7 +1214,7 @@ at the given wavelengths `λ`, given the parameter vector `params`.
 - `λ::Vector{<:AbstractFloat}`: Wavelength vector of the spectrum to be fit
 - `params::Vector{<:AbstractFloat}`: Parameter vector. 
 - `N::Real`: The normalization.
-- `velscale::Real`: The constant velocity scale between pixels, assuming the wavelength vector is logarithmically binned, in km/s/pix.
+- `vres::Real`: The constant velocity resolution between pixels, assuming the wavelength vector is logarithmically binned, in km/s/pix.
 - `vsyst_ssp::Real`: The systemic velocity offset between the input wavelength grid and the SSP template wavelength grid
 - `vsyst_feii::Real`: The systemic velocity offset between the input wavelength grid and the Fe II template wavelength grid
 - `npad_feii::Integer`: The length of the Fe II wavelength grid (NOT the length of the Fourier transformed templates)
@@ -1362,7 +1231,7 @@ at the given wavelengths `λ`, given the parameter vector `params`.
 - `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
-function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, velscale::Real, vsyst_ssp::Real, vsyst_feii::Real, 
+function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, vres::Real, vsyst_ssp::Real, vsyst_feii::Real, 
     npad_feii::Integer, n_ssps::Integer, ssp_λ::Vector{<:Real}, ssp_templates::Union{Vector{Spline2D},Matrix{<:Real}}, 
     feii_templates_fft::Matrix{<:Complex}, n_power_law::Integer, fit_uv_bump::Bool, fit_covering_frac::Bool, fit_opt_na_feii::Bool, 
     fit_opt_br_feii::Bool, extinction_curve::String, return_components::Bool)   
@@ -1387,7 +1256,7 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, ve
     end
 
     # Convolve with a line-of-sight velocity distribution (LOSVD) according to the stellar velocity and dispersion
-    conv_ssps = convolve_losvd(ssps, vsyst_ssp, params[pᵢ], params[pᵢ+1], velscale, length(λ))
+    conv_ssps = convolve_losvd(ssps, vsyst_ssp, params[pᵢ], params[pᵢ+1], vres, length(λ))
     pᵢ += 2
 
     # Combine the convolved stellar templates together with the weights
@@ -1399,16 +1268,17 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, ve
     # Apply attenuation law
     E_BV = params[pᵢ]
     E_BV_factor = params[pᵢ+1]
-    δ = f_nodust = nothing
+    δ = nothing
+    Cf_dust = 0.
     if fit_uv_bump && fit_covering_frac
         δ = params[pᵢ+2]
-        f_nodust = params[pᵢ+3]
+        Cf_dust = params[pᵢ+3]
         pᵢ += 2
     elseif fit_uv_bump && extinction_curve == "calzetti"
         δ = params[pᵢ+2]
         pᵢ += 1
     elseif fit_covering_frac && extinction_curve == "calzetti"
-        f_nodust = params[pᵢ+2]
+        Cf_dust = params[pᵢ+2]
         pᵢ += 1
     end
     pᵢ += 2
@@ -1416,8 +1286,13 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, ve
         comps["attenuation_stars"] = attenuation_cardelli(λ, E_BV * E_BV_factor)
         comps["attenuation_gas"] = attenuation_cardelli(λ, E_BV)
     elseif extinction_curve == "calzetti"
-        comps["attenuation_stars"] = attenuation_calzetti(λ, E_BV * E_BV_factor, δ=δ, f_nodust=f_nodust)
-        comps["attenuation_gas"] = attenuation_calzetti(λ, E_BV, δ=δ, f_nodust=f_nodust)
+        if isnothing(δ)
+            comps["attenuation_stars"] = attenuation_calzetti(λ, E_BV * E_BV_factor, Cf=Cf_dust)
+            comps["attenuation_gas"] = attenuation_calzetti(λ, E_BV, Cf=Cf_dust)
+        else
+            comps["attenuation_stars"] = attenuation_calzetti(λ, E_BV * E_BV_factor, δ, Cf=Cf_dust)
+            comps["attenuation_gas"] = attenuation_calzetti(λ, E_BV, δ, Cf=Cf_dust)
+        end
     else
         error("Unrecognized extinctino curve $extinction_curve")
     end
@@ -1425,14 +1300,14 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, ve
 
     # Fe II emission
     if fit_opt_na_feii
-        conv_na_feii = convolve_losvd(feii_templates_fft[:, 1], vsyst_feii, params[pᵢ+1], params[pᵢ+2], velscale, length(λ), 
+        conv_na_feii = convolve_losvd(feii_templates_fft[:, 1], vsyst_feii, params[pᵢ+1], params[pᵢ+2], vres, length(λ), 
             temp_fft=true, npad_in=npad_feii)
         comps["na_feii"] = params[pᵢ] .* conv_na_feii[:, 1]
         contin .+= comps["na_feii"] .* comps["attenuation_gas"]
         pᵢ += 3
     end
     if fit_opt_br_feii
-        conv_br_feii = convolve_losvd(feii_templates_fft[:, 2], vsyst_feii, params[pᵢ+1], params[pᵢ+2], velscale, length(λ),
+        conv_br_feii = convolve_losvd(feii_templates_fft[:, 2], vsyst_feii, params[pᵢ+1], params[pᵢ+2], vres, length(λ),
             temp_fft=true, npad_in=npad_feii)
         comps["br_feii"] = params[pᵢ] .* conv_br_feii[:, 1]
         contin .+= comps["br_feii"] .* comps["attenuation_gas"]
@@ -1456,7 +1331,7 @@ end
 
 
 # Multiple versions for more efficiency
-function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, velscale::Real, vsyst_ssp::Real, vsyst_feii::Real, 
+function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, vres::Real, vsyst_ssp::Real, vsyst_feii::Real, 
     npad_feii::Integer, n_ssps::Integer, ssp_λ::Vector{<:Real}, ssp_templates::Union{Vector{Spline2D},Matrix{<:Real}}, 
     feii_templates_fft::Matrix{<:Complex}, n_power_law::Integer, fit_uv_bump::Bool, fit_covering_frac::Bool, fit_opt_na_feii::Bool, 
     fit_opt_br_feii::Bool, extinction_curve::String)   
@@ -1480,7 +1355,7 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, ve
     end
 
     # Convolve with a line-of-sight velocity distribution (LOSVD) according to the stellar velocity and dispersion
-    conv_ssps = convolve_losvd(ssps, vsyst_ssp, params[pᵢ], params[pᵢ+1], velscale, length(λ))
+    conv_ssps = convolve_losvd(ssps, vsyst_ssp, params[pᵢ], params[pᵢ+1], vres, length(λ))
     pᵢ += 2
 
     # Combine the convolved stellar templates together with the weights
@@ -1491,16 +1366,17 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, ve
     # Apply attenuation law
     E_BV = params[pᵢ]
     E_BV_factor = params[pᵢ+1]
-    δ = f_nodust = nothing
+    δ = nothing
+    Cf_dust = 0.
     if fit_uv_bump && fit_covering_frac
         δ = params[pᵢ+2]
-        f_nodust = params[pᵢ+3]
+        Cf_dust = params[pᵢ+3]
         pᵢ += 2
     elseif fit_uv_bump && extinction_curve == "calzetti"
         δ = params[pᵢ+2]
         pᵢ += 1
     elseif fit_covering_frac && extinction_curve == "calzetti"
-        f_nodust = params[pᵢ+2]
+        Cf_dust = params[pᵢ+2]
         pᵢ += 1
     end
     pᵢ += 2
@@ -1508,8 +1384,13 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, ve
         att_stars = attenuation_cardelli(λ, E_BV * E_BV_factor)
         att_gas = attenuation_cardelli(λ, E_BV)
     elseif extinction_curve == "calzetti"
-        att_stars = attenuation_calzetti(λ, E_BV * E_BV_factor, δ=δ, f_nodust=f_nodust)
-        att_gas = attenuation_calzetti(λ, E_BV, δ=δ, f_nodust=f_nodust)
+        if isnothing(δ)
+            att_stars = attenuation_calzetti(λ, E_BV * E_BV_factor, Cf=Cf_dust)
+            att_gas = attenuation_calzetti(λ, E_BV, Cf=Cf_dust)
+        else
+            att_stars = attenuation_calzetti(λ, E_BV * E_BV_factor, δ, Cf=Cf_dust)
+            att_gas = attenuation_calzetti(λ, E_BV, δ, Cf=Cf_dust)
+        end
     else
         error("Unrecognized extinctino curve $extinction_curve")
     end
@@ -1517,13 +1398,13 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, ve
 
     # Fe II emission
     if fit_opt_na_feii
-        conv_na_feii = convolve_losvd(feii_templates_fft[:, 1], vsyst_feii, params[pᵢ+1], params[pᵢ+2], velscale, length(λ), 
+        conv_na_feii = convolve_losvd(feii_templates_fft[:, 1], vsyst_feii, params[pᵢ+1], params[pᵢ+2], vres, length(λ), 
             temp_fft=true, npad_in=npad_feii)
         @views contin .+= params[pᵢ] .* conv_na_feii[:, 1] .* att_gas
         pᵢ += 3
     end
     if fit_opt_br_feii
-        conv_br_feii = convolve_losvd(feii_templates_fft[:, 2], vsyst_feii, params[pᵢ+1], params[pᵢ+2], velscale, length(λ),
+        conv_br_feii = convolve_losvd(feii_templates_fft[:, 2], vsyst_feii, params[pᵢ+1], params[pᵢ+2], vres, length(λ),
             temp_fft=true, npad_in=npad_feii)
         @views contin .+= params[pᵢ] .* conv_br_feii[:, 1] .* att_gas
         pᵢ += 3
@@ -1566,7 +1447,7 @@ function test_line_snr(λ0::Real, half_window_size::Real, λ::Vector{T}, I::Vect
     Isub = I[region] .- Ilin
 
     # Smooth with a width of 3 pixels
-    Iconv, _ = convolveGaussian1D([zeros(9); Isub; zeros(9)], 3 .* ones(length(Isub)+18))
+    Iconv, _ = convolveGaussian1D([zeros(9); Isub; zeros(9)], 7 .* ones(length(Isub)+18))
 
     # Maximum within the center of the region of the SMOOTHED spectrum
     central = (λ0 - half_window_size/3) .< λsub .< (λ0 + half_window_size/3)
