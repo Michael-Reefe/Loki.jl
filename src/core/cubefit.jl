@@ -849,7 +849,12 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
         # More default options
         if !haskey(out, :templates)
             out[:templates] = Array{Float64, 4}(undef, size(cube.I)..., 0)
+        elseif ndims(out[:templates]) == 3
+            t4 = Array{Float64, 4}(undef, size(cube.I)..., 1)
+            t4[:, :, :, 1] .= out[:templates]
+            out[:templates] = t4
         end
+
         if !haskey(out, :template_names)
             out[:template_names] = String["template_$i" for i in axes(out[:templates], 4)]
         end
@@ -884,7 +889,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
         λ = cube.λ
         # Get potential extinction map
         extinction_map = nothing
-        if haskey(out, :extinction_map)
+        if haskey(out, :extinction_map) && !isnothing(out[:extinction_map])
             extinction_map = out[:extinction_map]
             @assert size(extinction_map) == size(cube.I)[1:2] "The extinction map must match the shape of the first two dimensions of the intensity map!"
         end
@@ -1471,15 +1476,15 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, spaxel::CartesianInd
     if nanmedian(I) ≤ nanmedian(σ)
         ext_lock[1:4] .= true
     end
-    if !init
-        for t in 1:cube_fitter.n_templates
-            m = minimum(I .- templates_spax[:, t])
-            if m < nanmedian(σ)
-                ext_lock[1:4] .= true
-                ab_lock .= true
-            end
-        end
-    end
+    # if !init
+    #     for t in 1:cube_fitter.n_templates
+    #         m = minimum(I .- templates_spax[:, t])
+    #         if m < nanmedian(σ)
+    #             ext_lock[1:4] .= true
+    #             ab_lock .= true
+    #         end
+    #     end
+    # end
 
     hd_plim = cube_fitter.fit_sil_emission ? [amp_dc_plim, continuum.T_hot.limits, continuum.Cf_hot.limits, 
         continuum.τ_warm.limits, continuum.τ_cold.limits, continuum.sil_peak.limits] : []
@@ -1686,14 +1691,14 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
             p₀[pᵢ+2] = 0.
             lock_abs = true
         end
-        for t in 1:cube_fitter.n_templates
-            m = minimum(I .- templates_spax[:, t])
-            if m < nanmedian(σ)
-                p₀[pᵢ] = 0.
-                p₀[pᵢ+2] = 0.
-                lock_abs = true
-            end
-        end
+        # for t in 1:cube_fitter.n_templates
+        #     m = minimum(I .- templates_spax[:, t])
+        #     if m < nanmedian(σ)
+        #         p₀[pᵢ] = 0.
+        #         p₀[pᵢ+2] = 0.
+        #         lock_abs = true
+        #     end
+        # end
 
         # Set τ_9.7 to the guess if the guess_tau flag is set
         if !isnothing(cube_fitter.guess_tau)
@@ -1729,6 +1734,7 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
 
         # Template amplitudes (not rescaled)
         for n ∈ 1:cube_fitter.n_templates
+            p₀[pᵢ] = 1.0
             pᵢ += 1
         end
 

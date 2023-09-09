@@ -19,6 +19,8 @@ using SpecialFunctions
 using FFTW
 using Polynomials
 using NLsolve
+using ImageFiltering
+using ImageTransformations
 
 # Optimization packages
 using Optim
@@ -33,11 +35,11 @@ using AstroAngles
 using SkyCoords
 using WCS
 using Reproject
-using ImageFiltering
 using Unitful, UnitfulAstro
 using SpectralResampling
 
 # File I/O
+using Glob
 using TOML
 using DelimitedFiles
 using CSV
@@ -156,6 +158,7 @@ export DataCube,   # DataCube struct
        correct!, 
        interpolate_nans!, 
        calculate_statistical_errors!,
+       rotate_to_sky_axes!,
        voronoi_rebin!,
        plot_2d, 
        plot_1d,
@@ -165,8 +168,14 @@ export DataCube,   # DataCube struct
 
        # Observation functions
        save_fits,
+       generate_psf_model!,
        adjust_wcs_alignment!, 
        reproject_channels!, 
+       extract_from_aperture!,
+       rescale_channels!,
+       resample_channel_wavelengths!,
+       combine_channels!,
+       generate_nuclear_template,
 
        # Parameter structs
        Parameter,
@@ -231,6 +240,7 @@ include("core/cubedata.jl")
 include("core/cubefit.jl")
 include("core/fitting.jl")
 include("core/output.jl")
+include("core/psf.jl")
 
 include("util/aperture_utils.jl")
 

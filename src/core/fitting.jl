@@ -206,17 +206,20 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     if cube_fitter.n_templates > 0
         if init
             n_pix = sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
-            templates_spax = sumdim(cube_fitter.templates[:, :, .~mask_bad, :], (1,2))
+            templates_spax = sumdim(cube_fitter.templates, (1,2))
             for s in axes(templates_spax, 2)
                 templates_spax[:, s] ./= n_pix
             end
         else
-            templates_spax = cube_fitter.templates[spaxel, .~mask_bad, :]
+            templates_spax = cube_fitter.templates[spaxel, :, :]
         end
         for s in axes(templates_spax, 2)
             m = .~isfinite.(templates_spax[:, s])
             templates_spax[m, s] .= nanmedian(templates_spax[.~m, s])
+            # Interpolate over the emission lines for the templates too
+            templates_spax[mask_lines, s] .= Spline1D(λ[.~mask_lines], templates_spax[.~mask_lines, s], λknots, k=1, bc="extrapolate")(λ[mask_lines])
         end
+        templates_spax = templates_spax[.~mask_bad, :]
     else
         templates_spax = Matrix{Float64}(undef, 0, 0)
     end
@@ -443,8 +446,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
     λknots = λ[.~mask_lines][(1+scale):scale:(length(λ[.~mask_lines])-scale)]
     # Replace the masked lines with a linear interpolation
-    I_spax[mask_lines] .= Spline1D(λ_spax[.~mask_lines], I_spax[.~mask_lines], λknots, k=1, bc="extrapolate").(λ[mask_lines]) 
-    σ_spax[mask_lines] .= Spline1D(λ_spax[.~mask_lines], σ_spax[.~mask_lines], λknots, k=1, bc="extrapolate").(λ[mask_lines])
+    I_spax[mask_lines] .= Spline1D(λ_spax[.~mask_lines], I_spax[.~mask_lines], λknots, k=1, bc="extrapolate")(λ[mask_lines]) 
+    σ_spax[mask_lines] .= Spline1D(λ_spax[.~mask_lines], σ_spax[.~mask_lines], λknots, k=1, bc="extrapolate")(λ[mask_lines])
 
     # Masked spectrum
     λ_spax = λ_spax[.~mask_bad]
@@ -453,17 +456,20 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     if cube_fitter.n_templates > 0
         if init
             n_pix = sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
-            templates_spax = sumdim(cube_fitter.templates[:, :, .~mask_bad, :], (1,2))
+            templates_spax = sumdim(cube_fitter.templates, (1,2))
             for s in axes(templates_spax, 2)
                 templates_spax[:, s] ./= n_pix
             end
         else
-            templates_spax = cube_fitter.templates[spaxel, .~mask_bad, :]
+            templates_spax = cube_fitter.templates[spaxel, :, :]
         end
         for s in axes(templates_spax, 2)
             m = .~isfinite.(templates_spax[:, s])
             templates_spax[m, s] .= nanmedian(templates_spax[.~m, s])
+            # Interpolate over the emission lines for the templates too
+            templates_spax[mask_lines, s] .= Spline1D(λ[.~mask_lines], templates_spax[.~mask_lines, s], λknots, k=1, bc="extrapolate")(λ[mask_lines])
         end
+        templates_spax = templates_spax[.~mask_bad, :]
     else
         templates_spax = Matrix{Float64}(undef, 0, 0) 
     end
@@ -1211,7 +1217,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
                             if j > 1
                                 popt[pᵢ+2] = cube_fitter.relative_flags[3] ? 1.0 : fwhm_main
                             else
-                                popt[pᵢ+2] = fwhm_main = lower_bounds[pᵢ+2] # fwhm
+                                popt[pᵢ+2] = fwhm_main = (lower_bounds[pᵢ+2]+upper_bounds[pᵢ+2])/2 # fwhm
                             end
                         end
                     end 
@@ -1313,17 +1319,18 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     if cube_fitter.n_templates > 0
         if init
             n_pix = sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
-            templates_spax = sumdim(cube_fitter.templates[:, :, .~mask_bad, :], (1,2))
+            templates_spax = sumdim(cube_fitter.templates, (1,2))
             for s in axes(templates_spax, 2)
                 templates_spax[:, s] ./= n_pix
             end
         else
-            templates_spax = cube_fitter.templates[spaxel, .~mask_bad, :]
+            templates_spax = cube_fitter.templates[spaxel, :, :]
         end
         for s in axes(templates_spax, 2)
             m = .~isfinite.(templates_spax[:, s])
             templates_spax[m, s] .= nanmedian(templates_spax[.~m, s])
         end
+        templates_spax = templates_spax[.~mask_bad, :]
     else
         templates_spax = cube_fitter.templates
     end

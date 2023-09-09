@@ -964,15 +964,21 @@ function resample_flux_permuted3D(new_wave::AbstractVector, old_wave::AbstractVe
     end
 
     # apply the function from SpectralResampling.jl
-    out = resample_conserving_flux(new_wave, old_wave, fluxp, errp, maskp)
-    
-    # premute the first axis back to the third axis for each output
-    for i in eachindex(out)
-        out[i] = permutedims(out[i], (2,3,1))
+    if !isnothing(errp) && !isnothing(mask) 
+        out = resample_conserving_flux(new_wave, old_wave, fluxp, errp, maskp)
+        Tuple(permutedims(out[i], (2,3,1)) for i in eachindex(out))
+    elseif !isnothing(errp)
+        out = resample_conserving_flux(new_wave, old_wave, fluxp, errp)
+        Tuple(permutedims(out[i], (2,3,1)) for i in eachindex(out))
+    elseif !isnothing(maskp)
+        out = resample_conserving_flux(new_wave, old_wave, fluxp, maskp)
+        Tuple(permutedims(out[i], (2,3,1)) for i in eachindex(out))
+    else
+        out = resample_conserving_flux(new_wave, old_wave, fluxp)
+        permutedims(out, (2,3,1))
     end
-    return out
-
 end
+
 
 ############################################## FITTING FUNCTIONS #############################################
 

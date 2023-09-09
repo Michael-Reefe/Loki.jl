@@ -39,9 +39,6 @@ kinematic_group_SII = [
 kinematic_group_FeII = [
     "FeII_"
 ]
-kinematic_group_FeVII = [
-    "FeVII_"
-]
 kinematic_group_NeIII = [
     "NeIII_"
 ]

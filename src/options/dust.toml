@@ -535,10 +535,11 @@ locked = false
 # extinction.tau_9_7: the optical depth at 9.7 microns.
 # Default: gets estimated by the continuum at 9.7 microns.
 [extinction.tau_9_7]
+# val = 1.2777
 val = 0.1
-plim = [0.0, 100.0]
+plim = [0.0, 2.0]
 locked = false
-
+ 
 # extinction.tau_ice: *not* an actual optical depth -- this is
 # a fraction of the CH optical depth that applies to the ice feature
 [extinction.tau_ice]

@@ -34,7 +34,7 @@ get_patches(aperture::RectangularAnnulus) = [plt.Rectangle((aperture.x-1.5, aper
 
 Get the center of mass coordinates of a given n-dimensional array `data`.
 """
-cenroid_com(data) = centroid_com(data, falses(size(data)))
+centroid_com(data) = centroid_com(data, falses(size(data)))
 
 function centroid_com(data::AbstractArray, mask::BitArray)
     # Mask out any non-finite values
