@@ -17,7 +17,8 @@ def calculate_mrs_psf(ifu_cube, wave=None, oversample=4, broadening='both'):
     
     :param ifu_cube: HDUList
         A FITS object containing observational data from the channel/band that one wants to create a PSF model for.
-        This is only necessary to obtain information on the wavelength and spatial sampling scales.
+        This is necessary to obtain information on the wavelength and spatial sampling scales, as well as the centroid
+        location of the source on the detector. As such, it must be an IFU-aligned cube, NOT a sky-aligned cube.
     :param wave: ndarray, optional
         An optional argument specifying which monochromatic wavelengths to generate PSFs for. If left empty, then PSFs
         will be generated for every wavelength slice in the channel/band of the `ifu_cube` parameter.
@@ -49,10 +50,18 @@ def calculate_mrs_psf(ifu_cube, wave=None, oversample=4, broadening='both'):
     # pix_as = {'1': 0.13, '2': 0.17, '3': 0.2, '4': 0.34}[channel]
     fov_as = np.array(ifu_cube[1].data.shape[1:]) * pix_as
 
+    # Get the rotation angle w/r/t sky coordinates and make sure it's not 0!
+    hdr = ifu_cube[1].header
+    costheta = -hdr["PC1_1"]  # (negative because of the flipped RA axis)
+    sintheta = -hdr["PC1_2"]  # (negative because of how the rotation matrix is defined)
+    theta_rad = np.arctan2(sintheta, costheta)
+    theta = theta_rad * 180/np.pi
+    assert theta != 0.0, "Please input an IFU-coordinate aligned cube, not a sky-coordinate aligned cube!"
+
     print("Setting up MIRI detector object")
     # Set up MIRI object with the IFU configurations
     miri = webbpsf.MIRI()
-    # Get OPD inormation at the time of the observation
+    # Get OPD information at the time of the observation
     miri.load_wss_opd_by_date(ifu_cube[0].header['DATE-BEG'])
 
     # Configure for the proper channel/band setup

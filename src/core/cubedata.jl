@@ -1492,7 +1492,7 @@ function rescale_channels!(λ_out::Vector{<:Real}, I_out::Array{<:Real,3}, σ_ou
         _, i2 = findmin(abs.(λ_out[jump+1:end] .- wave_right))
         i2 += jump
 
-        function get_scale_factors(I, σ, rescale_snr)
+        function get_scale_factors(I, signal, noise, rescale_snr)
 
             # Get the flux in the left and right channels
             I_left = I[:, :, i1:jump]
@@ -1522,8 +1522,8 @@ function rescale_channels!(λ_out::Vector{<:Real}, I_out::Array{<:Real,3}, σ_ou
             scale_left[mask2d, :] .= 1.
             scale_right[mask2d, :] .= 1.
             # Do not rescale low S/N spaxels
-            SN_left = dropdims(nanmedian(I[:, :, i1:jump] ./ σ[:, :, i1:jump], dims=3), dims=3)
-            SN_right = dropdims(nanmedian(I[:, :, jump+1:i2] ./ σ[:, :, jump+1:i2], dims=3), dims=3)
+            SN_left = dropdims(nanmedian(signal[:, :, i1:jump] ./ noise[:, :, i1:jump], dims=3), dims=3)
+            SN_right = dropdims(nanmedian(signal[:, :, jump+1:i2] ./ noise[:, :, jump+1:i2], dims=3), dims=3)
             SN = dropdims(nanminimum(cat(SN_left, SN_right, dims=3), dims=3), dims=3)
             scale_left[SN .< rescale_snr, :] .= 1.
             scale_right[SN .< rescale_snr, :] .= 1.
@@ -1539,10 +1539,10 @@ function rescale_channels!(λ_out::Vector{<:Real}, I_out::Array{<:Real,3}, σ_ou
             scale_left, scale_right
         end
 
-        scale_left_data, scale_right_data = get_scale_factors(I_out, σ_out, rescale_snr)
+        scale_left_data, scale_right_data = get_scale_factors(I_out, I_out, σ_out, rescale_snr)
         scale_left_psf, scale_right_psf = scale_left_data, scale_right_data
         if (!force_match_psf_scalefactors) && do_psf_model
-            scale_left_psf, scale_right_psf = get_scale_factors(psf_out, σ_out, 0.) # rescale everything for PSF models
+            scale_left_psf, scale_right_psf = get_scale_factors(psf_out, I_out, σ_out, rescale_snr)
         end
 
         # Apply the scale factors
@@ -1751,6 +1751,9 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
     if !isnothing(rescale_channels)
         I_out, σ_out, mask_out, psf_out, scale_factors, jumps = rescale_channels!(λ_out, I_out, σ_out, mask_out, psf_out, 
             rescale_channels, rescale_limits=rescale_limits, rescale_snr=rescale_snr, force_match_psf_scalefactors=force_match_psf_scalefactors)
+    else
+        jumps = findall(diff(λ_out) .< 0)
+        scale_factors = nothing
     end
 
     # 4. Resample along the spectral axis onto a linear wavelength grid while conserving flux
@@ -1786,6 +1789,14 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
         σ_out[mask_out] .= NaN
         if do_psf_model
             psf_out[mask_out] .= NaN
+        end
+    end
+
+    # Do a final PSF renormalization
+    if do_psf_model
+        psf_out[psf_out .< 0] .= 0.
+        for k ∈ axes(psf_out, 3)
+            psf_out[:, :, k] ./= nansum(psf_out[:, :, k])
         end
     end
 
