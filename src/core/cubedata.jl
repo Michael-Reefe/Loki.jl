@@ -545,8 +545,7 @@ function calculate_statistical_errors!(cube::DataCube, Δ::Union{Integer,Nothing
         # Statistical uncertainties based on the local RMS of the residuals with a cubic spline fit
         σ_stat = zeros(l_mask)
         for i in 1:l_mask
-            indices = sortperm(abs.((1:l_mask) .- i))[1:min(60,l_mask)]
-            σ_stat[i] = std(I[.~mask][indices] .- I_spline[.~mask][indices])
+            σ_stat[i] = std(I[.~mask][max(1,i-30):min(l_mask,i+30)] .- I_spline[.~mask][max(1,i-30):min(l_mask,i+30)])
         end
         # We insert at the locations of the lines since the cubic spline does not include them
         l_all = length(λ)
@@ -1493,7 +1492,7 @@ function rescale_channels!(λ_out::Vector{<:Real}, I_out::Array{<:Real,3}, σ_ou
         _, i2 = findmin(abs.(λ_out[jump+1:end] .- wave_right))
         i2 += jump
 
-        function get_scale_factors(I, signal, noise)
+        function get_scale_factors(I, σ, rescale_snr)
 
             # Get the flux in the left and right channels
             I_left = I[:, :, i1:jump]
@@ -1523,8 +1522,8 @@ function rescale_channels!(λ_out::Vector{<:Real}, I_out::Array{<:Real,3}, σ_ou
             scale_left[mask2d, :] .= 1.
             scale_right[mask2d, :] .= 1.
             # Do not rescale low S/N spaxels
-            SN_left = dropdims(nanmedian(signal[:, :, i1:jump] ./ noise[:, :, i1:jump], dims=3), dims=3)
-            SN_right = dropdims(nanmedian(signal[:, :, jump+1:i2] ./ noise[:, :, jump+1:i2], dims=3), dims=3)
+            SN_left = dropdims(nanmedian(I[:, :, i1:jump] ./ σ[:, :, i1:jump], dims=3), dims=3)
+            SN_right = dropdims(nanmedian(I[:, :, jump+1:i2] ./ σ[:, :, jump+1:i2], dims=3), dims=3)
             SN = dropdims(nanminimum(cat(SN_left, SN_right, dims=3), dims=3), dims=3)
             scale_left[SN .< rescale_snr, :] .= 1.
             scale_right[SN .< rescale_snr, :] .= 1.
@@ -1540,10 +1539,10 @@ function rescale_channels!(λ_out::Vector{<:Real}, I_out::Array{<:Real,3}, σ_ou
             scale_left, scale_right
         end
 
-        scale_left_data, scale_right_data = get_scale_factors(I_out, I_out, σ_out)
+        scale_left_data, scale_right_data = get_scale_factors(I_out, σ_out, rescale_snr)
         scale_left_psf, scale_right_psf = scale_left_data, scale_right_data
         if (!force_match_psf_scalefactors) && do_psf_model
-            scale_left_psf, scale_right_psf = get_scale_factors(psf_out, I_out, σ_out)
+            scale_left_psf, scale_right_psf = get_scale_factors(psf_out, σ_out, 0.) # rescale everything for PSF models
         end
 
         # Apply the scale factors

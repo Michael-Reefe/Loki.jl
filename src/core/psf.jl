@@ -9,26 +9,28 @@ may also be smoothed along the spectral axis using a cubic spline interpolation 
 over the 12.22 um region to correct for the spectral leak artifact. The final PSF model outputs are normalized such that each wavelength slice 
 integrates to 1.  The DataCube object is modified in-place with the PSF model, and the PSF model is also returned by the function.
 """
-function generate_psf_model!(cube::DataCube, psf_model_dir::String=""; spline_width::Integer=7, interpolate_leak_artifact::Bool=true,
+function generate_psf_model!(cube::DataCube, psf_model_dir::String=""; spline_width::Integer=0, interpolate_leak_artifact::Bool=false,
     z::Real=0.)
 
     # Load in data from observations of bright stars (HD 163466, HD 37962, 16 Cyg B)
     hdus = []
     if psf_model_dir == ""
-        psf_model_dir = joinpath(@__DIR__, "..", "templates", "psf")
+        psf_model_dir = joinpath(@__DIR__, "..", "templates", "webbpsf")
     end
-    objects = glob("*", psf_model_dir)
+    files = glob("**/*.fits", psf_model_dir)
     bands = Dict("SHORT" => 'A', "MEDIUM" => 'B', "LONG" => 'C')
-    for object ∈ objects
-        f = FITS(joinpath(object, "Level3_ch$(cube.channel)-$(lowercase(cube.band))_s3d.fits"))
-        push!(hdus, f)
+    for file ∈ files
+        m = match(Regex("(.+?)(ch$(cube.channel)[-_.]?$(cube.band))(.+?).fits?", "i"), file)
+        if !isnothing(m)
+            push!(hdus, file)
+        end
     end
 
     # Make sure the input cube is aligned to the IFU axes and not the sky axes
     chband = Symbol("$(bands[cube.band])$(cube.channel)")
     @assert !cube.sky_aligned "Must input an IFU-aligned datacube, not a sky-aligned one! (The cubes can be rotated later)"
 
-    @info "Combining PSFs from standard bright star observations..."
+    @info "Loading PSF models from $psf_model_dir..."
     psfs = []
     for hdu ∈ hdus
 
@@ -128,9 +130,39 @@ end
 
 
 # A method that applies the `generate_psf_model!` function to each channel in an Observation object
-function generate_psf_model!(obs::Observation, psf_model_dir::String=""; spline_width::Integer=7, interpolate_leak_artifact::Bool=true)
+function generate_psf_model!(obs::Observation, psf_model_dir::String=""; spline_width::Integer=0, interpolate_leak_artifact::Bool=false)
     for ch in keys(obs.channels)
         generate_psf_model!(obs.channels[ch], psf_model_dir; spline_width=spline_width, interpolate_leak_artifact=interpolate_leak_artifact)
+    end
+end
+
+
+"""
+    polyfit_psf_model!(cube, poly_order)
+
+Fit a PSF model with a polynomial of order `poly_order`.
+"""
+function polyfit_psf_model!(cube::DataCube, poly_order::Integer)
+    @assert !isnothing(cube.psf_model) "Please input a DataCube that already has a PSF model!"
+
+    @info "Fitting PSF model with an order $poly_order polynomial"
+    for c ∈ CartesianIndices(size(cube.psf_model)[1:2])
+        cube.psf_model[c, :] .= Polynomials.fit(cube.λ, cube.psf_model[c, :], poly_order).(cube.λ)
+    end
+
+    # Renormalize
+    cube.psf_model[cube.psf_model .< 0] .= 0.
+    for k ∈ axes(cube.psf_model, 3)
+        cube.psf_model[:, :, k] ./= nansum(cube.psf_model[:, :, k])
+    end
+
+end
+
+
+# Method that applies `polyfit_psf_model!` to each channel in an Observation object
+function polyfit_psf_model!(obs::Observation, poly_order::Integer)
+    for ch in keys(obs.channels)
+        polyfit_psf_model!(obs.channels[ch], poly_order)
     end
 end
 
@@ -162,7 +194,7 @@ function generate_nuclear_template(cube::DataCube, ap_r::Real=0., spline_width::
         # Prepare outputs
         nuc1d = zeros(eltype(cube.I), length(cube.λ))
         # Do aperture photometry
-        for i ∈ eachindex(nuc)
+        for i ∈ eachindex(nuc1d)
             # Convert ap_r into pixels
             ap_size = ap_r * cube.psf[i] / pixel_scale
             ap = CircularAperture(mx.I..., ap_size)

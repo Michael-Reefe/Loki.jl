@@ -169,6 +169,7 @@ export DataCube,   # DataCube struct
        # Observation functions
        save_fits,
        generate_psf_model!,
+       polyfit_psf_model!,
        adjust_wcs_alignment!, 
        reproject_channels!, 
        extract_from_aperture!,
