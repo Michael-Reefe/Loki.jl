@@ -1472,10 +1472,12 @@ backwards.
 - `rescale_snr::Real=0.0`: SNR threshold that a spaxel must pass before being rescaled.
 - `force_match_psf_scalefactors::Bool=false`: If true, the rescaling factors for the PSF models are forced to be the same as those
     for the actual data.
+- `rescale_all_psf::Bool=false`: If true, force all PSF spaxels to be rescaled (use this if you generated PSF models using
+    webbpsf, but not if you are using PSF models from real data)
 """
 function rescale_channels!(λ_out::Vector{<:Real}, I_out::Array{<:Real,3}, σ_out::Array{<:Real,3}, 
     mask_out::BitArray{3}, psf_out::Union{Array{<:Real,3},Nothing}=nothing, ref_λ::Real=8.0; rescale_limits::Tuple=(0., Inf),
-    rescale_snr::Real=0., force_match_psf_scalefactors::Bool=false)
+    rescale_snr::Real=0., force_match_psf_scalefactors::Bool=false, rescale_all_psf::Bool=false)
 
     # Need an additional correction (fudge) factor for overall channels
     jumps = findall(diff(λ_out) .< 0.)
@@ -1542,7 +1544,8 @@ function rescale_channels!(λ_out::Vector{<:Real}, I_out::Array{<:Real,3}, σ_ou
         scale_left_data, scale_right_data = get_scale_factors(I_out, I_out, σ_out, rescale_snr)
         scale_left_psf, scale_right_psf = scale_left_data, scale_right_data
         if (!force_match_psf_scalefactors) && do_psf_model
-            scale_left_psf, scale_right_psf = get_scale_factors(psf_out, I_out, σ_out, rescale_snr)
+            rescale_psf_snr = rescale_all_psf ? 0. : rescale_snr
+            scale_left_psf, scale_right_psf = get_scale_factors(psf_out, I_out, σ_out, rescale_psf_snr)
         end
 
         # Apply the scale factors
@@ -1704,11 +1707,14 @@ Perform a number of transformations on data from different channels/subchannels 
     This may be necessary for MIRI data to reduce resampling noise.
 - `force_match_psf_scalefactors::Bool=false`: If a PSF model is present, this will force the rescaling factors between the subchannels to be the
     same between the data and PSF models (the PSF models will use the scaling factors derived from the data).1
+- `rescale_all_psf::Bool=false`: If true, force all PSF spaxels to be rescaled (use this if you generated PSF models using
+    webbpsf, but not if you are using PSF models from real data)
 """
 function combine_channels!(obs::Observation, channels=nothing, concat_type=:full; out_id=0,
     order::Union{Integer,String}=1, rescale_channels::Union{Real,Nothing}=nothing, adjust_wcs_headerinfo::Bool=true, 
     min_λ::Real=-Inf, max_λ::Real=Inf, rescale_limits::Tuple{<:Real,<:Real}=(0., Inf), rescale_snr::Real=0.0, 
-    output_wcs_frame::Integer=1, extract_from_ap::Real=0., force_match_psf_scalefactors::Bool=false)
+    output_wcs_frame::Integer=1, extract_from_ap::Real=0., force_match_psf_scalefactors::Bool=false,
+    rescale_all_psf::Bool=false)
 
     @assert obs.spectral_region == :MIR "The reproject_channels! function is only supported for MIR cubes!"
 
@@ -1750,7 +1756,8 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
     # 3. Optionally apply scaling factors between the subchannels
     if !isnothing(rescale_channels)
         I_out, σ_out, mask_out, psf_out, scale_factors, jumps = rescale_channels!(λ_out, I_out, σ_out, mask_out, psf_out, 
-            rescale_channels, rescale_limits=rescale_limits, rescale_snr=rescale_snr, force_match_psf_scalefactors=force_match_psf_scalefactors)
+            rescale_channels, rescale_limits=rescale_limits, rescale_snr=rescale_snr, force_match_psf_scalefactors=force_match_psf_scalefactors,
+            rescale_all_psf=rescale_all_psf)
     else
         jumps = findall(diff(λ_out) .< 0)
         scale_factors = nothing

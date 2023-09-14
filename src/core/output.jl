@@ -877,7 +877,8 @@ automtically using the `name_i` parameter.
 function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::String, Ω::Float64, z::Float64, psf_fwhm::Float64,
     cosmo::Cosmology.AbstractCosmology, wcs::Union{WCSTransform,Nothing}; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, 
     snr_thresh::Float64=3., abs_thresh::Union{Float64,Nothing}=nothing, cmap=py_colormap.cubehelix, line_latex::Union{String,Nothing}=nothing, 
-    disable_axes::Bool=true, disable_colorbar::Bool=false, modify_ax=nothing, colorscale_limits=nothing, custom_bunit::Union{LaTeXString,Nothing}=nothing)
+    marker::Union{Vector{<:Real},Nothing}=nothing, disable_axes::Bool=true, disable_colorbar::Bool=false, modify_ax=nothing, colorscale_limits=nothing, 
+    custom_bunit::Union{LaTeXString,Nothing}=nothing)
 
     bunit = paramstring_to_latex(name_i, cosmo)
     # Overwrite with input if provided
@@ -1026,6 +1027,11 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         fig.colorbar(cdata, ax=ax, label=bunit)
     end
 
+    # Add a marker, if given
+    if !isnothing(marker)
+        ax.plot(marker[1]-1, marker[2]-1, "rx", ms=5)
+    end
+
     # Make directories
     if (save_path ≠ "") && isnothing(modify_ax)
         if !isdir(dirname(save_path))
@@ -1043,7 +1049,7 @@ end
 
 # Line parameters
 """
-    plot_multiline_parameters(cube_fitter, param_maps, psf_interp[, snr_thresh])
+    plot_multiline_parameters(cube_fitter, param_maps, psf_interp[, snr_thresh, marker])
 
 Helper function to plot line parameters on a grid of plots with a consistent color scale. This is useful
 in particular for lines with multiple components. For example, for the flux, if a line has two components, 
@@ -1052,7 +1058,7 @@ all on the same color scale. Kinematic components such as the velocity don't hav
 defined, so they would just get 2 plots containing the kinematics of each component.
 """
 function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMaps, psf_interp::Spline1D, 
-    snr_thresh::Real=3.)
+    snr_thresh::Real=3., marker::Union{Vector{<:Real},Nothing}=nothing)
 
     plotted_lines = []
     for line ∈ keys(param_maps.lines)
@@ -1122,16 +1128,16 @@ function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMap
                 name_i = join([line, "total_flux"], "_")
                 save_path = ""
                 _, _, cdata = plot_parameter_map(total_flux, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
-                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh, abs_thresh=nanmedian(total_flux[snr_filter .≥ 3.]), 
-                    line_latex=latex_i, modify_ax=(fig, ax[ci]), disable_colorbar=true, colorscale_limits=(vmin, vmax))
+                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
+                    line_latex=latex_i, modify_ax=(fig, ax[ci]), disable_colorbar=true, colorscale_limits=(vmin, vmax), marker=marker)
                 ci += 1
             end
             if parameter == :eqw && plot_total
                 name_i = join([line, "total_eqw"], "_")
                 save_path = ""
                 _, _, cdata = plot_parameter_map(total_eqw, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
-                    cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh, abs_thresh=nanmedian(total_eqw[snr_filter .≥ 3.]), 
-                    line_latex=latex_i, modify_ax=(fig, ax[ci]), disable_colorbar=true, colorscale_limits=(vmin, vmax))
+                    cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
+                    line_latex=latex_i, modify_ax=(fig, ax[ci]), disable_colorbar=true, colorscale_limits=(vmin, vmax), marker=marker)
                 ci += 1
             end
             for i in 1:n_line_comps
@@ -1144,8 +1150,8 @@ function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMap
                 save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(line_key)", "$(name_i).pdf")
                 _, _, cdata = plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i), 
                     cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filt, snr_thresh=snr_thresh, 
-                    abs_thresh=contains(name_i, "flux") ? nanmedian(data[snr_filt .≥ 3.]) : nothing, 
-                    line_latex=latex_i, modify_ax=(fig, ax[ci]), disable_colorbar=true, colorscale_limits=(vmin, vmax))
+                    line_latex=latex_i, modify_ax=(fig, ax[ci]), disable_colorbar=true, colorscale_limits=(vmin, vmax),
+                    marker=marker)
                 ci += 1
             end
             # Save the final figure
@@ -1186,8 +1192,13 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
     # Iterate over model parameters and make 2D maps
     @debug "Using solid angle $(cube_fitter.cube.Ω), redshift $(cube_fitter.z), cosmology $(cube_fitter.cosmology)"
 
-    # Ineterpolate the PSF
+    # Ineterpolate the PSF FWHM
     psf_interp = Spline1D(cube_fitter.cube.λ, cube_fitter.cube.psf, k=1)
+
+    # Calculate the centroid
+    data2d = sumdim(cube_fitter.cube.I, 3)
+    _, mx = findmax(data2d)
+    centroid = centroid_com(data2d[mx[1]-5:mx[1]+5, mx[2]-5:mx[2]+5]) .+ (mx.I .- 5) .- 1
 
     # Stellar continuum parameters
     for parameter ∈ keys(param_maps.stellar_continuum)
@@ -1195,7 +1206,7 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         name_i = join(["stellar_continuum", parameter], "_")
         save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "continuum", "$(name_i).pdf")
         plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf), 
-            cube_fitter.cosmology, cube_fitter.cube.wcs)
+            cube_fitter.cosmology, cube_fitter.cube.wcs, marker=centroid)
     end
 
     # Dust continuum parameters
@@ -1205,7 +1216,7 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
             name_i = join(["dust_continuum", i, parameter], "_") 
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "continuum", "$(name_i).pdf")
             plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf), 
-                cube_fitter.cosmology, cube_fitter.cube.wcs)
+                cube_fitter.cosmology, cube_fitter.cube.wcs, marker=centroid)
         end
     end
 
@@ -1216,7 +1227,7 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
             name_i = join(["power_law", j, parameter], "_")
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "continuum", "$(name_i).pdf")
             plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf),
-                cube_fitter.cosmology, cube_fitter.cube.wcs)
+                cube_fitter.cosmology, cube_fitter.cube.wcs, marker=centroid)
         end
     end
 
@@ -1247,7 +1258,7 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "dust_features", "$(name_i).pdf")
             plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=parameter !== :SNR ? snr : nothing, snr_thresh=snr_thresh,
-                abs_thresh=contains(name_i, "flux") ? nanmedian(data[snr .≥ 3.]) : nothing, line_latex=latex_i)
+                line_latex=latex_i, marker=centroid)
         end
     end
 
@@ -1268,7 +1279,7 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "dust_features", "$(name_i).pdf")
         plot_parameter_map(total_flux, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
             cube_fitter.cosmology, cube_fitter.cube.wcs, line_latex=comp_name, snr_filter=snr, snr_thresh=snr_thresh,
-            abs_thresh=nanmedian(total_flux[snr .≥ 3.]))
+            marker=centroid)
 
         # Repeat for equivalent width
         total_eqw = sum([param_maps.dust_features[df][:eqw] for df ∈ indivs])
@@ -1276,7 +1287,7 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "dust_features", "$(name_i).pdf")
         plot_parameter_map(total_eqw, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
             cube_fitter.cosmology, cube_fitter.cube.wcs, line_latex=comp_name, snr_filter=snr, snr_thresh=snr_thresh,
-            abs_thresh=nanmedian(total_eqw[snr .≥ 3.]))
+            marker=centroid)
     end
 
     # Absorption feature parameters
@@ -1287,7 +1298,7 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
             name_i = join([ab, parameter], "_")
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "absorption_features", "$(name_i).pdf")
             plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
-                cube_fitter.cosmology, cube_fitter.cube.wcs)
+                cube_fitter.cosmology, cube_fitter.cube.wcs, marker=centroid)
         end
     end
 
@@ -1297,7 +1308,7 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         name_i = join(["extinction", parameter], "_")
         save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "extinction", "$(name_i).pdf")
         plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf), 
-            cube_fitter.cosmology, cube_fitter.cube.wcs)
+            cube_fitter.cosmology, cube_fitter.cube.wcs, marker=centroid)
     end
 
     if cube_fitter.fit_sil_emission
@@ -1307,7 +1318,7 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
             name_i = join(["hot_dust", parameter], "_")
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "hot_dust", "$(name_i).pdf")
             plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf), 
-                cube_fitter.cosmology, cube_fitter.cube.wcs)
+                cube_fitter.cosmology, cube_fitter.cube.wcs, marker=centroid)
         end
     end
 
@@ -1318,7 +1329,7 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
             name_i = join(["template", temp, parameter], "_")
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "continuum", "$(name_i).pdf")
             plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf),
-                cube_fitter.cosmology, cube_fitter.cube.wcs)
+                cube_fitter.cosmology, cube_fitter.cube.wcs, marker=centroid)
         end
     end
 
@@ -1344,12 +1355,11 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(line_key)", "$(name_i).pdf")
             plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i), 
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filt, snr_thresh=snr_thresh,
-                abs_thresh=contains(name_i, "flux") ? nanmedian(data[snr_filt .≥ 3.]) : nothing,
-                line_latex=latex_i)
+                line_latex=latex_i, marker=centroid)
         end
     end
     # Make combined plots for lines with multiple components
-    plot_multiline_parameters(cube_fitter, param_maps, psf_interp, snr_thresh)
+    plot_multiline_parameters(cube_fitter, param_maps, psf_interp, snr_thresh, centroid)
 
     # Total parameters for combined lines
     for comb_lines in cube_fitter.lines.combined
@@ -1396,7 +1406,7 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(group_name)", "$(name_i).pdf")
         plot_parameter_map(total_flux, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
             cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
-            abs_thresh=nanmedian(total_flux[snr_filter .≥ 3.]), line_latex=group_name_ltx)
+            line_latex=group_name_ltx, marker=centroid)
         
         # Total equivalent width
         total_eqw = sum([param_maps.lines[comp][:eqw] for comp in component_keys])
@@ -1404,7 +1414,7 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(group_name)", "$(name_i).pdf")
         plot_parameter_map(total_eqw, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
             cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
-            abs_thresh=nanmedian(total_eqw[snr_filter .≥ 3.]), line_latex=group_name_ltx)
+            line_latex=group_name_ltx, marker=centroid)
 
         # Voff and FWHM
         if all(.!isnothing.(cube_fitter.lines.tied_voff[line_inds, 1]))
@@ -1413,7 +1423,7 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(group_name)", "$(name_i).pdf") 
             plot_parameter_map(voff, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
-                line_latex=group_name_ltx)  
+                line_latex=group_name_ltx, marker=centroid) 
         end
         if all(.!isnothing.(cube_fitter.lines.tied_fwhm[line_inds, 1]))
             fwhm = param_maps.lines[component_keys[1]][:fwhm]
@@ -1421,7 +1431,7 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(group_name)", "$(name_i).pdf") 
             plot_parameter_map(fwhm, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
-                line_latex=group_name_ltx)  
+                line_latex=group_name_ltx, marker=centroid) 
         end
         
     end
@@ -1432,7 +1442,7 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
     name_i = "reduced_chi2"
     save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "$(name_i).pdf")
     plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf), 
-        cube_fitter.cosmology, cube_fitter.cube.wcs)
+        cube_fitter.cosmology, cube_fitter.cube.wcs, marker=centroid)
 
     return
 
@@ -1448,6 +1458,10 @@ function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
     # Ineterpolate the PSF
     psf_interp = Spline1D(cube_fitter.cube.λ, cube_fitter.cube.psf, k=1)
 
+    data2d = sumdim(cube_fitter.cube.I, 3)
+    _, mx = findmax(data2d)
+    centroid = centroid_com(data2d[mx[1]-5:mx[1]+5, mx[2]-5:mx[2]+5]) .+ (mx.I .- 5) .- 1
+
     # Stellar population parameters
     for i ∈ keys(param_maps.stellar_populations)
         for parameter ∈ keys(param_maps.stellar_populations[i])
@@ -1455,7 +1469,7 @@ function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
             name_i = join(["stellar_populations", i, parameter], "_")
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "continuum", "$(name_i).pdf")
             plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf),
-                cube_fitter.cosmology, cube_fitter.cube.wcs)
+                cube_fitter.cosmology, cube_fitter.cube.wcs, marker=centroid)
         end
     end
 
@@ -1465,7 +1479,7 @@ function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         name_i = join(["stellar_kinematics", parameter], "_")
         save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "continuum", "$(name_i).pdf")
         plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf),
-            cube_fitter.cosmology, cube_fitter.cube.wcs)
+            cube_fitter.cosmology, cube_fitter.cube.wcs, marker=centroid)
     end
 
     # Attenuation parameters
@@ -1474,7 +1488,7 @@ function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         name_i = join(["attenuation", parameter], "_")
         save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "extinction", "$(name_i).pdf")
         plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf),
-            cube_fitter.cosmology, cube_fitter.cube.wcs)
+            cube_fitter.cosmology, cube_fitter.cube.wcs, marker=centroid)
     end
 
     # Fe II parameters
@@ -1484,7 +1498,7 @@ function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
             name_i = join(["feii", parameter], "_")
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "continuum", "$(name_i).pdf")    
             plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf),
-                cube_fitter.cosmology, cube_fitter.cube.wcs)
+                cube_fitter.cosmology, cube_fitter.cube.wcs, marker=centroid)
         end
     end
 
@@ -1495,7 +1509,7 @@ function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
             name_i = join(["power_law", j, parameter], "_")
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "continuum", "$(name_i).pdf")
             plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf),
-                cube_fitter.cosmology, cube_fitter.cube.wcs)
+                cube_fitter.cosmology, cube_fitter.cube.wcs, marker=centroid)
         end
     end
 
@@ -1523,12 +1537,11 @@ function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(line_key)", "$(name_i).pdf")
             plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i), 
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filt, snr_thresh=snr_thresh,
-                abs_thresh=contains(name_i, "flux") ? nanmedian(data[snr_filt .≥ 3.]) : nothing,
-                line_latex=latex_i)
+                line_latex=latex_i, marker=centroid)
         end
     end
     # Make combined plots for lines with multiple components
-    plot_multiline_parameters(cube_fitter, param_maps, psf_interp, snr_thresh)
+    plot_multiline_parameters(cube_fitter, param_maps, psf_interp, snr_thresh, centroid)
 
     # Total parameters for lines with multiple components
     for (k, name) ∈ enumerate(cube_fitter.lines.names)
@@ -1544,7 +1557,7 @@ function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(name)", "$(name_i).pdf")
             plot_parameter_map(total_flux, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
-                abs_thresh=nanmedian(total_flux[snr_filter .≥ 3.]), line_latex=cube_fitter.lines.latex[k])
+                line_latex=cube_fitter.lines.latex[k], marker=centroid)
 
             # Total equivalent width
             total_eqw = sum([param_maps.lines[comp][:eqw] for comp in component_keys])
@@ -1552,7 +1565,7 @@ function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(name)", "$(name_i).pdf")
             plot_parameter_map(total_eqw, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
-                abs_thresh=nanmedian(total_eqw[snr_filter .≥ 3.]), line_latex=cube_fitter.lines.latex[k])
+                line_latex=cube_fitter.lines.latex[k], marker=centroid)
             
         end
     end
@@ -1602,7 +1615,7 @@ function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(group_name)", "$(name_i).pdf")
         plot_parameter_map(total_flux, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
             cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
-            abs_thresh=nanmedian(total_flux[snr_filter .≥ 3.]), line_latex=group_name_ltx)
+            line_latex=group_name_ltx, marker=centroid)
         
         # Total equivalent width
         total_eqw = sum([param_maps.lines[comp][:eqw] for comp in component_keys])
@@ -1610,7 +1623,7 @@ function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(group_name)", "$(name_i).pdf")
         plot_parameter_map(total_eqw, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
             cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
-            abs_thresh=nanmedian(total_eqw[snr_filter .≥ 3.]), line_latex=group_name_ltx)
+            line_latex=group_name_ltx, marker=centroid)
          
         # Voff and FWHM
         if all(.!isnothing.(cube_fitter.lines.tied_voff[line_inds, 1]))
@@ -1619,7 +1632,7 @@ function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(group_name)", "$(name_i).pdf") 
             plot_parameter_map(voff, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
-                line_latex=group_name_ltx)  
+                line_latex=group_name_ltx, marker=centroid) 
         end
         if all(.!isnothing.(cube_fitter.lines.tied_fwhm[line_inds, 1]))
             fwhm = param_maps.lines[component_keys[1]][:fwhm]
@@ -1627,7 +1640,7 @@ function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(group_name)", "$(name_i).pdf") 
             plot_parameter_map(fwhm, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
-                line_latex=group_name_ltx)  
+                line_latex=group_name_ltx, marker=centroid) 
         end
         
     end
@@ -1637,7 +1650,7 @@ function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
     name_i = "reduced_chi2"
     save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "$(name_i).pdf")
     plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf), 
-        cube_fitter.cosmology, cube_fitter.cube.wcs)
+        cube_fitter.cosmology, cube_fitter.cube.wcs, marker=centroid)
 
     return
 

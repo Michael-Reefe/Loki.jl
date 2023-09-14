@@ -52,6 +52,14 @@ kinematic_group_MgV = [
     "MgV_"
 ]
 
+kinematic_group_NeVI = [
+    "NeVI_",
+    "ArIII_",
+    "MgVII_"
+]
+tie_voff_NeVI = true
+tie_fwhm_NeVI = false
+
 # # Lines to make combined flux/eqw maps for
 combined_maps = [["OII_03727", "OII_03729"]]
 
@@ -67,7 +75,7 @@ eta_locked = true                        # the MIRI/MRS line-spread function sho
 
 # Additional line components
 n_acomps = 1
-rel_amp = false
+rel_amp = true
 rel_voff = false 
 rel_fwhm = false
 
@@ -482,6 +490,11 @@ annotate = true
 [lines.MgV_5609]
 wave = 5.609850
 latex = "[Mg V]"
+annotate = true
+
+[lines.MgVII_9009]
+wave = 9.009000
+latex = "[Mg VII]"
 annotate = true
 
 # [lines.MgV_13521]
@@ -906,6 +919,10 @@ default = "Voigt"
 
 # optional: add [parameters] key to specify individual line priors that 
 # are different from the defaults
+
+# [parameters.SIV_10511]
+# fwhm_plim = [0.0, 800.0]
+# acomp_fwhm_plim = [[0.0, 800.0]]
 
 # In channel 3A, 1 pixel ~ 61 km/s
 # [parameters.ArIII_8991]

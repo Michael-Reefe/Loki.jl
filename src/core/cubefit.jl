@@ -661,7 +661,8 @@ one with the additional profile, in order to include the additional profile in t
     the line masking algorithm.
 - `linemask_overrides::Vector{Tuple{T,T}}`: Optional list of tuples specifying (min, max) wavelength ranges that will be forcibly 
     added to the line mask. This is different from the `user_mask` option since it only applies to the continuum fitting step but
-    will be ignored during the line fitting step.
+    will be ignored during the line fitting step. NOTE: Using this option will disable the 'automatic' line masking algorithm and just
+    use the manually input regions in the mask.
 - `map_snr_thresh::T`: The SNR threshold below which to mask out spaxels from parameter maps for emission lines.
 
 ## Best fit parameters
@@ -763,6 +764,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     line_test_lines::Vector{Vector{Symbol}}
     line_test_threshold::T
     plot_line_test::Bool
+    subtract_cubic_spline::Bool
 
     # Line masking options
     linemask_Δ::S
@@ -1367,8 +1369,8 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             continuum, n_dust_cont, n_power_law, n_dust_features, n_abs_features, n_templates, out[:templates], out[:template_names], dust_features, 
             abs_features, abs_taus, n_ssps, ssp_λ, ssp_templates, feii_templates_fft, vres, vsyst_ssp, vsyst_feii, npad_feii, n_lines, n_acomps, n_comps, relative_flags, 
             lines, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, out[:cosmology], flexible_wavesol, out[:n_bootstrap], 
-            out[:random_seed], out[:line_test_lines], out[:line_test_threshold], out[:plot_line_test], out[:linemask_delta], out[:linemask_n_inc_thresh], out[:linemask_thresh], 
-            out[:linemask_overrides], out[:map_snr_thresh], p_init_cont, p_init_line, p_init_pahtemp, p_init_cube_λ, p_init_cube_cont, p_init_cube_lines, p_init_cube_wcs, 
+            out[:random_seed], out[:line_test_lines], out[:line_test_threshold], out[:plot_line_test], out[:subtract_cubic_spline], out[:linemask_delta], out[:linemask_n_inc_thresh], 
+            out[:linemask_thresh], out[:linemask_overrides], out[:map_snr_thresh], p_init_cont, p_init_line, p_init_pahtemp, p_init_cube_λ, p_init_cube_cont, p_init_cube_lines, p_init_cube_wcs, 
             p_init_cube_coords, p_init_cube_Ω)
     end
 

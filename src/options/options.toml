@@ -105,6 +105,10 @@ line_test_threshold = 0.0
 # whether or not to plot the results of line testing
 plot_line_test = true
 
+# whether or not to subtract a cubic spline fit to the continuum instead of the real fit to the continuum during
+# the line fitting step
+subtract_cubic_spline = false
+
 # cosmology options: Controls the cosmology used for distance / luminosity calculations.
 # If h is set to 1, the distances in plot scale bars will be shown with h^-1 units.
 [cosmology]

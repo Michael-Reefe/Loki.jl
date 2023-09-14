@@ -22,7 +22,7 @@ locked = true
 # locked = false
 [[dust_continuum_temps]]
 val = 135.0
-plim = [90.0, 170.0]
+plim = [90.0, 300.0]
 locked = false
 [[dust_continuum_temps]]
 val = 50.0
@@ -537,7 +537,7 @@ locked = false
 [extinction.tau_9_7]
 # val = 1.2777
 val = 0.1
-plim = [0.0, 2.0]
+plim = [0.0, 3.0]
 locked = false
  
 # extinction.tau_ice: *not* an actual optical depth -- this is

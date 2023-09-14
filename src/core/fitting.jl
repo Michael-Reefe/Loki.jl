@@ -31,6 +31,16 @@ See also [`continuum_cubic_spline`](@ref)
 function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}, Δ::Integer, n_inc_thresh::Integer, thresh::Real,
     overrides::Vector{Tuple{T,T}}=Vector{Tuple{Real,Real}}()) where {T<:Real}
 
+
+    mask = falses(length(λ))
+    # manual regions that wish to be masked out
+    if length(overrides) > 0
+        for override in overrides
+            mask[override[1] .< λ .< override[2]] .= 1
+        end
+        return mask
+    end
+
     # Wavelength difference vector
     diffs = diff(λ)
     diffs = [diffs; diffs[end]]
@@ -40,7 +50,6 @@ function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}, Δ::Integer,
     @simd for i ∈ 1:length(λ)
         d2f[i] = (I[min(length(λ), i+Δ)] - 2I[i] + I[max(1, i-Δ)]) / (Δ * diffs[i])^2
     end
-    mask = falses(length(λ))
     W = (10 * Δ, 1000)
 
     # Find where the second derivative is significantly concave-down 
@@ -85,11 +94,6 @@ function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}, Δ::Integer,
     mask[11.17 .< λ .< 11.24] .= 0
     mask[11.26 .< λ .< 11.355] .= 0
     # mask[12.5 .< λ .< 12.79] .= 0
-    
-    # manual regions that wish to be masked out
-    for override in overrides
-        mask[override[1] .< λ .< override[2]] .= 1
-    end
 
     # Force the beginning/end few pixels to be unmasked to prevent runaway splines at the edges
     mask[1:7] .= 0
@@ -1003,13 +1007,13 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     # This ensures that any lines that fall within the masked regions will go to 0
     Inorm[mask_bad] .= 0.
 
-    if !isnothing(cube_fitter.user_mask)
-        # Mask out additional regions
-        for pair in cube_fitter.user_mask
-            region = pair[1] .< λnorm .< pair[2]
-            Inorm[region] .= 0.
-        end
-    end
+    # if !isnothing(cube_fitter.user_mask)
+    #     # Mask out additional regions
+    #     for pair in cube_fitter.user_mask
+    #         region = pair[1] .< λnorm .< pair[2]
+    #         Inorm[region] .= 0.
+    #     end
+    # end
 
     plimits, param_lock, param_names, tied_pairs, tied_indices = get_line_plimits(cube_fitter, init || use_ap, ext_curve_norm)
     p₀, dstep = get_line_initial_values(cube_fitter, spaxel, init || use_ap)
@@ -2182,7 +2186,25 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     if !cube_fitter.fit_joint
         popt_c, I_cont, comps_cont, n_free_c, perr_c, pahtemp = continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, mask_bad, norm, 
             cube_fitter.use_pah_templates && pah_template_spaxel, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_cont)
-        popt_l, I_line, comps_line, n_free_l, perr_l = line_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_bad, I_cont, comps_cont[ext_key], 
+
+        # Use the real continuum fit or a cubic spline continuum fit based on the settings
+        line_cont = copy(I_cont)
+        if cube_fitter.subtract_cubic_spline
+            full_cont = I ./ norm
+            temp_cont = zeros(eltype(line_cont), length(line_cont))
+            # subtract any templates first
+            for comp ∈ keys(comps_cont)
+                if contains(comp, "templates_")
+                    temp_cont .+= comps_cont[comp]
+                end
+            end
+            # do cubic spline fit
+            _, notemp_cont, _ = continuum_cubic_spline(λ, full_cont .- temp_cont, zeros(eltype(line_cont), length(line_cont)), 
+                cube_fitter.linemask_Δ, cube_fitter.linemask_n_inc_thresh, cube_fitter.linemask_thresh, cube_fitter.linemask_overrides)
+            line_cont = temp_cont .+ notemp_cont
+        end
+
+        popt_l, I_line, comps_line, n_free_l, perr_l = line_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_bad, line_cont, comps_cont[ext_key], 
             lsf_interp_func, norm, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_l)
     else
         popt_c, popt_l, I_cont, I_line, comps_cont, comps_line, n_free_c, n_free_l, perr_c, perr_l, pahtemp = all_fit_spaxel(cube_fitter,
@@ -2206,8 +2228,8 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # Total free parameters
     n_free = n_free_c + n_free_l
     n_data = length(I)
-    n_masked = sum(mask_chi2)
-    if !isnothing(cube_fitter.user_mask)
+    n_masked = 0
+    if !isnothing(cube_fitter.user_mask) && cube_fitter.fit_joint
         for pair in cube_fitter.user_mask
             region = pair[1] .< λ .< pair[2]
             n_masked += sum(region)

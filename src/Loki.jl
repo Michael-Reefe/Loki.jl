@@ -14,9 +14,8 @@ using QuadGK
 using NumericalIntegration
 using Dierckx
 using LinearAlgebra
-using EllipsisNotation
-using SpecialFunctions
 using FFTW
+using SpecialFunctions
 using Polynomials
 using NLsolve
 using ImageFiltering

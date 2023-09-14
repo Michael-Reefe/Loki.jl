@@ -17,7 +17,7 @@ function generate_psf_model!(cube::DataCube, psf_model_dir::String=""; interpola
     end
     files = glob("**/*.fits", psf_model_dir)
     bands = Dict("SHORT" => 'A', "MEDIUM" => 'B', "LONG" => 'C')
-    for file ∈ files
+    for file ∈ sort(files)
         m = match(Regex("(.+?)(ch$(cube.channel)[-_.]?$(cube.band))(.+?).fits?", "i"), file)
         if !isnothing(m)
             push!(hdus, FITS(file))
@@ -46,6 +46,30 @@ function generate_psf_model!(cube::DataCube, psf_model_dir::String=""; interpola
         _, mx2 = findmax(data2d)
         c2 = centroid_com(data2d[mx2[1]-5:mx2[1]+5, mx2[2]-5:mx2[2]+5]) .+ (mx2.I .- 5) .- 1
         dx = c1 .- c2
+
+        # Subtract the background within an annulus
+        pix_size = sqrt(cube.Ω) * 180/π * 3600
+        for i in axes(data, 3)
+            r_in = 8 * cube.psf[i] / pix_size
+            r_out = 10 * cube.psf[i] / pix_size
+            back_ann = CircularAnnulus(c2..., r_in, r_out)
+            pedestal = photometry(back_ann, data[:, :, i]).aperture_sum / photometry(back_ann, ones(size(data)[1:2])).aperture_sum
+            # if i == 1
+            #     println("$(cube.channel) $(cube.band)")
+            #     println(pedestal)
+            #     fig, ax = plt.subplots()
+            #     d = copy(data[:, :, i])
+            #     d[d .< 0] .= 0
+            #     ax.imshow(log10.(d)', origin=:lower, cmap=:cubehelix)
+            #     patches = get_patches(back_ann)
+            #     for patch in patches
+            #         ax.add_patch(patch)
+            #     end
+            #     plt.show()
+            #     plt.close()
+            # end
+            data[:, :, i] .-= pedestal
+        end
         
         data_shift = zeros(eltype(data), size(data))
         for i in axes(data_shift, 3)
@@ -60,12 +84,11 @@ function generate_psf_model!(cube::DataCube, psf_model_dir::String=""; interpola
             data_shift = data_shift[1:size_obs[1], 1:size_obs[2], :]
         end
 
-        # Cut down to match the size of the reference data
         push!(psfs, data_shift)
     end
 
     # Take an average of each individual PSF model
-    psf = dropdims(nansum(cat(psfs..., dims=4), dims=4), dims=4)
+    psf = dropdims(nanmean(cat(psfs..., dims=4), dims=4), dims=4)
 
     # Interpolate over the 12.22 μm region to account for the JWST spectral leak artifact,
     # which is very prominent for blue sources such as these stars
