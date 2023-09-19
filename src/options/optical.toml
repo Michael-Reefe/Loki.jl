@@ -8,12 +8,12 @@
 # Use one old population and one young population
 [[stellar_population_ages]]
 val = 8.0
-plim = [7.5, 10.0]
-locked = true
+plim = [7.0, 10.0]
+locked = false 
 [[stellar_population_ages]]
 val = 0.002
 plim = [0.001, 0.02]
-locked = true
+locked = false
 
 # Metallicities in [M/H]
 
@@ -21,11 +21,11 @@ locked = true
 [[stellar_population_metallicities]]
 val = -0.4
 plim = [-2.3, 0.0]
-locked = true
+locked = false
 [[stellar_population_metallicities]]
 val = 0.0
 plim = [0.0, 0.40]
-locked = true
+locked = false
 
 ################# Stellar Kinematics #################
 
@@ -76,7 +76,7 @@ locked = false
 
 # E(B-V) Reddening factor for the gas
 [attenuation.E_BV]
-val = 0.10
+val = 0.1
 plim = [0.0, 1.0]
 locked = false
 

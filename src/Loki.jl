@@ -23,6 +23,7 @@ using ImageTransformations
 
 # Optimization packages
 using Optim
+using BlackBoxOptim
 using CMPFit
 
 # Astronomy packages

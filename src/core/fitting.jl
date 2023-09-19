@@ -840,8 +840,8 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
             end
 
             fit_func_lnL = p -> -ln_likelihood(Inorm[region], fit_func_test(λnorm[region], p), σnorm[region])
-            x_tol = 1e-5
-            f_tol = abs(fit_func_lnL(pfree) - fit_func_lnL(pfree .* (1 .- x_tol)))
+            # x_tol = 1e-5
+            # f_tol = abs(fit_func_lnL(pfree) - fit_func_lnL(pfree .* (1 .- x_tol)))
 
             # Parameter info
             # parinfo_test = CMPFit.Parinfo(pstop-pstart+1)
@@ -856,11 +856,16 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
             #                     parinfo=parinfo_test, config=config_test)
 
             # Fit with simulated annealing
-            res_test = Optim.optimize(fit_func_lnL, lower_bounds[pstart:pstop][.~plock], upper_bounds[pstart:pstop][.~plock], pfree,
-                SAMIN(;rt=0.9, nt=5, ns=5, neps=5, x_tol=x_tol, f_tol=f_tol, verbosity=0), Optim.Options(iterations=10^6))
+            # res_test = Optim.optimize(fit_func_lnL, lower_bounds[pstart:pstop][.~plock], upper_bounds[pstart:pstop][.~plock], pfree,
+                # SAMIN(;rt=0.9, nt=5, ns=5, neps=5, x_tol=x_tol, f_tol=f_tol, verbosity=0), Optim.Options(iterations=10^6))
+            # res_test = Optim.optimize(fit_func_lnL, lower_bounds[pstart:pstop][.~plock], upper_bounds[pstart:pstop][.~plock], pfree,
+                # ParticleSwarm(lower=lower_bounds[pstart:pstop][.~plock], upper=upper_bounds[pstart:pstop][.~plock], n_particles=length(pfree)),
+                # Optim.Options(iterations=10^3))
+            res_test = bboptimize(fit_func_lnL, pfree; SearchRange=[(l,u) for (l,u) in zip(lower_bounds[pstart:pstop][.~plock], upper_bounds[pstart:pstop][.~plock])], 
+                NumDimensions=length(pfree), Method=:adaptive_de_rand_1_bin_radiuslimited, PopulationSize=max(50, 10*length(pfree)), TraceMode=:silent)
 
             # Save the reduced chi2 values
-            test_model = fit_func_test(λnorm[region], res_test.minimizer)
+            test_model = fit_func_test(λnorm[region], best_candidate(res_test))
             χ² = sum((Inorm[region] .- test_model).^2 ./ σnorm[region].^2)
             dof = length(λnorm[region]) - sum(.~plock)
             test_chi2 = χ² / dof
@@ -908,9 +913,14 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
         end
     end
 
-    for group in cube_fitter.line_test_lines
+    for grp in cube_fitter.line_test_lines
+        # Use "*" as a special character in the line name to indicate that a line should not be tested, but should still
+        # be included in the group such that it is fit with the same number of components as the other group members.
+        group = [Symbol(replace(string(g), "*" => "")) for g in grp]
         # Get the group member indices
         inds = [findfirst(ln .== line_names) for ln in group]
+        inds = inds[.~isnothing.(inds)]  # may get nothings if the "*" flag is used, but this is ok since we only need the inds
+                                         # to find the maximum number of profiles in the group, so the "*"s are irrelevant here
         # Fit the maximum number of components in the group
         profiles_group = maximum(profiles_to_fit_list[inds])
 
@@ -959,7 +969,7 @@ end
         lsf_interp_func, N; [init, use_ap, bootstrap_iter, p1_boots])
 
 Fit the emission lines of a given spaxel in the DataCube, subtracting the continuum, using the 
-Simulated Annealing fitting method with the `Optim` package and the Levenberg-Marquardt method with `CMPFit`.
+Differential Evolution fitting method with the `Optim` package and the Levenberg-Marquardt method with `CMPFit`.
 
 This procedure has been adapted from PAHFIT (with some heavy adjustments). 
 See Smith, Draine, et al. 2007; http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
@@ -1079,9 +1089,10 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
         func(x, ptot, n)
     end
 
-    if (init || use_ap || cube_fitter.fit_all_samin) && !bootstrap_iter
+    _fit_global = false
+    if (init || use_ap || cube_fitter.fit_all_global) && !bootstrap_iter
     # if false
-        @debug "Beginning Line fitting with Simulated Annealing:"
+        @debug "Beginning Line fitting with Differential Evolution:"
 
         # Parameter and function tolerance levels for convergence with SAMIN,
         # these are a bit loose since we're mainly just looking to get into the right global minimum region with SAMIN
@@ -1091,18 +1102,23 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
                                 model_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
                                     cube_fitter.flexible_wavesol, ext_curve_norm, lsf_interp_func, cube_fitter.relative_flags), 
                                 σnorm)
-        x_tol = 1e-5
-        f_tol = abs(fit_func(λnorm, p₀, 0) - fit_func(λnorm, clamp.(p₀ .* (1 .- x_tol), lower_bounds, upper_bounds), 0))
+        # x_tol = 1e-5
+        # f_tol = abs(fit_func(λnorm, p₀, 0) - fit_func(λnorm, clamp.(p₀ .* (1 .- x_tol), lower_bounds, upper_bounds), 0))
 
         # Replace infinite upper limits with finite ones so SAMIN can calculate convergence
-        lb_samin = lbfree_tied
-        ub_samin = [isfinite(ub) ? ub : 1e10 for ub in ubfree_tied]
+        lb_global = lbfree_tied
+        ub_global = [isfinite(ub) ? ub : 1e10 for ub in ubfree_tied]
 
         # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
-        res = Optim.optimize(p -> fit_step3(λnorm, p, fit_func), lb_samin, ub_samin, pfree_tied, 
-            SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
-        
-        p₁ = res.minimizer
+        # res = Optim.optimize(p -> fit_step3(λnorm, p, fit_func), lb_samin, ub_samin, pfree_tied, 
+            # SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
+        # res = Optim.optimize(p -> fit_step3(λnorm, p, fit_func), lb_global, ub_global, pfree_tied,
+            # ParticleSwarm(lower=lb_global, upper=ub_global, n_particles=length(pfree_tied)), Optim.Options(iterations=10^4))
+        # p₁ = res.minimizer
+        res = bboptimize(p -> fit_step3(λnorm, p, fit_func), pfree_tied; SearchRange=[(l,u) for (l,u) in zip(lb_global, ub_global)], 
+            NumDimensions=length(pfree_tied), Method=:adaptive_de_rand_1_bin_radiuslimited, PopulationSize=max(50, 10*length(pfree_tied)),
+            TraceMode=:silent, MaxSteps=50_000)
+        p₁ = best_candidate(res) 
 
         # Write convergence results to file, if specified
         if cube_fitter.track_convergence
@@ -1113,12 +1129,19 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
                     redirect_stdout(conv) do
                         label = isone(length(spaxel)) ? "Voronoi bin $(spaxel[1])" : "Spaxel ($(spaxel[1]),$(spaxel[2]))"
                         println("$label on worker $(myid()):")
-                        println(res)
+                        println("Method: $(res.method)")
+                        println("Stop reason: $(res.stop_reason)")
+                        println("Iterations: $(res.iterations)")
+                        println("Start time: $(res.start_time)")
+                        println("Elapsed time: $(res.elapsed_time)")
+                        println("Function calls: $(res.f_calls)")
                         println("-------------------------------------------------------")
                     end
                 end
             end
         end
+
+        _fit_global = true
 
     elseif bootstrap_iter
         p₁ = copy(p1_boots)
@@ -1140,7 +1163,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     res = cmpfit(λnorm, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func_2), p₁, parinfo=parinfo, config=config)
 
     n = 1
-    while res.niter < 5
+    while (res.niter < 5) && !_fit_global
         @warn "LM Solver is stuck on the initial state for the line fit of spaxel $spaxel. Jittering starting params..."
         # Jitter the starting parameters a bit
         jit_lo = (lbfree_tied .- p₁) ./ 20  # defined to be negative
@@ -1270,7 +1293,7 @@ end
     all_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, mask_bad, I_spline, N, area_sr, lsf_interp_func;
         [init, use_ap, bootstrap_iter, p1_boots_cont, p1_boots_line])
 
-Fit the continuum and emission lines in a spaxel simultaneously with a combination of the Simulated Annealing
+Fit the continuum and emission lines in a spaxel simultaneously with a combination of the Differential Evolution
 and Levenberg-Marquardt algorithms.
 
 This procedure has been adapted from PAHFIT (with some heavy adjustments). 
@@ -1336,7 +1359,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         end
         templates_spax = templates_spax[.~mask_bad, :]
     else
-        templates_spax = cube_fitter.templates
+        templates_spax = Matrix{Float64}(undef, 0, 0)
     end
 
     if !isnothing(cube_fitter.user_mask)
@@ -1426,7 +1449,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     end
 
     # Place initial values within the lower/upper limits (amplitudes may be too large if the extinction levels differ between spaxels)
-    pfree_lines_tied = clamp.(pfree_lines_tied, lower_bounds_lines_tied, upper_bounds_lines_tied)
+    pfree_lines_tied = clamp.(pfree_lines_tied, lbfree_lines_tied, ubfree_lines_tied)
 
     @debug """\n
     ##################################################################################################################
@@ -1588,26 +1611,31 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     upper_bounds = [ub_cont; ubfree_lines_tied]
     dstep = [dstep_cont; dfree_lines_tied]
 
-    if (init || use_ap || cube_fitter.fit_all_samin) && !bootstrap_iter
+    _fit_global = false
+    if (init || use_ap || cube_fitter.fit_all_global) && !bootstrap_iter
     # if false
-        @debug "Beginning joint continuum+line fitting with Simulated Annealing:"
+        @debug "Beginning joint continuum+line fitting with Differential Evolution:"
 
         # Parameter and function tolerance levels for convergence with SAMIN,
         # these are a bit loose since we're mainly just looking to get into the right global minimum region with SAMIN
         # before refining the fit later with a LevMar local minimum routine
         fit_func = p -> -ln_likelihood(I_spax, fit_joint(λ_spax, p, n=0), σ_spax)
-        x_tol = 1e-5
-        f_tol = abs(fit_func(p₀) - fit_func(clamp.(p₀ .* (1 .- x_tol), lower_bounds, upper_bounds)))
+        # x_tol = 1e-5
+        # f_tol = abs(fit_func(p₀) - fit_func(clamp.(p₀ .* (1 .- x_tol), lower_bounds, upper_bounds)))
 
         # Replace infinite upper limits with finite ones so SAMIN can calculate convergence
-        lb_samin = lower_bounds
-        ub_samin = [isfinite(ub) ? ub : 1e10 for ub in upper_bounds]
+        lb_global = lower_bounds
+        ub_global = [isfinite(ub) ? ub : 1e10 for ub in upper_bounds]
 
         # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
-        res = Optim.optimize(fit_func, lb_samin, ub_samin, p₀, 
-            SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
-        
-        p₁ = res.minimizer
+        # res = Optim.optimize(fit_func, lb_samin, ub_samin, p₀, 
+            # SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
+        # res = Optim.optimize(fit_func, lb_global, ub_global, p₀,
+            # ParticleSwarm(lower=lb_global, upper=ub_global, n_particles=length(p₀)), Optim.Options(iterations=10^4))
+        # p₁ = res.minimizer
+        res = bboptimize(fit_func, p₀; SearchRange=[(l,u) for (l,u) in zip(lb_global, ub_global)], NumDimensions=length(p₀),
+            Method=:adaptive_de_rand_1_bin_radiuslimited, PopulationSize=max(50, 10*length(p₀)), TraceMode=:silent, MaxSteps=50_000)
+        p₁ = best_candidate(res) 
 
         # Write convergence results to file, if specified
         if cube_fitter.track_convergence
@@ -1618,12 +1646,19 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
                     redirect_stdout(conv) do
                         label = isone(length(spaxel)) ? "Voronoi bin $(spaxel[1])" : "Spaxel ($(spaxel[1]),$(spaxel[2]))"
                         println("$label on worker $(myid()):")
-                        println(res)
+                        println("Method: $(res.method)")
+                        println("Stop reason: $(res.stop_reason)")
+                        println("Iterations: $(res.iterations)")
+                        println("Start time: $(res.start_time)")
+                        println("Elapsed time: $(res.elapsed_time)")
+                        println("Function calls: $(res.f_calls)")
                         println("-------------------------------------------------------")
                     end
                 end
             end
         end
+
+        _fit_global = true
 
     else
         p₁ = p₀
@@ -1640,7 +1675,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
 
     cont_snr = nanmedian(I_spax ./ σ_spax)
     n = 1
-    while (res.niter < 5) && (cont_snr > 3)
+    while (res.niter < 5) && (cont_snr > 3) && !_fit_global
         @warn "LM Solver is stuck on the initial state for the continuum+lines fit of spaxel $spaxel. Jittering starting params..."
         # Jitter the starting parameters a bit
         jit_lo = (lower_bounds .- p₁) ./ 20  # defined to be negative
@@ -2228,14 +2263,6 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # Total free parameters
     n_free = n_free_c + n_free_l
     n_data = length(I)
-    n_masked = 0
-    if !isnothing(cube_fitter.user_mask) && cube_fitter.fit_joint
-        for pair in cube_fitter.user_mask
-            region = pair[1] .< λ .< pair[2]
-            n_masked += sum(region)
-        end
-    end
-    n_data -= n_masked
 
     # Degrees of freedom
     dof = n_data - n_free

@@ -345,11 +345,12 @@ end
 
 
 """
-    log_rebin!(cube::DataCube)
+    log_rebin!(cube, factor)
 
 Rebin a DataCube onto a logarithmically spaced wavelength vector, conserving flux.
+Optionally input a rebinning factor > 1 to resample onto a coarser wavelength grid.
 """
-function log_rebin!(cube::DataCube)
+function log_rebin!(cube::DataCube, factor::Integer=1)
 
     # check if it is already log-rebinned
     log_check = (cube.λ[2]/cube.λ[1]) ≈ (cube.λ[end]/cube.λ[end-1])
@@ -361,13 +362,15 @@ function log_rebin!(cube::DataCube)
 
     # rebin onto a logarithmically spaced wavelength grid
     if !log_check
-        dλ = (maximum(cube.λ) - minimum(cube.λ)) / length(cube.λ)
+        dλ = (maximum(cube.λ) - minimum(cube.λ)) / length(cube.λ) * factor
         linλ = minimum(cube.λ):dλ:maximum(cube.λ)
         lnλ = get_logarithmic_λ(linλ)
         cube.I, cube.σ, cube.mask = resample_flux_permuted3D(lnλ, cube.λ, cube.I, cube.σ, cube.mask)
         if !isnothing(cube.psf_model)
             cube.psf_model = resample_flux_permuted3D(lnλ, cube.λ, cube.psf_model)
         end
+        cube.psf = Spline1D(cube.λ, cube.psf, k=1, bc="extrapolate")(lnλ)
+        cube.lsf = Spline1D(cube.λ, cube.lsf, k=1, bc="extrapolate")(lnλ)
         cube.λ = lnλ
     else
         @warn "Cube is already log-rebinned! Will not be rebinned again."
@@ -972,7 +975,7 @@ function save_fits(path::String, obs::Observation, channels::Vector)
 
             [obs.name, obs.z, string(channel), obs.channels[channel].band, obs.channels[channel].Ω, 
                 obs.α, obs.δ, obs.instrument, obs.detector, obs.channels[channel].θ_sky, string(obs.spectral_region), obs.rest_frame, obs.masked, obs.vacuum_wave, 
-                "IFUCubeModel", obs.channels[channel].nx, obs.channels[channel].ny, obs.channels[channel].nz, obs.channels[channel].wcs.naxis, 
+                "IFUCubeModel", size(obs.channels[channel].I, 1), size(obs.channels[channel].I, 2), size(obs.channels[channel].I, 3), obs.channels[channel].wcs.naxis, 
                 obs.channels[channel].wcs.cdelt[1], obs.channels[channel].wcs.cdelt[2], obs.channels[channel].wcs.cdelt[3],
                 obs.channels[channel].wcs.ctype[1], obs.channels[channel].wcs.ctype[2], obs.channels[channel].wcs.ctype[3],
                 obs.channels[channel].wcs.crpix[1], obs.channels[channel].wcs.crpix[2], obs.channels[channel].wcs.crpix[3],

@@ -1108,18 +1108,18 @@ function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMap
             # Get the minimum/maximum for the color scale based on the combined dataset
             vmin, vmax = 0., 0.
             if parameter == :flux && plot_total
-                vmin = quantile(total_flux[isfinite.(total_flux)], 0.01)
-                vmax = quantile(total_flux[isfinite.(total_flux)], 0.99)
+                vmin = quantile(total_flux[isfinite.(total_flux) .& (snr_filter .> 3)], 0.01)
+                vmax = quantile(total_flux[isfinite.(total_flux) .& (snr_filter .> 3)], 0.99)
             elseif parameter == :eqw && plot_total
-                vmin = quantile(total_eqw[isfinite.(total_eqw)], 0.01)
-                vmax = quantile(total_eqw[isfinite.(total_eqw)], 0.99)
+                vmin = quantile(total_eqw[isfinite.(total_eqw) .& (snr_filter .> 3)], 0.01)
+                vmax = quantile(total_eqw[isfinite.(total_eqw) .& (snr_filter .> 3)], 0.99)
             else
                 # Each element of 'minmax' is a tuple with the minimum and maximum for that spaxel
                 minmax = dropdims(nanextrema(cat([param_maps.lines[comp][parameter] for comp in component_keys]..., dims=3), dims=3), dims=3)
                 mindata = [m[1] for m in minmax]
                 maxdata = [m[2] for m in minmax]
-                vmin = quantile(mindata[isfinite.(mindata)], 0.01)
-                vmax = quantile(maxdata[isfinite.(maxdata)], 0.99)
+                vmin = quantile(mindata[isfinite.(mindata) .& (snr_filter .> 3)], 0.01)
+                vmax = quantile(maxdata[isfinite.(maxdata) .& (snr_filter .> 3)], 0.99)
             end
 
             cdata = nothing
@@ -1143,7 +1143,7 @@ function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMap
             for i in 1:n_line_comps
                 data = param_maps.lines[component_keys[i]][parameter]
                 name_i = join([line, parameter], "_")
-                snr_filt = snr_filter
+                snr_filt = param_maps.lines[component_keys[i]][:SNR]
                 if contains(string(parameter), "SNR")
                     snr_filt = nothing
                 end
@@ -1341,14 +1341,14 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         line_i = findfirst(cube_fitter.lines.names .== line_key)
         wave_i = cube_fitter.lines.λ₀[line_i]
         latex_i = cube_fitter.lines.latex[line_i]
-        n_line_comps = sum(.!isnothing.(cube_fitter.lines.profiles[line_i, :]))
-        snr_filter = dropdims(
-            nanmaximum(cat([param_maps.lines[Symbol(line_key, "_$i")][:SNR] for i in 1:n_line_comps]..., dims=3), dims=3), dims=3)
+        # n_line_comps = sum(.!isnothing.(cube_fitter.lines.profiles[line_i, :]))
+        # snr_filter = dropdims(
+        #     nanmaximum(cat([param_maps.lines[Symbol(line_key, "_$i")][:SNR] for i in 1:n_line_comps]..., dims=3), dims=3), dims=3)
 
         for parameter ∈ keys(param_maps.lines[line])
             data = param_maps.lines[line][parameter]
             name_i = join([line, parameter], "_")
-            snr_filt = snr_filter
+            snr_filt = param_maps.lines[line][:SNR]
             if contains(string(parameter), "SNR")
                 snr_filt = nothing
             end
@@ -1523,14 +1523,14 @@ function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         line_i = findfirst(cube_fitter.lines.names .== line_key)
         wave_i = cube_fitter.lines.λ₀[line_i]
         latex_i = cube_fitter.lines.latex[line_i]
-        n_line_comps = sum(.!isnothing.(cube_fitter.lines.profiles[line_i, :]))
-        snr_filter = dropdims(
-            nanmaximum(cat([param_maps.lines[Symbol(line_key, "_$i")][:SNR] for i in 1:n_line_comps]..., dims=3), dims=3), dims=3)
+        # n_line_comps = sum(.!isnothing.(cube_fitter.lines.profiles[line_i, :]))
+        # snr_filter = dropdims(
+        #     nanmaximum(cat([param_maps.lines[Symbol(line_key, "_$i")][:SNR] for i in 1:n_line_comps]..., dims=3), dims=3), dims=3)
 
         for parameter ∈ keys(param_maps.lines[line])
             data = param_maps.lines[line][parameter]
             name_i = join([line, parameter], "_")
-            snr_filt = snr_filter
+            snr_filt = param_maps.lines[line][:SNR]
             if contains(string(parameter), "SNR")
                 snr_filt = nothing
             end

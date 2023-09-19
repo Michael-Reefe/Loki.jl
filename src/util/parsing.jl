@@ -102,7 +102,7 @@ function parse_options()
     # Read in the options file
     options = TOML.parsefile(joinpath(@__DIR__, "..", "options", "options.toml"))
     keylist1 = ["n_bootstrap", "extinction_curve", "extinction_screen", "fit_sil_emission", "fit_opt_na_feii", "fit_opt_br_feii", 
-                "fit_all_samin", "use_pah_templates", "fit_joint", "fit_uv_bump", "fit_covering_frac", "parallel", "plot_spaxels", 
+                "fit_all_global", "use_pah_templates", "fit_joint", "fit_uv_bump", "fit_covering_frac", "parallel", "plot_spaxels", 
                 "plot_maps", "save_fits", "overwrite", "track_memory", "track_convergence", "save_full_model", "line_test_lines", 
                 "line_test_threshold", "plot_line_test", "make_movies", "cosmology"]
     keylist2 = ["h", "omega_m", "omega_K", "omega_r"]
@@ -910,7 +910,7 @@ function parse_lines()
     # Iterate and create the tied amplitude parameters
     for j ∈ 1:size(lines_out.tied_amp, 2)
         for (i, kin_tie) ∈ enumerate(kin_tied_key_amp[j])
-            a_ratio = isone(j) ? lines["tie_amp_$kin_tie"] : lines["tie_acomp_amp_$kin_tie"]
+            a_ratio = isone(j) ? lines["tie_amp_$kin_tie"] : lines["tie_acomp_$(j-1)_amp_$kin_tie"]
             lines_in_group = lines_out.names[lines_out.tied_amp[:, j] .== kin_tie]
             amp_tied[j][i] = Dict(ln => ai for (ln, ai) in zip(lines_in_group, a_ratio))
             msg *= "\namp_tied_$(kin_tie)_$(j) $(amp_tied[j][i])"
@@ -928,15 +928,15 @@ function parse_lines()
                     param_str = isone(j) ? "voff" : "acomp_voff"
                     if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_plim")
                         v_plim = isone(j) ? (lines["parameters"][string(kin_tie)]["$(param_str)_plim"]...,) :
-                                            (lines["parameters"][string(kin_tie)]["$(param_str)_plim"][j]...,)
+                                            (lines["parameters"][string(kin_tie)]["$(param_str)_plim"][j-1]...,)
                     end
                     if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_locked")
                         v_locked = isone(j) ? lines["parameters"][string(kin_tie)]["$(param_str)_locked"] :
-                                              lines["parameters"][string(kin_tie)]["$(param_str)_locked"][j]
+                                              lines["parameters"][string(kin_tie)]["$(param_str)_locked"][j-1]
                     end
                     if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_init")
                         v_init = isone(j) ? lines["parameters"][string(kin_tie)]["$(param_str)_init"] :
-                                            lines["parameters"][string(kin_tie)]["$(param_str)_init"][j]
+                                            lines["parameters"][string(kin_tie)]["$(param_str)_init"][j-1]
                     end
                 end
             end
@@ -963,15 +963,15 @@ function parse_lines()
                     param_str = isone(j) ? "fwhm" : "acomp_fwhm"
                     if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_plim")
                         f_plim = isone(j) ? (lines["parameters"][string(kin_tie)]["$(param_str)_plim"]...,) :
-                                            (lines["parameters"][string(kin_tie)]["$(param_str)_plim"][j]...,)
+                                            (lines["parameters"][string(kin_tie)]["$(param_str)_plim"][j-1]...,)
                     end
                     if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_locked")
                         f_locked = isone(j) ? lines["parameters"][string(kin_tie)]["$(param_str)_locked"] :
-                                              lines["parameters"][string(kin_tie)]["$(param_str)_locked"][j]
+                                              lines["parameters"][string(kin_tie)]["$(param_str)_locked"][j-1]
                     end
                     if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_init")
                         f_init = isone(j) ?   lines["parameters"][string(kin_tie)]["$(param_str)_init"] :
-                                              lines["parameters"][string(kin_tie)]["$(param_str)_init"][j]
+                                              lines["parameters"][string(kin_tie)]["$(param_str)_init"][j-1]
                     end
                 end
             end
@@ -1204,7 +1204,7 @@ function generate_stellar_populations(λ::Vector{<:Real}, lsf::Vector{<:Real}, z
             # Resample onto the linear wavelength grid
             ssp_flux = Spline1D(ssp_λ, ssp_flux, k=1, bc="nearest")(ssp_λlin)
             # Convolve with gaussian kernels to degrade the spectrum to match the input spectrum's resolution
-            ssp_flux, _ = convolveGaussian1D(ssp_flux, dfwhm)
+            ssp_flux = convolveGaussian1D(ssp_flux, dfwhm)
             # Resample again, this time onto the logarithmic wavelength grid
             ssp_flux = Spline1D(ssp_λlin, ssp_flux, k=1, bc="nearest")(ssp_lnλ)
             # Add to the templates array
@@ -1285,8 +1285,8 @@ function generate_feii_templates(λ::Vector{<:Real}, lsf::Vector{<:Real})
     dfwhm = sqrt.(clamp.(inp_fwhm.^2 .- feii_fwhm.^2, 0., Inf)) ./ Δλ
 
     # Convolve the templates to match the resolution of the input spectrum
-    na_feii_temp, _ = convolveGaussian1D(na_feii_temp, dfwhm)
-    br_feii_temp, _ = convolveGaussian1D(br_feii_temp, dfwhm)
+    na_feii_temp = convolveGaussian1D(na_feii_temp, dfwhm)
+    br_feii_temp = convolveGaussian1D(br_feii_temp, dfwhm)
 
     # Logarithmically rebinned wavelengths
     logscale = log(λ[2]/λ[1])

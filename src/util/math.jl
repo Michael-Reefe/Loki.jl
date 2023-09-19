@@ -573,8 +573,8 @@ function _calzetti_kprime_curve(λ::Vector{<:Real}, E_BV::Real, Rv::Real)
     # eq. (4) from Calzetti et al. (2000)
     kprime = zeros(eltype(E_BV), length(λ))
     good = λ .≥ 0.63
-    kprime[good] .= 2.659 .* Calz_poly_a.(1 ./ λ) .+ Rv
-    kprime[.~good] .= 2.659 .* Calz_poly_b.(1 ./ λ) .+ Rv
+    kprime[good] .= 2.659 .* Calz_poly_a.(1 ./ λ[good]) .+ Rv
+    kprime[.~good] .= 2.659 .* Calz_poly_b.(1 ./ λ[.~good]) .+ Rv
 
     kprime
 end
@@ -1444,7 +1444,7 @@ function test_line_snr(λ0::Real, half_window_size::Real, λ::Vector{T}, I::Vect
 
     # Line testing region
     region = (λ0 - half_window_size) .< λ .< (λ0 + half_window_size)
-    @assert sum(region) > 40 "The spectrum does not cover the line in question sufficiently!"
+    @assert sum(region) > 10 "The spectrum does not cover the line in question sufficiently!"
 
     # Subtract linear trend
     m = (mean(I[region][end-19:end]) - mean(I[region][1:20])) / (λ[region][end-9] - λ[region][10])
@@ -1453,7 +1453,7 @@ function test_line_snr(λ0::Real, half_window_size::Real, λ::Vector{T}, I::Vect
     Isub = I[region] .- Ilin
 
     # Smooth with a width of 3 pixels
-    Iconv, _ = convolveGaussian1D([zeros(9); Isub; zeros(9)], 7 .* ones(length(Isub)+18))
+    Iconv = convolveGaussian1D([zeros(9); Isub; zeros(9)], 7 .* ones(length(Isub)+18))
 
     # Maximum within the center of the region of the SMOOTHED spectrum
     central = (λ0 - half_window_size/3) .< λsub .< (λ0 + half_window_size/3)

@@ -82,10 +82,12 @@ use_pah_templates = false
 # Note: It is recommended to use FALSE for fitting MIR data, and TRUE for fitting optical data.
 fit_joint = false
 
-# whether or not to use simulated annealing on ALL spaxels (if false, only uses it for the initial fit
+# whether or not to use global optimization on ALL spaxels (if false, only uses it for the initial fit
 # to the sum of all spaxels, and subsequent individual-spaxel fits are only done with a local Lev-Mar fit,
-# which is typically sufficient as long as the lines one wishes to fit are prominent in the sum of all spaxels)
-fit_all_samin = false
+# which is typically sufficient as long as the lines one wishes to fit are prominent in the sum of all spaxels).
+# If fitting lines with multiple velocity components, global optimization can be a good idea since they can be
+# degenerate. The global optimizer is an adaptive particle swarm algorithm.
+fit_all_global = false
 
 # whether or not to fit the UV bump for the calzetti attenuation curve
 fit_uv_bump = false

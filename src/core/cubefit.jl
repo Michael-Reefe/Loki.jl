@@ -580,7 +580,7 @@ corresponding spaxel.
     The fitted value will then be constrained to be at least 80% of the inferred value.
 - `fit_opt_na_feii::Bool`: Whether or not to fit optical narrow Fe II emission
 - `fit_opt_br_feii::Bool`: Whether or not to fit optical broad Fe II emission
-- `fit_all_samin::Bool`: Whether or not to fit all spaxels with simulated annealing
+- `fit_all_global::Bool`: Whether or not to fit all spaxels with a global optimizer (Particle Swarm) instead of a local optimizer (Levenberg-Marquardt).
 - `use_pah_templates::Bool`: Whether or not to fit the continuum in two steps, where the first step uses PAH templates,
 and the second step fits the PAH residuals with the PAHFIT Drude model.
 - `pah_template_map::BitMatrix`: Map of booleans specifying individual spaxels to fit with PAH templates, if use_pah_templates
@@ -704,7 +704,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     guess_tau::Union{Vector{<:Tuple},Nothing}
     fit_opt_na_feii::Bool
     fit_opt_br_feii::Bool
-    fit_all_samin::Bool
+    fit_all_global::Bool
     use_pah_templates::Bool
     pah_template_map::BitMatrix
     fit_joint::Bool
@@ -1365,7 +1365,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
         new{typeof(z), typeof(n_lines), ctype}(cube, z, name, spectral_region, out[:user_mask], out[:plot_spaxels], out[:plot_maps], out[:plot_range], 
             out[:parallel], out[:save_fits], out[:save_full_model], out[:overwrite], out[:track_memory], out[:track_convergence], out[:make_movies], 
             out[:extinction_curve], out[:extinction_screen], extinction_map, out[:fit_stellar_continuum], out[:fit_sil_emission], out[:guess_tau], out[:fit_opt_na_feii], 
-            out[:fit_opt_br_feii], out[:fit_all_samin], out[:use_pah_templates], pah_template_map, out[:fit_joint], out[:fit_uv_bump], out[:fit_covering_frac], 
+            out[:fit_opt_br_feii], out[:fit_all_global], out[:use_pah_templates], pah_template_map, out[:fit_joint], out[:fit_uv_bump], out[:fit_covering_frac], 
             continuum, n_dust_cont, n_power_law, n_dust_features, n_abs_features, n_templates, out[:templates], out[:template_names], dust_features, 
             abs_features, abs_taus, n_ssps, ssp_λ, ssp_templates, feii_templates_fft, vres, vsyst_ssp, vsyst_feii, npad_feii, n_lines, n_acomps, n_comps, relative_flags, 
             lines, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, out[:cosmology], flexible_wavesol, out[:n_bootstrap], 
@@ -1525,6 +1525,7 @@ function get_opt_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, 
     else
         ssp_locked = vcat([[false, ai.locked, zi.locked] for (ai, zi) in zip(continuum.ssp_ages, continuum.ssp_metallicities)]...)
     end
+    # ssp_locked = vcat([[false, ai.locked, zi.locked] for (ai, zi) in zip(continuum.ssp_ages, continuum.ssp_metallicities)]...)
 
     stel_kin_plim = [continuum.stel_vel.limits, continuum.stel_vdisp.limits]
     stel_kin_locked = [continuum.stel_vel.locked, continuum.stel_vdisp.locked]
@@ -1895,11 +1896,11 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         # normalized to any particular N (at least for the blackbody components).
         scale = max(nanmedian(I), 1e-10) * N0 / nanmedian(I_init)
 
-        if !isnothing(cube_fitter.extinction_map)
-            pₑ = 1 + 3cube_fitter.n_ssps + 2
-            ebv_orig = p₀[pₑ]
-            ebv_factor = p₀[pₑ+1]
+        pₑ = 1 + 3cube_fitter.n_ssps + 2
+        ebv_orig = p₀[pₑ]
+        ebv_factor = p₀[pₑ+1]
 
+        if !isnothing(cube_fitter.extinction_map)
             @debug "Using the provided E(B-V) values from the extinction_map and rescaling starting point"
             if !isnothing(cube_fitter.cube.voronoi_bins)
                 data_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(spaxel)[1])
@@ -1909,20 +1910,24 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
                 ebv_new = cube_fitter.extinction_map[data_index]
             end
             ebv_factor_new = continuum.E_BV_factor.value
-
-            # Rescale to keep the continuum at a good starting point
-            if cube_fitter.extinction_curve == "ccm"
-                scale /= median(attenuation_cardelli(λ, ebv_new*ebv_factor_new) ./ attenuation_cardelli(λ, ebv_orig*ebv_factor))
-            elseif cube_fitter.extinction_curve == "calzetti"
-                scale /= median(attenuation_calzetti(λ, ebv_new*ebv_factor_new) ./ attenuation_calzetti(λ, ebv_orig*ebv_factor))
-            else
-                error("Unrecognized extinction curve $(cube_fitter.extinction_curve)")
-            end
-
-            # Set the new values
-            p₀[pₑ] = ebv_new
-            p₀[pₑ+1] = ebv_factor_new
+        else
+            # Otherwise always start at an E(B-V) of some small value
+            ebv_new = 0.01
+            ebv_factor_new = continuum.E_BV_factor.value
         end
+
+        # Rescale to keep the continuum at a good starting point
+        if cube_fitter.extinction_curve == "ccm"
+            scale /= median(attenuation_cardelli(λ, ebv_new*ebv_factor_new) ./ attenuation_cardelli(λ, ebv_orig*ebv_factor))
+        elseif cube_fitter.extinction_curve == "calzetti"
+            scale /= median(attenuation_calzetti(λ, ebv_new*ebv_factor_new) ./ attenuation_calzetti(λ, ebv_orig*ebv_factor))
+        else
+            error("Unrecognized extinction curve $(cube_fitter.extinction_curve)")
+        end
+
+        # Set the new values
+        p₀[pₑ] = ebv_new
+        p₀[pₑ+1] = ebv_factor_new
 
         # SSP amplitudes
         pᵢ = 1
