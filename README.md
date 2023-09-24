@@ -1,6 +1,6 @@
 # LOKI: Likelihood Optimization of gas Kinematics in IFUs
 
-### A Julia package for fitting and plotting IFU spectra in the mid-infrared or (newly added) optical
+### A Julia package for fitting and plotting IFU spectra in the mid-infrared or optical
 
 ---
 ## Table of Contents
@@ -33,7 +33,7 @@
 
 This Julia package provides routines for reading, fitting, and plotting IFU data for spectra in the mid-infrared (MIR) or the optical. The MIR fitting models are based on the widely used IDL tool [PAHFIT](http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php) from the Spitzer era, but many areas have been updated to account for the increased spectral resolution of the MIRI instrument, and special attention has been given to fitting emission lines, allowing for much more flexibile and robust fits. The optical fitting models use stellar populations generated using the Flexible Stellar Population Synthesis ([FSPS](https://dfm.io/python-fsps/current/)) tool, allowing quantities like stellar age/metallicity to be interpolated and included as free paramters in the fit, and also fitting stellar velocities and velocity dispersions using a convolution with the line-of-sight velocity distribution (LOSVD), following the FFT-based methods utilized by [pPXF](https://www-astro.physics.ox.ac.uk/~cappellari/software/#ppxf) and [BADASS](https://github.com/remingtonsexton/BADASS3). 
 
-As a brief overview, the mid-infrared spectrum is decomposed into
+As a brief overview, by default mid-infrared spectrum is decomposed into
 - A stellar continuum modeled by a blackbody at a fixed temperature of $T = 5000$ K
 - A dust continuum modeled by a series of modified blackbody functions with emissivities $\propto 1/\lambda^2$ at fixed temperatures of $T \in \{35,40,50,65,90,135,200,300,500\}$ K
 - Emission from Polycyclic Aromatic Hydrocarbon (PAH) molecules reperesented by Drude (or Pearson type-IV) profiles with constrained central wavelengths and widths
@@ -49,11 +49,11 @@ Whereas the optical spectrum is decomposed into
 - An arbitrary number of power laws to potentially model an AGN continuum.
 - Emission lines from hydrogen recombination and ionized species, modeled using Gaussian, Lorentzian, Gauss-Hermite, or pseudo-Voigt profiles.
 
-The code uses the [MPFIT](https://pages.physics.wisc.edu/~craigm/idl/cmpfit.html) ([Markwardt 2009](https://ui.adsabs.harvard.edu/abs/2009ASPC..411..251M)) implementation of the Levenberg-Marquardt (LM) least-squares minimization routine, as well as the simulated annealing (SA) global minimization method as implemented by [Optim](https://github.com/JuliaNLSolvers/Optim.jl), and optionally may estimate uncertainties using bootstrapping. Depending on how the code is configured, the fitting procedure may be performed in multiple steps. By default, the configuration contains two steps:
+The code uses the [MPFIT](https://pages.physics.wisc.edu/~craigm/idl/cmpfit.html) ([Markwardt 2009](https://ui.adsabs.harvard.edu/abs/2009ASPC..411..251M)) implementation of the Levenberg-Marquardt (LM) least-squares minimization routine, as well as the differential evolution (DE) global minimization method as implemented by [BlackBoxOptim.jl](https://github.com/robertfeldt/BlackBoxOptim.jl/tree/master), and optionally may estimate uncertainties using bootstrapping. Depending on how the code is configured, the fitting procedure may be performed in multiple steps. By default, the configuration contains two steps:
 1. The emission lines are masked and the continuum + PAH features are fit with LM
-2. The continuum + PAH features are subtracted and the emission lines are fit to the residual spectrum with SA, followed by LM
+2. The continuum + PAH features are subtracted and the emission lines are fit to the residual spectrum with DE, followed by LM
 
-However, if one wishes, the code can be configured to fit the continuum and emission lines simultaneously in one step (using SA and/or LM), or it may be further broken down into 3 steps by splitting the continuum and PAH features up into 2 individual steps.
+However, if one wishes, the code can be configured to fit the continuum and emission lines simultaneously in one step (using DE and/or LM), or it may be further broken down into 3 steps by splitting the continuum and PAH features up into 2 individual steps.
 
 For a more detailed description of the PAHFIT decomposition and fitting methods, see [Smith et al. (2007)](https://ui.adsabs.harvard.edu/abs/2007ApJ...656..770S), and for a detailed overview of the changes and updates made by LOKI, see Reefe et al. (2023, in prep.).
 
@@ -66,7 +66,7 @@ For a more detailed description of the PAHFIT decomposition and fitting methods,
 
 ```julia
 julia> ]
-(Environment)> add "https://github.com/Michael-Reefe/Loki.jl"
+(Environment)> add https://github.com/Michael-Reefe/Loki.jl
 ```
 
 or alternatively,
@@ -76,7 +76,7 @@ julia> using Pkg
 julia> Pkg.add(url="https://github.com/Michael-Reefe/Loki.jl")
 ```
 
-Once installed, you can start using the package simply with `using Loki`. N.B. If you plan on utilizing the multiprocessing capabilities of LOKI, make sure you prepend your using statement by an `@everywhere` macro (from the `Distributed` module) to include it in all running processes!
+Once installed, you can start using the package simply with `using Loki`. N.B. If you plan on utilizing the multiprocessing capabilities of LOKI, make sure you prepend your using statement by an `@everywhere` macro (from the `Distributed` module) to include it in all running processes! If using multiprocessing on hardware with limited RAM, you may also want to include the `--heap-size-hint` command line argument to limit the memory usage of each julia process. Limiting each process to 4 GB has little to no effect on the performance.
 
 ### Python Requirements
 
@@ -142,7 +142,7 @@ This boolean option controls whether an additional log file is generated for eac
 
 `track_convergence = true`
 
-This boolean option controls whether an additional log file is generated which prints convergence information for the simulated annealing emission line fit for each spaxel. Be warned that the way Optim.jl works with the simulated annealing method SAMIN makes it always print "status: failure" even if convergence was reached. The way to tell whether convergence was *actually* reached is if the number of iterations is less than the maximum (which is $10^6$ by default).
+This boolean option controls whether an additional log file is generated which prints convergence information for the simulated annealing emission line fit for each spaxel. Note that the way BlackBoxOptim.jl works with the differential evolution method, it just runs until a predetermined maximum number of iterations is reached (which LOKI sets to 10^5), and does not actually check for convergence.
 
 `make_movies = false`
 
@@ -182,15 +182,15 @@ Same as `fit_opt_na_feii` but pertaining to broad Fe II line emission.
 
 `use_pah_templates = false`
 
-This boolean option determines how the PAH features are fit. If `false`, they will be fit using Drude profiles simultaneously with the rest of the continuum, the exact same way that PAHFIT does.  However, if `true`, the continuum fitting is split up into two steps.  In the first step, the continuum is fit while the PAH features are included using two templates from [Smith et al. (2007)](https://ui.adsabs.harvard.edu/abs/2007ApJ...656..770S).  Then in the second step, the continuum from the previous step is subtracted, and PAH features are fit to the residual spectrum using Drude profiles, using the same Drude model as PAHFIT.  In general, it is best to leave this option `false` unless you are dealing with spectra with extremely weak PAH emission and a complicated underlying continuum that causes the fitted PAHs to become unphysical.
+This boolean option determines how the PAH features are fit. If `false`, they will be fit using Drude profiles simultaneously with the rest of the continuum, the exact same way that PAHFIT does.  However, if `true`, the continuum fitting is split up into two steps.  In the first step, the continuum is fit while the PAH features are included using two templates from [Smith et al. (2007)](https://ui.adsabs.harvard.edu/abs/2007ApJ...656..770S).  Then in the second step, the continuum from the previous step is subtracted, and PAH features are fit to the residual spectrum using Drude profiles, using the same Drude model as PAHFIT.  In general, it is best to leave this option `false` unless you are dealing with spectra with extremely weak PAH emission and a heavily extincted underlying continuum. In these cases, the Drude model tends to get confused and unphysically attributes a large fraction of the underlying continuum to the left and right of the 9.7 micron silicate absorption feature to the PAH profiles.
 
 `fit_joint = false`
 
 This boolean option determines how the emission lines are fit. If `false`, they will first be masked out and the continuum will be fit. Then the continuum will be subtracted and the lines will be fit to the residual spectrum in a second step. If `true`, the continuum and lines will be fit simultaneously in one step. It is recommended to set this to `true` when fitting optical spectra with nonzero reddening, since E(B-V) can be better constrained by fixing certain emission line amplitude ratios.
 
-`fit_all_samin = false`
+`fit_all_global = false`
 
-By default, simulated annealing is only performed for the line fit during the initial fit of the sum of all spaxels. If this option is set to `true`, then simulated annealing will be performed on all of the line fits for the individual spaxels as well.
+By default, global optimization with differential evolution is only performed for the line fit during the initial fit of the sum of all spaxels. If this option is set to `true`, then it will be performed on all of the line fits for the individual spaxels as well.
 
 `fit_uv_bump = false`
 
@@ -208,13 +208,13 @@ This option allows the user to mask out predefined regions of the spectrum that 
 
 A list of lists of lines lines should be tested for additional components. The lines in this list must have multiple components to begin with (specified in the `lines.toml` file), otherwise they won't be tested. Each entry should be a string matching the name of the line in the `lines.toml` file. Lines that are grouped together into sub-lists will each be tested and given the maximum number of profiles that any one line in the group achieves during the test (this is useful if, for example, one is testing a tied doublet of lines). For example, this might look like `line_test_lines = [["OIII_05008", "OIII_04960"], ["HI_H_beta"]]` if one wanted to test the [O III] λλ4960,5008 doublet together and Hβ individually.
 
-`line_test_threshold = 0.20`
+`line_test_threshold = 0.003`
 
-This sets a threshold value on the chi-squared ratio, defined as $1 - \tilde{\chi}^2_B/\tilde{\chi}^2_A$, which must be met in order to consider additional line components as "significant."  Lines with multiple components will be tested by fitting iteratively, first with 1 component, and then adding additional components one at a time until reaching the value set in the line options files, or until this threshold fails to be achieved. Only components that pass this threshold will be fit in a given spaxel. This line testing can be disabled entirely by setting this threshold to 0.
+This sets a threshold value on the F-test, where F is defined as $$F = \frac{(\chi^2_A - \chi^2_B)/(p_B-p_A)}{\chi^2_B / (n - p_B)}$$ (here $p$ is the number of model parameters, $n$ is the number of data points, and the A and B subscripts denote the models with $N$ and $N+1$ components), which must be met in order to consider additional line components as "significant." $F$ should follow an F-distribution, so the test threshold checks to see if the F measured from the data is greater than the critical value of the F distribution for a given significance threshold, which defaults to 0.3% or 3-sigma. Lines with multiple components will be tested by fitting iteratively, first with 1 component, and then adding additional components one at a time until reaching the value set in the line options files, or until this threshold fails to be achieved. Only components that pass this threshold will be fit in a given spaxel. This line testing can be disabled entirely by setting this threshold to 0.
 
 `plot_line_test = true`
 
-Whether or not to plot the line test results showing models with different numbers of components and their chi-squared ratios.
+Whether or not to plot the line test results showing models with different numbers of components and their F values.
 
 ```toml
 [cosmology]

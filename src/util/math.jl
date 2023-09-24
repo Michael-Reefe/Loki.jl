@@ -1787,8 +1787,8 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     n_power_law::Integer, n_dust_feat::Integer, dust_profiles::Vector{Symbol}, n_abs_feat::Integer, fit_sil_emission::Bool, 
     n_templates::Integer, n_lines::Integer, n_acomps::Integer, n_comps::Integer, lines::TransitionLines, flexible_wavesol::Bool, 
     lsf::Function, relative_flags::BitVector, popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}, 
-    extinction::Vector{T}, mask_lines::BitVector, continuum::Vector{T}, 
-    area_sr::Vector{T}, propagate_err::Bool=true) where {T<:Real}
+    extinction::Vector{T}, mask_lines::BitVector, continuum::Vector{T}, area_sr::Vector{T}, n_fit_comps::Dict,
+    spaxel::CartesianIndex, propagate_err::Bool=true) where {T<:Real}
 
     @debug "Calculating extra parameters"
 
@@ -1873,8 +1873,8 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     end
 
     # Loop through lines
-    p_lines = zeros(3n_lines+3n_acomps)
-    p_lines_err = zeros(3n_lines+3n_acomps)
+    p_lines = zeros(3n_lines+3n_acomps+n_lines)
+    p_lines_err = zeros(3n_lines+3n_acomps+n_lines)
 
     # Unpack the relative flags
     rel_amp, rel_voff, rel_fwhm = relative_flags
@@ -2003,6 +2003,13 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                 pₒ += 3
             end
         end
+
+        # Add composite parameters that only make sense for the total line profile 
+
+        # Number of velocity components
+        p_lines[pₒ] = n_fit_comps[lines.names[k]][spaxel]
+        pₒ += 1
+
     end
 
     p_dust, p_lines, p_dust_err, p_lines_err
@@ -2020,7 +2027,8 @@ Currently this includes the integrated intensity, equivalent width, and signal t
 function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, comps::Dict, n_ssps::Integer,
     n_power_law::Integer, fit_opt_na_feii::Bool, fit_opt_br_feii::Bool, n_lines::Integer, n_acomps::Integer, n_comps::Integer, 
     lines::TransitionLines, flexible_wavesol::Bool, lsf::Function, relative_flags::BitVector, popt_l::Vector{T}, perr_l::Vector{T}, 
-    extinction::Vector{T}, mask_lines::BitVector, continuum::Vector{T}, area_sr::Vector{T}, propagate_err::Bool=true) where {T<:Real}
+    extinction::Vector{T}, mask_lines::BitVector, continuum::Vector{T}, area_sr::Vector{T}, n_fit_comps::Dict,
+    spaxel::CartesianIndex, propagate_err::Bool=true) where {T<:Real}
 
     @debug "Calculating extra parameters"
 
@@ -2031,8 +2039,8 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     # max_ext = 1 / minimum(extinction)
 
     # Loop through lines
-    p_lines = zeros(3n_lines+3n_acomps)
-    p_lines_err = zeros(3n_lines+3n_acomps)
+    p_lines = zeros(3n_lines+3n_acomps+n_lines)
+    p_lines_err = zeros(3n_lines+3n_acomps+n_lines)
     rel_amp, rel_voff, rel_fwhm = relative_flags
     pₒ = pᵢ = 1
     for (k, λ0) ∈ enumerate(lines.λ₀)
@@ -2157,6 +2165,13 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                 pₒ += 3
             end
         end
+
+        # Add composite parameters that only make sense for the total line profile 
+
+        # Number of velocity components
+        p_lines[pₒ] = n_fit_comps[lines.names[k]][spaxel]
+        pₒ += 1
+
     end
 
     p_lines, p_lines_err

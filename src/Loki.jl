@@ -22,7 +22,6 @@ using ImageFiltering
 using ImageTransformations
 
 # Optimization packages
-using Optim
 using BlackBoxOptim
 using CMPFit
 
@@ -67,6 +66,7 @@ const plt::PyObject = PyNULL()
 const py_anchored_artists::PyObject = PyNULL()
 const py_ticker::PyObject = PyNULL()
 const py_colormap::PyObject = PyNULL()
+const py_colors::PyObject = PyNULL()
 const py_animation::PyObject = PyNULL()
 
 const py_lineidplot::PyObject = PyNULL()
@@ -103,6 +103,7 @@ function __init__()
     copy!(py_ticker, pyimport_conda("matplotlib.ticker", "matplotlib"))
     # cm --> used for formatting matplotlib colormaps
     copy!(py_colormap, pyimport_conda("matplotlib.cm", "matplotlib"))
+    copy!(py_colors, pyimport_conda("matplotlib.colors", "matplotlib"))
     # animation --> used for making mp4 movie files (optional)
     copy!(py_animation, pyimport_conda("matplotlib.animation", "matplotlib"))
     # python package for adjusting matplotlib text so it doesn't overlap

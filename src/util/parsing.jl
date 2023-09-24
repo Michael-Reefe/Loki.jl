@@ -466,7 +466,7 @@ function parse_lines()
     # Read in the lines file
     lines = TOML.parsefile(joinpath(@__DIR__, "..", "options", "lines.toml"))
 
-    keylist1 = ["tie_voigt_mixing", "voff_plim", "fwhm_plim", "h3_plim", "h4_plim", "acomp_voff_plim", 
+    keylist1 = ["default_sort_order", "tie_voigt_mixing", "voff_plim", "fwhm_plim", "h3_plim", "h4_plim", "acomp_voff_plim", 
         "acomp_fwhm_plim", "flexible_wavesol", "wavesol_unc", "lines", "profiles", "acomps", "n_acomps"]
     keylist2 = ["wave", "latex", "annotate"]
 
@@ -535,6 +535,7 @@ function parse_lines()
     tied_voff = Vector{Union{Symbol,Nothing}}(nothing, length(lines["lines"]))
     tied_fwhm = Vector{Union{Symbol,Nothing}}(nothing, length(lines["lines"]))
     prof_out = Vector{Union{Symbol,Nothing}}(nothing, length(lines["lines"]))
+    sort_order = ones(Int, length(lines["lines"])) .* lines["default_sort_order"]
 
     # Additional components
     acomp_amps = Matrix{Union{Parameter,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
@@ -563,6 +564,9 @@ function parse_lines()
         cent_vals[i] = lines["lines"][line]["wave"]
         annotate[i] = lines["lines"][line]["annotate"]
         prof_out[i] = isnothing(profiles[line]) ? nothing : Symbol(profiles[line])
+        if haskey(lines["lines"][line], "sort_order")
+            sort_order[i] = lines["lines"][line]["sort_order"]
+        end
 
         mask = isnothing.(acomp_profiles[line])
         acomp_prof_out[i, mask] .= nothing
@@ -884,7 +888,7 @@ function parse_lines()
     end
 
     # create vectorized object for all the line data
-    lines_out = TransitionLines(names[ss], latex[ss], annotate[ss], cent_vals[ss], hcat(prof_out[ss], acomp_prof_out[ss, :]), 
+    lines_out = TransitionLines(names[ss], latex[ss], annotate[ss], cent_vals[ss], sort_order[ss], hcat(prof_out[ss], acomp_prof_out[ss, :]), 
         hcat(tied_amp[ss], acomp_tied_amp[ss, :]), hcat(tied_voff[ss], acomp_tied_voff[ss, :]), hcat(tied_fwhm[ss], acomp_tied_fwhm[ss, :]), 
         acomp_amps[ss, :], hcat(voffs[ss], acomp_voffs[ss, :]), hcat(fwhms[ss], acomp_fwhms[ss, :]), hcat(h3s[ss], acomp_h3s[ss, :]), 
         hcat(h4s[ss], acomp_h4s[ss, :]), hcat(ηs[ss], acomp_ηs[ss, :]), combined, rel_amp, rel_voff, rel_fwhm)

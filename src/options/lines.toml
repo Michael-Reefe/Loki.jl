@@ -16,64 +16,108 @@ acomp_1_kinematic_group_H2 = [
 ]
 
 # Atomic hydrogen recombination lines
-kinematic_group_Balmer = [
-    "HI_H_"
-]
-acomp_1_kinematic_group_Balmer = [
-    "HI_H_"
-]
-# Case B recombination amplitude ratios for (Hzeta, Hepsilon, Hdelta, Hgamma, Hbeta, Halpha)
-tie_amp_Balmer = [0.105, 0.158, 0.256, 0.466, 1.0, 2.87]
-tie_acomp_1_amp_Balmer = [0.105, 0.158, 0.256, 0.466, 1.0, 2.87]
+# kinematic_group_Balmer = [
+#     "HI_H_"
+# ]
+# acomp_1_kinematic_group_Balmer = [
+#     "HI_H_"
+# ]
+# # Case B recombination amplitude ratios for (Hzeta, Hepsilon, Hdelta, Hgamma, Hbeta, Halpha)
+# tie_amp_Balmer = [0.105, 0.158, 0.256, 0.466, 1.0, 2.87]
+# tie_acomp_1_amp_Balmer = [0.105, 0.158, 0.256, 0.466, 1.0, 2.87]
 
-kinematic_group_Brackett = [
-    "HI_Br_"
+kinematic_group_HI = [
+    "HI_",
 ]
-kinematic_group_Pfund = [
-    "HI_Pf_"
-]
-kinematic_group_Humphreys = [
-    "HI_Hu_"
+acomp_1_kinematic_group_HI = [
+    "HI_",
 ]
 
 # Ionized species with doublets and/or multiple lines within the fitting region
-kinematic_group_OIII = [
-    "OIII_"
-]
-acomp_1_kinematic_group_OIII = [
-    "OIII_"
-]
-kinematic_group_OII = [
-    "OII_"
-]
-kinematic_group_SII = [
-    "SII_"
-]
-kinematic_group_FeII = [
-    "FeII_"
-]
-kinematic_group_NeIII = [
-    "NeIII_"
-]
-kinematic_group_NeV = [
-    "NeV_"
-]
-acomp_1_kinematic_group_NeV = [
-    "NeV_"
-]
-kinematic_group_MgV = [
-    "MgV_"
-]
+# kinematic_group_OIII = [
+#     "OIII_"
+# ]
+# acomp_1_kinematic_group_OIII = [
+#     "OIII_"
+# ]
+# kinematic_group_OII = [
+#     "OII_"
+# ]
+# kinematic_group_SII = [
+#     "SII_"
+# ]
+# kinematic_group_FeII = [
+#     "FeII_"
+# ]
+# kinematic_group_NeIII = [
+#     "NeIII_"
+# ]
+# kinematic_group_NeV = [
+#     "NeV_"
+# ]
+# acomp_1_kinematic_group_NeV = [
+#     "NeV_"
+# ]
+# kinematic_group_MgV = [
+#     "MgV_"
+# ]
 
-kinematic_group_lo = [
-    "SIV_",
-    "ArIII_"
+# kinematic_group_lo = [
+#     "ArII_",
+#     "NeII_",
+#     "FeII_"
+# ]
+# acomp_1_kinematic_group_lo = [
+#     "ArII_",
+#     "NeII_",
+#     "FeII_"
+# ]
+
+# kinematic_group_med = [
+#     "ArIII_",
+#     "SIV_",
+#     "MgIV_",
+#     "ArVI_"
+# ]
+# acomp_1_kinematic_group_med = [
+#     "ArIII_",
+#     "SIV_",
+#     "MgIV_",
+#     "ArVI_"
+# ]
+
+# kinematic_group_hi = [
+#     "NeV_",
+#     "NeVI_",
+#     "MgV_",
+#     "MgVII_",
+#     "FeVII_",
+#     "FeVIII_",
+#     "SiIX_",
+# ]
+# acomp_1_kinematic_group_hi = [
+#     "NeV_",
+#     "NeVI_",
+#     "MgV_",
+#     "MgVII_",
+#     "FeVII_",
+#     "FeVIII_",
+#     "SiIX_",
+# ]
+
+kinematic_group_l3 = [
+    "ArIII_",
+    "SIV_"
 ]
-acomp_1_kinematic_group_lo = [
-    "SIV_",
-    "ArIII_"
+acomp_1_kinematic_group_l3 = [
+    "ArIII_",
+    "SIV_"
 ]
-kinematic_group_hi = [
+kinematic_group_h3 = [
+    "NeVI_",
+    "MgVII_"
+]
+acomp_1_kinematic_group_h3 = [
     "NeVI_",
     "MgVII_"
 ]
@@ -95,16 +139,20 @@ eta_locked = true                        # the MIRI/MRS line-spread function sho
 n_acomps = 1
 rel_amp = false
 rel_voff = false 
-rel_fwhm = true
+rel_fwhm = false
 
 acomp_amp_plim = [[0.0, 1.0]]            # if rel_amp is true: multiplicative factor with the main line amp
 acomp_voff_plim = [[-800.0, 800.0]]      # if rel_voff is true: additive factor with the main line voff
-# acomp_fwhm_plim = [[0.0, 1500.0]]      # if rel_fwhm is true: multiplicative factor with the main line FWHM
-acomp_fwhm_plim = [[0.0, 3.0]]
+acomp_fwhm_plim = [[0.0, 1500.0]]      # if rel_fwhm is true: multiplicative factor with the main line FWHM
+# acomp_fwhm_plim = [[0.0, 3.0]]
 
 # Uncertainty in the wavelength solution of the data
 flexible_wavesol = false                 # allow tied voffs to vary slightly based on wavelength solution uncertainty
 wavesol_unc = 30.0                       # wavelength solution uncertainties in each of the 4 MIRI channels (<30 km/s)
+
+# Default sorting order for lines components: 
+# -1 = decreasing (largest first), 1 = increasing (smallest first)
+default_sort_order = -1
 
 # Central wavelengths of each line that should be included in the model, in microns
 # Line wavelengths should be *vacuum* wavelengths, not air wavelengths
@@ -338,10 +386,10 @@ annotate = true
 ####################################### MIR LINES ##################################################
 
 # Brackett Series (Hydrogen, n -> 4) Lines
-# [lines.HI_Br_alpha]
-# wave = 4.05225
-# latex = "Br$\\alpha$"
-# annotate = true
+[lines.HI_Br_alpha]
+wave = 4.05225
+latex = "Br$\\alpha$"
+annotate = true
 
 # [lines.HI_Br_beta]
 # wave = 2.6259
@@ -406,6 +454,11 @@ annotate = true
 # annotate = true
 
 # Argon Lines
+[lines.ArVI_4529]
+wave = 4.529520
+latex = "[Ar VI]"
+annotate = true
+
 [lines.ArII_6985]
 wave = 6.985274
 latex = "[Ar II]"
@@ -490,6 +543,11 @@ annotate = true
 # annotate = true
 
 # Magnesium Lines
+[lines.MgIV_4867]
+wave = 4.486680
+latex = "[Mg IV]"
+annotate = true
+
 [lines.MgVII_5503]
 wave = 5.503200
 latex = "[Mg VII]"
@@ -560,6 +618,12 @@ wave = 17.885000
 latex = "[P III]"
 annotate = true
 
+# Silicon lines
+[lines.SiIX_3936]
+wave = 3.935700
+latex = "[Si IX]"
+annotate = true
+
 # Sulfur Lines
 [lines.SIV_10511]
 wave = 10.510500
@@ -576,46 +640,55 @@ annotate = true
 wave = 5.05312
 latex = "H$_2$ 0-0 $S(8)$"
 annotate = true
+sort_order = 1
 
 [lines.H200_S7]
 wave = 5.51118
 latex = "H$_2$ 0-0 $S(7)$"
 annotate = true
+sort_order = 1
 
 [lines.H200_S6]
 wave = 6.10857
 latex = "H$_2$ 0-0 $S(6)$"
 annotate = true
+sort_order = 1
 
 [lines.H200_S5]
 wave = 6.90952
 latex = "H$_2$ 0-0 $S(5)$"
 annotate = true
+sort_order = 1
 
 [lines.H200_S4]
 wave = 8.02505
 latex = "H$_2$ 0-0 $S(4)$"
 annotate = true
+sort_order = 1
 
 [lines.H200_S3]
 wave = 9.66492
 latex = "H$_2$ 0-0 $S(3)$"
 annotate = true
+sort_order = 1
 
 [lines.H200_S2]
 wave = 12.27861
 latex = "H$_2$ 0-0 $S(2)$"
 annotate = true
+sort_order = 1
 
 [lines.H200_S1]
 wave = 17.03484
 latex = "H$_2$ 0-0 $S(1)$"
 annotate = true
+sort_order = 1
 
 [lines.H200_S0]
 wave = 28.21883
 latex = "H$_2$ 0-0 $S(0)$"
 annotate = true
+sort_order = 1
 
 # Other molecular Hydrogen lines (disabled):
 
@@ -940,12 +1013,21 @@ H200_S6 = ["Voigt"]
 H200_S7 = ["Voigt"]
 H200_S8 = ["Voigt"]
 
+SiIX_3936 = ["Voigt"]
+MgIV_4867 = ["Voigt"]
+ArVI_4529 = ["Voigt"]
+
+FeVIII_5447 = ["Voigt"]
+MgVII_5503 = ["Voigt"]
+MgV_5609 = ["Voigt"]
+
+NeVI_7652 = ["Voigt"]
 ArIII_8991 = ["Voigt"]
+MgVII_9009 = ["Voigt"]
+FeVII_9527 = ["Voigt"]
 SIV_10511 = ["Voigt"]
 
-# NeVI_7652 = ["Voigt"]
-# FeVII_9527 = ["Voigt"]
-# NeII_12813 = ["Voigt"]
+NeV_14322 = ["Voigt"]
 
 # optional: add [parameters] key to specify individual line priors that 
 # are different from the defaults
@@ -982,13 +1064,13 @@ SIV_10511 = ["Voigt"]
 
 ### MIR ###
 
-[parameters.H2]
-fwhm_plim = [0.0, 800.0]
-acomp_fwhm_plim = [[1.1, 3.0]]
+# [parameters.H2]
+# fwhm_plim = [0.0, 400.0]
+# acomp_fwhm_plim = [[400.0, 800.0]]
 
-[parameters.lo]
-fwhm_plim = [0.0, 1500.0]
-acomp_fwhm_plim = [[0.0, 0.9]]
+# [parameters.lo]
+# fwhm_plim = [0.0, 1500.0]
+# acomp_fwhm_plim = [[0.0, 700.0]]
 
 # In channel 3A, 1 pixel ~ 61 km/s
 # [parameters.ArIII_8991]

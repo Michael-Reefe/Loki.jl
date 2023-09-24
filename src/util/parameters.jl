@@ -193,6 +193,7 @@ struct TransitionLines
     latex::Vector{String}
     annotate::BitVector
     λ₀::Vector{AbstractFloat}
+    sort_order::Vector{Int}
     
     # 1st axis: labels each transition line
     # 2nd axis: labels the components of each line

@@ -100,9 +100,10 @@ user_mask = []
 # which lines should be tested for additional components
 line_test_lines = []
 
-# a threshold value on the chi^2 ratio (1 - chi^2_line/chi^2_noline) to determine how significant additional line 
-# components must be in order to include them in a fit
-line_test_threshold = 0.0
+# a threshold value on the F-value (https://en.wikipedia.org/wiki/F-test#:~:text=An%20F%2Dtest%20is%20any,which%20the%20data%20were%20sampled) 
+# to determine how significant additional line components must be in order to include them in a fit.
+# Smaller threshold -> lines must be more significant to be added
+line_test_threshold = 0.003
 
 # whether or not to plot the results of line testing
 plot_line_test = true

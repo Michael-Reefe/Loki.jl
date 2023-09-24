@@ -26,7 +26,9 @@ in the parameter map.
 - `hot_dust::Dict{Symbol, Array{T, 2}}`: Hot dust parameters: amplitude, temperature, covering fraction, warm tau, and cold tau
 - `templates::Dict{String, Dict{Symbol, Array{T, 2}}}`: Template parameters: amplitude for each template
 - `lines::Dict{Symbol, Dict{Symbol, Array{T, 2}}}`: The emission line parameters: amplitude, voff, FWHM, and any additional 
-    line profile parameters for each line
+    line profile parameters for each component of each line
+- `lines_comp::Dict{Symbol, Dict{Symbol, Array{T, 2}}}`: Like `lines`, but for composite parameters that only make sense when referring
+    to the line profile as a whole.
 - `statistics::Array{T, 2}`: The reduced chi^2 value and degrees of freedom for each fit.
 
 See ['parammaps_empty`](@ref) for a default constructor function.
@@ -42,6 +44,7 @@ struct MIRParamMaps{T<:Real} <: ParamMaps
     hot_dust::Dict{Symbol, Array{T, 2}}
     templates::Dict{String, Dict{Symbol, Array{T, 2}}}
     lines::Dict{Symbol, Dict{Symbol, Array{T, 2}}}
+    lines_comp::Dict{Symbol, Dict{Symbol, Array{T, 2}}}
     statistics::Dict{Symbol, Array{T, 2}}
 
 end
@@ -62,8 +65,10 @@ in the parameter map.
 - `power_law::Dict{Int, Dict{Symbol, Array{T, 2}}}`: Power law parameters, including amplitude and index.
 - `attenuation::Dict{Symbol, Array{T, 2}}`: Attenuation parameters, including E(B-V), E(B-V) factor, and optionally UV bump slope
 and dust covering fraction.
-- `lines::Dict{Symbol, Dict{Symbol, Array{T, 2}}}`: Emission line parameters, including amplitude, velocity, and FWHM, and any 
-additional line profile parameters for non-Gaussian profiles.
+- `lines::Dict{Symbol, Dict{Symbol, Array{T, 2}}}`: The emission line parameters: amplitude, voff, FWHM, and any additional 
+    line profile parameters for each component of each line
+- `lines_comp::Dict{Symbol, Dict{Symbol, Array{T, 2}}}`: Like `lines`, but for composite parameters that only make sense when referring
+    to the line profile as a whole.
 - `statistics::Dict{Symbol, Array{T, 2}}`: Reduced chi^2 and degrees of freedom.
 
 See ['parammaps_empty`](@ref) for a default constructor function.
@@ -76,6 +81,7 @@ struct OpticalParamMaps{T<:Real} <: ParamMaps
     power_law::Dict{Int, Dict{Symbol, Array{T, 2}}}
     attenuation::Dict{Symbol, Array{T, 2}}
     lines::Dict{Symbol, Dict{Symbol, Array{T, 2}}}
+    lines_comp::Dict{Symbol, Dict{Symbol, Array{T, 2}}}
     statistics::Dict{Symbol, Array{T, 2}}
 
 end
@@ -191,6 +197,7 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::S, n_power_law::S, cf
 
     # Nested dictionary -> first layer keys are line names, second layer keys are parameter names, which contain 2D arrays
     lines = Dict{Symbol, Dict{Symbol, Array{Float64, 2}}}()
+    lines_comp = Dict{Symbol, Dict{Symbol, Array{Float64, 2}}}()
     for i ∈ 1:n_lines
         for j ∈ 1:n_comps
             if !isnothing(cf_lines.profiles[i, j])
@@ -218,6 +225,8 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::S, n_power_law::S, cf
                 @debug "line $line maps with keys $pnames"
             end
         end
+        lines_comp[cf_lines.names[i]] = Dict{Symbol, Array{Float64, 2}}()
+        lines_comp[cf_lines.names[i]][:n_comps] = copy(nan_arr)
     end
 
     statistics = Dict{Symbol, Array{Float64, 2}}()
@@ -228,7 +237,7 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::S, n_power_law::S, cf
     @debug "dof map"
 
     MIRParamMaps{Float64}(stellar_continuum, dust_continuum, power_law, dust_features, abs_features, 
-        extinction, hot_dust, templates, lines, statistics)
+        extinction, hot_dust, templates, lines, lines_comp, statistics)
 end
 
 
@@ -303,6 +312,7 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_ssps::S, n_power_law::S, n_lines
 
     # Nested dictionary -> first layer keys are line names, second layer keys are parameter names, which contain 2D arrays
     lines = Dict{Symbol, Dict{Symbol, Array{Float64, 2}}}()
+    lines_comp = Dict{Symbol, Dict{Symbol, Array{Float64, 2}}}()
     for i ∈ 1:n_lines
         for j ∈ 1:n_comps
             if !isnothing(cf_lines.profiles[i, j])
@@ -330,6 +340,8 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_ssps::S, n_power_law::S, n_lines
                 @debug "line $line maps with keys $pnames"
             end
         end
+        lines_comp[cf_lines.names[i]] = Dict{Symbol, Array{Float64, 2}}()
+        lines_comp[cf_lines.names[i]][:n_comps] = copy(nan_arr)
     end
 
     statistics = Dict{Symbol, Array{Float64, 2}}()
@@ -339,7 +351,8 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_ssps::S, n_power_law::S, n_lines
     statistics[:dof] = copy(nan_arr)
     @debug "dof map"
 
-    OpticalParamMaps{Float64}(stellar_populations, stellar_kinematics, feii, power_law, attenuation, lines, statistics)
+    OpticalParamMaps{Float64}(stellar_populations, stellar_kinematics, feii, power_law, attenuation, lines, 
+        lines_comp, statistics)
 end
 
 
@@ -580,7 +593,7 @@ corresponding spaxel.
     The fitted value will then be constrained to be at least 80% of the inferred value.
 - `fit_opt_na_feii::Bool`: Whether or not to fit optical narrow Fe II emission
 - `fit_opt_br_feii::Bool`: Whether or not to fit optical broad Fe II emission
-- `fit_all_global::Bool`: Whether or not to fit all spaxels with a global optimizer (Particle Swarm) instead of a local optimizer (Levenberg-Marquardt).
+- `fit_all_global::Bool`: Whether or not to fit all spaxels with a global optimizer (Differential Evolution) instead of a local optimizer (Levenberg-Marquardt).
 - `use_pah_templates::Bool`: Whether or not to fit the continuum in two steps, where the first step uses PAH templates,
 and the second step fits the PAH residuals with the PAHFIT Drude model.
 - `pah_template_map::BitMatrix`: Map of booleans specifying individual spaxels to fit with PAH templates, if use_pah_templates
@@ -741,6 +754,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     n_lines::S
     n_acomps::S
     n_comps::S
+    n_fit_comps::Dict{Symbol,Matrix{S}}
     relative_flags::BitVector
     lines::TransitionLines
 
@@ -766,17 +780,20 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     plot_line_test::Bool
     subtract_cubic_spline::Bool
 
-    # Line masking options
+    # Line masking and sorting options
     linemask_Δ::S
     linemask_n_inc_thresh::S
     linemask_thresh::T
     linemask_overrides::Vector{Tuple{T,T}}
     map_snr_thresh::T
+    sort_line_components::Union{Symbol,Nothing}
 
+    # Initial parameter vectors
     p_init_cont::Vector{T}
     p_init_line::Vector{T}
     p_init_pahtemp::Vector{T}
 
+    # Initial parameter cubes
     p_init_cube_λ::Union{Vector{T},Nothing}
     p_init_cube_cont::Union{Array{T,3},Nothing}
     p_init_cube_lines::Union{Array{T,3},Nothing}
@@ -879,6 +896,11 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
         if !haskey(out, :guess_tau)
             out[:guess_tau] = nothing
         end
+        if !haskey(out, :sort_line_components)
+            out[:sort_line_components] = nothing
+        else
+            out[:sort_line_components] = Symbol(out[:sort_line_components])
+        end
 
         #############################################################
 
@@ -931,7 +953,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             @debug msg
 
             # Only use PAH features within +/-0.5 um of the region being fit (to include wide tails)
-            df_filt = [(minimum(λ)-0.5 < dust_features_0.mean[i].value < maximum(λ)+0.5) for i ∈ 1:length(dust_features_0.mean)]
+            df_filt = [(minimum(λ) < dust_features_0.mean[i].value < maximum(λ)) for i ∈ 1:length(dust_features_0.mean)]
             if !isnothing(out[:user_mask])
                 for pair in out[:user_mask]
                     df_filt .&= [~(pair[1] < dust_features_0.mean[i].value < pair[2]) for i ∈ 1:length(dust_features_0.mean)]
@@ -953,7 +975,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             @debug msg
 
             # Only use absorption features within +/-0.5 um of the region being fit
-            ab_filt = [(minimum(λ)-0.5 < abs_features_0.mean[i].value < maximum(λ)+0.5) for i ∈ 1:length(abs_features_0.mean)]
+            ab_filt = [(minimum(λ) < abs_features_0.mean[i].value < maximum(λ)) for i ∈ 1:length(abs_features_0.mean)]
             if !isnothing(out[:user_mask])
                 for pair in out[:user_mask]
                     ab_filt .&= [~(pair[1] < abs_features_0.mean[i].value < pair[2]) for i ∈ 1:length(abs_features_0.mean)]
@@ -1038,7 +1060,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             end
         end
         # Convert to a vectorized "TransitionLines" object
-        lines = TransitionLines(lines_0.names[ln_filt], lines_0.latex[ln_filt], lines_0.annotate[ln_filt], lines_0.λ₀[ln_filt], 
+        lines = TransitionLines(lines_0.names[ln_filt], lines_0.latex[ln_filt], lines_0.annotate[ln_filt], lines_0.λ₀[ln_filt], lines_0.sort_order[ln_filt],
                                 lines_0.profiles[ln_filt, :], lines_0.tied_amp[ln_filt, :], lines_0.tied_voff[ln_filt, :], lines_0.tied_fwhm[ln_filt, :], 
                                 lines_0.acomp_amp[ln_filt, :], lines_0.voff[ln_filt, :], lines_0.fwhm[ln_filt, :], lines_0.h3[ln_filt, :], 
                                 lines_0.h4[ln_filt, :], lines_0.η[ln_filt, :], lines_0.combined, lines_0.rel_amp, lines_0.rel_voff, lines_0.rel_fwhm)
@@ -1055,6 +1077,11 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             end
         end
         @debug msg
+        n_fit_comps = Dict{Symbol, Matrix{typeof(n_comps)}}()
+        for name ∈ lines.names
+            n_fit_comps[name] = ones(typeof(n_comps), size(cube.I)[1:2])
+        end
+
         relative_flags = BitVector([lines.rel_amp, lines.rel_voff, lines.rel_fwhm])
 
         # Remove unnecessary rows/keys from the tied_kinematics object after the lines have been filtered
@@ -1163,7 +1190,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
                 end
             end
         end
-        n_params_extra = 3 * (n_dust_features + n_lines + n_acomps)
+        n_params_extra = 3 * (n_dust_features + n_lines + n_acomps) + n_lines
         @debug "### There is a total of $(n_params_cont) continuum parameters ###"
         @debug "### There is a total of $(n_params_lines) emission line parameters ###"
         @debug "### There is a total of $(n_params_extra) extra parameters ###"
@@ -1210,7 +1237,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             p_init_cube_lines = ones(size(cube.I)[1:2]..., n_params_lines) .* NaN
 
             # Filter out dust features
-            df_filt = [(minimum(p_init_cube_λ)-0.5 < dust_features_0.mean[i].value < maximum(p_init_cube_λ)+0.5) for i ∈ 1:length(dust_features_0.mean)]
+            df_filt = [(minimum(p_init_cube_λ) < dust_features_0.mean[i].value < maximum(p_init_cube_λ)) for i ∈ 1:length(dust_features_0.mean)]
             if !isnothing(out[:user_mask])
                 for pair in out[:user_mask]
                     df_filt .&= [~(pair[1] < dust_features_0.mean[i].value < pair[2]) for i ∈ 1:length(dust_features_0.mean)]
@@ -1244,7 +1271,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             end
 
             # Repeat for absorption features
-            ab_filt = [(minimum(p_init_cube_λ)-0.5 < abs_features_0.mean[i].value < maximum(p_init_cube_λ)+0.5) for i ∈ 1:length(abs_features_0.mean)]
+            ab_filt = [(minimum(p_init_cube_λ) < abs_features_0.mean[i].value < maximum(p_init_cube_λ)) for i ∈ 1:length(abs_features_0.mean)]
             if !isnothing(out[:user_mask])
                 for pair in out[:user_mask]
                     ab_filt .&= [~(pair[1] < abs_features_0.mean[i].value < pair[2]) for i ∈ 1:length(abs_features_0.mean)]
@@ -1276,7 +1303,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
                 end
             end
             # Convert to a vectorized "TransitionLines" object
-            initcube_lines = TransitionLines(lines_0.names[ln_filt], lines_0.latex[ln_filt], lines_0.annotate[ln_filt], lines_0.λ₀[ln_filt], 
+            initcube_lines = TransitionLines(lines_0.names[ln_filt], lines_0.latex[ln_filt], lines_0.annotate[ln_filt], lines_0.λ₀[ln_filt], lines_0.sort_order[ln_filt],
                                     lines_0.profiles[ln_filt, :], lines_0.tied_amp[ln_filt, :], lines_0.tied_voff[ln_filt, :], lines_0.tied_fwhm[ln_filt, :], 
                                     lines_0.acomp_amp[ln_filt, :], lines_0.voff[ln_filt, :], lines_0.fwhm[ln_filt, :], lines_0.h3[ln_filt, :], 
                                     lines_0.h4[ln_filt, :], lines_0.η[ln_filt, :], lines_0.combined, lines_0.rel_amp, lines_0.rel_voff, lines_0.rel_fwhm)
@@ -1367,11 +1394,11 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             out[:extinction_curve], out[:extinction_screen], extinction_map, out[:fit_stellar_continuum], out[:fit_sil_emission], out[:guess_tau], out[:fit_opt_na_feii], 
             out[:fit_opt_br_feii], out[:fit_all_global], out[:use_pah_templates], pah_template_map, out[:fit_joint], out[:fit_uv_bump], out[:fit_covering_frac], 
             continuum, n_dust_cont, n_power_law, n_dust_features, n_abs_features, n_templates, out[:templates], out[:template_names], dust_features, 
-            abs_features, abs_taus, n_ssps, ssp_λ, ssp_templates, feii_templates_fft, vres, vsyst_ssp, vsyst_feii, npad_feii, n_lines, n_acomps, n_comps, relative_flags, 
+            abs_features, abs_taus, n_ssps, ssp_λ, ssp_templates, feii_templates_fft, vres, vsyst_ssp, vsyst_feii, npad_feii, n_lines, n_acomps, n_comps, n_fit_comps, relative_flags, 
             lines, tied_kinematics, tie_voigt_mixing, voigt_mix_tied, n_params_cont, n_params_lines, n_params_extra, out[:cosmology], flexible_wavesol, out[:n_bootstrap], 
             out[:random_seed], out[:line_test_lines], out[:line_test_threshold], out[:plot_line_test], out[:subtract_cubic_spline], out[:linemask_delta], out[:linemask_n_inc_thresh], 
-            out[:linemask_thresh], out[:linemask_overrides], out[:map_snr_thresh], p_init_cont, p_init_line, p_init_pahtemp, p_init_cube_λ, p_init_cube_cont, p_init_cube_lines, p_init_cube_wcs, 
-            p_init_cube_coords, p_init_cube_Ω)
+            out[:linemask_thresh], out[:linemask_overrides], out[:map_snr_thresh], out[:sort_line_components], p_init_cont, p_init_line, p_init_pahtemp, p_init_cube_λ, p_init_cube_cont, 
+            p_init_cube_lines, p_init_cube_wcs, p_init_cube_coords, p_init_cube_Ω)
     end
 
 end
@@ -2610,38 +2637,39 @@ function get_line_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex
         end
     end
 
-    # Relative step size vector (0 tells CMPFit to use a default value)
-    ln_dstep = zeros(length(ln_pars))
+    # Absolute step size vector (0 tells CMPFit to use a default value)
+    ln_astep = zeros(length(ln_pars))
 
-    # deps = sqrt(eps())
-    # ln_dstep = Float64[]
-    # for i ∈ 1:cube_fitter.n_lines
-    #     for j ∈ 1:cube_fitter.n_comps
-    #         if !isnothing(cube_fitter.lines.profiles[i, j])
+    # if !init
+    #     ln_astep = Float64[]
+    #     for i ∈ 1:cube_fitter.n_lines
+    #         for j ∈ 1:cube_fitter.n_comps
+    #             if !isnothing(cube_fitter.lines.profiles[i, j])
 
-    #             amp_dstep = deps
-    #             voff_dstep = 1e-4
-    #             fwhm_dstep = isone(j) ? 1e-4 : deps
+    #                 amp_step = 0.
+    #                 voff_step = 10.
+    #                 fwhm_step = j > 1 && cube_fitter.relative_flags[3] ? 0. : 10.
 
-    #             # Depending on flexible_wavesol option, we need to add 2 voffs
-    #             if !isnothing(cube_fitter.lines.tied_voff[i, j]) && cube_fitter.flexible_wavesol && isone(j)
-    #                 append!(ln_dstep, [amp_dstep, voff_dstep, voff_dstep, fwhm_dstep])
-    #             else
-    #                 append!(ln_dstep, [amp_dstep, voff_dstep, fwhm_dstep])
-    #             end
+    #                 # Depending on flexible_wavesol option, we need to add 2 voffs
+    #                 if !isnothing(cube_fitter.lines.tied_voff[i, j]) && cube_fitter.flexible_wavesol && isone(j)
+    #                     append!(ln_astep, [amp_step, voff_step, voff_step, fwhm_step])
+    #                 else
+    #                     append!(ln_astep, [amp_step, voff_step, fwhm_step])
+    #                 end
 
-    #             if cube_fitter.lines.profiles[i, j] == :GaussHermite
-    #                 # 2 extra parameters: h3 and h4
-    #                 append!(ln_dstep, [deps, deps])
-    #             elseif cube_fitter.lines.profiles[i, j] == :Voigt
-    #                 # 1 extra parameter: eta
-    #                 append!(ln_dstep, [deps])
+    #                 if cube_fitter.lines.profiles[i, j] == :GaussHermite
+    #                     # 2 extra parameters: h3 and h4
+    #                     append!(ln_astep, [0., 0.])
+    #                 elseif cube_fitter.lines.profiles[i, j] == :Voigt
+    #                     # 1 extra parameter: eta
+    #                     append!(ln_astep, [0.])
+    #                 end
     #             end
     #         end
-    #     end
-    # end 
+    #     end 
+    # end
 
-    ln_pars, ln_dstep
+    ln_pars, ln_astep
 
 end
 
@@ -2650,7 +2678,7 @@ end
     get_line_parinfo(n_free, lb, ub, dp)
 
 Get the CMPFit parinfo and config objects for a given CubeFitter object, given the vector of initial values,
-limits, and relative step sizes.
+limits, and absolute step sizes.
 """
 function get_line_parinfo(n_free, lb, ub, dp)
 
@@ -2660,14 +2688,15 @@ function get_line_parinfo(n_free, lb, ub, dp)
         parinfo[pᵢ].fixed = 0
         parinfo[pᵢ].limited = (1,1)
         parinfo[pᵢ].limits = (lb[pᵢ], ub[pᵢ])
-        parinfo[pᵢ].relstep = dp[pᵢ]
+        parinfo[pᵢ].step = dp[pᵢ]
     end
 
     # Create a `config` structure
     config = CMPFit.Config()
     # Lower tolerance level for lines fit
-    config.ftol = 1e-14
-    config.xtol = 1e-14
+    config.ftol = 1e-18
+    config.xtol = 1e-18
+    config.maxiter = 500
 
     parinfo, config
 end

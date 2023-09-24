@@ -172,6 +172,7 @@ http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 - `λ::Vector{<:Real}`: The 1D wavelength vector 
 - `I::Vector{<:Real}`: The 1D intensity vector
 - `σ::Vector{<:Real}`: The 1D error vector
+- `templates::Matrix{<:Real}`: The 2D templates array (1st dimension = wavelength, 2nd dimension = each template)
 - `mask_lines::BitVector`: The mask giving the locations of emission lines
 - `mask_bad::BitVector`: The mask giving the locations of bad pixels
 - `N::Real`: The normalization
@@ -183,8 +184,8 @@ http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 for the initial non-bootstrapped fit of the spectrum.
 """
 function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
-    σ::Vector{<:Real}, mask_lines::BitVector, mask_bad::BitVector, N::Real; init::Bool=false, use_ap::Bool=false, 
-    bootstrap_iter::Bool=false, p1_boots::Union{Vector{<:Real},Nothing}=nothing) 
+    σ::Vector{<:Real}, templates::Matrix{<:Real}, mask_lines::BitVector, mask_bad::BitVector, N::Real; init::Bool=false, 
+    use_ap::Bool=false, bootstrap_iter::Bool=false, p1_boots::Union{Vector{<:Real},Nothing}=nothing) 
 
     @debug """\n
     #########################################################
@@ -195,6 +196,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     λ_spax = copy(λ)
     I_spax = I ./ N
     σ_spax = σ ./ N
+    templates_spax = copy(templates)
 
     scale = 7
     # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
@@ -202,31 +204,17 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # Replace the masked lines with a linear interpolation
     I_spax[mask_lines] .= Spline1D(λ_spax[.~mask_lines], I_spax[.~mask_lines], λknots, k=1, bc="extrapolate").(λ[mask_lines]) 
     σ_spax[mask_lines] .= Spline1D(λ_spax[.~mask_lines], σ_spax[.~mask_lines], λknots, k=1, bc="extrapolate").(λ[mask_lines])
+    for s in axes(templates_spax, 2)
+        m = .~isfinite.(templates_spax[:, s])
+        templates_spax[mask_lines .| m, s] .= Spline1D(λ[.~mask_lines .& .~m], templates_spax[.~mask_lines .& .~m], λknots, 
+            k=1, bc="extrapolate")(λ[mask_lines .| m])
+    end
 
     # Masked spectrum
     λ_spax = λ_spax[.~mask_bad]
     I_spax = I_spax[.~mask_bad]
     σ_spax = σ_spax[.~mask_bad]
-    if cube_fitter.n_templates > 0
-        if init
-            n_pix = sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
-            templates_spax = sumdim(cube_fitter.templates, (1,2))
-            for s in axes(templates_spax, 2)
-                templates_spax[:, s] ./= n_pix
-            end
-        else
-            templates_spax = cube_fitter.templates[spaxel, :, :]
-        end
-        for s in axes(templates_spax, 2)
-            m = .~isfinite.(templates_spax[:, s])
-            templates_spax[m, s] .= nanmedian(templates_spax[.~m, s])
-            # Interpolate over the emission lines for the templates too
-            templates_spax[mask_lines, s] .= Spline1D(λ[.~mask_lines], templates_spax[.~mask_lines, s], λknots, k=1, bc="extrapolate")(λ[mask_lines])
-        end
-        templates_spax = templates_spax[.~mask_bad, :]
-    else
-        templates_spax = Matrix{Float64}(undef, 0, 0)
-    end
+    templates_spax = templates_spax[.~mask_bad, :]
 
     if !isnothing(cube_fitter.user_mask)
         # Mask out additional regions
@@ -235,9 +223,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
             λ_spax = λ_spax[.~region]
             I_spax = I_spax[.~region]
             σ_spax = σ_spax[.~region]
-            if cube_fitter.n_templates > 0
-                templates_spax = templates_spax[.~region, :]
-            end
+            templates_spax = templates_spax[.~region, :]
         end
     end
 
@@ -367,26 +353,9 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
 
     # Create the full model, again only if not bootstrapping
     if cube_fitter.spectral_region == :MIR
-        if cube_fitter.n_templates > 0
-            if init
-                n_pix = sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
-                templates_full = sumdim(cube_fitter.templates, (1,2))
-                for s in axes(templates_full, 2)
-                    templates_full[:, s] ./= n_pix
-                end
-            else
-                templates_full = cube_fitter.templates[spaxel, :, :]
-            end
-            for s in axes(templates_full, 2)
-                m = .~isfinite.(templates_full[:, s])
-                templates_full[m, s] .= nanmedian(templates_full[:, s])
-            end
-        else
-            templates_full = Matrix{Float64}(undef,0,0)
-        end
         I_model, comps = model_continuum(λ, popt, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
             cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, false,
-            templates_full,  true)
+            templates,  true)
     else
         I_model, comps = model_continuum(λ, popt, N, cube_fitter.vres, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
             cube_fitter.n_ssps, cube_fitter.ssp_λ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, 
@@ -425,11 +394,11 @@ end
 
 
 function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
-    σ::Vector{<:Real}, mask_lines::BitVector, mask_bad::BitVector, N::Real, split_flag::Bool; 
+    σ::Vector{<:Real}, templates::Matrix{<:Real}, mask_lines::BitVector, mask_bad::BitVector, N::Real, split_flag::Bool; 
     init::Bool=false, use_ap::Bool=false, bootstrap_iter::Bool=false, p1_boots::Union{Vector{<:Real},Nothing}=nothing) 
 
     if (!split_flag) || (cube_fitter.spectral_region != :MIR)
-        return continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, mask_bad, N; init=init, use_ap=use_ap,
+        return continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, templates, mask_lines, mask_bad, N; init=init, use_ap=use_ap,
             bootstrap_iter=bootstrap_iter, p1_boots=p1_boots)
     end
 
@@ -445,38 +414,25 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     λ_spax = copy(λ)
     I_spax = I ./ N
     σ_spax = σ ./ N
+    templates_spax = copy(templates)
 
     scale = 7
     # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
     λknots = λ[.~mask_lines][(1+scale):scale:(length(λ[.~mask_lines])-scale)]
     # Replace the masked lines with a linear interpolation
-    I_spax[mask_lines] .= Spline1D(λ_spax[.~mask_lines], I_spax[.~mask_lines], λknots, k=1, bc="extrapolate")(λ[mask_lines]) 
-    σ_spax[mask_lines] .= Spline1D(λ_spax[.~mask_lines], σ_spax[.~mask_lines], λknots, k=1, bc="extrapolate")(λ[mask_lines])
+    I_spax[mask_lines] .= Spline1D(λ_spax[.~mask_lines], I_spax[.~mask_lines], λknots, k=1, bc="extrapolate").(λ[mask_lines]) 
+    σ_spax[mask_lines] .= Spline1D(λ_spax[.~mask_lines], σ_spax[.~mask_lines], λknots, k=1, bc="extrapolate").(λ[mask_lines])
+    for s in axes(templates_spax, 2)
+        m = .~isfinite.(templates_spax[:, s])
+        templates_spax[mask_lines .| m, s] .= Spline1D(λ[.~mask_lines .& .~m], templates_spax[.~mask_lines .& .~m], λknots, 
+            k=1, bc="extrapolate")(λ[mask_lines .| m])
+    end
 
     # Masked spectrum
     λ_spax = λ_spax[.~mask_bad]
     I_spax = I_spax[.~mask_bad]
     σ_spax = σ_spax[.~mask_bad]
-    if cube_fitter.n_templates > 0
-        if init
-            n_pix = sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
-            templates_spax = sumdim(cube_fitter.templates, (1,2))
-            for s in axes(templates_spax, 2)
-                templates_spax[:, s] ./= n_pix
-            end
-        else
-            templates_spax = cube_fitter.templates[spaxel, :, :]
-        end
-        for s in axes(templates_spax, 2)
-            m = .~isfinite.(templates_spax[:, s])
-            templates_spax[m, s] .= nanmedian(templates_spax[.~m, s])
-            # Interpolate over the emission lines for the templates too
-            templates_spax[mask_lines, s] .= Spline1D(λ[.~mask_lines], templates_spax[.~mask_lines, s], λknots, k=1, bc="extrapolate")(λ[mask_lines])
-        end
-        templates_spax = templates_spax[.~mask_bad, :]
-    else
-        templates_spax = Matrix{Float64}(undef, 0, 0) 
-    end
+    templates_spax = templates_spax[.~mask_bad, :]
 
     if !isnothing(cube_fitter.user_mask)
         # Mask out additional regions
@@ -485,9 +441,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
             λ_spax = λ_spax[.~region]
             I_spax = I_spax[.~region]
             σ_spax = σ_spax[.~region]
-            if cube_fitter.n_templates > 0
-                templates_spax = templates_spax[.~region, :]
-            end
+            templates_spax = templates_spax[.~region, :]
         end
     end
 
@@ -676,26 +630,9 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # @debug "Continuum covariance matrix: \n $covar"
 
     # Create the full model, again only if not bootstrapping
-    if cube_fitter.n_templates > 0
-        if init
-            n_pix = sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
-            templates_full = sumdim(cube_fitter.templates, (1,2))
-            for s in axes(templates_full, 2)
-                templates_full[:, s] ./= n_pix
-            end
-        else
-            templates_full = cube_fitter.templates[spaxel, :, :]
-        end
-        for s in axes(templates_full, 2)
-            m = .~isfinite.(templates_full[:, s])
-            templates_full[m, s] .= nanmedian(templates_full[:, s])
-        end
-    else
-        templates_full = Matrix{Float64}(undef,0,0)
-    end
     I_model, comps = model_continuum(λ, popt, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
         cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, false,
-        templates_full, true)
+        templates, true)
 
     if init
         cube_fitter.p_init_cont[:] .= popt
@@ -789,6 +726,7 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
             [cube_fitter.lines.latex[i]], 
             [cube_fitter.lines.annotate[i]],
             [cube_fitter.lines.λ₀[i]], 
+            [cube_fitter.lines.sort_order[i]],
             reshape(cube_fitter.lines.profiles[i, :], (1, cube_fitter.n_comps)), 
             reshape(cube_fitter.lines.tied_amp[i, :], (1, cube_fitter.n_comps)),
             reshape(cube_fitter.lines.tied_voff[i, :], (1, cube_fitter.n_comps)),
@@ -812,7 +750,10 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
 
         # Perform fits for all possible numbers of components
         last_chi2 = test_chi2 = 0.
-        test_stat = 0.
+        test_p = last_p = 0
+        test_n = length(λnorm[region]) 
+        critical_val = 0.
+        F_data = 0.
         chi2_A = chi2_B = 0.
         profiles_to_fit = 0
         for np in 1:n_prof
@@ -840,54 +781,63 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
             end
 
             fit_func_lnL = p -> -ln_likelihood(Inorm[region], fit_func_test(λnorm[region], p), σnorm[region])
-            # x_tol = 1e-5
-            # f_tol = abs(fit_func_lnL(pfree) - fit_func_lnL(pfree .* (1 .- x_tol)))
-
+            
             # Parameter info
-            # parinfo_test = CMPFit.Parinfo(pstop-pstart+1)
-            # for i in 1:(pstop-pstart+1)
-            #     parinfo_test[i].fixed = param_lock[pstart+i-1]
+            # parinfo_test = CMPFit.Parinfo(length(pfree))
+            # for i in eachindex(pfree)
+            #     # parinfo_test[i].fixed = param_lock[pstart+i-1]
             #     parinfo_test[i].limited = (1,1)
-            #     parinfo_test[i].limits = (lower_bounds[pstart+i-1], upper_bounds[pstart+i-1])
+            #     parinfo_test[i].limits = (lower_bounds[pstart:pstop][.~plock][i], upper_bounds[pstart:pstop][.~plock][i])
             # end
             # config_test = CMPFit.Config()
 
-            # res_test = cmpfit(λnorm[region], Inorm[region], σnorm[region], fit_func_test, parameters, 
-            #                     parinfo=parinfo_test, config=config_test)
+            # res_test = cmpfit(λnorm[region], Inorm[region], σnorm[region], fit_func_test, pfree, 
+            #                   parinfo=parinfo_test, config=config_test)
 
-            # Fit with simulated annealing
-            # res_test = Optim.optimize(fit_func_lnL, lower_bounds[pstart:pstop][.~plock], upper_bounds[pstart:pstop][.~plock], pfree,
-                # SAMIN(;rt=0.9, nt=5, ns=5, neps=5, x_tol=x_tol, f_tol=f_tol, verbosity=0), Optim.Options(iterations=10^6))
-            # res_test = Optim.optimize(fit_func_lnL, lower_bounds[pstart:pstop][.~plock], upper_bounds[pstart:pstop][.~plock], pfree,
-                # ParticleSwarm(lower=lower_bounds[pstart:pstop][.~plock], upper=upper_bounds[pstart:pstop][.~plock], n_particles=length(pfree)),
-                # Optim.Options(iterations=10^3))
+            # Fit with differential evolution to make absolutely sure there are or arent multiple components
             res_test = bboptimize(fit_func_lnL, pfree; SearchRange=[(l,u) for (l,u) in zip(lower_bounds[pstart:pstop][.~plock], upper_bounds[pstart:pstop][.~plock])], 
                 NumDimensions=length(pfree), Method=:adaptive_de_rand_1_bin_radiuslimited, PopulationSize=max(50, 10*length(pfree)), TraceMode=:silent)
 
             # Save the reduced chi2 values
             test_model = fit_func_test(λnorm[region], best_candidate(res_test))
             χ² = sum((Inorm[region] .- test_model).^2 ./ σnorm[region].^2)
-            dof = length(λnorm[region]) - sum(.~plock)
-            test_chi2 = χ² / dof
+            test_p = sum(.~plock)
+            dof = test_n - test_p
+            test_chi2 = χ²
 
-            chi2_A = round(last_chi2, digits=3)
-            chi2_B = round(test_chi2, digits=3)
-            test_stat = 1.0 - test_chi2/last_chi2
-            @debug "(A) Previous reduced chi^2 = $last_chi2"
-            @debug "(B) New reduced chi^2 = $test_chi2"
-            @debug "Chi^2 ratio = $test_stat | Threshold = $(cube_fitter.line_test_threshold)"
+            chi2_A = round(last_chi2/dof, digits=3)
+            chi2_B = round(test_chi2/dof, digits=3)
+            # test_stat = 1.0 - test_chi2/last_chi2
+
+            ##### Perform an F-test #####
+            
+            # Generate an F distribution with (p2-p1, n-p2) parameters
+            F_dist = FDist(test_p - last_p, test_n - test_p)
+            # Calculate the critical value at the given significance threshold
+            critical_val = invlogccdf(F_dist, log(cube_fitter.line_test_threshold))
+            # Compare to the F calculated from the data
+            F_data = ((last_chi2 - test_chi2) / (test_p - last_p)) / (test_chi2 / (test_n - test_p))
+            # See if the new model is significantly better than the old one
+            test_passed = F_data > critical_val
+
+            @debug "(A) Previous chi^2 = $last_chi2"
+            @debug "(B) New chi^2 = $test_chi2"
+            @debug "F-value = $F_data | Critical value = $critical_val"
+            @debug "TEST $(test_passed ? "SUCCESS" : "FAILURE")"
 
             if cube_fitter.plot_line_test
                 ax.plot(λnorm[region], test_model, linestyle="-", label="$np-component model")
             end
 
-            if (test_stat < cube_fitter.line_test_threshold) && (np > 1)
+            if !test_passed && (np > 1)
                 break
             end
             last_chi2 = test_chi2
+            last_p = test_p
             profiles_to_fit += 1
         end
-        test_stat_final = round(test_stat, sigdigits=3)
+        F_final = round(F_data, sigdigits=3)
+        crit_final = round(critical_val, sigdigits=3)
         @debug "$(cube_fitter.lines.names[i]) will have $profiles_to_fit components"
 
         push!(profiles_to_fit_list, profiles_to_fit)
@@ -900,12 +850,12 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
             ax.legend(loc="upper right")
             ax.set_xlim(wbounds[1], wbounds[2])
             ax.annotate("Result: $profiles_to_fit profile(s)\n" * L"$\tilde{\chi}^2_A = %$chi2_A$" * "\n" *
-                L"$\tilde{\chi}^2_B = %$chi2_B$" * "\n" * L"$1-\tilde{\chi}^2_B/\tilde{\chi}^2_A = %$test_stat_final$", 
+                L"$\tilde{\chi}^2_B = %$chi2_B$" * "\n" * L"$F = %$F_final$" * "\n" * L"$F_{\rm crit} = %$crit_final$", 
                 (0.05, 0.95), xycoords="axes fraction", ha="left", va="top")
             ax.axvline(cube_fitter.lines.λ₀[i], linestyle="--", alpha=0.5, color="k", lw=0.5)
             folder = joinpath("output_$(cube_fitter.name)", "line_tests", "$(cube_fitter.lines.names[i])")
             if !isdir(folder)
-                mkdir(folder)
+                mkpath(folder)
             end
             fname = isone(length(spaxel)) ? "voronoi_bin_$(spaxel[1])" : "spaxel_$(spaxel[1])_$(spaxel[2])"
             plt.savefig(joinpath(folder, "$fname.pdf"), dpi=300, bbox_inches="tight")
@@ -923,6 +873,13 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
                                          # to find the maximum number of profiles in the group, so the "*"s are irrelevant here
         # Fit the maximum number of components in the group
         profiles_group = maximum(profiles_to_fit_list[inds])
+
+        # Save the number of components fit for this spaxel
+        if spaxel != CartesianIndex(0,0)
+            for ln in group
+                cube_fitter.n_fit_comps[ln][spaxel] = profiles_group
+            end
+        end
 
         # Lock the amplitudes to 0 for any profiles that will not be fit
         pᵢ = 1
@@ -1026,24 +983,24 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     # end
 
     plimits, param_lock, param_names, tied_pairs, tied_indices = get_line_plimits(cube_fitter, init || use_ap, ext_curve_norm)
-    p₀, dstep = get_line_initial_values(cube_fitter, spaxel, init || use_ap)
+    p₀, step = get_line_initial_values(cube_fitter, spaxel, init || use_ap)
     lower_bounds = [pl[1] for pl in plimits]
     upper_bounds = [pl[2] for pl in plimits]
 
     # Perform line component tests to determine which line components are actually necessary to include in the fit
-    if (length(cube_fitter.line_test_lines) > 0) && !init && !use_ap && !bootstrap_iter
+    if (length(cube_fitter.line_test_lines) > 0) && !init && !bootstrap_iter
         perform_line_component_test!(cube_fitter, spaxel, p₀, param_lock, lower_bounds, upper_bounds, λnorm, Inorm, σnorm,
             lsf_interp_func)
     end
 
     # Combine all of the tied parameters
     p_tied = copy(p₀)
-    dstep_tied = copy(dstep)
+    step_tied = copy(step)
     plims_tied = copy(plimits)
     param_lock_tied = copy(param_lock)
     param_names_tied = copy(param_names)
     deleteat!(p_tied, tied_indices)
-    deleteat!(dstep_tied, tied_indices)
+    deleteat!(step_tied, tied_indices)
     deleteat!(plims_tied, tied_indices)
     deleteat!(param_lock_tied, tied_indices)
     deleteat!(param_names_tied, tied_indices)
@@ -1051,7 +1008,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     # Split up into free and locked parameters
     pfree_tied = p_tied[.~param_lock_tied]
     pfix_tied = p_tied[param_lock_tied]
-    dfree_tied = dstep_tied[.~param_lock_tied]
+    dfree_tied = step_tied[.~param_lock_tied]
 
     # Count free parameters
     n_free = sum(.~param_lock_tied)
@@ -1094,30 +1051,16 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     # if false
         @debug "Beginning Line fitting with Differential Evolution:"
 
-        # Parameter and function tolerance levels for convergence with SAMIN,
-        # these are a bit loose since we're mainly just looking to get into the right global minimum region with SAMIN
-        # before refining the fit later with a LevMar local minimum routine
         fit_func = (x, p, n) -> -ln_likelihood(
                                 Inorm, 
                                 model_line_residuals(x, p, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
                                     cube_fitter.flexible_wavesol, ext_curve_norm, lsf_interp_func, cube_fitter.relative_flags), 
                                 σnorm)
-        # x_tol = 1e-5
-        # f_tol = abs(fit_func(λnorm, p₀, 0) - fit_func(λnorm, clamp.(p₀ .* (1 .- x_tol), lower_bounds, upper_bounds), 0))
 
-        # Replace infinite upper limits with finite ones so SAMIN can calculate convergence
-        lb_global = lbfree_tied
-        ub_global = [isfinite(ub) ? ub : 1e10 for ub in ubfree_tied]
-
-        # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
-        # res = Optim.optimize(p -> fit_step3(λnorm, p, fit_func), lb_samin, ub_samin, pfree_tied, 
-            # SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
-        # res = Optim.optimize(p -> fit_step3(λnorm, p, fit_func), lb_global, ub_global, pfree_tied,
-            # ParticleSwarm(lower=lb_global, upper=ub_global, n_particles=length(pfree_tied)), Optim.Options(iterations=10^4))
-        # p₁ = res.minimizer
-        res = bboptimize(p -> fit_step3(λnorm, p, fit_func), pfree_tied; SearchRange=[(l,u) for (l,u) in zip(lb_global, ub_global)], 
+        # First, perform a bounded Differential Evolution search for the optimal parameters with a generous population (10n)
+        res = bboptimize(p -> fit_step3(λnorm, p, fit_func), pfree_tied; SearchRange=[(l,u) for (l,u) in zip(lbfree_tied, ubfree_tied)], 
             NumDimensions=length(pfree_tied), Method=:adaptive_de_rand_1_bin_radiuslimited, PopulationSize=max(50, 10*length(pfree_tied)),
-            TraceMode=:silent, MaxSteps=50_000)
+            TraceMode=:silent, MaxSteps=10^5)
         p₁ = best_candidate(res) 
 
         # Write convergence results to file, if specified
@@ -1220,43 +1163,50 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     I_model, comps = model_line_residuals(λ, popt, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
         cube_fitter.flexible_wavesol, ext_curve, lsf_interp_func, cube_fitter.relative_flags, true)
     
+    # Clean up the initial parameters to be more amenable to individual spaxel fits
     if init
         pᵢ = 1
         for i in 1:cube_fitter.n_lines
             amp_main = popt[pᵢ]
             voff_main = popt[pᵢ+1]
             fwhm_main = (!isnothing(cube_fitter.lines.tied_voff[i, 1]) && cube_fitter.flexible_wavesol) ? popt[pᵢ+3] : popt[pᵢ+2]
+
             for j in 1:cube_fitter.n_comps
                 if !isnothing(cube_fitter.lines.profiles[i, j])
+                    n_prof = sum(.~isnothing.(cube_fitter.lines.profiles[i, :]))
+
                     # If additional components arent detected, set them to a small nonzero value
                     replace_line = iszero(popt[pᵢ])
-                    if replace_line && (j > 1)
-                        popt[pᵢ] = cube_fitter.relative_flags[1] ? 0.01 : 0.01 * amp_main
-                    end
-                    # If any line component is not detected, set the voff and fwhm to 0 (if it isn't tied)
-                    if replace_line && isnothing(cube_fitter.lines.tied_voff[i, j])
+                    if replace_line
                         if j > 1
-                            popt[pᵢ+1] = cube_fitter.relative_flags[2] ? 0. : voff_main
+                            popt[pᵢ] = cube_fitter.relative_flags[1] ? 0.1 * 1/(n_prof-1) : 0.1 * 1/(n_prof-1) * amp_main
+                            popt[pᵢ+1] = cube_fitter.relative_flags[2] ? 0.0 : voff_main
+                            popt[pᵢ+2] = cube_fitter.relative_flags[3] ? 1.0 : fwhm_main
                         else
-                            popt[pᵢ+1] = voff_main = 0. # voff
-                        end
-                        if isnothing(cube_fitter.lines.tied_fwhm[i, j])
-                            if j > 1
-                                popt[pᵢ+2] = cube_fitter.relative_flags[3] ? 1.0 : fwhm_main
-                            else
+                            popt[pᵢ] = 0.9 * popt[pᵢ]
+                            if isnothing(cube_fitter.lines.tied_voff[i, j])
+                                popt[pᵢ+1] = voff_main = 0. # voff
+                            end
+                            if isnothing(cube_fitter.lines.tied_fwhm[i, j])
                                 popt[pᵢ+2] = fwhm_main = (lower_bounds[pᵢ+2]+upper_bounds[pᵢ+2])/2 # fwhm
                             end
                         end
-                    end 
+                    end
+                    # Velocity offsets for the integrated spectrum shouldnt be too large
+                    # popt[pᵢ+1] = clamp(popt[pᵢ+1], -300., 300.)
+                    # popt[pᵢ+1] = 0.
+
                     if replace_line && !isnothing(cube_fitter.lines.tied_voff[i, j]) && isone(j) && cube_fitter.flexible_wavesol
                         popt[pᵢ+2] = 0. # individual voff
                     end
+
                     # Check if using a flexible_wavesol tied voff -> if so there is an extra voff parameter
                     if !isnothing(cube_fitter.lines.tied_voff[i, j]) && cube_fitter.flexible_wavesol && isone(j)
                         pc = 4
                     else
                         pc = 3
                     end
+
                     if cube_fitter.lines.profiles[i, j] == :GaussHermite
                         pc += 2
                     elseif cube_fitter.lines.profiles[i, j] == :Voigt
@@ -1268,6 +1218,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
                         end
                         pc += 1
                     end
+
                     pᵢ += pc
                 end
             end
@@ -1290,7 +1241,7 @@ end
 
 
 """
-    all_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, mask_bad, I_spline, N, area_sr, lsf_interp_func;
+    all_fit_spaxel(cube_fitter, spaxel, λ, I, σ, templates, mask_lines, mask_bad, I_spline, N, area_sr, lsf_interp_func;
         [init, use_ap, bootstrap_iter, p1_boots_cont, p1_boots_line])
 
 Fit the continuum and emission lines in a spaxel simultaneously with a combination of the Differential Evolution
@@ -1305,6 +1256,7 @@ See Smith, Draine, et al. 2007; http://tir.astro.utoledo.edu/jdsmith/research/pa
 - `λ::Vector{<:Real}`: The 1D wavelength vector 
 - `I::Vector{<:Real}`: The 1D intensity vector
 - `σ::Vector{<:Real}`: The 1D error vector
+- `templates::Matrix{<:Real}`: The 2D templates array (1st dimension = wavelength, 2nd dimension = each template)
 - `mask_lines::BitVector`: The mask giving the locations of emission Lines
 - `mask_bad::BitVector`: The mask giving the locations of bad pixels
 - `I_spline::Vector{<:Real}`: The cubic-spline fit to the continuum 
@@ -1320,7 +1272,7 @@ for the initial non-bootstrapped fit of the continuum.
 - `p1_boots_line::Union{Vector{<:Real},Nothing}=nothing`: Same as `p1_boots_cont`, but for the line parameters.
 """
 function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
-    σ::Vector{<:Real}, mask_bad::BitVector, I_spline::Vector{<:Real}, N::Real, area_sr::Vector{<:Real}, 
+    σ::Vector{<:Real}, templates::Matrix{<:Real}, mask_bad::BitVector, I_spline::Vector{<:Real}, N::Real, area_sr::Vector{<:Real}, 
     lsf_interp_func::Function; init::Bool=false, use_ap::Bool=false, bootstrap_iter::Bool=false, 
     p1_boots_cont::Union{Vector{<:Real},Nothing}=nothing, p1_boots_line::Union{Vector{<:Real},Nothing}=nothing) 
 
@@ -1337,30 +1289,21 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     I_spax = I ./ N
     I_spline_spax = I_spline ./ N
     σ_spax = σ ./ N
+    templates_spax = copy(templates)
+
+    scale = 7
+    λknots = λ[(1+scale):scale:(length(λ)-scale)]
+    for s in axes(templates_spax, 2)
+        m = .~isfinite.(templates_spax[:, s])
+        templates_spax[m, s] .= Spline1D(λ[.~m], templates_spax[.~m], λknots, k=1, bc="extrapolate")(λ[m])
+    end
 
     # Masked spectrum
     λ_spax = λ_spax[.~mask_bad]
     I_spax = I_spax[.~mask_bad]
     I_spline_spax = I_spline_spax[.~mask_bad]
     σ_spax = σ_spax[.~mask_bad]
-    if cube_fitter.n_templates > 0
-        if init
-            n_pix = sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
-            templates_spax = sumdim(cube_fitter.templates, (1,2))
-            for s in axes(templates_spax, 2)
-                templates_spax[:, s] ./= n_pix
-            end
-        else
-            templates_spax = cube_fitter.templates[spaxel, :, :]
-        end
-        for s in axes(templates_spax, 2)
-            m = .~isfinite.(templates_spax[:, s])
-            templates_spax[m, s] .= nanmedian(templates_spax[.~m, s])
-        end
-        templates_spax = templates_spax[.~mask_bad, :]
-    else
-        templates_spax = Matrix{Float64}(undef, 0, 0)
-    end
+    templates_spax = templates_spax[.~mask_bad, :]
 
     if !isnothing(cube_fitter.user_mask)
         # Mask out additional regions
@@ -1370,9 +1313,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
             I_spax = I_spax[.~region]
             I_spline_spax = I_spline_spax[.~region]
             σ_spax = σ_spax[.~region]
-            if cube_fitter.n_templates > 0
-                templates_spax = templates_spax[.~region, :]
-            end
+            templates_spax = templates_spax[.~region, :]
         end
     end
 
@@ -1407,7 +1348,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     upper_bounds_lines = [pl[2] for pl in plims_lines]
 
     # Perform line component tests to determine which line components are actually necessary to include in the fit
-    if (length(cube_fitter.line_test_lines) > 0) && !init && !use_ap && !bootstrap_iter
+    if (length(cube_fitter.line_test_lines) > 0) && !init && !bootstrap_iter
         perform_line_component_test!(cube_fitter, spaxel, pars_0_lines, lock_lines, lower_bounds_lines, upper_bounds_lines, 
             λ_spax, I_spax .- I_spline_spax, σ_spax, lsf_interp_func)
     end
@@ -1616,25 +1557,12 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     # if false
         @debug "Beginning joint continuum+line fitting with Differential Evolution:"
 
-        # Parameter and function tolerance levels for convergence with SAMIN,
-        # these are a bit loose since we're mainly just looking to get into the right global minimum region with SAMIN
-        # before refining the fit later with a LevMar local minimum routine
         fit_func = p -> -ln_likelihood(I_spax, fit_joint(λ_spax, p, n=0), σ_spax)
-        # x_tol = 1e-5
-        # f_tol = abs(fit_func(p₀) - fit_func(clamp.(p₀ .* (1 .- x_tol), lower_bounds, upper_bounds)))
 
-        # Replace infinite upper limits with finite ones so SAMIN can calculate convergence
-        lb_global = lower_bounds
-        ub_global = [isfinite(ub) ? ub : 1e10 for ub in upper_bounds]
-
-        # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
-        # res = Optim.optimize(fit_func, lb_samin, ub_samin, p₀, 
-            # SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
-        # res = Optim.optimize(fit_func, lb_global, ub_global, p₀,
-            # ParticleSwarm(lower=lb_global, upper=ub_global, n_particles=length(p₀)), Optim.Options(iterations=10^4))
-        # p₁ = res.minimizer
-        res = bboptimize(fit_func, p₀; SearchRange=[(l,u) for (l,u) in zip(lb_global, ub_global)], NumDimensions=length(p₀),
-            Method=:adaptive_de_rand_1_bin_radiuslimited, PopulationSize=max(50, 10*length(p₀)), TraceMode=:silent, MaxSteps=50_000)
+        # First, perform a bounded Differential Evolution search for the optimal parameters with a large population (10n)
+        res = bboptimize(fit_func, p₀; SearchRange=[(l,u) for (l,u) in zip(lower_bounds, upper_bounds)], NumDimensions=length(p₀),
+            Method=:adaptive_de_rand_1_bin_radiuslimited, PopulationSize=max(50, 10*length(p₀)), TraceMode=:silent, 
+            MaxSteps=10^5)
         p₁ = best_candidate(res) 
 
         # Write convergence results to file, if specified
@@ -1736,26 +1664,9 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
 
     # Create the full model
     if cube_fitter.spectral_region == :MIR
-        if cube_fitter.n_templates > 0
-            if init
-                n_pix = sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
-                templates_full = sumdim(cube_fitter.templates, (1,2))
-                for s in axes(templates_full, 2)
-                    templates_full[:, s] ./= n_pix
-                end
-            else
-                templates_full = cube_fitter.templates[spaxel, :, :]
-            end
-            for s in axes(templates_full, 2)
-                m = .~isfinite.(templates_full[:, s])
-                templates_full[m, s] .= nanmedian(templates_full[:, s])
-            end
-        else
-            templates_full = Matrix{Float64}(undef,0,0)
-        end
         Icont, comps_cont = model_continuum(λ, popt_cont, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
             cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.fit_sil_emission, false, 
-            templates_full, true)
+            templates, true)
         ext_key = "extinction"
     else
         Icont, comps_cont = model_continuum(λ, popt_cont, N, cube_fitter.vres, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
@@ -2197,8 +2108,8 @@ end
 
 # Helper function for fitting one iteration (i.e. for bootstrapping)
 function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
-    σ::Vector{<:Real}, norm::Real, area_sr::Vector{<:Real}, mask_lines::BitVector, mask_bad::BitVector, mask_chi2::BitVector, 
-    I_spline::Vector{<:Real}; bootstrap_iter::Bool=false, p1_boots_c::Union{Vector{<:Real},Nothing}=nothing, 
+    σ::Vector{<:Real}, templates::Matrix{<:Real}, norm::Real, area_sr::Vector{<:Real}, mask_lines::BitVector, mask_bad::BitVector, 
+    mask_chi2::BitVector, I_spline::Vector{<:Real}; bootstrap_iter::Bool=false, p1_boots_c::Union{Vector{<:Real},Nothing}=nothing, 
     p1_boots_l::Union{Vector{<:Real},Nothing}=nothing, p1_boots_pah::Union{Vector{<:Real},Nothing}=nothing, use_ap::Bool=false, 
     init::Bool=false)
 
@@ -2219,7 +2130,7 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # Fit the spaxel
     ext_key = cube_fitter.spectral_region == :MIR ? "extinction" : "attenuation_gas"
     if !cube_fitter.fit_joint
-        popt_c, I_cont, comps_cont, n_free_c, perr_c, pahtemp = continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, mask_bad, norm, 
+        popt_c, I_cont, comps_cont, n_free_c, perr_c, pahtemp = continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, templates, mask_lines, mask_bad, norm, 
             cube_fitter.use_pah_templates && pah_template_spaxel, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_cont)
 
         # Use the real continuum fit or a cubic spline continuum fit based on the settings
@@ -2243,7 +2154,7 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
             lsf_interp_func, norm, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_l)
     else
         popt_c, popt_l, I_cont, I_line, comps_cont, comps_line, n_free_c, n_free_l, perr_c, perr_l, pahtemp = all_fit_spaxel(cube_fitter,
-            spaxel, λ, I, σ, mask_bad, I_spline, norm, area_sr, lsf_interp_func, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots_cont=p1_boots_cont,
+            spaxel, λ, I, σ, templates, mask_bad, I_spline, norm, area_sr, lsf_interp_func, use_ap=use_ap, init=init, bootstrap_iter=bootstrap_iter, p1_boots_cont=p1_boots_cont,
             p1_boots_line=p1_boots_l)
     end
 
@@ -2277,14 +2188,14 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
                 cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, 
                 cube_fitter.fit_sil_emission, cube_fitter.n_templates, cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, 
                 cube_fitter.lines, cube_fitter.flexible_wavesol, lsf_interp_func, cube_fitter.relative_flags, popt_c, popt_l, perr_c, 
-                perr_l, comps[ext_key], mask_lines, I_spline, area_sr, !bootstrap_iter)
+                perr_l, comps[ext_key], mask_lines, I_spline, area_sr, cube_fitter.n_fit_comps, spaxel, !bootstrap_iter)
             p_out = [popt_c; popt_l; p_dust; p_lines; χ2; dof]
             p_err = [perr_c; perr_l; p_dust_err; p_lines_err; 0.; 0.]
         else
             p_lines, p_lines_err = calculate_extra_parameters(λ, I, norm, comps, cube_fitter.n_ssps, cube_fitter.n_power_law,
                 cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, 
                 cube_fitter.lines, cube_fitter.flexible_wavesol, lsf_interp_func, cube_fitter.relative_flags, popt_l, perr_l, comps[ext_key], 
-                mask_lines, I_spline, area_sr, !bootstrap_iter)
+                mask_lines, I_spline, area_sr, cube_fitter.n_fit_comps, spaxel, !bootstrap_iter)
             p_out = [popt_c; popt_l; p_lines; χ2; dof]
             p_err = [perr_c; perr_l; p_lines_err; 0.; 0.]
         end
@@ -2315,18 +2226,25 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
     I = cube_data.I[spaxel, :]
     σ = cube_data.σ[spaxel, :]
     area_sr = cube_data.area_sr[spaxel, :]
+    templates = cube_data.templates[spaxel, :, :]
+
+    # if spaxel ∉ (CartesianIndex(19,19), CartesianIndex(23,22), CartesianIndex(23,23), CartesianIndex(23,28), 
+    #              CartesianIndex(23,32), CartesianIndex(23,33), CartesianIndex(23,34), CartesianIndex(23,37),
+    #              CartesianIndex(22,30), CartesianIndex(21,29), CartesianIndex(19,20))
+    #     return nothing, nothing
+    # end
 
     # if there are any NaNs, skip over the spaxel
     if any(.!isfinite.(I))
+        @debug "Non-finite values found in the intensity! Not fitting spaxel $spaxel"
         return nothing, nothing
     end
 
-    if (cube_fitter.n_templates > 0)
-        for t in 1:cube_fitter.n_templates
-            if all(.~isfinite.(cube_fitter.templates[spaxel, :, t]))
-                # If a template is fully NaN/Inf, we can't fit 
-                return nothing, nothing
-            end
+    for t in 1:cube_fitter.n_templates
+        if all(.~isfinite.(templates[:, t]))
+            # If a template is fully NaN/Inf, we can't fit 
+            @debug "Non-finite values found in the templates! Not fitting spaxel $spaxel"
+            return nothing, nothing
         end
     end
 
@@ -2388,8 +2306,8 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
 
             # Perform the regular fit
             p_out, p_err, popt_c, popt_l, perr_c, perr_l, I_model, comps, χ2, dof, pahtemp = _fit_spaxel_iterfunc(
-                cube_fitter, spaxel, λ, I, σ, norm, area_sr, mask_lines, mask_bad, mask_chi2, I_spline; bootstrap_iter=false, 
-                use_ap=use_ap)
+                cube_fitter, spaxel, λ, I, σ, templates, norm, area_sr, mask_lines, mask_bad, mask_chi2, I_spline; 
+                bootstrap_iter=false, use_ap=use_ap)
             # Convert p_err into 2 columns for the lower/upper errorbars
             p_err = [p_err p_err]
 
@@ -2421,12 +2339,10 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                         continuum_cubic_spline(λ, I, σ, cube_fitter.linemask_Δ, cube_fitter.linemask_n_inc_thresh, 
                             cube_fitter.linemask_thresh, cube_fitter.linemask_overrides)
                     end
-                    # (do not recalculate sigma_stat since it would be increased by a factor of sqrt(2), but in reality
-                    # we would have to divide out the sqrt(2) because we now have 2 "measurements")
 
                     # Re-perform the fitting on the resampled data
                     pb_i, _, _, _, _, _, Ib_i, _, _, _, _ = with_logger(NullLogger()) do
-                        _fit_spaxel_iterfunc(cube_fitter, spaxel, λ, I_boot, σ, norm, area_sr, mask_lines_boot, mask_bad, mask_chi2, 
+                        _fit_spaxel_iterfunc(cube_fitter, spaxel, λ, I_boot, σ, templates, norm, area_sr, mask_lines_boot, mask_bad, mask_chi2, 
                             I_spline_boot; bootstrap_iter=true, p1_boots_c=popt_c, p1_boots_l=popt_l, p1_boots_pah=pahtemp, use_ap=use_ap)
                     end
                     p_boot[:, nboot] .= pb_i
@@ -2452,7 +2368,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                 if cube_fitter.spectral_region == :MIR
                     I_boot_cont, comps_boot_cont = model_continuum(λ, p_out[1:split1], norm, cube_fitter.n_dust_cont, cube_fitter.n_power_law, 
                         cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, 
-                        cube_fitter.fit_sil_emission, false, cube_fitter.n_templates > 0 ? cube_fitter.templates[spaxel, :, :] : Matrix{Float64}(undef, 0, 0), true)
+                        cube_fitter.fit_sil_emission, false, templates, true)
                     ext_key = "extinction"
                 else
                     I_boot_cont, comps_boot_cont = model_continuum(λ, p_out[1:split1], norm, cube_fitter.vres, cube_fitter.vsyst_ssp, 
@@ -2533,9 +2449,6 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
             p_out, p_err
         end
 
-        # Force full garbage collection
-        GC.gc(true)
-
         return p_out, p_err
 
     end
@@ -2547,9 +2460,6 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
 
     # Still need to overwrite the raw errors with the statistical errors
     cube_data.σ[spaxel, :] .= σ
-
-    # Force full garbage collection
-    GC.gc(true)
 
     p_out, p_err
 
@@ -2571,12 +2481,17 @@ function fit_stack!(cube_fitter::CubeFitter)
     I_sum_init = sumdim(cube_fitter.cube.I, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
     σ_sum_init = sqrt.(sumdim(cube_fitter.cube.σ.^2, (1,2))) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
     area_sr_init = cube_fitter.cube.Ω .* sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+    templates_init = zeros(eltype(I_sum_init), size(I_sum_init)..., cube_fitter.n_templates)
+    for s in 1:cube_fitter.n_templates
+        templates_init[:, s] .= sumdim(cube_fitter.templates[:,:,:,s], (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+    end
+
     # Edge cases
     if !isfinite(I_sum_init[1])
-        I_sum_init[1] = 0.
+        I_sum_init[1] = nanmedian(I_sum_init)
     end
     if !isfinite(I_sum_init[end])
-        I_sum_init[end] = 0.
+        I_sum_init[end] = nanmedian(I_sum_init)
     end
     if !isfinite(σ_sum_init[1])
         σ_sum_init[1] = nanmedian(σ_sum_init)
@@ -2584,17 +2499,35 @@ function fit_stack!(cube_fitter::CubeFitter)
     if !isfinite(σ_sum_init[end])
         σ_sum_init[end] = nanmedian(σ_sum_init)
     end
+    for s in 1:cube_fitter.n_templates
+        if !isfinite(templates_init[1,s])
+            templates_init[1,s] = nanmedian(templates_init[:,s])
+        end
+        if !isfinite(templates_init[end,s])
+            templates_init[end,s] = nanmedian(templates_init[:,s])
+        end
+    end
 
     bad = findall(.~isfinite.(I_sum_init) .| .~isfinite.(σ_sum_init))
     # Replace with the average of the points to the left and right
     l = length(I_sum_init)
     for badi in bad
-        lind = findfirst(x -> isfinite(x), I_sum_init[max(badi-1,1):-1:1])
-        rind = findfirst(x -> isfinite(x), I_sum_init[min(badi+1,l):end])
+        lind = findfirst(isfinite, I_sum_init[max(badi-1,1):-1:1])
+        rind = findfirst(isfinite, I_sum_init[min(badi+1,l):end])
         I_sum_init[badi] = (I_sum_init[max(badi-1,1):-1:1][lind] + I_sum_init[min(badi+1,l):end][rind]) / 2
         σ_sum_init[badi] = (σ_sum_init[max(badi-1,1):-1:1][lind] + σ_sum_init[min(badi+1,l):end][rind]) / 2
     end
     @assert all(isfinite.(I_sum_init) .& isfinite.(σ_sum_init)) "Error: Non-finite values found in the summed intensity/error arrays!"
+    for s in 1:cube_fitter.n_templates
+        bad = findall(.~isfinite.(templates_init[:, s]))
+        l = length(templates_init[:, s])
+        for badi in bad
+            lind = findfirst(isfinite, templates_init[max(badi-1,1):-1:1, s])
+            rind = findfirst(isfinite, templates_init[min(badi+1,l):end, s])
+            templates_init[badi, s] = (templates_init[max(badi-1,1):-1:1, s][lind] + templates_init[min(badi+1,l):end, s][rind]) / 2
+        end
+    end
+    @assert all(isfinite.(templates_init)) "Error: Non-finite values found in the summed template arrays!"
 
     # Perform a cubic spline fit, also obtaining the line mask
     mask_lines_init, I_spline_init, σ_spline_init = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init, cube_fitter.linemask_Δ,
@@ -2626,8 +2559,8 @@ function fit_stack!(cube_fitter::CubeFitter)
     norm = norm ≠ 0. ? norm : 1.
 
     I_model_init, comps_init, χ2_init, dof_init = _fit_spaxel_iterfunc(
-        cube_fitter, CartesianIndex(0,0), λ_init, I_sum_init, σ_sum_init, norm, area_sr_init, mask_lines_init, mask_bad_init, 
-        mask_chi2_init, I_spline_init; bootstrap_iter=false, use_ap=false, init=true)
+        cube_fitter, CartesianIndex(0,0), λ_init, I_sum_init, σ_sum_init, templates_init, norm, area_sr_init, mask_lines_init, 
+        mask_bad_init, mask_chi2_init, I_spline_init; bootstrap_iter=false, use_ap=false, init=true)
 
     χ2red_init = χ2_init / dof_init
 
@@ -2690,7 +2623,9 @@ function fit_cube!(cube_fitter::CubeFitter)
     # "cube_data" object holds the primary wavelength, intensity, and errors
     # this is just a convenience object since these may be different when fitting an integrated spectrum
     # within an aperture, or when using voronoi bins
-    cube_data = (λ=cube_fitter.cube.λ, I=cube_fitter.cube.I, σ=cube_fitter.cube.σ, area_sr=cube_fitter.cube.Ω .* ones(shape))
+    cube_data = (λ=cube_fitter.cube.λ, I=cube_fitter.cube.I, σ=cube_fitter.cube.σ, 
+        templates=cube_fitter.n_templates > 0 ? cube_fitter.templates : Array{Float64}(undef, shape..., 0),
+        area_sr=cube_fitter.cube.Ω .* ones(shape))
 
     vorbin = !isnothing(cube_fitter.cube.voronoi_bins)
     if vorbin
@@ -2699,13 +2634,17 @@ function fit_cube!(cube_fitter::CubeFitter)
         I_vorbin = zeros(n_bins, shape[3])
         σ_vorbin = zeros(n_bins, shape[3])
         area_vorbin = zeros(n_bins, shape[3])
+        template_vorbin = zeros(n_bins, shape[3], cube_fitter.n_templates)
         for n in 1:n_bins
             w = cube_fitter.cube.voronoi_bins .== n
             I_vorbin[n, :] .= sumdim(cube_fitter.cube.I[w, :], 1) ./ sum(w)
             σ_vorbin[n, :] .= sqrt.(sumdim(cube_fitter.cube.σ[w, :].^2, 1)) ./ sum(w)
             area_vorbin[n, :] .= sum(w) .* cube_fitter.cube.Ω
+            for s in 1:cube_fitter.n_templates
+                template_vorbin[n, :, s] .= sumdim(cube_fitter.templates[w, :, s], 1) ./ sum(w)
+            end
         end
-        cube_data = (λ=cube_fitter.cube.λ, I=I_vorbin, σ=σ_vorbin, area_sr=area_vorbin)
+        cube_data = (λ=cube_fitter.cube.λ, I=I_vorbin, σ=σ_vorbin, area_sr=area_vorbin, templates=template_vorbin)
     end
 
     ######################### DO AN INITIAL FIT WITH THE SUM OF ALL SPAXELS ###################
@@ -2859,9 +2798,15 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
         
         @info "Integrating spectrum across the whole cube..."
         I = sumdim(cube_fitter.cube.I, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+        I = reshape(I, shape)
         σ = sqrt.(sumdim(cube_fitter.cube.σ.^2, (1,2))) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+        σ = reshape(σ, shape)
         area_sr = cube_fitter.cube.Ω .* sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
-        area_sr = reshape(area_sr, (1,1,length(area_sr)))
+        area_sr = reshape(area_sr, shape)
+        templates = zeros(shape..., cube_fitter.n_templates)
+        for s in 1:cube_fitter.n_templates
+            templates[1,1,:,s] .= sumdim(cube_fitter.templates, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+        end
 
     else
         # If using an aperture, overwrite the cube_data object with the quantities within
@@ -2869,6 +2814,7 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
         # Prepare the 1D arrays
         I = zeros(Float32, shape)
         σ = zeros(Float32, shape)
+        templates = zeros(Float32, shape..., cube_fitter.n_templates)
         area_sr = zeros(shape)
 
         @info "Performing aperture photometry to get an integrated spectrum..."
@@ -2887,9 +2833,18 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
             area_sr[1,1,z] = get_area(aperture[z]) * cube_fitter.cube.Ω
             I[1,1,z] = F_ap / area_sr[1,1,z]
             σ[1,1,z] = eF_ap / area_sr[1,1,z]
+
+            # repeat for templates
+            for s in 1:cube_fitter.n_templates
+                Ftz = cube_fitter.templates[:, :, z, s] .* cube_fitter.cube.Ω
+                Ftz[.~isfinite.(Ftz) .| cube_fitter.cube.mask[:, :, z]] .= 0.
+                Ft_ap = photometry(aperture[z], Ftz).aperture_sum
+                templates[1,1,z,s] = Ft_ap / area_sr[1,1,z]
+            end
+
         end
     end
-    cube_data = (λ=cube_fitter.cube.λ, I=I, σ=σ, area_sr=area_sr)
+    cube_data = (λ=cube_fitter.cube.λ, I=I, σ=σ, templates=templates, area_sr=area_sr)
 
     ######################### DO AN INITIAL FIT WITH THE SUM OF ALL SPAXELS ###################
 
