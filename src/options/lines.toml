@@ -96,11 +96,13 @@ acomp_1_kinematic_group_l3 = [
 ]
 kinematic_group_h3 = [
     "NeVI_",
-    "MgVII_"
+    "MgVII_",
+    "FeVII_"
 ]
 acomp_1_kinematic_group_h3 = [
     "NeVI_",
-    "MgVII_"
+    "MgVII_",
+    "FeVII_"
 ]
 
 # # Lines to make combined flux/eqw maps for

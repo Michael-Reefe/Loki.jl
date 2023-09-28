@@ -509,7 +509,7 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
 
             # Get composite line parameters
             ln = cube_fitter.lines.names[k]
-            param_maps.lines_comp[ln][:n_comps][index] = isfinite(out_params[index, pᵢ]) ? out_params[index, pᵢ] : 0.
+            param_maps.lines_comp[ln][:n_comps][index] = out_params[index, pᵢ] 
             param_errs[1].lines_comp[ln][:n_comps][index] = out_errs[index, pᵢ, 1]
             param_errs[2].lines_comp[ln][:n_comps][index] = out_errs[index, pᵢ, 2]
             param_maps.lines_comp[ln][:w80][index] = out_params[index, pᵢ+1]
@@ -890,7 +890,7 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
 
             # Get composite line parameters
             ln = cube_fitter.lines.names[k]
-            param_maps.lines_comp[ln][:n_comps][index] = isfinite(out_params[index, pᵢ]) ? out_params[index, pᵢ] : 0.
+            param_maps.lines_comp[ln][:n_comps][index] = out_params[index, pᵢ]
             param_errs[1].lines_comp[ln][:n_comps][index] = out_errs[index, pᵢ, 1]
             param_errs[2].lines_comp[ln][:n_comps][index] = out_errs[index, pᵢ, 2]
             param_maps.lines_comp[ln][:w80][index] = out_params[index, pᵢ+1]
@@ -1172,7 +1172,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     nan_color = "k"
     text_color = "w"
     # if taking a voff, make sure vmin/vmax are symmetric and change the colormap to coolwarm
-    if occursin("voff", name_i) || occursin("index", name_i) || occursin("vel", name_i)
+    if occursin("voff", name_i) || occursin("index", name_i) || occursin("vel", name_i) || occursin("delta_v", name_i)
         vabs = max(abs(vmin), abs(vmax))
         vmin = -vabs
         vmax = vabs
@@ -1188,7 +1188,9 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         vmax = min(nanmaximum(filtered), 30)
     end
     # default cmap is magma for FWHMs and equivalent widths
-    if (occursin("fwhm", name_i) || occursin("eqw", name_i)) || occursin("vdisp", name_i) && cmap == py_colormap.cubehelix
+    if (occursin("fwhm", name_i) || occursin("eqw", name_i) || occursin("vdisp", name_i) || occursin("w80", name_i)) && 
+        cmap == py_colormap.cubehelix
+
         cmap = py_colormap.magma
     end
     # get discrete colormap for number of line components

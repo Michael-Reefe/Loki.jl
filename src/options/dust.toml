@@ -35,15 +35,11 @@ locked = true
 # locked = false
 [[dust_continuum_temps]]
 val = 200.0
-plim = [150.0, 300.0]
+plim = [150.0, 250.0]
 locked = false
 [[dust_continuum_temps]]
 val = 100.0
-plim = [90.0, 150.0]
-locked = false
-[[dust_continuum_temps]]
-val = 50.0
-plim = [35.0, 90.0]
+plim = [35.0, 150.0]
 locked = false
 
 # [[dust_continuum_temps]]

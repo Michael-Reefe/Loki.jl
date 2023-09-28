@@ -363,7 +363,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
             cube_fitter.fit_sil_emission, false, templates,  true)
         for s in 1:cube_fitter.n_templates
             pₑ = 3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law
-            if !force_noext && (popt[pₑ] != 0) && (nanminimum(abs.(I_model .- comps["templates_$s"])) .< nanmedian(σ./N./3))
+            if !force_noext && (popt[pₑ] != 0) && (nanminimum(abs.(I_model .- comps["templates_$s"])) .< nanmedian(σ./N))
                 @debug "Redoing the fit with optical depth locked to 0 due to template amplitudes"
                 return continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, templates, mask_lines, mask_bad, N, false, init=init,
                     use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots, force_noext=true)
@@ -649,7 +649,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # set optical depth to 0 if the template fits all of the spectrum
     for s in 1:cube_fitter.n_templates
         pₑ = 3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law
-        if !force_noext && (popt[pₑ] != 0) && (nanminimum(abs.(I_model .- comps["templates_$s"])) .< nanmedian(σ./N./3))
+        if !force_noext && (popt[pₑ] != 0) && (nanminimum(abs.(I_model .- comps["templates_$s"])) .< nanmedian(σ./N))
             @debug "Redoing the fit with optical depth locked to 0 due to template amplitudes"
             return continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, templates, mask_lines, mask_bad, N, split_flag, init=init,
                 use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots, force_noext=true)
@@ -805,7 +805,8 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
             fit_func_lnL = p -> -ln_likelihood(Inorm[region], fit_func_test(λnorm[region], p), σnorm[region])
             x_tol = 1e-5
             f_tol = abs(fit_func_lnL(pfree) - fit_func_lnL(pfree .* (1 .- x_tol)))
-
+            f_tol = 10^floor(log10(f_tol))
+            
             # Parameter info
             # parinfo_test = CMPFit.Parinfo(length(pfree))
             # for i in eachindex(pfree)
@@ -1082,6 +1083,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
                                 σnorm)
         x_tol = 1e-5
         f_tol = abs(fit_func(λnorm, p₀, 0) - fit_func(λnorm, clamp.(p₀ .* (1 .- x_tol), lower_bounds, upper_bounds), 0))
+        f_tol = 10^floor(log10(f_tol))
         lb_global = lbfree_tied
         ub_global = [isfinite(ub) ? ub : 1e10 for ub in ubfree_tied]
 
@@ -1130,6 +1132,10 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     n = 1
     while (res.niter < 5) && !_fit_global
         @warn "LM Solver is stuck on the initial state for the line fit of spaxel $spaxel. Jittering starting params..."
+        # for j in eachindex(parinfo)
+        #     parinfo[j].step = 0.
+        # end
+        # res = cmpfit(λnorm, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func_2), p₁, parinfo=parinfo, config=config)
         # Jitter the starting parameters a bit
         jit_lo = (lbfree_tied .- p₁) ./ 20  # defined to be negative
         jit_hi = (ubfree_tied .- p₁) ./ 20  # defined to be positive
@@ -1189,13 +1195,15 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     if init
         pᵢ = 1
         for i in 1:cube_fitter.n_lines
+            p_amps = Int[]
             amp_main = popt[pᵢ]
             voff_main = popt[pᵢ+1]
             fwhm_main = (!isnothing(cube_fitter.lines.tied_voff[i, 1]) && cube_fitter.flexible_wavesol) ? popt[pᵢ+3] : popt[pᵢ+2]
 
             for j in 1:cube_fitter.n_comps
+                n_prof = sum(.~isnothing.(cube_fitter.lines.profiles[i, :]))
                 if !isnothing(cube_fitter.lines.profiles[i, j])
-                    n_prof = sum(.~isnothing.(cube_fitter.lines.profiles[i, :]))
+                    push!(p_amps, pᵢ)
 
                     # If additional components arent detected, set them to a small nonzero value
                     replace_line = iszero(popt[pᵢ])
@@ -1215,8 +1223,9 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
                         end
                     end
                     # Velocity offsets for the integrated spectrum shouldnt be too large
-                    # popt[pᵢ+1] = clamp(popt[pᵢ+1], -300., 300.)
-                    # popt[pᵢ+1] = 0.
+                    if abs(popt[pᵢ+1]) > 500.
+                        popt[pᵢ+1] = 0.
+                    end
 
                     if replace_line && !isnothing(cube_fitter.lines.tied_voff[i, j]) && isone(j) && cube_fitter.flexible_wavesol
                         popt[pᵢ+2] = 0. # individual voff
@@ -1266,7 +1275,7 @@ end
     all_fit_spaxel(cube_fitter, spaxel, λ, I, σ, templates, mask_lines, mask_bad, I_spline, N, area_sr, lsf_interp_func;
         [init, use_ap, bootstrap_iter, p1_boots_cont, p1_boots_line])
 
-Fit the continuum and emission lines in a spaxel simultaneously with a combination of the Simulated Annealing
+Fit the continuum and emission lines in a spaxel simultaneously with a combination of the Simulated Annealing 
 and Levenberg-Marquardt algorithms.
 
 This procedure has been adapted from PAHFIT (with some heavy adjustments). 
@@ -1594,13 +1603,14 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         fit_func = p -> -ln_likelihood(I_spax, fit_joint(λ_spax, p, n=0), σ_spax)
         x_tol = 1e-5
         f_tol = abs(fit_func(p₀) - fit_func(clamp.(p₀ .* (1 .- x_tol), lower_bounds, upper_bounds)))
+        f_tol = 10^floor(log10(f_tol))
         lb_global = lower_bounds
         ub_global = [isfinite(ub) ? ub : 1e10 for ub in upper_bounds]
 
         # First, perform a bounded Simulated Annealing search for the optimal parameters with a large population (10n)
         res = Optim.optimize(fit_func, lb_global, ub_global, p₀, 
             SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
-        p₁ = res.minimizer 
+        p₁ = res.minimizer
 
         # Write convergence results to file, if specified
         if cube_fitter.track_convergence
