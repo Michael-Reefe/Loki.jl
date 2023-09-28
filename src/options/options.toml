@@ -53,9 +53,18 @@ save_full_model = true
 # extinction profile, "ct" for the Chiar & Tielens (2005) extinction profile,
 # "ohm" for the Ossenkopf, Henning, & Mathis (1992) extinction profile, or "d+" for the 
 # Donnan et al. (2022) extinction profile.
+# May also be "decompose" to fit as a combination of amorphous olivine, pyroxene, and crystalline forsterite absorption
 # optical options: may be either "calzetti" for the Calzetti et al. (2000) starburst galaxy curve,
 # or "ccm" for the Cardelli, Clayton, & Mathis (1989) Milky Way curve.
 extinction_curve = "kvt"
+
+# The following 3 options are only used if extinction_screen = "decompose"
+# Magnesium content for olivine 
+olivine_y = 0.5
+# Magnesium content for pyroxene
+pyroxene_x = 0.5
+# Olivine and pyroxene grain sizes (in microns)
+grain_size = 0.1
 
 # extinction_screen: Controls whether extinction is modeled as e^-tau (true) or
 # (1 - e^-tau) / tau (false), following PAHFIT.

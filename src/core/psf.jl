@@ -54,20 +54,20 @@ function generate_psf_model!(cube::DataCube, psf_model_dir::String=""; interpola
             r_out = 9 * cube.psf[i] / pix_size
             back_ann = CircularAnnulus(c2..., r_in, r_out)
             pedestal = photometry(back_ann, data[:, :, i]).aperture_sum / photometry(back_ann, ones(size(data)[1:2])).aperture_sum
-            if i == 1
-                println("$(cube.channel) $(cube.band)")
-                println(pedestal)
-                fig, ax = plt.subplots()
-                d = copy(data[:, :, i])
-                d[d .< 0] .= 0
-                ax.imshow(log10.(d)', origin=:lower, cmap=:cubehelix)
-                patches = get_patches(back_ann)
-                for patch in patches
-                    ax.add_patch(patch)
-                end
-                plt.show()
-                plt.close()
-            end
+            # if i == 1
+            #     println("$(cube.channel) $(cube.band)")
+            #     println(pedestal)
+            #     fig, ax = plt.subplots()
+            #     d = copy(data[:, :, i])
+            #     d[d .< 0] .= 0
+            #     ax.imshow(log10.(d)', origin=:lower, cmap=:cubehelix)
+            #     patches = get_patches(back_ann)
+            #     for patch in patches
+            #         ax.add_patch(patch)
+            #     end
+            #     plt.show()
+            #     plt.close()
+            # end
             data[:, :, i] .-= pedestal
         end
         

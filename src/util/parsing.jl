@@ -310,12 +310,22 @@ function parse_dust()
     # dust["extinction"]["tau_9_7"]["val"] = τ_guess
     τ_97 = from_dict(dust["extinction"]["tau_9_7"])
     msg *= "\nTau_sil $τ_97"
+    τ_pah = from_dict(dust["extinction"]["tau_pah"])
+    msg *= "\nTau_PAH $τ_pah"
+    N_oli = from_dict(dust["extinction"]["N_oli"])
+    msg *= "\nN_oli $N_oli"
+    N_pyr = from_dict(dust["extinction"]["N_pyr"])
+    msg *= "\nN_pyr $N_pyr"
+    N_for = from_dict(dust["extinction"]["N_for"])
+    msg *= "\nN_for $N_for"
     τ_ice = from_dict(dust["extinction"]["tau_ice"])
     msg *= "\nTau_ice $τ_ice"
     τ_ch = from_dict(dust["extinction"]["tau_ch"])
     msg *= "\nTau_CH $τ_ch"
     β = from_dict(dust["extinction"]["beta"])
     msg *= "\nBeta $β"
+    Cf = from_dict(dust["extinction"]["frac"])
+    msg *= "\nFrac $Cf"
     @debug msg
 
     # Hot dust parameters, temperature, covering fraction, warm tau, and cold tau
@@ -325,8 +335,8 @@ function parse_dust()
     # dust["hot_dust"]["tau_cold"]["val"] = τ_guess
     T_hot = from_dict(dust["hot_dust"]["temp"])
     msg *= "\nTemp $T_hot"
-    Cf = from_dict(dust["hot_dust"]["frac"])
-    msg *= "\nFrac $Cf"
+    hd_Cf = from_dict(dust["hot_dust"]["frac"])
+    msg *= "\nFrac $hd_Cf"
     τ_warm = from_dict(dust["hot_dust"]["tau_warm"])
     msg *= "\nTau_Warm $τ_warm"
     τ_cold = from_dict(dust["hot_dust"]["tau_cold"])
@@ -336,7 +346,8 @@ function parse_dust()
     @debug msg
 
     # Create continuum object
-    continuum = MIRContinuum(T_s, T_dc, α, τ_97, τ_ice, τ_ch, β, T_hot, Cf, τ_warm, τ_cold, sil_peak, temp_A)
+    continuum = MIRContinuum(T_s, T_dc, α, τ_97, τ_pah, N_oli, N_pyr, N_for, τ_ice, τ_ch, β, Cf, 
+        T_hot, hd_Cf, τ_warm, τ_cold, sil_peak, temp_A)
 
     continuum, dust_features, abs_features, abs_taus
 end
@@ -1122,6 +1133,39 @@ function silicate_ohm()
         header=["wave", "ext"])
     data[!, "ext"] ./= 0.4
     data[!, "wave"], data[!, "ext"]
+end
+
+
+function read_dust_κ(x::Real, y::Real, a::Real)
+
+    # Get wavelength, x, y, and a arrays
+    λ = readdlm(joinpath(@__DIR__, "..", "templates", "dorschner_wave.txt"), ' ', Float64, '\n')[:,1]
+    ρ_oli = 3.71    # g/cm^3
+    ρ_pyr = 3.20    # g/cm^3
+    a_cm = a / 1e4  # convert a from μm to cm
+
+    # Read in the Qabs/Qsca arrays
+    q_abs_oli = readdlm(joinpath(@__DIR__, "..", "templates", "dorschner_qabs_oli_$(y)_$(a).txt"), ' ', Float64, '\n')[:,1]
+    q_abs_pyr = readdlm(joinpath(@__DIR__, "..", "templates", "dorschner_qabs_pyr_$(x)_$(a).txt"), ' ', Float64, '\n')[:,1]
+
+    # Convert absorption efficiencies into mass absorption coefficients (cm^2/g)
+    κ_abs_oli = @. 3 * q_abs_oli / (4 * a_cm * ρ_oli)
+    κ_abs_pyr = @. 3 * q_abs_pyr / (4 * a_cm * ρ_pyr)
+
+    # Create interpolating functions over wavelength
+    κ_abs_pyr = Spline1D(λ, κ_abs_pyr, k=3)
+    κ_abs_oli = Spline1D(λ, κ_abs_oli, k=3)
+
+    # Read in the mass absorption coefficiencts for crystalline forsterite
+    for_data = readdlm(joinpath(@__DIR__, "..", "templates", "tamani_crystalline_forsterite_k.txt"), ' ', Float64, '\n', comments=true)
+
+    # Create interpolating function 
+    # extend edges to 0
+    λ_for = [for_data[1,1]-0.2; for_data[1,1]-0.1; for_data[:, 1]; for_data[end, 1]+0.1; for_data[end, 1]+0.2]
+    κ_abs_for = [0.; 0.; for_data[:, 2]; 0.; 0.]
+    κ_abs_for = Spline1D(λ_for, κ_abs_for, k=3)
+
+    κ_abs_oli, κ_abs_pyr, κ_abs_for
 end
 
 

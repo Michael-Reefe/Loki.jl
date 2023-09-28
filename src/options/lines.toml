@@ -33,34 +33,6 @@ acomp_1_kinematic_group_HI = [
     "HI_",
 ]
 
-# Ionized species with doublets and/or multiple lines within the fitting region
-# kinematic_group_OIII = [
-#     "OIII_"
-# ]
-# acomp_1_kinematic_group_OIII = [
-#     "OIII_"
-# ]
-# kinematic_group_OII = [
-#     "OII_"
-# ]
-# kinematic_group_SII = [
-#     "SII_"
-# ]
-# kinematic_group_FeII = [
-#     "FeII_"
-# ]
-# kinematic_group_NeIII = [
-#     "NeIII_"
-# ]
-# kinematic_group_NeV = [
-#     "NeV_"
-# ]
-# acomp_1_kinematic_group_NeV = [
-#     "NeV_"
-# ]
-# kinematic_group_MgV = [
-#     "MgV_"
-# ]
 
 # kinematic_group_lo = [
 #     "ArII_",
@@ -103,6 +75,15 @@ acomp_1_kinematic_group_HI = [
 #     "FeVII_",
 #     "FeVIII_",
 #     "SiIX_",
+# ]
+
+# kinematic_group_h2 = [
+#     "MgVII_",
+#     "FeVIII_"
+# ]
+# acomp_1_kinematic_group_h2 = [
+#     "MgVII_",
+#     "FeVIII_"
 # ]
 
 kinematic_group_l3 = [
@@ -1017,9 +998,11 @@ SiIX_3936 = ["Voigt"]
 MgIV_4867 = ["Voigt"]
 ArVI_4529 = ["Voigt"]
 
+FeII_5340 = ["Voigt"]
 FeVIII_5447 = ["Voigt"]
 MgVII_5503 = ["Voigt"]
 MgV_5609 = ["Voigt"]
+ArII_6985 = ["Voigt"]
 
 NeVI_7652 = ["Voigt"]
 ArIII_8991 = ["Voigt"]
@@ -1027,6 +1010,7 @@ MgVII_9009 = ["Voigt"]
 FeVII_9527 = ["Voigt"]
 SIV_10511 = ["Voigt"]
 
+NeII_12813 = ["Voigt"]
 NeV_14322 = ["Voigt"]
 
 # optional: add [parameters] key to specify individual line priors that 

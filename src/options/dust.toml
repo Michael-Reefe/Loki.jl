@@ -20,7 +20,6 @@ locked = true
 # val = 400.0
 # plim = [300.0, 1500.0]
 # locked = false
-
 # [[dust_continuum_temps]]
 # val = 135.0
 # plim = [90.0, 300.0]
@@ -30,6 +29,10 @@ locked = true
 # plim = [35.0, 90.0]
 # locked = false
 
+# [[dust_continuum_temps]]
+# val = 400.0
+# plim = [300.0, 1500.0]
+# locked = false
 [[dust_continuum_temps]]
 val = 200.0
 plim = [150.0, 300.0]
@@ -553,6 +556,39 @@ locked = false
 val = 0.1
 plim = [0.0, 3.0]
 locked = false
+
+# extinction.tau_pah: the optical depth that the PAH continuum
+# is extincted by 
+# Note: this is only used if extinction_curve = "decompose"
+[extinction.tau_pah]
+val = 0.1
+plim = [0.0, 3.0]
+locked = false
+
+# extinction.N_XXX: column densities for amorphous olivine, amorphous pyroxene, and crystalline forsterite
+# Note: these are only used if extinction_curve = "decompose"
+# Units: g/cm^2
+[extinction.N_oli]
+val = 1.7e-3
+plim = [0.0, 1.0]
+locked = false
+
+[extinction.N_pyr]
+val = 5.0e-5
+plim = [0.0, 1.0]
+locked = false
+
+[extinction.N_for]
+val = 1.0e-4
+plim = [0.0, 1.0]
+locked = false
+
+# extinction.frac: covering fraction for how much of the dust continuum
+# (blackbodies and power laws) is affected by the extinction
+[extinction.frac]
+val = 1.0
+plim = [0.0, 1.0]
+locked = true
  
 # extinction.tau_ice: *not* an actual optical depth -- this is
 # a fraction of the CH optical depth that applies to the ice feature
@@ -604,7 +640,7 @@ locked = false
 
 # Peak location of 10 um silicate emission feature
 [hot_dust.peak]
-val = 10.421
-# val = 10.0178
+# val = 10.421
+val = 10.0178
 plim = [10.0, 10.8]
 locked = true
