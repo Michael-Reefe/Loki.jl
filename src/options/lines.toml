@@ -26,84 +26,86 @@ acomp_1_kinematic_group_H2 = [
 # tie_amp_Balmer = [0.105, 0.158, 0.256, 0.466, 1.0, 2.87]
 # tie_acomp_1_amp_Balmer = [0.105, 0.158, 0.256, 0.466, 1.0, 2.87]
 
-kinematic_group_HI = [
-    "HI_",
-]
-acomp_1_kinematic_group_HI = [
-    "HI_",
-]
-
-
-# kinematic_group_lo = [
-#     "ArII_",
-#     "NeII_",
-#     "FeII_"
+# kinematic_group_HI = [
+#     "HI_",
 # ]
-# acomp_1_kinematic_group_lo = [
-#     "ArII_",
-#     "NeII_",
-#     "FeII_"
+# acomp_1_kinematic_group_HI = [
+#     "HI_",
 # ]
 
-# kinematic_group_med = [
+kinematic_group_lo = [
+    "HI_",
+    "HeI_",
+    "ArII_",
+    "NeII_",
+    "FeII_",
+    "OII_",
+    "SII_"
+]
+acomp_1_kinematic_group_lo = [
+    "HI_",
+    "HeI_",
+    "ArII_",
+    "NeII_",
+    "FeII_",
+    "OII_",
+    "SII_"
+]
+
+kinematic_group_med = [
+    "ArIII_",
+    "SIV_",
+    "MgIV_",
+    "ArVI_",
+    "OIII_",
+    "NeIII_",
+    "HeII_"
+]
+acomp_1_kinematic_group_med = [
+    "ArIII_",
+    "SIV_",
+    "MgIV_",
+    "ArVI_",
+    "OIII_",
+    "NeIII_",
+    "HeII_"
+]
+
+kinematic_group_hi = [
+    "NeV_",
+    "NeVI_",
+    "MgV_",
+    "MgVII_",
+    "FeVII_",
+    "FeVIII_",
+    "SiIX_",
+]
+acomp_1_kinematic_group_hi = [
+    "NeV_",
+    "NeVI_",
+    "MgV_",
+    "MgVII_",
+    "FeVII_",
+    "FeVIII_",
+    "SiIX_",
+]
+
+# kinematic_group_l3 = [
 #     "ArIII_",
 #     "SIV_",
-#     "MgIV_",
-#     "ArVI_"
 # ]
-# acomp_1_kinematic_group_med = [
+# acomp_1_kinematic_group_l3 = [
 #     "ArIII_",
 #     "SIV_",
-#     "MgIV_",
-#     "ArVI_"
 # ]
-
-# kinematic_group_hi = [
-#     "NeV_",
+# kinematic_group_h3 = [
 #     "NeVI_",
-#     "MgV_",
 #     "MgVII_",
-#     "FeVII_",
-#     "FeVIII_",
-#     "SiIX_",
 # ]
-# acomp_1_kinematic_group_hi = [
-#     "NeV_",
+# acomp_1_kinematic_group_h3 = [
 #     "NeVI_",
-#     "MgV_",
 #     "MgVII_",
-#     "FeVII_",
-#     "FeVIII_",
-#     "SiIX_",
 # ]
-
-# kinematic_group_h2 = [
-#     "MgVII_",
-#     "FeVIII_"
-# ]
-# acomp_1_kinematic_group_h2 = [
-#     "MgVII_",
-#     "FeVIII_"
-# ]
-
-kinematic_group_l3 = [
-    "ArIII_",
-    "SIV_"
-]
-acomp_1_kinematic_group_l3 = [
-    "ArIII_",
-    "SIV_"
-]
-kinematic_group_h3 = [
-    "NeVI_",
-    "MgVII_",
-    "FeVII_"
-]
-acomp_1_kinematic_group_h3 = [
-    "NeVI_",
-    "MgVII_",
-    "FeVII_"
-]
 
 # # Lines to make combined flux/eqw maps for
 combined_maps = [["OII_03727", "OII_03729"]]
@@ -623,55 +625,46 @@ annotate = true
 wave = 5.05312
 latex = "H$_2$ 0-0 $S(8)$"
 annotate = true
-sort_order = 1
 
 [lines.H200_S7]
 wave = 5.51118
 latex = "H$_2$ 0-0 $S(7)$"
 annotate = true
-sort_order = 1
 
 [lines.H200_S6]
 wave = 6.10857
 latex = "H$_2$ 0-0 $S(6)$"
 annotate = true
-sort_order = 1
 
 [lines.H200_S5]
 wave = 6.90952
 latex = "H$_2$ 0-0 $S(5)$"
 annotate = true
-sort_order = 1
 
 [lines.H200_S4]
 wave = 8.02505
 latex = "H$_2$ 0-0 $S(4)$"
 annotate = true
-sort_order = 1
 
 [lines.H200_S3]
 wave = 9.66492
 latex = "H$_2$ 0-0 $S(3)$"
 annotate = true
-sort_order = 1
 
 [lines.H200_S2]
 wave = 12.27861
 latex = "H$_2$ 0-0 $S(2)$"
 annotate = true
-sort_order = 1
 
 [lines.H200_S1]
 wave = 17.03484
 latex = "H$_2$ 0-0 $S(1)$"
 annotate = true
-sort_order = 1
 
 [lines.H200_S0]
 wave = 28.21883
 latex = "H$_2$ 0-0 $S(0)$"
 annotate = true
-sort_order = 1
 
 # Other molecular Hydrogen lines (disabled):
 
@@ -975,14 +968,26 @@ default = "Voigt"
 
 ### Optical lines ###
 
-# HI_H_beta = ["Voigt"]
-# HI_H_gamma = ["Voigt"]
-# HI_H_delta = ["Voigt"]
-# HI_H_epsilon = ["Voigt"]
-# HI_H_zeta = ["Voigt"]
+NeV_03426 = ["Voigt"]
+OIII_03445 = ["Voigt"]
+OII_03727 = ["Voigt"]
+OII_03729 = ["Voigt"]
+NeIII_03869 = ["Voigt"]
+NeIII_03967 = ["Voigt"]
+HeI_03889 = ["Voigt"]
+SII_04069 = ["Voigt"]
+SII_04077 = ["Voigt"]
+OIII_04364 = ["Voigt"]
+HeII_04687 = ["Voigt"]
 
-# OIII_04960 = ["Voigt"]
-# OIII_05008 = ["Voigt"]
+HI_H_beta = ["Voigt"]
+HI_H_gamma = ["Voigt"]
+HI_H_delta = ["Voigt"]
+HI_H_epsilon = ["Voigt"]
+HI_H_zeta = ["Voigt"]
+
+OIII_04960 = ["Voigt"]
+OIII_05008 = ["Voigt"]
 
 ### MIR lines ###
 

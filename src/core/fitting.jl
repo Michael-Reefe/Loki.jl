@@ -360,10 +360,10 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     if cube_fitter.spectral_region == :MIR
         I_model, comps = model_continuum(λ, popt, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
             cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.κ_abs, cube_fitter.custom_ext_template, 
-            cube_fitter.fit_sil_emission, false, templates,  true)
+            cube_fitter.fit_sil_emission, false, templates, true)
         for s in 1:cube_fitter.n_templates
             pₑ = 3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law
-            if !force_noext && (popt[pₑ] != 0) && (nanminimum(abs.(I_model .- comps["templates_$s"])) .< nanmedian(σ./N))
+            if !(lock[pₑ]) && !force_noext && (popt[pₑ] != 0) && (nanminimum(abs.(I_model .- comps["templates_$s"])) .< nanmedian(σ./N))
                 @debug "Redoing the fit with optical depth locked to 0 due to template amplitudes"
                 return continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, templates, mask_lines, mask_bad, N, false, init=init,
                     use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots, force_noext=true)
@@ -649,7 +649,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # set optical depth to 0 if the template fits all of the spectrum
     for s in 1:cube_fitter.n_templates
         pₑ = 3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law
-        if !force_noext && (popt[pₑ] != 0) && (nanminimum(abs.(I_model .- comps["templates_$s"])) .< nanmedian(σ./N))
+        if !(lock_1[pₑ]) && !force_noext && (popt[pₑ] != 0) && (nanminimum(abs.(I_model .- comps["templates_$s"])) .< nanmedian(σ./N))
             @debug "Redoing the fit with optical depth locked to 0 due to template amplitudes"
             return continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, templates, mask_lines, mask_bad, N, split_flag, init=init,
                 use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots, force_noext=true)
@@ -793,6 +793,7 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
             parameters = p₀[pstart:pstop]
             plock = param_lock[pstart:pstop]
             pfree = parameters[.~plock]
+            pfree = clamp.(pfree, lower_bounds[pstart:pstop][.~plock], upper_bounds[pstart:pstop][.~plock])
 
             function fit_func_test(x, pfree) 
                 p = zeros(length(parameters))
@@ -1223,7 +1224,8 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
                         end
                     end
                     # Velocity offsets for the integrated spectrum shouldnt be too large
-                    if abs(popt[pᵢ+1]) > 500.
+                    # if abs(popt[pᵢ+1]) > 500.
+                    if !cube_fitter.fit_all_global
                         popt[pᵢ+1] = 0.
                     end
 
