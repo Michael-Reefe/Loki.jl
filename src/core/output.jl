@@ -2,10 +2,17 @@
 
 const ascii_lowercase = "abcdefghijklmnopqrstuvwxyz"
 
+
+"""
+    sort_line_components!(cube_fitter, param_maps, param_errs, index, cube_data)
+
+A helper function that sorts line parameters based on a sorting criterion (flux, FWHM, voff, etc.) so that
+the parameter maps look continuous.
+"""
 function sort_line_components!(cube_fitter::CubeFitter, param_maps::ParamMaps, param_errs::Vector{<:ParamMaps}, 
     index::CartesianIndex, cube_data::NamedTuple)
 
-    # Reorder line parameters sorted by the FWHM velocity
+    # Reorder line parameters
     if !isnothing(cube_fitter.sort_line_components)
         for k ∈ 1:cube_fitter.n_lines
             # n_prof = sum([!isnothing(cube_fitter.lines.profiles[k, j]) for j ∈ 1:cube_fitter.n_comps])
@@ -168,6 +175,47 @@ function sort_line_components!(cube_fitter::CubeFitter, param_maps::ParamMaps, p
         end
     end
 
+end
+
+
+"""
+    sort_temperatures!(cube_fitter, param_maps, param_errs, index)
+
+A helper function that sorts dust continua parameters based on the temperature parameters so that the 
+parameter maps look continuous.
+"""
+function sort_temperatures!(cube_fitter::CubeFitter, param_maps::ParamMaps, param_errs::Vector{<:ParamMaps},
+    index::CartesianIndex)
+
+    # Collect the relevant dust continuum parameters
+    amps = zeros(cube_fitter.n_dust_cont)
+    amp_errs_lo = zeros(cube_fitter.n_dust_cont)
+    amp_errs_hi = zeros(cube_fitter.n_dust_cont)
+    temps = zeros(cube_fitter.n_dust_cont)
+    temp_errs_lo = zeros(cube_fitter.n_dust_cont)
+    temp_errs_hi = zeros(cube_fitter.n_dust_cont)
+
+    for i in 1:cube_fitter.n_dust_cont
+        amps[i] = param_maps.dust_continuum[i][:amp][index]
+        amp_errs_lo[i] = param_errs[1].dust_continuum[i][:amp][index]
+        amp_errs_hi[i] = param_errs[2].dust_continuum[i][:amp][index]
+        temps[i] = param_maps.dust_continuum[i][:temp][index]
+        temp_errs_lo[i] = param_errs[1].dust_continuum[i][:temp][index]
+        temp_errs_hi[i] = param_errs[2].dust_continuum[i][:temp][index]
+    end
+
+    # sort by the temperature
+    ss = sortperm(temps, rev=true)
+
+    # reassign the parameters in the new order
+    for i in eachindex(ss)
+        param_maps.dust_continuum[i][:amp][index] = amps[ss[i]]
+        param_errs[1].dust_continuum[i][:amp][index] = amp_errs_lo[ss[i]]
+        param_errs[2].dust_continuum[i][:amp][index] = amp_errs_hi[ss[i]]
+        param_maps.dust_continuum[i][:temp][index] = temps[ss[i]]
+        param_errs[1].dust_continuum[i][:temp][index] = temp_errs_lo[ss[i]]
+        param_errs[2].dust_continuum[i][:temp][index] = temp_errs_hi[ss[i]]
+    end
 end
 
 
@@ -521,6 +569,8 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             pᵢ += 3
         end
 
+        # Sort the dust continuum parameters based on the temperature
+        sort_temperatures!(cube_fitter, param_maps, param_errs, index)
         # Sort the parameters for multicomponent lines
         sort_line_components!(cube_fitter, param_maps, param_errs, index, cube_data)
 
@@ -1238,8 +1288,8 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     dA = angular_diameter_dist(u"pc", cosmo, z)
     # Remove units
     dA = uconvert(NoUnits, dA/u"pc")
-    # l = d * theta (") where theta is chosen as 1/4 the horizontal extent of the image
-    l = dA * (size(data, 1) * pix_as / 4) * π/180 / 3600  
+    # l = d * theta (") where theta is chosen as 1/5 the horizontal extent of the image
+    l = dA * (size(data, 1) * pix_as / 5) * π/180 / 3600  
     # Round to a nice even number
     l = Int(round(l, sigdigits=1))
      # new angular size for this scale
@@ -1258,7 +1308,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         l = Int(l / 10^9)
         unit = "Gpc"
     end
-    scalebar_text = cosmo.h ≈ 1.0 ? L"%$l$h^{-1}$ %$unit" : L"%$l %$unit"
+    scalebar_text = cosmo.h ≈ 1.0 ? L"%$l$h^{-1}$ %$unit" : L"$%$l$ %$unit"
     scalebar_1 = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, scalebar_text, "upper center", pad=0, borderpad=0, 
         color=text_color, frameon=false, size_vertical=0.1, label_top=false, bbox_to_anchor=(0.17, 0.1), bbox_transform=ax.transAxes)
     ax.add_artist(scalebar_1)
@@ -1390,8 +1440,15 @@ function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMap
                 minmax = dropdims(nanextrema(cat([param_maps.lines[comp][parameter] for comp in component_keys]..., dims=3), dims=3), dims=3)
                 mindata = [m[1] for m in minmax]
                 maxdata = [m[2] for m in minmax]
-                vmin = quantile(mindata[isfinite.(mindata) .& (snr_filter .> 3)], 0.01)
-                vmax = quantile(maxdata[isfinite.(maxdata) .& (snr_filter .> 3)], 0.99)
+                mask1 = isfinite.(mindata) .& (snr_filter .> 3)
+                mask2 = isfinite.(maxdata) .& (snr_filter .> 3)
+                if sum(mask1) > 0 && sum(mask2) > 0
+                    vmin = quantile(mindata[mask1], 0.01)
+                    vmax = quantile(maxdata[mask2], 0.99)
+                else
+                    vmin = 0.
+                    vmax = 1.
+                end
                 if parameter in (:voff, :voff_indiv)
                     vlim = max(abs(vmin), abs(vmax))
                     vmin = -vlim
@@ -1765,8 +1822,10 @@ function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
             data = param_maps.stellar_populations[i][parameter]
             name_i = join(["stellar_populations", i, parameter], "_")
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "continuum", "$(name_i).pdf")
+            # continuum SNR
+            snr_filt = dropdims(nanmedian(cube_fitter.cube.I ./ cube_fitter.cube.σ, dims=3), dims=3)
             plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf),
-                cube_fitter.cosmology, cube_fitter.cube.wcs, marker=centroid)
+                cube_fitter.cosmology, cube_fitter.cube.wcs, marker=centroid, snr_filter=snr_filt, snr_thresh=snr_thresh)
         end
     end
 
@@ -1775,8 +1834,10 @@ function plot_opt_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         data = param_maps.stellar_kinematics[parameter]
         name_i = join(["stellar_kinematics", parameter], "_")
         save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "continuum", "$(name_i).pdf")
+        # continuum SNR
+        snr_filt = dropdims(nanmedian(cube_fitter.cube.I ./ cube_fitter.cube.σ, dims=3), dims=3)
         plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf),
-            cube_fitter.cosmology, cube_fitter.cube.wcs, marker=centroid)
+            cube_fitter.cosmology, cube_fitter.cube.wcs, marker=centroid, snr_filter=snr_filt, snr_thresh=snr_thresh)
     end
 
     # Attenuation parameters
@@ -2423,7 +2484,7 @@ end
 
 # Optical implementation of the write_fits function
 function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel, param_maps::ParamMaps, 
-    param_errs::Vector{<:ParamMaps}; aperture::Union{Vector{Aperture.AbstractAperture},Nothing}=nothing)
+    param_errs::Vector{<:ParamMaps}; aperture::Union{Vector{<:Aperture.AbstractAperture},Nothing}=nothing)
 
     aperture_keys = []
     aperture_vals = []

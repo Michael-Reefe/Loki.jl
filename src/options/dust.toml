@@ -31,15 +31,15 @@ locked = true
 
 # [[dust_continuum_temps]]
 # val = 400.0
-# plim = [300.0, 1500.0]
+# plim = [0.0, 1500.0]
 # locked = false
 [[dust_continuum_temps]]
 val = 200.0
-plim = [150.0, 250.0]
+plim = [0.0, 300.0]
 locked = false
 [[dust_continuum_temps]]
-val = 100.0
-plim = [35.0, 150.0]
+val = 90.0
+plim = [0.0, 300.0]
 locked = false
 
 # [[dust_continuum_temps]]
@@ -557,7 +557,7 @@ locked = false
 # is extincted by 
 # Note: this is only used if extinction_curve = "decompose"
 [extinction.tau_pah]
-val = 0.1
+val = 1.0
 plim = [0.0, 3.0]
 locked = false
 

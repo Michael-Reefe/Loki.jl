@@ -81,6 +81,16 @@ function generate_psf_model!(cube::DataCube, psf_model_dir::String=""; interpola
         size_obs = size(cube.I)[1:2]
         if size_psf != size_obs
             @debug "Sizes of PSF and Observation data do not match: $size_psf and $size_obs. Masking the edges of the PSF data."
+            while size_obs[1] > size_psf[1]
+                data_slice = ones(1, size(data_shift)[2:3]...) .* NaN
+                data_shift = cat(data_shift, data_slice, data_slice, dims=1)
+                size_psf = size(data_shift)[1:2]
+            end
+            while size_obs[2] > size_psf[2]
+                data_slice = ones(size(data_shift, 1), 1, size(data_shift, 3)) .* NaN
+                data_shift = cat(data_shift, data_slice, data_slice, dims=2)
+                size_psf = size(data_shift)[1:2]
+            end
             data_shift = data_shift[1:size_obs[1], 1:size_obs[2], :]
         end
 
@@ -245,8 +255,10 @@ function generate_nuclear_template(cube::DataCube, ap_r::Real=0., spline_width::
     end
 
     # Do a cubic spline fit to get a good S/N
-    λknots = cube.λ[1+spline_width:spline_width:end-spline_width]
-    nuc1d = Spline1D(cube.λ, nuc1d, λknots, k=3, bc="extrapolate")(cube.λ)
+    if spline_width > 0
+        λknots = cube.λ[1+spline_width:spline_width:end-spline_width]
+        nuc1d = Spline1D(cube.λ, nuc1d, λknots, k=3, bc="extrapolate")(cube.λ)
+    end
 
     # Normalize the PSF models and combine them
     psf_model = copy(cube.psf_model)

@@ -1188,7 +1188,7 @@ function generate_stellar_populations(λ::Vector{<:Real}, lsf::Vector{<:Real}, z
     name::String)
 
     # Make sure λ is logarithmically binned
-    @assert (λ[2]/λ[1]) ≈ (λ[end]/λ[end-1]) "Input spectrum must be logarithmically binned to fit optical data!"
+    @assert isapprox((λ[2]/λ[1]), (λ[end]/λ[end-1]), rtol=1e-6) "Input spectrum must be logarithmically binned to fit optical data!"
 
     # Test to see if templates have already been generated
     if isfile(joinpath("output_$name", "stellar_templates.loki"))
@@ -1284,7 +1284,7 @@ fixed, we are free to pre-compute the FFTs).
 function generate_feii_templates(λ::Vector{<:Real}, lsf::Vector{<:Real})
 
     # Make sure λ is logarithmically binned
-    @assert (λ[2]/λ[1]) ≈ (λ[end]/λ[end-1]) "Input spectrum must be logarithmically binned to fit optical data!"
+    @assert isapprox((λ[2]/λ[1]), (λ[end]/λ[end-1]), rtol=1e-6) "Input spectrum must be logarithmically binned to fit optical data!"
 
     # Read the templates in from the specified directory
     template_path = joinpath(@__DIR__, "..", "templates", "veron-cetty_2004")

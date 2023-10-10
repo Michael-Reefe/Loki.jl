@@ -1549,7 +1549,7 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, spaxel::CartesianInd
         end
     end
     # Also lock if the continuum is within 1 std dev of 0
-    if nanmedian(I) ≤ 3nanmedian(σ)
+    if nanmedian(I) ≤ 2nanmedian(σ)
         ext_lock[:] .= true
     end
     # if !init
@@ -1593,13 +1593,16 @@ function get_opt_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, 
 
     amp_ssp_plim = (0., Inf)
     amp_pl_plim = (0., Inf)
-    ssp_plim = vcat([[amp_ssp_plim, ai.limits, zi.limits] for (ai, zi) in zip(continuum.ssp_ages, continuum.ssp_metallicities)]...)
-    if !init
-        ssp_locked = vcat([[false, true, true] for _ in 1:cube_fitter.n_ssps]...)
-    else
-        ssp_locked = vcat([[false, ai.locked, zi.locked] for (ai, zi) in zip(continuum.ssp_ages, continuum.ssp_metallicities)]...)
-    end
-    # ssp_locked = vcat([[false, ai.locked, zi.locked] for (ai, zi) in zip(continuum.ssp_ages, continuum.ssp_metallicities)]...)
+    age_univ = age(u"Gyr", cube_fitter.cosmology, cube_fitter.z).val
+    age_lim = [(ai.limits[1], clamp(ai.limits[2], 0., age_univ)) for ai in continuum.ssp_ages]
+
+    ssp_plim = vcat([[amp_ssp_plim, ai, zi.limits] for (ai, zi) in zip(age_lim, continuum.ssp_metallicities)]...)
+    # if !init
+    #     ssp_locked = vcat([[false, true, true] for _ in 1:cube_fitter.n_ssps]...)
+    # else
+    #     ssp_locked = vcat([[false, ai.locked, zi.locked] for (ai, zi) in zip(continuum.ssp_ages, continuum.ssp_metallicities)]...)
+    # end
+    ssp_locked = vcat([[false, ai.locked, zi.locked] for (ai, zi) in zip(continuum.ssp_ages, continuum.ssp_metallicities)]...)
 
     stel_kin_plim = [continuum.stel_vel.limits, continuum.stel_vdisp.limits]
     stel_kin_locked = [continuum.stel_vel.locked, continuum.stel_vdisp.locked]
@@ -1621,13 +1624,6 @@ function get_opt_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, 
     atten_plim = [continuum.E_BV.limits, continuum.E_BV_factor.limits]
     atten_locked = [continuum.E_BV.locked, continuum.E_BV_factor.locked]
 
-    # test the SNR of the H-beta and H-gamma lines
-    Hβ_snr = test_line_snr(0.4862691, 0.0080, λ, I)
-    Hγ_snr = test_line_snr(0.4341691, 0.0080, λ, I)
-    # if the SNR is less than 3, we cannot constrain E(B-V)_gas, so lock it to 0
-    if (Hβ_snr < 3) || (Hγ_snr < 2)
-        atten_locked = [true, true]
-    end
     # Lock E(B-V) if an extinction map has been provided
     if !isnothing(cube_fitter.extinction_map) && !init
         atten_locked = [true, true]
@@ -1763,7 +1759,7 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
 
         # Set τ_9.7 and τ_CH to 0 if the continuum is within 1 std dev of 0
         lock_abs = false
-        if nanmedian(I) ≤ 3nanmedian(σ)
+        if nanmedian(I) ≤ 2nanmedian(σ)
             lock_abs = true
             if cube_fitter.extinction_curve != "decompose"
                 p₀[pᵢ] = 0.
@@ -2030,16 +2026,6 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         end
         pᵢ += 2
 
-        # test the SNR of the H-beta line
-        Hβ_snr = test_line_snr(0.4862691, 0.0060, λ, I)
-        Hγ_snr = test_line_snr(0.4341691, 0.0080, λ, I)
-        # if the SNR is less than 3, we cannot constrain E(B-V), so lock it to 0
-        if ((Hβ_snr < 3) || (Hγ_snr < 2)) && isnothing(cube_fitter.extinction_map)
-            @debug "Locking E(B-V) to 0 due to insufficient H-beta emission"
-            p₀[pᵢ] = 0.
-            p₀[pᵢ+1] = continuum.E_BV_factor.value
-        end
-
         if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
             pᵢ += 1
         end
@@ -2083,7 +2069,16 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
             m_ssps[i] = nanmedian(I) / att / cube_fitter.n_ssps
         end
 
-        ssp_pars = vcat([[mi, ai.value, zi.value] for (mi, ai, zi) in zip(m_ssps, continuum.ssp_ages, continuum.ssp_metallicities)]...)
+        # SSP ages
+        a_ssps = copy([ai.value for ai in continuum.ssp_ages])
+        for i in eachindex(a_ssps)
+            if iszero(a_ssps[i])
+                # take 0 to mean that we should guess the age based on the redshift
+                a_ssps[i] = age(u"Gyr", cube_fitter.cosmology, cube_fitter.z).val - 0.1
+            end
+        end
+
+        ssp_pars = vcat([[mi, ai, zi.value] for (mi, ai, zi) in zip(m_ssps, a_ssps, continuum.ssp_metallicities)]...)
 
         # Stellar kinematics
         stel_kin_pars = [continuum.stel_vel.value, continuum.stel_vdisp.value]

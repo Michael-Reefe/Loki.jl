@@ -124,7 +124,7 @@ subtract_cubic_spline = false
 # cosmology options: Controls the cosmology used for distance / luminosity calculations.
 # If h is set to 1, the distances in plot scale bars will be shown with h^-1 units.
 [cosmology]
-h = 1.0           # Hubble constant (in km s^-1 Mpc^-1) / 100
+h = 0.7           # Hubble constant (in km s^-1 Mpc^-1) / 100
 omega_m = 0.27    # matter density parameter
 omega_K = 0.0     # curvature density parameter
 omega_r = 0.0     # radiation density parameter
