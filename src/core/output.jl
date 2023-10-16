@@ -302,19 +302,16 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             param_errs[2].extinction[:tau_9_7][index] = out_errs[index, pᵢ, 2]
             pᵢ += 1
         else
-            param_maps.extinction[:tau_pah][index] = out_params[index, pᵢ]
-            param_errs[1].extinction[:tau_pah][index] = out_errs[index, pᵢ, 1]
-            param_errs[2].extinction[:tau_pah][index] = out_errs[index, pᵢ, 2]
-            param_maps.extinction[:N_oli][index] = out_params[index, pᵢ+1] > 0 ? log10(out_params[index, pᵢ+1]) : -Inf
-            param_errs[1].extinction[:N_oli][index] = out_params[index, pᵢ+1] > 0 ? out_errs[index, pᵢ+1, 1] / (log(10) * out_params[index, pᵢ+1]) : NaN
-            param_errs[2].extinction[:N_oli][index] = out_params[index, pᵢ+1] > 0 ? out_errs[index, pᵢ+1, 2] / (log(10) * out_params[index, pᵢ+1]) : NaN
-            param_maps.extinction[:N_pyr][index] = out_params[index, pᵢ+2] > 0 ? log10(out_params[index, pᵢ+2]) : -Inf
-            param_errs[1].extinction[:N_pyr][index] = out_params[index, pᵢ+2] > 0 ? out_errs[index, pᵢ+2, 1] / (log(10) * out_params[index, pᵢ+2]) : NaN
-            param_errs[2].extinction[:N_pyr][index] = out_params[index, pᵢ+2] > 0 ? out_errs[index, pᵢ+2, 2] / (log(10) * out_params[index, pᵢ+2]) : NaN
-            param_maps.extinction[:N_for][index] = out_params[index, pᵢ+3] > 0 ? log10(out_params[index, pᵢ+3]) : -Inf
-            param_errs[1].extinction[:N_for][index] = out_params[index, pᵢ+3] > 0 ? out_errs[index, pᵢ+3, 1] / (log(10) * out_params[index, pᵢ+3]) : NaN
-            param_errs[2].extinction[:N_for][index] = out_params[index, pᵢ+3] > 0 ? out_errs[index, pᵢ+3, 2] / (log(10) * out_params[index, pᵢ+3]) : NaN
-            pᵢ += 4
+            param_maps.extinction[:N_oli][index] = out_params[index, pᵢ] > 0 ? log10(out_params[index, pᵢ]) : -Inf
+            param_errs[1].extinction[:N_oli][index] = out_params[index, pᵢ] > 0 ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
+            param_errs[2].extinction[:N_oli][index] = out_params[index, pᵢ] > 0 ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
+            param_maps.extinction[:N_pyr][index] = out_params[index, pᵢ+1] > 0 ? log10(out_params[index, pᵢ+1]) : -Inf
+            param_errs[1].extinction[:N_pyr][index] = out_params[index, pᵢ+1] > 0 ? out_errs[index, pᵢ+1, 1] / (log(10) * out_params[index, pᵢ+1]) : NaN
+            param_errs[2].extinction[:N_pyr][index] = out_params[index, pᵢ+1] > 0 ? out_errs[index, pᵢ+1, 2] / (log(10) * out_params[index, pᵢ+1]) : NaN
+            param_maps.extinction[:N_for][index] = out_params[index, pᵢ+2] > 0 ? log10(out_params[index, pᵢ+2]) : -Inf
+            param_errs[1].extinction[:N_for][index] = out_params[index, pᵢ+2] > 0 ? out_errs[index, pᵢ+2, 1] / (log(10) * out_params[index, pᵢ+2]) : NaN
+            param_errs[2].extinction[:N_for][index] = out_params[index, pᵢ+2] > 0 ? out_errs[index, pᵢ+2, 2] / (log(10) * out_params[index, pᵢ+2]) : NaN
+            pᵢ += 3
         end
         param_maps.extinction[:tau_ice][index] = out_params[index, pᵢ]
         param_errs[1].extinction[:tau_ice][index] = out_errs[index, pᵢ, 1]
@@ -613,11 +610,10 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             if cube_fitter.extinction_curve != "decompose"
                 cube_model.extinction[:, index, 1] .= comps["extinction"]
             else
-                cube_model.extinction[:, index, 1] .= comps["ext_pah"]
-                cube_model.extinction[:, index, 2] .= comps["abs_oli"]
-                cube_model.extinction[:, index, 3] .= comps["abs_pyr"]
-                cube_model.extinction[:, index, 4] .= comps["abs_for"]
-                cube_model.extinction[:, index, 5] .= comps["extinction"]
+                cube_model.extinction[:, index, 1] .= comps["abs_oli"]
+                cube_model.extinction[:, index, 2] .= comps["abs_pyr"]
+                cube_model.extinction[:, index, 3] .= comps["abs_for"]
+                cube_model.extinction[:, index, 4] .= comps["extinction"]
             end
             cube_model.abs_ice[:, index] .= comps["abs_ice"]
             cube_model.abs_ch[:, index] .= comps["abs_ch"]
@@ -1641,7 +1637,25 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         data = param_maps.extinction[parameter]
         name_i = join(["extinction", parameter], "_")
         save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "extinction", "$(name_i).pdf")
+        snr_filt = nothing
+        # if parameter == :tau_pah
+            # snr_filt = dropdims(nanmaximum(cat([param_maps.dust_features[df][:SNR] for df ∈ cube_fitter.dust_features.names]..., dims=3), dims=3), dims=3)
+        # end
         plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf), 
+            cube_fitter.cosmology, cube_fitter.cube.wcs, marker=centroid, snr_filter=snr_filt, snr_thresh=snr_thresh)
+    end
+    # Calculate a tau_9.7 map if using the "decompose" method
+    if cube_fitter.extinction_curve == "decompose"
+        N_oli = exp10.(param_maps.extinction[:N_oli])
+        N_oli[.~isfinite.(N_oli)] .= 0.
+        N_pyr = exp10.(param_maps.extinction[:N_pyr])
+        N_pyr[.~isfinite.(N_pyr)] .= 0.
+        N_for = exp10.(param_maps.extinction[:N_for])
+        N_for[.~isfinite.(N_for)] .= 0.
+        data = N_oli .* cube_fitter.κ_abs[1](9.7) .+ N_pyr .* cube_fitter.κ_abs[2](9.7) .+ N_for .* cube_fitter.κ_abs[3](9.7)
+        name_i = join(["extinction", "tau_9_7"], "_")
+        save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "extinction", "$(name_i).pdf")
+        plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf),
             cube_fitter.cosmology, cube_fitter.cube.wcs, marker=centroid)
     end
 
@@ -2134,51 +2148,53 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
     aperture_vals = []
     aperture_comments = []
     # If using an aperture, extract its properties 
-    if typeof(aperture) <: Aperture.AbstractAperture
+    if eltype(aperture) <: Aperture.AbstractAperture
 
         # Get the name (giving the shape of the aperture: circular, elliptical, or rectangular)
-        ap_shape = string(typeof(aperture))
-
+        ap_shape = string(eltype(aperture))
+  
         aperture_keys = ["AP_SHAPE", "AP_X", "AP_Y"]
-        aperture_vals = Any[ap_shape, aperture.x, aperture.y]
+        aperture_vals = Any[ap_shape, aperture[1].x, aperture[1].y]
         aperture_comments = ["The shape of the spectrum extraction aperture", "The x coordinate of the aperture",
             "The y coordinate of the aperture"]
 
         # Get the properties, i.e. radius for circular 
         if contains(ap_shape, "CircularAperture")
-            push!(aperture_keys, "AP_RADIUS")
-            push!(aperture_vals, aperture.r)
-            push!(aperture_comments, "Radius of aperture (pixels)")
+            append!(aperture_keys, ["AP_RADIUS", "AP_SCALE"])
+            append!(aperture_vals, [aperture[1].r, aperture[end].r/aperture[1].r])
+            append!(aperture_comments, ["Radius of aperture (pixels)", "Fractional aperture size increase over wavelength"])
         elseif contains(ap_shape, "EllipticalAperture")
-            append!(aperture_keys, ["AP_A", "AP_B", "AP_ANGLE"])
-            append!(aperture_vals, [aperture.a, aperture.b, aperture.θ])
+            append!(aperture_keys, ["AP_A", "AP_B", "AP_ANGLE", "AP_SCALE"])
+            append!(aperture_vals, [aperture[1].a, aperture[1].b, aperture[1].theta, aperture[end].a/aperture[1].a])
             append!(aperture_comments, ["Semimajor axis of aperture (pixels)", 
-                "Semiminor axis of aperture (pixels)", "Aperture angle in deg."])
+                "Semiminor axis of aperture (pixels)", "Aperture angle in deg.", "Fractional aperture size increase over wavelength"])
         elseif contains(ap_shape, "RectangularAperture")
-            append!(aperture_keys, ["AP_W", "AP_H", "AP_ANGLE"])
-            append!(aperture_vals, [aperture.w, aperture.h, aperture.θ])
+            append!(aperture_keys, ["AP_W", "AP_H", "AP_ANGLE", "AP_SCALE"])
+            append!(aperture_vals, [aperture[1].w, aperture[1].h, aperture[1].theta, aperture[end].w/aperture[1].w])
             append!(aperture_comments, ["Width of aperture (pixels)", 
-                "Height of aperture (pixels)", "Aperture angle in deg."])
+                "Height of aperture (pixels)", "Aperture angle in deg.", "Fractional aperture size increase over wavelength"])
         elseif contains(ap_shape, "CircularAnnulus")
-            append!(aperture_keys, ["AP_R_IN", "AP_R_OUT"])
-            append!(aperture_vals, [aperture.r_in, aperture.r_out])
-            append!(aperture_comments, ["Inner radius of annulus (pixels)", "Outer radius of annulus (pixels)"])
+            append!(aperture_keys, ["AP_R_IN", "AP_R_OUT", "AP_SCALE"])
+            append!(aperture_vals, [aperture[1].r_in, aperture[1].r_out, aperture[end].r_in/aperture[1].r_in])
+            append!(aperture_comments, ["Inner radius of annulus (pixels)", "Outer radius of annulus (pixels)", "Fractional aperture size increase over wavelength"])
         elseif contains(ap_shape, "EllipticalAnnulus")
-            append!(aperture_keys, ["AP_A_IN", "AP_A_OUT", "AP_B_IN", "AP_B_OUT", "AP_ANGLE"])
-            append!(aperture_vals, [aperture.a_in, aperture.a_out, aperture.b_in, aperture.b_out, aperture.θ])
+            append!(aperture_keys, ["AP_A_IN", "AP_A_OUT", "AP_B_IN", "AP_B_OUT", "AP_ANGLE", "AP_SCALE"])
+            append!(aperture_vals, [aperture[1].a_in, aperture[1].a_out, aperture[1].b_in, aperture[1].b_out, aperture[1].theta, aperture[end].a_in/aperture[1].a_in])
             append!(aperture_comments, ["Inner semimajor axis of annulus (pixels)", "Outer semimajor axis of annulus (pixels)",
-                "Inner semiminor axis of annulus (pixels)", "Outer semiminor axis of annulus (pixels)", "Annulus angle in deg."])
+                "Inner semiminor axis of annulus (pixels)", "Outer semiminor axis of annulus (pixels)", "Annulus angle in deg.", 
+                "Fractional aperture size increase over wavelength"])
         elseif contains(ap_shape, "RectangularAnnulus")
-            append!(aperture_keys, ["AP_W_IN", "AP_W_OUT", "AP_H_IN", "AP_H_OUT", "AP_ANGLE"])
-            append!(aperture_vals, [aperture.w_in, aperture.w_out, aperture.h_in, aperture.h_out, aperture.θ])
+            append!(aperture_keys, ["AP_W_IN", "AP_W_OUT", "AP_H_IN", "AP_H_OUT", "AP_ANGLE", "AP_SCALE"])
+            append!(aperture_vals, [aperture[1].w_in, aperture[1].w_out, aperture[1].h_in, aperture[1].h_out, aperture[1].theta, aperture[end].w_in/aperture[1].w_in])
             append!(aperture_comments, ["Inner width of annulus (pixels)", "Outer width of annulus (pixels)",
-                "Inner height of annulus (pixels)", "Outer height of annulus (pixels)", "Aperture angle in deg."])    
+                "Inner height of annulus (pixels)", "Outer height of annulus (pixels)", "Aperture angle in deg.",
+                "Fractional aperture size increase over wavelength"])    
         end
 
         # Also append the aperture area
         push!(aperture_keys, "AP_AREA")
-        push!(aperture_vals, get_area(aperture))
-        push!(aperture_comments, "Area of aperture in pixels")
+        push!(aperture_vals, get_area(aperture[1]))
+        push!(aperture_comments, "Area of aperture in pixels") 
     
     elseif aperture isa String
 
@@ -2247,7 +2263,7 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
             for (k, line) ∈ enumerate(cube_fitter.lines.names)
                 write(f, permutedims(cube_model.lines[:, :, :, k], (2,3,1)); name=uppercase("$line"))              # Emission line profiles
             end
-            ext_names = cube_fitter.extinction_curve == "decompose" ? ["EXTINCTION_PAH", "ABS_OLIVINE", "ABS_PYROXENE", "ABS_FORSTERITE", "EXTINCTION"] : ["EXTINCTION"]
+            ext_names = cube_fitter.extinction_curve == "decompose" ? ["ABS_OLIVINE", "ABS_PYROXENE", "ABS_FORSTERITE", "EXTINCTION"] : ["EXTINCTION"]
             for r ∈ axes(cube_model.extinction, 4)
                 write(f, permutedims(cube_model.extinction[:, :, :, r], (2,3,1)); name=ext_names[r])                    # Extinction model
             end
@@ -2490,50 +2506,52 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
     aperture_vals = []
     aperture_comments = []
     # If using an aperture, extract its properties 
-    if typeof(aperture) <: Aperture.AbstractAperture
+    if eltype(aperture) <: Aperture.AbstractAperture
 
         # Get the name (giving the shape of the aperture: circular, elliptical, or rectangular)
-        ap_shape = string(typeof(aperture))
+        ap_shape = string(eltype(aperture))
 
         aperture_keys = ["AP_SHAPE", "AP_X", "AP_Y"]
-        aperture_vals = Any[ap_shape, aperture.x, aperture.y]
+        aperture_vals = Any[ap_shape, aperture[1].x, aperture[1].y]
         aperture_comments = ["The shape of the spectrum extraction aperture", "The x coordinate of the aperture",
             "The y coordinate of the aperture"]
 
         # Get the properties, i.e. radius for circular 
         if contains(ap_shape, "CircularAperture")
-            push!(aperture_keys, "AP_RADIUS")
-            push!(aperture_vals, aperture.r)
-            push!(aperture_comments, "Radius of aperture (pixels)")
+            append!(aperture_keys, ["AP_RADIUS", "AP_SCALE"])
+            append!(aperture_vals, [aperture[1].r, aperture[end].r/aperture[1].r])
+            append!(aperture_comments, ["Radius of aperture (pixels)", "Fractional aperture size increase over wavelength"])
         elseif contains(ap_shape, "EllipticalAperture")
-            append!(aperture_keys, ["AP_A", "AP_B", "AP_ANGLE"])
-            append!(aperture_vals, [aperture.a, aperture.b, aperture.θ])
+            append!(aperture_keys, ["AP_A", "AP_B", "AP_ANGLE", "AP_SCALE"])
+            append!(aperture_vals, [aperture[1].a, aperture[1].b, aperture[1].theta, aperture[end].a/aperture[1].a])
             append!(aperture_comments, ["Semimajor axis of aperture (pixels)", 
-                "Semiminor axis of aperture (pixels)", "Aperture angle in deg."])
+                "Semiminor axis of aperture (pixels)", "Aperture angle in deg.", "Fractional aperture size increase over wavelength"])
         elseif contains(ap_shape, "RectangularAperture")
-            append!(aperture_keys, ["AP_W", "AP_H", "AP_ANGLE"])
-            append!(aperture_vals, [aperture.w, aperture.h, aperture.θ])
+            append!(aperture_keys, ["AP_W", "AP_H", "AP_ANGLE", "AP_SCALE"])
+            append!(aperture_vals, [aperture[1].w, aperture[1].h, aperture[1].theta, aperture[end].w/aperture[1].w])
             append!(aperture_comments, ["Width of aperture (pixels)", 
-                "Height of aperture (pixels)", "Aperture angle in deg."])
+                "Height of aperture (pixels)", "Aperture angle in deg.", "Fractional aperture size increase over wavelength"])
         elseif contains(ap_shape, "CircularAnnulus")
-            append!(aperture_keys, ["AP_R_IN", "AP_R_OUT"])
-            append!(aperture_vals, [aperture.r_in, aperture.r_out])
-            append!(aperture_comments, ["Inner radius of annulus (pixels)", "Outer radius of annulus (pixels)"])
+            append!(aperture_keys, ["AP_R_IN", "AP_R_OUT", "AP_SCALE"])
+            append!(aperture_vals, [aperture[1].r_in, aperture[1].r_out, aperture[end].r_in/aperture[1].r_in])
+            append!(aperture_comments, ["Inner radius of annulus (pixels)", "Outer radius of annulus (pixels)", "Fractional aperture size increase over wavelength"])
         elseif contains(ap_shape, "EllipticalAnnulus")
-            append!(aperture_keys, ["AP_A_IN", "AP_A_OUT", "AP_B_IN", "AP_B_OUT", "AP_ANGLE"])
-            append!(aperture_vals, [aperture.a_in, aperture.a_out, aperture.b_in, aperture.b_out, aperture.θ])
+            append!(aperture_keys, ["AP_A_IN", "AP_A_OUT", "AP_B_IN", "AP_B_OUT", "AP_ANGLE", "AP_SCALE"])
+            append!(aperture_vals, [aperture[1].a_in, aperture[1].a_out, aperture[1].b_in, aperture[1].b_out, aperture[1].theta, aperture[end].a_in/aperture[1].a_in])
             append!(aperture_comments, ["Inner semimajor axis of annulus (pixels)", "Outer semimajor axis of annulus (pixels)",
-                "Inner semiminor axis of annulus (pixels)", "Outer semiminor axis of annulus (pixels)", "Annulus angle in deg."])
+                "Inner semiminor axis of annulus (pixels)", "Outer semiminor axis of annulus (pixels)", "Annulus angle in deg.", 
+                "Fractional aperture size increase over wavelength"])
         elseif contains(ap_shape, "RectangularAnnulus")
-            append!(aperture_keys, ["AP_W_IN", "AP_W_OUT", "AP_H_IN", "AP_H_OUT", "AP_ANGLE"])
-            append!(aperture_vals, [aperture.w_in, aperture.w_out, aperture.h_in, aperture.h_out, aperture.θ])
+            append!(aperture_keys, ["AP_W_IN", "AP_W_OUT", "AP_H_IN", "AP_H_OUT", "AP_ANGLE", "AP_SCALE"])
+            append!(aperture_vals, [aperture[1].w_in, aperture[1].w_out, aperture[1].h_in, aperture[1].h_out, aperture[1].theta, aperture[end].w_in/aperture[1].w_in])
             append!(aperture_comments, ["Inner width of annulus (pixels)", "Outer width of annulus (pixels)",
-                "Inner height of annulus (pixels)", "Outer height of annulus (pixels)", "Aperture angle in deg."])   
+                "Inner height of annulus (pixels)", "Outer height of annulus (pixels)", "Aperture angle in deg.",
+                "Fractional aperture size increase over wavelength"])    
         end
 
         # Also append the aperture area
         push!(aperture_keys, "AP_AREA")
-        push!(aperture_vals, get_area(aperture))
+        push!(aperture_vals, get_area(aperture[1]))
         push!(aperture_comments, "Area of aperture in pixels")
     
     elseif aperture isa String

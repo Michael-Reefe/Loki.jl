@@ -172,7 +172,6 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::S, n_power_law::S, cf
     # Add extinction fitting parameters
     extinction = Dict{Symbol, Array{Float64, 2}}()
     if extinction_curve == "decompose"
-        extinction[:tau_pah] = copy(nan_arr)
         extinction[:N_oli] = copy(nan_arr)
         extinction[:N_pyr] = copy(nan_arr)
         extinction[:N_for] = copy(nan_arr)
@@ -497,7 +496,7 @@ function cubemodel_empty(shape::Tuple, n_dust_cont::Integer, n_power_law::Intege
     @debug "dust features comp cubes"
     abs_features = zeros(floattype, shape2..., length(ab_names))
     @debug "absorption features comp cubes"
-    extinction = zeros(floattype, shape2..., extinction_curve == "decompose" ? 5 : 1)
+    extinction = zeros(floattype, shape2..., extinction_curve == "decompose" ? 4 : 1)
     @debug "extinction comp cube"
     abs_ice = zeros(floattype, shape2...)
     @debug "abs_ice comp cube"
@@ -1035,7 +1034,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
 
             if n_templates == 0
                 # Ignore any template amplitude entries in the dust.toml options if there are no templates
-                continuum = MIRContinuum(continuum.T_s, continuum.T_dc, continuum.α, continuum.τ_97, continuum.τ_pah,
+                continuum = MIRContinuum(continuum.T_s, continuum.T_dc, continuum.α, continuum.τ_97, 
                                          continuum.N_oli, continuum.N_pyr, continuum.N_for, continuum.τ_ice,
                                          continuum.τ_ch, continuum.β, continuum.Cf, continuum.T_hot, continuum.Cf_hot, continuum.τ_warm, 
                                          continuum.τ_cold, continuum.sil_peak, Parameter[])
@@ -1183,7 +1182,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
 
         # Total number of parameters for the continuum and line fits
         if spectral_region == :MIR
-            n_params_cont = (2+4) + (out[:extinction_curve] == "decompose" ? 4 : 1) + 2n_dust_cont + 2n_power_law + 
+            n_params_cont = (2+4) + (out[:extinction_curve] == "decompose" ? 3 : 1) + 2n_dust_cont + 2n_power_law + 
                             3n_abs_features + (out[:fit_sil_emission] ? 6 : 0) + n_templates
             n_params_cont += 3 * sum(dust_features.profiles .== :Drude) + 5 * sum(dust_features.profiles .== :PearsonIV)
         elseif spectral_region == :OPT
@@ -1392,7 +1391,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             spaxfiles = [f for f in readdir(joinpath(path, "spaxel_binaries")) if contains(f, "spaxel")]
             for sf in spaxfiles
                 params = readdlm(joinpath(path, "spaxel_binaries", sf), ',', Float64, '\n')[:,1]
-                c1 = (2+4) + (out[:extinction_curve] == "decompose" ? 4 : 1) + 2n_dust_cont + 2n_power_law
+                c1 = (2+4) + (out[:extinction_curve] == "decompose" ? 3 : 1) + 2n_dust_cont + 2n_power_law
                 c2 = c1 + n_abparams_left + 3n_abs_features - n_abparams_right
                 c3 = c2 + n_abparams_right + (out[:fit_sil_emission] ? 6 : 0) + n_templates
                 c4 = c3 + n_dfparams_left + 3sum(dust_features.profiles .== :Drude) + 5sum(dust_features.profiles .== :PearsonIV)
@@ -1534,9 +1533,9 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, spaxel::CartesianInd
         ext_plim = [continuum.τ_97.limits, continuum.τ_ice.limits, continuum.τ_ch.limits, continuum.β.limits, continuum.Cf.limits]
         ext_lock = [continuum.τ_97.locked, continuum.τ_ice.locked, continuum.τ_ch.locked, continuum.β.locked, continuum.Cf.locked]
     else
-        ext_plim = [continuum.τ_pah.limits, continuum.N_oli.limits, continuum.N_pyr.limits, continuum.N_for.limits, 
+        ext_plim = [continuum.N_oli.limits, continuum.N_pyr.limits, continuum.N_for.limits, 
                     continuum.τ_ice.limits, continuum.τ_ch.limits, continuum.β.limits, continuum.Cf.limits]
-        ext_lock = [continuum.τ_pah.locked, continuum.N_oli.locked, continuum.N_pyr.locked, continuum.N_for.locked, 
+        ext_lock = [continuum.N_oli.locked, continuum.N_pyr.locked, continuum.N_for.locked, 
                     continuum.τ_ice.locked, continuum.τ_ch.locked, continuum.β.locked, continuum.Cf.locked]
     end
 
@@ -1545,7 +1544,7 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, spaxel::CartesianInd
         if cube_fitter.extinction_curve != "decompose"
             ext_lock[1] = true
         else
-            ext_lock[1:4] .= true
+            ext_lock[1:3] .= true
         end
     end
     # Also lock if the continuum is within 1 std dev of 0
@@ -1716,7 +1715,8 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         @debug "Using initial best fit continuum parameters from coordinates $closest --> $(coords[argmin(dist)])"
 
         p₀ = pcube_cont[Int.(closest)..., :]
-        pᵢ = 3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law + 4 + 3cube_fitter.n_abs_feat + (cube_fitter.fit_sil_emission ? 6 : 0) + cube_fitter.n_templates
+        pᵢ = 2 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law + 4 + (cube_fitter.extinction_curve == "decompose" ? 3 : 1) + 
+             3cube_fitter.n_abs_feat + (cube_fitter.fit_sil_emission ? 6 : 0) + cube_fitter.n_templates
         pahtemp = model_pah_residuals(cube_fitter.cube.λ, p₀[pᵢ:end], cube_fitter.dust_features.profiles, ones(length(cube_fitter.cube.λ)))
         pah_frac = repeat([maximum(pahtemp)/2], 2)
 
@@ -1755,7 +1755,9 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         end
 
         # Set optical depth based on the initial guess or the initial fit (whichever is larger)
-        p₀[pᵢ] = max(cube_fitter.continuum.τ_97.value, p₀[pᵢ])
+        if cube_fitter.extinction_curve != "decompose"
+            p₀[pᵢ] = max(cube_fitter.continuum.τ_97.value, p₀[pᵢ])
+        end
 
         # Set τ_9.7 and τ_CH to 0 if the continuum is within 1 std dev of 0
         lock_abs = false
@@ -1765,18 +1767,10 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
                 p₀[pᵢ] = 0.
                 p₀[pᵢ+2] = 0.
             else
-                p₀[pᵢ+1:pᵢ+3] .= 0.
-                p₀[pᵢ+5] = 0.
+                p₀[pᵢ:pᵢ+2] .= 0.
+                p₀[pᵢ+4] = 0.
             end
         end
-        # for t in 1:cube_fitter.n_templates
-        #     m = minimum(I .- templates_spax[:, t])
-        #     if m < nanmedian(σ)
-        #         p₀[pᵢ] = 0.
-        #         p₀[pᵢ+2] = 0.
-        #         lock_abs = true
-        #     end
-        # end
 
         # Set τ_9.7 to the guess if the guess_tau flag is set
         if !isnothing(cube_fitter.guess_tau) && (cube_fitter.extinction_curve != "decompose")
@@ -1796,7 +1790,7 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         end
 
         # Do not adjust absorption feature amplitudes since they are multiplicative
-        pᵢ += 4 + (cube_fitter.extinction_curve == "decompose" ? 4 : 1)
+        pᵢ += 4 + (cube_fitter.extinction_curve == "decompose" ? 3 : 1)
         for _ ∈ 1:cube_fitter.n_abs_feat
             if lock_abs
                 p₀[pᵢ] = 0.
@@ -1888,7 +1882,7 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         if cube_fitter.extinction_curve != "decompose"
             extinction_pars = [continuum.τ_97.value, continuum.τ_ice.value, continuum.τ_ch.value, continuum.β.value, continuum.Cf.value]
         else
-            extinction_pars = [continuum.τ_pah.value, continuum.N_oli.value, continuum.N_pyr.value, continuum.N_for.value,
+            extinction_pars = [continuum.N_oli.value, continuum.N_pyr.value, continuum.N_for.value,
                                continuum.τ_ice.value, continuum.τ_ch.value, continuum.β.value, continuum.Cf.value]
         end
         if !isnothing(cube_fitter.guess_tau) && (cube_fitter.extinction_curve != "decompose")
@@ -1903,7 +1897,7 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
     @debug "Continuum Parameter labels: \n [stellar_amp, stellar_temp, " * 
         join(["dust_continuum_amp_$i, dust_continuum_temp_$i" for i ∈ 1:cube_fitter.n_dust_cont], ", ") * 
         join(["power_law_amp_$i, power_law_index_$i" for i ∈ 1:cube_fitter.n_power_law], ", ") *
-        (cube_fitter.extinction_curve == "decompose" ? ", extinction_tau_pah, extinction_N_oli, extinction_N_pyr, extinction_N_for" : ", extinction_tau_97") *
+        (cube_fitter.extinction_curve == "decompose" ? ", extinction_N_oli, extinction_N_pyr, extinction_N_for" : ", extinction_tau_97") *
         ", extinction_tau_ice, extinction_tau_ch, extinction_beta, extinction_Cf, " *  
         join(["$(ab)_tau, $(ab)_mean, $(ab)_fwhm" for ab ∈ cube_fitter.abs_features.names], ", ") *
         (cube_fitter.fit_sil_emission ? ", hot_dust_amp, hot_dust_temp, hot_dust_covering_frac, hot_dust_tau_warm, hot_dust_tau_cold, hot_dust_sil_peak, " : ", ") *
@@ -1933,7 +1927,7 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
     else
         hd_dstep = []
     end
-    extinction_dstep = repeat([deps], cube_fitter.extinction_curve == "decompose" ? 8 : 5)
+    extinction_dstep = repeat([deps], cube_fitter.extinction_curve == "decompose" ? 7 : 5)
     temp_dstep = [deps for _ in 1:cube_fitter.n_templates]
     dstep = Vector{Float64}(vcat(stellar_dstep, dc_dstep, pl_dstep, extinction_dstep, ab_dstep, hd_dstep, temp_dstep, df_dstep))
 
@@ -1943,11 +1937,11 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         p₀, dstep
     else
         # Step 1: Stellar + Dust blackbodies, 2 new amplitudes for the PAH templates, and the extinction parameters
-        pars_1 = vcat(p₀[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.extinction_curve == "decompose" ? 4 : 1)+3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0))+cube_fitter.n_templates], pah_frac)
-        dstep_1 = vcat(dstep[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.extinction_curve == "decompose" ? 4 : 1)+3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0))+cube_fitter.n_templates], [deps, deps])
+        pars_1 = vcat(p₀[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.extinction_curve == "decompose" ? 3 : 1)+3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0))+cube_fitter.n_templates], pah_frac)
+        dstep_1 = vcat(dstep[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.extinction_curve == "decompose" ? 3 : 1)+3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0))+cube_fitter.n_templates], [deps, deps])
         # Step 2: The PAH profile amplitudes, centers, and FWHMs
-        pars_2 = p₀[(3+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.extinction_curve == "decompose" ? 4 : 1)+3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0)+cube_fitter.n_templates):end]
-        dstep_2 = dstep[(3+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.extinction_curve == "decompose" ? 4 : 1)+3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0)+cube_fitter.n_templates):end]
+        pars_2 = p₀[(3+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.extinction_curve == "decompose" ? 3 : 1)+3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0)+cube_fitter.n_templates):end]
+        dstep_2 = dstep[(3+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.extinction_curve == "decompose" ? 3 : 1)+3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0)+cube_fitter.n_templates):end]
 
         pars_1, pars_2, dstep_1, dstep_2
     end
@@ -2255,19 +2249,16 @@ function pretty_print_mir_continuum_results(cube_fitter::CubeFitter, popt::Vecto
             (continuum.τ_97.locked ? " (fixed)" : "") * "\n"
         pᵢ += 1
     else
-        msg *= "τ_PAH: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ]) +/- $(@sprintf "%.2f" perr[pᵢ]) [-] \t Limits: " *
-            "($(@sprintf "%.2f" continuum.τ_pah.limits[1]), $(@sprintf "%.2f" continuum.τ_pah.limits[2]))" * 
-            (continuum.τ_pah.locked ? " (fixed)" : "") * "\n"
-        msg *= "N_oli: \t\t\t\t $(@sprintf "%.2g" popt[pᵢ+1]) +/- $(@sprintf "%.2g" perr[pᵢ+1]) [-] \t Limits: " *
+        msg *= "N_oli: \t\t\t\t $(@sprintf "%.2g" popt[pᵢ]) +/- $(@sprintf "%.2g" perr[pᵢ]) [-] \t Limits: " *
             "($(@sprintf "%.2g" continuum.N_oli.limits[1]), $(@sprintf "%.2g" continuum.N_oli.limits[2]))" * 
             (continuum.N_oli.locked ? " (fixed)" : "") * "\n"
-        msg *= "N_pyr: \t\t\t\t $(@sprintf "%.2g" popt[pᵢ+2]) +/- $(@sprintf "%.2g" perr[pᵢ+2]) [-] \t Limits: " *
+        msg *= "N_pyr: \t\t\t\t $(@sprintf "%.2g" popt[pᵢ+1]) +/- $(@sprintf "%.2g" perr[pᵢ+1]) [-] \t Limits: " *
             "($(@sprintf "%.2g" continuum.N_pyr.limits[1]), $(@sprintf "%.2g" continuum.N_pyr.limits[2]))" * 
             (continuum.N_pyr.locked ? " (fixed)" : "") * "\n"
-        msg *= "N_for: \t\t\t\t $(@sprintf "%.2g" popt[pᵢ+3]) +/- $(@sprintf "%.2g" perr[pᵢ+3]) [-] \t Limits: " *
+        msg *= "N_for: \t\t\t\t $(@sprintf "%.2g" popt[pᵢ+2]) +/- $(@sprintf "%.2g" perr[pᵢ+2]) [-] \t Limits: " *
             "($(@sprintf "%.2g" continuum.N_for.limits[1]), $(@sprintf "%.2g" continuum.N_for.limits[2]))" * 
             (continuum.N_for.locked ? " (fixed)" : "") * "\n"
-        pᵢ += 4
+        pᵢ += 3
     end
     msg *= "τ_ice: \t\t\t\t $(@sprintf "%.2f" popt[pᵢ]) +/- $(@sprintf "%.2f" perr[pᵢ]) [-] \t Limits: " *
         "($(@sprintf "%.2f" continuum.τ_ice.limits[1]), $(@sprintf "%.2f" continuum.τ_ice.limits[2]))" *

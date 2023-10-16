@@ -240,14 +240,17 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     end
 
     # Constrain optical depth to be at least 80% of the guess
-    if !isnothing(cube_fitter.guess_tau)
+    if !isnothing(cube_fitter.guess_tau) && (cube_fitter.extinction_curve != "decompose")
         pₑ = 3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law
         plims[pₑ] = (0.8 * pars_0[pₑ], plims[pₑ][2]) 
     end
     if force_noext
-        pₑ = 3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law
-        pars_0[pₑ] = 0.
-        plock[pₑ] = 1
+        pₑ = [3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law]
+        if cube_fitter.extinction_curve == "decompose"
+            pₑ = pₑ[1]:(pₑ[1]+2)
+        end
+        pars_0[pₑ] .= 0.
+        plock[pₑ] .= 1
     end
 
     # Sort parameters by those that are locked and those that are unlocked
@@ -404,17 +407,21 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         I_model, comps = model_continuum(λ, popt, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
             cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.κ_abs, cube_fitter.custom_ext_template, 
             cube_fitter.fit_sil_emission, false, templates, true)
-        # for s in 1:cube_fitter.n_templates
-        #     pₑ = 3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law
-        #     sil_abs_region = 9.0 .< λ .< 11.0
-        #     if !(lock[pₑ]) && !force_noext && (popt[pₑ] != 0) && sum(sil_abs_region) > 100
-        #         if sum((abs.(I_model .- comps["templates_$s"])[sil_abs_region]) .< (σ[sil_abs_region]./N)) > (sum(sil_abs_region)/10)
-        #             @debug "Redoing the fit with optical depth locked to 0 due to template amplitudes"
-        #             return continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, templates, mask_lines, mask_bad, N, false, init=init,
-        #                 use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots, force_noext=true)
-        #         end
-        #     end
-        # end
+        # set optical depth to 0 if the template fits all of the spectrum
+        for s in 1:cube_fitter.n_templates
+            pₑ = [3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law]
+            if cube_fitter.extinction_curve == "decompose"
+                pₑ = pₑ[1]:(pₑ[1]+2)
+            end
+            sil_abs_region = 9.0 .< λ .< 11.0
+            if any(.~plock[pₑ]) && !force_noext && any(popt[pₑ] .≠ 0) && sum(sil_abs_region) > 100
+                if sum((abs.(I_model .- comps["templates_$s"])[sil_abs_region]) .< (σ[sil_abs_region]./N)) > (sum(sil_abs_region)/2)
+                    @debug "Redoing the fit with optical depth locked to 0 due to template amplitudes"
+                    return continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, templates, mask_lines, mask_bad, N, false, init=init,
+                        use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots, force_noext=true)
+                end
+            end
+        end
     else
         I_model, comps = model_continuum(λ, popt, N, cube_fitter.vres, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
             cube_fitter.n_ssps, cube_fitter.ssp_λ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, 
@@ -513,21 +520,24 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     pars_1, pars_2, dstep_1, dstep_2 = get_continuum_initial_values(cube_fitter, spaxel, λ_spax, I_spax, σ_spax, N, init || use_ap, 
         templates_spax./N, split=true)
     if bootstrap_iter
-        pars_1 = vcat(p1_boots[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.extinction_curve == "decompose" ? 4 : 1)+
+        pars_1 = vcat(p1_boots[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.extinction_curve == "decompose" ? 3 : 1)+
             3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0)+cube_fitter.n_templates)], p1_boots[end-1:end])
-        pars_2 = p1_boots[(3+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.extinction_curve == "decompose" ? 4 : 1)+
+        pars_2 = p1_boots[(3+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.extinction_curve == "decompose" ? 3 : 1)+
             3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0)+cube_fitter.n_templates):end-2]
     end
 
     # Constrain optical depth to be at least 80% of the guess
-    if !isnothing(cube_fitter.guess_tau)
+    if !isnothing(cube_fitter.guess_tau) && (cube_fitter.extinction_curve != "decompose")
         pₑ = 3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law
         plims_1[pₑ] = (0.8 * pars_1[pₑ], plims_1[pₑ][2])
     end
     if force_noext
-        pₑ = 3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law
-        pars_1[pₑ] = 0.
-        lock_1[pₑ] = 1
+        pₑ = [3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law]
+        if cube_fitter.extinction_curve == "decompose"
+            pₑ = pₑ[1]:(pₑ[1]+2)
+        end
+        pars_1[pₑ] .= 0.
+        lock_1[pₑ] .= 1
     end
 
     # Sort parameters by those that are locked and those that are unlocked
@@ -636,9 +646,9 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         ptot[.~lock_2] .= pfree
         ptot[lock_2] .= p2fix
         if !return_comps
-            model_pah_residuals(x, ptot, cube_fitter.dust_features.profiles, ccomps["ext_pah"])
+            model_pah_residuals(x, ptot, cube_fitter.dust_features.profiles, ccomps["extinction"])
         else
-            model_pah_residuals(x, ptot, cube_fitter.dust_features.profiles, ccomps["ext_pah"], true)
+            model_pah_residuals(x, ptot, cube_fitter.dust_features.profiles, ccomps["extinction"], true)
         end
     end
     res_2 = cmpfit(λ_spax, I_spax.-I_cont, σ_spax, fit_step2, p2free, parinfo=parinfo_2, config=config)
@@ -693,17 +703,20 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         cube_fitter.fit_sil_emission, false, templates, true)
 
     # set optical depth to 0 if the template fits all of the spectrum
-    # for s in 1:cube_fitter.n_templates
-    #     pₑ = 3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law
-    #     sil_abs_region = 9.0 .< λ .< 11.0
-    #     if !(lock[pₑ]) && !force_noext && (popt[pₑ] != 0) && sum(sil_abs_region) > 100
-    #         if sum((abs.(I_model .- comps["templates_$s"])[sil_abs_region]) .< (σ[sil_abs_region]./N)) > (sum(sil_abs_region)/10)
-    #             @debug "Redoing the fit with optical depth locked to 0 due to template amplitudes"
-    #             return continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, templates, mask_lines, mask_bad, N, split_flag, init=init,
-    #                 use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots, force_noext=true)
-    #         end
-    #     end
-    # end
+    for s in 1:cube_fitter.n_templates
+        pₑ = [3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law]
+        if cube_fitter.extinction_curve == "decompose"
+            pₑ = pₑ[1]:(pₑ[1]+2)
+        end
+        sil_abs_region = 9.0 .< λ .< 11.0
+        if any(.~lock_1[pₑ]) && !force_noext && any(popt[pₑ] .≠ 0) && sum(sil_abs_region) > 100
+            if sum((abs.(I_model .- comps["templates_$s"])[sil_abs_region]) .< (σ[sil_abs_region]./N)) > (sum(sil_abs_region)/2)
+                @debug "Redoing the fit with optical depth locked to 0 due to template amplitudes"
+                return continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, templates, mask_lines, mask_bad, N, split_flag, init=init,
+                    use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots, force_noext=true)
+            end
+        end
+    end
 
     if init
         cube_fitter.p_init_cont[:] .= popt
@@ -1559,11 +1572,11 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
             ext_curve = cube_fitter.custom_ext_template(λ)
             ext_curve = extinction.(ext_curve, ptot_cont[pₑ], screen=cube_fitter.extinction_screen)
         elseif cube_fitter.extinction_curve == "decompose"
-            τ_oli = ptot_cont[pₑ+1] .* cube_fitter.κ_abs[1](λ)
-            τ_pyr = ptot_cont[pₑ+2] .* cube_fitter.κ_abs[2](λ)
-            τ_for = ptot_cont[pₑ+3] .* cube_fitter.κ_abs[3](λ)
-            τ_97 = ptot_cont[pₑ+1] * cube_fitter.κ_abs[1](9.7) + ptot_cont[pₑ+2] * cube_fitter.κ_abs[2](9.7) + ptot_cont[pₑ+3] * cube_fitter.κ_abs[3](9.7)
-            ext_curve = extinction.((1 .- ptot_cont[pₑ+6]) .* (τ_oli .+ τ_pyr .+ τ_for) .+ ptot_cont[pₑ+6] .* τ_97 .* (9.7./λ).^1.7, 1., screen=cube_fitter.extinction_screen)
+            τ_oli = ptot_cont[pₑ] .* cube_fitter.κ_abs[1](λ)
+            τ_pyr = ptot_cont[pₑ+1] .* cube_fitter.κ_abs[2](λ)
+            τ_for = ptot_cont[pₑ+2] .* cube_fitter.κ_abs[3](λ)
+            τ_97 = ptot_cont[pₑ] * cube_fitter.κ_abs[1](9.7) + ptot_cont[pₑ+1] * cube_fitter.κ_abs[2](9.7) + ptot_cont[pₑ+2] * cube_fitter.κ_abs[3](9.7)
+            ext_curve = extinction.((1 .- ptot_cont[pₑ+5]) .* (τ_oli .+ τ_pyr .+ τ_for) .+ ptot_cont[pₑ+5] .* τ_97 .* (9.7./λ).^1.7, 1., screen=cube_fitter.extinction_screen)
         else
             error("Unrecognized extinction curve: $(cube_fitter.extinction_curve)")
         end
@@ -1936,11 +1949,11 @@ function plot_spaxel_fit(spectral_region::Symbol, λ_um::Vector{<:Real}, I::Vect
                 comps["obscured_continuum"] .+ (n_templates > 0 ? sum([comps["templates_$k"] for k ∈ 1:n_templates], dims=1)[1] : zeros(length(λ))),
                 mode="lines", line=Dict(:color => "green", :width => 1), name="Total Continuum")])
             # Summed up PAH features
-            append!(traces, [PlotlyJS.scatter(x=λ, y=sum([comps["dust_feat_$i"] for i ∈ 1:n_dust_features], dims=1)[1] .* comps["ext_pah"],
+            append!(traces, [PlotlyJS.scatter(x=λ, y=sum([comps["dust_feat_$i"] for i ∈ 1:n_dust_features], dims=1)[1] .* comps["extinction"],
                 mode="lines", line=Dict(:color => "blue", :width => 1), name="PAHs")])
             # Individual PAH features
             for i in 1:n_dust_features
-                append!(traces, [PlotlyJS.scatter(x=λ, y=comps["dust_feat_$i"] .* comps["ext_pah"], mode="lines", line=Dict(:color => "blue", :width => 1), name="PAHs")])
+                append!(traces, [PlotlyJS.scatter(x=λ, y=comps["dust_feat_$i"] .* comps["extinction"], mode="lines", line=Dict(:color => "blue", :width => 1), name="PAHs")])
             end
             # Individual templates
             for j in 1:n_templates
@@ -2050,20 +2063,17 @@ function plot_spaxel_fit(spectral_region::Symbol, λ_um::Vector{<:Real}, I::Vect
                 abs_full .* (fit_sil_emission ? comps["hot_dust"] : zeros(length(λ))) .+
                 comps["obscured_continuum"] .+ comps["unobscured_continuum"]) ./ norm .* factor, "k-", lw=2, alpha=0.5, label="Continuum")
             # individual continuum components
-            if !split_ext
-                ax1.plot(λ, comps["stellar"] .* (Cf .* ext_full .+ (1 .- Cf)) ./ norm .* factor, "m--", alpha=0.5, label="Stellar continuum")
-                for i in 1:n_dust_cont
-                    ax1.plot(λ, comps["dust_cont_$i"] .* (Cf .* ext_full .+ (1 .- Cf)) ./ norm .* factor, "k-", alpha=0.5, label="Dust continuum")
-                end
-                for i in 1:n_power_law
-                    ax1.plot(λ, comps["power_law_$i"] .* (Cf .* ext_full .+ (1 .- Cf)) ./ norm .* factor, "k-", alpha=0.5, label="Power Law")
-                end
-            else
-                ax1.plot(λ, comps["obscured_continuum"] ./ norm .* factor, "-", color="#0b450a", alpha=0.8, label="Obscured continuum")
-                ax1.plot(λ, comps["unobscured_continuum"] ./ norm .* factor, "--", color="#0b450a", alpha=0.8, label="Unobscured continuum")
+            ax1.plot(λ, comps["stellar"] .* (Cf .* ext_full .+ (1 .- Cf)) ./ norm .* factor, "m--", alpha=0.5, label="Stellar continuum")
+            for i in 1:n_dust_cont
+                ax1.plot(λ, comps["dust_cont_$i"] .* (Cf .* ext_full .+ (1 .- Cf)) ./ norm .* factor, "k-", alpha=0.5, label="Dust continuum")
             end
+            for i in 1:n_power_law
+                ax1.plot(λ, comps["power_law_$i"] .* (Cf .* ext_full .+ (1 .- Cf)) ./ norm .* factor, "k-", alpha=0.5, label="Power Law")
+            end
+            # ax1.plot(λ, comps["obscured_continuum"] ./ norm .* factor, "-", color="#0b450a", alpha=0.8, label="Obscured continuum")
+            # ax1.plot(λ, comps["unobscured_continuum"] ./ norm .* factor, "--", color="#0b450a", alpha=0.8, label="Unobscured continuum")
             # full PAH profile
-            ax1.plot(λ, sum([comps["dust_feat_$i"] for i ∈ 1:n_dust_features], dims=1)[1] .* comps["ext_pah"] ./ norm .* factor, "-", 
+            ax1.plot(λ, sum([comps["dust_feat_$i"] for i ∈ 1:n_dust_features], dims=1)[1] .* comps["extinction"] ./ norm .* factor, "-", 
                 color="#0065ff", label="PAHs")
             # plot hot dust
             if haskey(comps, "hot_dust")
@@ -2315,7 +2325,7 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
                 cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, 
                 cube_fitter.fit_sil_emission, cube_fitter.n_templates, cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, 
                 cube_fitter.lines, cube_fitter.flexible_wavesol, lsf_interp_func, cube_fitter.relative_flags, popt_c, popt_l, perr_c, 
-                perr_l, comps["ext_pah"], comps[ext_key], cube_fitter.extinction_curve, mask_lines, I_spline, area_sr, cube_fitter.n_fit_comps, spaxel, !bootstrap_iter)
+                perr_l, comps[ext_key], comps[ext_key], cube_fitter.extinction_curve, mask_lines, I_spline, area_sr, cube_fitter.n_fit_comps, spaxel, !bootstrap_iter)
             p_out = [popt_c; popt_l; p_dust; p_lines; χ2; dof]
             p_err = [perr_c; perr_l; p_dust_err; p_lines_err; 0.; 0.]
         else
@@ -2529,7 +2539,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
             # Plot the fit
             if cube_fitter.plot_spaxels != :none
                 @debug "Plotting spaxel $spaxel best fit" 
-                p_cf = p_out[3+2cube_fitter.n_dust_cont+2cube_fitter.n_power_law+(cube_fitter.extinction_curve=="decompose" ? 4 : 1)+3]
+                p_cf = p_out[3+2cube_fitter.n_dust_cont+2cube_fitter.n_power_law+(cube_fitter.extinction_curve=="decompose" ? 3 : 1)+3]
                 plot_spaxel_fit(cube_fitter.spectral_region, λ, I, I_model, σ, mask_bad, mask_lines, cube_fitter.user_mask, comps, 
                     cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_abs_feat, cube_fitter.n_templates, cube_fitter.n_ssps, 
                     cube_fitter.n_comps, cube_fitter.lines.λ₀, cube_fitter.lines.names, cube_fitter.lines.annotate, cube_fitter.lines.latex, cube_fitter.extinction_screen, 
@@ -2695,7 +2705,7 @@ function fit_stack!(cube_fitter::CubeFitter)
     # Plot the fit
     if cube_fitter.plot_spaxels != :none
         @debug "Plotting spaxel sum initial fit"
-        p_cf = p_out[3+2cube_fitter.n_dust_cont+2cube_fitter.n_power_law+(cube_fitter.extinction_curve=="decompose" ? 4 : 1)+3]
+        p_cf = p_out[3+2cube_fitter.n_dust_cont+2cube_fitter.n_power_law+(cube_fitter.extinction_curve=="decompose" ? 3 : 1)+3]
         plot_spaxel_fit(cube_fitter.spectral_region, λ_init, I_sum_init, I_model_init, σ_sum_init, mask_bad_init, mask_lines_init, cube_fitter.user_mask, comps_init,
             cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.n_abs_feat, cube_fitter.n_templates, cube_fitter.n_ssps, 
             cube_fitter.n_comps, cube_fitter.lines.λ₀, cube_fitter.lines.names, cube_fitter.lines.annotate, cube_fitter.lines.latex, cube_fitter.extinction_screen,

@@ -30,16 +30,16 @@ locked = true
 # locked = false
 
 # [[dust_continuum_temps]]
-# val = 400.0
-# plim = [0.0, 1500.0]
+# val = 200.0
+# plim = [35.0, 300.0]
 # locked = false
 [[dust_continuum_temps]]
 val = 200.0
-plim = [0.0, 300.0]
+plim = [35.0, 300.0]
 locked = false
 [[dust_continuum_temps]]
-val = 90.0
-plim = [0.0, 300.0]
+val = 100.0
+plim = [35.0, 300.0]
 locked = false
 
 # [[dust_continuum_temps]]
@@ -553,30 +553,22 @@ val = 0.1
 plim = [0.0, 3.0]
 locked = false
 
-# extinction.tau_pah: the optical depth that the PAH continuum
-# is extincted by 
-# Note: this is only used if extinction_curve = "decompose"
-[extinction.tau_pah]
-val = 1.0
-plim = [0.0, 3.0]
-locked = false
-
 # extinction.N_XXX: column densities for amorphous olivine, amorphous pyroxene, and crystalline forsterite
 # Note: these are only used if extinction_curve = "decompose"
-# Units: g/cm^2
+# Units: g/cm^-2
 [extinction.N_oli]
 val = 1.7e-3
-plim = [0.0, 1.0]
+plim = [0.0, 3e-3]
 locked = false
 
 [extinction.N_pyr]
 val = 5.0e-5
-plim = [0.0, 1.0]
+plim = [0.0, 3e-3]
 locked = false
 
 [extinction.N_for]
 val = 1.0e-4
-plim = [0.0, 1.0]
+plim = [0.0, 3e-3]
 locked = false
 
 # extinction.frac: covering fraction for how much of the dust continuum

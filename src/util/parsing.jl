@@ -310,8 +310,6 @@ function parse_dust()
     # dust["extinction"]["tau_9_7"]["val"] = τ_guess
     τ_97 = from_dict(dust["extinction"]["tau_9_7"])
     msg *= "\nTau_sil $τ_97"
-    τ_pah = from_dict(dust["extinction"]["tau_pah"])
-    msg *= "\nTau_PAH $τ_pah"
     N_oli = from_dict(dust["extinction"]["N_oli"])
     msg *= "\nN_oli $N_oli"
     N_pyr = from_dict(dust["extinction"]["N_pyr"])
@@ -346,7 +344,7 @@ function parse_dust()
     @debug msg
 
     # Create continuum object
-    continuum = MIRContinuum(T_s, T_dc, α, τ_97, τ_pah, N_oli, N_pyr, N_for, τ_ice, τ_ch, β, Cf, 
+    continuum = MIRContinuum(T_s, T_dc, α, τ_97, N_oli, N_pyr, N_for, τ_ice, τ_ch, β, Cf, 
         T_hot, hd_Cf, τ_warm, τ_cold, sil_peak, temp_A)
 
     continuum, dust_features, abs_features, abs_taus
