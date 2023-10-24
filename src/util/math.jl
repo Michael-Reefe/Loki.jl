@@ -211,6 +211,28 @@ julia> Doppler_width_λ(0, 10)
 
 
 """
+    F_test(n, p1, p2, χ1, χ2, threshold)
+
+Perform a statistical F-test on two models with free parameters `p1` and `p2` and
+chi2 values `χ1` and `χ2`, fit to data with `n` data points. The F-value calculated
+from the data must be greater than the critical value of the F distribution for the
+given degrees of freedom up to the specified `threshold` level. `threshold` must be
+given as a probability, for example a threshold of 0.003 corresponds 
+to 1-0.003 -> 99.7% or a 3-sigma confidence level.
+"""
+function F_test(n, p1, p2, χ1, χ2, threshold)
+    # Generate an F distribution with these parameters
+    F = FDist(p2 - p1, n - p2)
+    # Calculate the critical value at some confidence threshold set by the user
+    F_crit = invlogccdf(F, log(threshold))
+    # Calculate the F value from the data
+    F_data = ((χ1 - χ2) / (p2 - p1)) / (χ2 / (n - p2))
+    # Compare to the critical value
+    F_data > F_crit, F_data, F_crit
+end
+
+
+"""
     convolveGaussian1D(flux, fwhm)
 
 Convolve a spectrum by a Gaussian with different FWHM for every pixel.
@@ -990,6 +1012,18 @@ function resample_flux_permuted3D(new_wave::AbstractVector, old_wave::AbstractVe
 end
 
 
+function multiplicative_exponentials(λ::Vector{<:Real}, p::Vector{<:Real})
+    λmin, λmax = extrema(λ)
+    λ̄ = @. (λ - λmin) / (λmax - λmin)
+    # Equation 2 of Rupke et al. (2017): https://arxiv.org/pdf/1708.05139.pdf
+    e1 = @. p[1] * exp(-p[2] * λ̄)
+    e2 = @. p[3] * exp(-p[4] * (1 - λ̄))
+    e3 = @. p[5] * (1 - exp(-p[6] * λ̄))
+    e4 = @. p[7] * (1 - exp(-p[8] * (1 - λ̄)))
+    return [e1 e2 e3 e4]
+end
+
+
 ############################################## FITTING FUNCTIONS #############################################
 
 
@@ -1017,13 +1051,14 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
     amorphous olivine, amorphous pyroxene, and crystalline forsterite
 - `custom_ext::Union{Spline1D,Nothing}`: An optional custom extinction template.
 - `fit_sil_emission::Bool`: Whether or not to fit silicate emission with a hot dust continuum component
+- `fit_temp_multexp::Bool`: Whether or not to apply and fit multiplicative exponentials to the provided templates
 - `use_pah_templates::Bool`: Whether or not to use PAH templates to model the PAH emission
 - `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
 function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
     n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, κ_abs::Vector{Spline1D}, custom_ext::Union{Spline1D,Nothing},
-    fit_sil_emission::Bool, use_pah_templates::Bool, templates::Matrix{<:Real}, return_components::Bool)
+    fit_sil_emission::Bool, fit_temp_multexp::Bool, use_pah_templates::Bool, templates::Matrix{<:Real}, return_components::Bool)
 
     # Prepare outputs
     out_type = eltype(params)
@@ -1115,10 +1150,19 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
     end
 
     # Add generic templates with a normalization parameter
-    for i in axes(templates, 2)
-        comps["templates_$i"] = params[pᵢ] .* templates[:, i] ./ N
-        contin .+= comps["templates_$i"]
-        pᵢ += 1
+    if fit_temp_multexp
+        ex = multiplicative_exponentials(λ, params[pᵢ:pᵢ+7])
+        for i in axes(templates, 2)
+            comps["templates_$i"] = sum([ex[:,j] .* templates[:,i] ./ N for j in axes(ex,2)])
+            contin .+= comps["templates_$i"]
+        end
+        pᵢ += 8
+    else
+        for i in axes(templates, 2)
+            comps["templates_$i"] = params[pᵢ] .* templates[:, i] ./ N
+            contin .+= comps["templates_$i"]
+            pᵢ += 1
+        end
     end
 
     if use_pah_templates
@@ -1151,7 +1195,7 @@ end
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
 function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
     n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, κ_abs::Vector{Spline1D}, custom_ext::Union{Spline1D,Nothing}, 
-    fit_sil_emission::Bool, use_pah_templates::Bool, templates::Matrix{<:Real})
+    fit_sil_emission::Bool, fit_temp_multexp::Bool, use_pah_templates::Bool, templates::Matrix{<:Real})
 
     # Prepare outputs
     out_type = eltype(params)
@@ -1231,9 +1275,17 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
     end
 
     # Add generic templates with a normalization parameter
-    for i in axes(templates, 2)
-        contin .+= params[pᵢ] .* templates[:, i] ./ N
-        pᵢ += 1
+    if fit_temp_multexp
+        ex = multiplicative_exponentials(λ, params[pᵢ:pᵢ+7])
+        for i in axes(templates, 2)
+            contin .+= sum([ex[:,j] .* templates[:,i] ./ N for j in axes(ex,2)])
+        end
+        pᵢ += 8
+    else
+        for i in axes(templates, 2)
+            contin .+= params[pᵢ] .* templates[:, i] ./ N
+            pᵢ += 1
+        end
     end
 
     if use_pah_templates
@@ -1843,10 +1895,10 @@ Currently this includes the integrated intensity, equivalent width, and signal t
 """
 function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, comps::Dict, n_dust_cont::Integer,
     n_power_law::Integer, n_dust_feat::Integer, dust_profiles::Vector{Symbol}, n_abs_feat::Integer, fit_sil_emission::Bool, 
-    n_templates::Integer, n_lines::Integer, n_acomps::Integer, n_comps::Integer, lines::TransitionLines, flexible_wavesol::Bool, 
-    lsf::Function, relative_flags::BitVector, popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}, 
-    extinction_pah::Vector{T}, extinction::Vector{T}, extinction_curve::String, mask_lines::BitVector, continuum::Vector{T}, 
-    area_sr::Vector{T}, n_fit_comps::Dict, spaxel::CartesianIndex, propagate_err::Bool=true) where {T<:Real}
+    fit_temp_multexp::Bool, n_templates::Integer, n_lines::Integer, n_acomps::Integer, n_comps::Integer, lines::TransitionLines, 
+    flexible_wavesol::Bool, lsf::Function, relative_flags::BitVector, popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, 
+    perr_l::Vector{T}, extinction_pah::Vector{T}, extinction::Vector{T}, extinction_curve::String, mask_lines::BitVector, 
+    continuum::Vector{T}, area_sr::Vector{T}, n_fit_comps::Dict, spaxel::CartesianIndex, propagate_err::Bool=true) where {T<:Real}
 
     @debug "Calculating extra parameters"
 
@@ -1858,7 +1910,8 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     p_dust_err = zeros(3n_dust_feat)
     pₒ = 1
     # Initial parameter vector index where dust profiles start
-    pᵢ = 3 + 2n_dust_cont + 2n_power_law + 4 + (extinction_curve == "decompose" ? 3 : 1) + 3n_abs_feat + (fit_sil_emission ? 6 : 0) + n_templates
+    pᵢ = 3 + 2n_dust_cont + 2n_power_law + 4 + (extinction_curve == "decompose" ? 3 : 1) + 3n_abs_feat + 
+        (fit_sil_emission ? 6 : 0) + (fit_temp_multexp ? 8 : n_templates)
     # Extinction normalization factor
     # max_ext = 1 / minimum(extinction)
 

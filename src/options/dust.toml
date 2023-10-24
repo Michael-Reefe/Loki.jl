@@ -30,8 +30,8 @@ locked = true
 # locked = false
 
 # [[dust_continuum_temps]]
-# val = 200.0
-# plim = [35.0, 300.0]
+# val = 400.0
+# plim = [35.0, 1500.0]
 # locked = false
 [[dust_continuum_temps]]
 val = 200.0
@@ -575,7 +575,7 @@ locked = false
 # (blackbodies and power laws) is affected by the extinction
 [extinction.frac]
 val = 1.0
-plim = [0.0, 1.0]
+plim = [0.5, 1.0]
 locked = true
  
 # extinction.tau_ice: *not* an actual optical depth -- this is

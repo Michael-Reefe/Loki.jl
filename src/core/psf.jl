@@ -47,27 +47,35 @@ function generate_psf_model!(cube::DataCube, psf_model_dir::String=""; interpola
         c2 = centroid_com(data2d[mx2[1]-5:mx2[1]+5, mx2[2]-5:mx2[2]+5]) .+ (mx2.I .- 5) .- 1
         dx = c1 .- c2
 
+        dsmooth = copy(data)
+        for c in CartesianIndices(size(data)[1:2])
+            dsmooth[c, :] .= movmean(data[c, :], 7)
+        end
+
         # Subtract the background within an annulus
         pix_size = sqrt(cube.Ω) * 180/π * 3600
         for i in axes(data, 3)
-            r_in = 7 * cube.psf[i] / pix_size
-            r_out = 9 * cube.psf[i] / pix_size
+            r_in = 5 * cube.psf[i] / pix_size
+            r_out = 10 * cube.psf[i] / pix_size
             back_ann = CircularAnnulus(c2..., r_in, r_out)
-            pedestal = photometry(back_ann, data[:, :, i]).aperture_sum / photometry(back_ann, ones(size(data)[1:2])).aperture_sum
-            # if i == 1
-            #     println("$(cube.channel) $(cube.band)")
-            #     println(pedestal)
-            #     fig, ax = plt.subplots()
-            #     d = copy(data[:, :, i])
-            #     d[d .< 0] .= 0
-            #     ax.imshow(log10.(d)', origin=:lower, cmap=:cubehelix)
-            #     patches = get_patches(back_ann)
-            #     for patch in patches
-            #         ax.add_patch(patch)
-            #     end
-            #     plt.show()
-            #     plt.close()
-            # end
+            pedestal = photometry(back_ann, dsmooth[:,:,i]).aperture_sum / photometry(back_ann, ones(size(dsmooth)[1:2])).aperture_sum
+            if i == 1
+                # println("$(cube.channel) $(cube.band)")
+                # println(pedestal)
+                # fig, ax = plt.subplots(1,2)
+                # d = copy(data[:, :, i])
+                # d[d .< 0] .= 0
+                # d2 = data[:, :, i] .- pedestal
+                # d2[d2 .< 0] .= 0
+                # ax[1].imshow(log10.(d)', origin=:lower, cmap=:cubehelix)
+                # ax[2].imshow(log10.(d2)', origin=:lower, cmap=:cubehelix)
+                # patches = get_patches(back_ann)
+                # for patch in patches
+                #     ax[1].add_patch(patch)
+                # end
+                # plt.show()
+                # plt.close()
+            end
             data[:, :, i] .-= pedestal
         end
         
@@ -220,7 +228,7 @@ end
 
 
 """
-    generate_nuclear_template(cube, ap_r, spline_width)
+    generate_nuclear_template(cube, ap_r, spline_width, use_psf_model)
 
 Extract a point-source nuclear template from the brightest region of a DataCube with a given aperture `ap_r`, 
 where `ap_r` is in units of the PSF FWHM (thus, the aperture size increases with wavelength at the same rate 
@@ -228,7 +236,7 @@ that the PSF FWHM does). If `ap_r` is 0, then the template is just extracted fro
 `spline_width` is > 0, a cubic spline interpolation is performed with knots spaced by `spline_width` pixels.
 The 1D template is then combined with a 3D PSF model to create a full 3D nuclear template.
 """
-function generate_nuclear_template(cube::DataCube, ap_r::Real=0., spline_width::Integer=7)
+function generate_nuclear_template(cube::DataCube, ap_r::Real=0.; spline_width::Integer=7, use_psf_model::Bool=true)
 
     # Get the brightest spaxel
     data2d = dropdims(nansum(cube.I, dims=3), dims=3)
@@ -261,7 +269,11 @@ function generate_nuclear_template(cube::DataCube, ap_r::Real=0., spline_width::
     end
 
     # Normalize the PSF models and combine them
-    psf_model = copy(cube.psf_model)
+    if use_psf_model
+        psf_model = copy(cube.psf_model)
+    else
+        psf_model = ones(size(cube.I))
+    end
     for i ∈ axes(psf_model, 3)
         psf_model[:, :, i] ./= nanmaximum(psf_model[:, :, i])
     end

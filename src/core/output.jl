@@ -364,11 +364,24 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
         end
 
         # Template amplitudes
-        for (q, tp) ∈ enumerate(cube_fitter.template_names)
-            param_maps.templates[tp][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
-            param_errs[1].templates[tp][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
-            param_errs[2].templates[tp][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
-            pᵢ += 1
+        if cube_fitter.fit_temp_multexp
+            tp = cube_fitter.template_names[1]
+            for q ∈ 1:4
+                param_maps.templates[tp][Symbol(:amp, "_$q")][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
+                param_errs[1].templates[tp][Symbol(:amp, "_$q")][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
+                param_errs[2].templates[tp][Symbol(:amp, "_$q")][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
+                param_maps.templates[tp][Symbol(:index, "_$q")][index] = out_params[index, pᵢ+1]
+                param_errs[1].templates[tp][Symbol(:index, "_$q")][index] = out_errs[index, pᵢ+1, 1]
+                param_errs[2].templates[tp][Symbol(:index, "_$q")][index] = out_errs[index, pᵢ+1, 2]
+                pᵢ += 2
+            end
+        else
+            for (q, tp) ∈ enumerate(cube_fitter.template_names)
+                param_maps.templates[tp][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
+                param_errs[1].templates[tp][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
+                param_errs[2].templates[tp][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
+                pᵢ += 1
+            end
         end
 
         # Dust feature log(amplitude), mean, FWHM
@@ -398,7 +411,8 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             # End of continuum parameters: recreate the continuum model
             I_cont, comps_c = model_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], N, cube_fitter.n_dust_cont, cube_fitter.n_power_law,
                 cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, 
-                cube_fitter.κ_abs, cube_fitter.custom_ext_template, cube_fitter.fit_sil_emission, false, cube_data.templates[index, :, :], true)
+                cube_fitter.κ_abs, cube_fitter.custom_ext_template, cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, false, 
+                cube_data.templates[index, :, :], true)
         end
 
         # Save marker of the point where the continuum parameters end and the line parameters begin
@@ -1045,7 +1059,7 @@ function paramstring_to_latex(name_i, cosmo)
         else
             bunit = L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$"
         end
-    elseif occursin("temp", name_i)
+    elseif occursin("temp", name_i) && !occursin("template", name_i)
         bunit = L"$T$ (K)"
     elseif occursin("fwhm", name_i) && (occursin("PAH", name_i) || occursin("abs", name_i))
         bunit = L"FWHM ($\mu$m)"
@@ -1105,6 +1119,8 @@ function paramstring_to_latex(name_i, cosmo)
         bunit = L"$C_f$"
     elseif occursin("index", name_i) && occursin("PAH", name_i)
         bunit = L"$m$"
+    elseif occursin("index", name_i) && occursin("template", name_i)
+        bunit = L"$b$"
     elseif occursin("index", name_i)
         bunit = L"$\alpha$"
     elseif occursin("cutoff", name_i)
@@ -1671,7 +1687,10 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
     end
 
     # Template parameters
-    for temp ∈ keys(param_maps.templates)
+    for (i,temp) ∈ enumerate(keys(param_maps.templates))
+        if i > 1 && cube_fitter.fit_temp_multexp
+            break
+        end
         for parameter ∈ keys(param_maps.templates[temp])
             data = param_maps.templates[temp][parameter]
             name_i = join(["template", temp, parameter], "_")
@@ -2432,10 +2451,13 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
             end
 
             # Template parameters
-            for temp ∈ keys(param_data.templates)
+            for (i,temp) ∈ enumerate(keys(param_data.templates))
+                if i > 1 && cube_fitter.fit_temp_multexp
+                    break
+                end
                 for parameter ∈ keys(param_data.templates[temp])
                     data = param_data.templates[temp][parameter]
-                    name_i = join(["templates", temp, parameter], "_")
+                    name_i = join(["templates", cube_fitter.fit_temp_multexp ? parameter : "$(temp)_$(parameter)"], "_")
                     bunit = "-"
                     write(f, data; name=uppercase(name_i))
                     write_key(f[name_i], "BUNIT", bunit)

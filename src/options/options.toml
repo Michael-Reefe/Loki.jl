@@ -58,6 +58,11 @@ save_full_model = true
 # or "ccm" for the Cardelli, Clayton, & Mathis (1989) Milky Way curve.
 extinction_curve = "kvt"
 
+# If true, perform a statistical F-test on the extinction, performing 2 fits with and without it,
+# and verifying that the fit with the extinction represents a significant statistical improvement.
+# Uses the same F threshold value as the line tests.
+extinction_F_test = false
+
 # The following 3 options are only used if extinction_screen = "decompose"
 # Magnesium content for olivine 
 olivine_y = 0.5
@@ -75,6 +80,9 @@ fit_stellar_continuum = true
 
 # whether or not to fit silicate emission
 fit_sil_emission = true
+
+# whether or not to fit multiplicative exponential profiles to any provided templates
+fit_temp_multexp = false
 
 # whether or not to fit optical Fe II emission (obviously only applies for optical spectra)
 # separate options for narrow- and broad-line templates
