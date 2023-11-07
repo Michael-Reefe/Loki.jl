@@ -14,25 +14,11 @@ plim = [4999.9, 5000.1]
 locked = true
 
 # dust_continuum_temps: the blackbody temperatures of the dust
-# continuum components of the model. Defaults: 300, 200, 135,
-# 90, 65, 50, 40, and 35 K.
-# [[dust_continuum_temps]]
-# val = 400.0
-# plim = [300.0, 1500.0]
-# locked = false
-# [[dust_continuum_temps]]
-# val = 135.0
-# plim = [90.0, 300.0]
-# locked = false
-# [[dust_continuum_temps]]
-# val = 50.0
-# plim = [35.0, 90.0]
-# locked = false
-
-# [[dust_continuum_temps]]
-# val = 400.0
-# plim = [35.0, 1500.0]
-# locked = false
+# continuum components of the model. 
+[[dust_continuum_temps]]
+val = 400.0
+plim = [35.0, 1500.0]
+locked = false
 [[dust_continuum_temps]]
 val = 200.0
 plim = [35.0, 300.0]
@@ -42,6 +28,7 @@ val = 100.0
 plim = [35.0, 300.0]
 locked = false
 
+# PAHFIT Model: A series of profiles at fixed temperatures b/w 35-500 K
 # [[dust_continuum_temps]]
 # val = 500.0
 # plim = [499.9, 500.1]
@@ -79,6 +66,8 @@ locked = false
 # plim = [34.9, 35.1]
 # locked = false
 
+# power laws: should not be used in conjunction with blackbodies 
+# (should be one or the other) since they are degenerate.
 # [[power_law_indices]]
 # val = 1.65
 # plim = [-3.0, 3.0]
@@ -480,9 +469,6 @@ val = 0.395
 plim = [0.9, 1.1]
 locked = false
 
-# ~19.8 um PAH feature? https://www.aanda.org/articles/aa/full_html/2010/03/aa12714-09/aa12714-09.html
-# https://iopscience.iop.org/article/10.1088/0004-637X/712/1/69
-
 [dust_features."PAH_33.10".wave]
 val = 33.1
 plim = [-0.05, 0.05]
@@ -515,47 +501,22 @@ locked = false
 # plim = [0.9, 1.1]
 # locked = true
 
-# [absorption_features."abs_9.7".tau]
-# val = 0.1
-# plim = [0.0, 10.0]
-# locked = false
-
-# [absorption_features."abs_9.7".wave]
-# val = 9.64
-# plim = [-0.01, 0.01]
-# locked = false
-
-# [absorption_features."abs_9.7".fwhm]
-# val = 0.210
-# plim = [0.2, 1.0]
-# locked = false
-
-# [absorption_features."abs_C2H2_13.7".wave]
-# val = 13.69
-# plim = [-0.1, 0.1]
-# locked = true
-
-# [absorption_features."abs_C2H2_13.7".fwhm]
-# val = 0.0197
-# plim = [0.9, 1.1]
-# locked = true
-
 # Other potential absorption features:
 # HCO+ @ 12.1 um
+# C2H2 @ 13.7 um
 # HCN  @ 14.0 um
 # HNC  @ 21.7 um
 
 # extinction.tau_9_7: the optical depth at 9.7 microns.
 # Default: gets estimated by the continuum at 9.7 microns.
 [extinction.tau_9_7]
-# val = 1.2777
 val = 0.1
 plim = [0.0, 3.0]
 locked = false
 
-# extinction.N_XXX: column densities for amorphous olivine, amorphous pyroxene, and crystalline forsterite
+# extinction.N_XXX: mass column densities (g/cm^2) for amorphous olivine, 
+# amorphous pyroxene, and crystalline forsterite
 # Note: these are only used if extinction_curve = "decompose"
-# Units: g/cm^-2
 [extinction.N_oli]
 val = 1.7e-3
 plim = [0.0, 3e-3]
@@ -599,7 +560,6 @@ locked = true
 val = 0.1
 plim = [0.0, 1.0]
 locked = true
-
 
 # Hot dust components
 # Temperature, 800-1600 K

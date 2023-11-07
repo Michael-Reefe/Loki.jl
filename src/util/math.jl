@@ -2007,8 +2007,8 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     end
 
     # Loop through lines
-    p_lines = zeros(3n_lines+3n_acomps+3n_lines)
-    p_lines_err = zeros(3n_lines+3n_acomps+3n_lines)
+    p_lines = zeros(3n_lines+3n_acomps+4n_lines)
+    p_lines_err = zeros(3n_lines+3n_acomps+4n_lines)
 
     # Unpack the relative flags
     rel_amp, rel_voff, rel_fwhm = relative_flags
@@ -2191,20 +2191,23 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
 
         # W80 and Δv parameters
         fwhm_inst = lsf(λ0)
-        w80, Δv = calculate_composite_params(λ, total_profile, λ0, fwhm_inst)
+        w80, Δv, vmed = calculate_composite_params(λ, total_profile, λ0, fwhm_inst)
         p_lines[pₒ+1] = w80
         p_lines[pₒ+2] = Δv
+        p_lines[pₒ+3] = vmed
         if propagate_err
-            w80_lo, Δv_lo = calculate_composite_params(λ, profile_err_lo, λ0, fwhm_inst)
-            w80_hi, Δv_hi = calculate_composite_params(λ, profile_err_hi, λ0, fwhm_inst)
+            w80_lo, Δv_lo, vmed_lo = calculate_composite_params(λ, profile_err_lo, λ0, fwhm_inst)
+            w80_hi, Δv_hi, vmed_hi = calculate_composite_params(λ, profile_err_hi, λ0, fwhm_inst)
             w80_err = mean([w80 - w80_lo, w80_hi - w80])
             Δv_err = mean([Δv - Δv_lo, Δv_hi - Δv])
+            vmed_err = mean([vmed - vmed_lo, vmed_hi - vmed])
             p_lines_err[pₒ+1] = w80_err
             p_lines_err[pₒ+2] = Δv_err
+            p_lines_err[pₒ+3] = vmed_err
         end
-        @debug "W80=$(w80), DELTA_V=$(Δv)"
+        @debug "W80=$(w80), DELTA_V=$(Δv), VMED=$(vmed)"
 
-        pₒ += 3
+        pₒ += 4
 
     end
 
@@ -2235,8 +2238,8 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     # max_ext = 1 / minimum(extinction)
 
     # Loop through lines
-    p_lines = zeros(3n_lines+3n_acomps+3n_lines)
-    p_lines_err = zeros(3n_lines+3n_acomps+3n_lines)
+    p_lines = zeros(3n_lines+3n_acomps+4n_lines)
+    p_lines_err = zeros(3n_lines+3n_acomps+4n_lines)
     rel_amp, rel_voff, rel_fwhm = relative_flags
     pₒ = pᵢ = 1
     for (k, λ0) ∈ enumerate(lines.λ₀)
@@ -2414,20 +2417,23 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
 
         # W80 and Δv parameters
         fwhm_inst = lsf(λ0)
-        w80, Δv = calculate_composite_params(λ, total_profile, λ0, fwhm_inst)
+        w80, Δv, vmed = calculate_composite_params(λ, total_profile, λ0, fwhm_inst)
         p_lines[pₒ+1] = w80
         p_lines[pₒ+2] = Δv
+        p_lines[pₒ+3] = vmed
         if propagate_err
-            w80_lo, Δv_lo = calculate_composite_params(λ, profile_err_lo, λ0, fwhm_inst)
-            w80_hi, Δv_hi = calculate_composite_params(λ, profile_err_hi, λ0, fwhm_inst)
+            w80_lo, Δv_lo, vmed_lo = calculate_composite_params(λ, profile_err_lo, λ0, fwhm_inst)
+            w80_hi, Δv_hi, vmed_hi = calculate_composite_params(λ, profile_err_hi, λ0, fwhm_inst)
             w80_err = mean([w80 - w80_lo, w80_hi - w80])
             Δv_err = mean([Δv - Δv_lo, Δv_hi - Δv])
+            vmed_err = mean([vmed - vmed_lo, vmed_hi - vmed])
             p_lines_err[pₒ+1] = w80_err
             p_lines_err[pₒ+2] = Δv_err
+            p_lines_err[pₒ+3] = vmed_err
         end
-        @debug "W80=$(w80), DELTA_V=$(Δv)"
+        @debug "W80=$(w80), DELTA_V=$(Δv), VMED=$(vmed)"
 
-        pₒ += 3
+        pₒ += 4
 
     end
 
@@ -2503,7 +2509,7 @@ function calculate_composite_params(λ::Vector{<:Real}, flux::Vector{<:Real}, λ
     # Get the cumulative distribution function
     m = flux .> 0
     if sum(m) < 2
-        return 0., 0.
+        return 0., 0., 0.
     end
 
     line_cdf = cumsum(flux[m] ./ sum(flux[m]))
@@ -2514,7 +2520,7 @@ function calculate_composite_params(λ::Vector{<:Real}, flux::Vector{<:Real}, λ
     line_cdf = line_cdf[w]
     velocity = velocity[w]
     if length(line_cdf) < 2
-        return 0., 0.
+        return 0., 0., 0.
     end
 
     # Interpolate to find where velocity is at 5, 10 and 90, and 95%
@@ -2531,10 +2537,10 @@ function calculate_composite_params(λ::Vector{<:Real}, flux::Vector{<:Real}, λ
     w80_inst = 1.09 * fwhm_inst
     w80 = sqrt(clamp(w80^2 - w80_inst^2, 0., Inf))
 
-    # Calculate Δv
-    Δv = (v5 + v95)/2 - vmed
+    # Calculate Δv (see Harrison et al. 2014: https://ui.adsabs.harvard.edu/abs/2014MNRAS.441.3306H/abstract)
+    Δv = (v5 + v95)/2 
 
-    w80, Δv
+    w80, Δv, vmed
 end
 
 

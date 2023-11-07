@@ -759,10 +759,11 @@ for non-necessary line components to 0).
 - `σnorm::Vector{<:Real}`: The 1D normalized error vector
 - `lsf_interp_func::Function`: Interpolating function for the line-spread function (LSF) in km/s as a function of wavelength
 - `all_fail::Bool=false`: Flag to force all tests to automatically fail, fitting each line with one profile.
+- `bootstrap_iter::Bool=false`: If true, disables plotting 
 """
 function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::CartesianIndex, p₀::Vector{<:Real}, 
     param_lock::BitVector, lower_bounds::Vector{<:Real}, upper_bounds::Vector{<:Real}, λnorm::Vector{<:Real},
-    Inorm::Vector{<:Real}, σnorm::Vector{<:Real}, lsf_interp_func::Function; all_fail::Bool=false)
+    Inorm::Vector{<:Real}, σnorm::Vector{<:Real}, lsf_interp_func::Function; all_fail::Bool=false, bootstrap_iter::Bool=false)
     @debug "Performing line component testing..."
 
     # Perform a test to see if each line with > 1 component really needs multiple components to be fit
@@ -828,7 +829,7 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
             cube_fitter.lines.rel_fwhm
         )
 
-        if cube_fitter.plot_line_test
+        if cube_fitter.plot_line_test && !bootstrap_iter
             fig, ax = plt.subplots()
             ax.plot(λnorm[region], Inorm[region], "k-", label="Data")
         end
@@ -906,7 +907,7 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
             @debug "F-value = $F_data | Critical value = $critical_val"
             @debug "TEST $(test_passed ? "SUCCESS" : "FAILURE")"
 
-            if cube_fitter.plot_line_test
+            if cube_fitter.plot_line_test && !bootstrap_iter
                 ax.plot(λnorm[region], test_model, linestyle="-", label="$np-component model")
             end
 
@@ -924,7 +925,7 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Cartesian
         push!(profiles_to_fit_list, profiles_to_fit)
         push!(line_names, cube_fitter.lines.names[i])
 
-        if cube_fitter.plot_line_test
+        if cube_fitter.plot_line_test && !bootstrap_iter
             ax.set_xlabel(L"$\lambda_{\rm rest}$ ($\mu$m)")
             ax.set_ylabel("Normalized Intensity")
             ax.set_title(cube_fitter.lines.latex[i])
@@ -1069,9 +1070,9 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     upper_bounds = [pl[2] for pl in plimits]
 
     # Perform line component tests to determine which line components are actually necessary to include in the fit
-    if (length(cube_fitter.line_test_lines) > 0) && !init && !bootstrap_iter
+    if (length(cube_fitter.line_test_lines) > 0) && !init
         perform_line_component_test!(cube_fitter, spaxel, p₀, param_lock, lower_bounds, upper_bounds, λnorm, Inorm, σnorm,
-            lsf_interp_func)
+            lsf_interp_func, bootstrap_iter=bootstrap_iter)
     end
 
     # Combine all of the tied parameters
@@ -1426,7 +1427,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     if bootstrap_iter
         pars_0_cont = p1_boots_cont
     end
-
+    
     # Sort parameters by those that are locked and those that are unlocked
     pfix_cont = pars_0_cont[lock_cont]
     pfree_cont = pars_0_cont[.~lock_cont]
@@ -1448,9 +1449,9 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     upper_bounds_lines = [pl[2] for pl in plims_lines]
 
     # Perform line component tests to determine which line components are actually necessary to include in the fit
-    if (length(cube_fitter.line_test_lines) > 0) && !init && !bootstrap_iter
+    if (length(cube_fitter.line_test_lines) > 0) && !init
         perform_line_component_test!(cube_fitter, spaxel, pars_0_lines, lock_lines, lower_bounds_lines, upper_bounds_lines, 
-            λ_spax, I_spax .- I_spline_spax, σ_spax, lsf_interp_func)
+            λ_spax, I_spax .- I_spline_spax, σ_spax, lsf_interp_func, bootstrap_iter=bootstrap_iter)
     end
 
     # Combine all of the tied parameters
@@ -2476,11 +2477,18 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                         _fit_spaxel_iterfunc(cube_fitter, spaxel, λ, I_boot, σ, templates, norm, area_sr, mask_lines_boot, mask_bad, mask_chi2, 
                             I_spline_boot; bootstrap_iter=true, p1_boots_c=popt_c, p1_boots_l=popt_l, p1_boots_pah=pahtemp, use_ap=use_ap)
                     end
+                    # Sort the emission line components (if not using relative parameters) to avoid multi-modal distirbutions
+                    # only mask additional line components after the first bootstrap so that they have a minimum of 1 finite sample
+                    sort_line_components!(cube_fitter, pb_i, mask_zeros=nboot > 1)
+
                     p_boot[:, nboot] .= pb_i
                     I_model_boot[:, nboot] .= Ib_i
                 end
 
                 # RESULTS: Values are the 50th percentile, and errors are the (15.9th, 84.1st) percentiles
+                open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$(fname)_p_boots.csv"), "w") do f
+                    writedlm(f, p_boot) 
+                end
                 p_out = dropdims(nanquantile(p_boot, 0.50, dims=2), dims=2)
                 p_err_lo = p_out .- dropdims(nanquantile(p_boot, 0.159, dims=2), dims=2)
                 p_err_up = dropdims(nanquantile(p_boot, 0.841, dims=2), dims=2) .- p_out
@@ -2992,11 +3000,11 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
 
     # If using an aperture, plot the aperture
     if !(aperture isa String)
-        plot_2d(cube_fitter.cube, joinpath("output_$(cube_fitter.name)", "aperture_plot_beg.pdf"); err=false, aperture=aperture[1],
+        plot_2d(cube_fitter.cube, joinpath("output_$(cube_fitter.name)", "aperture_plot_beg.pdf"); err=false, aperture=aperture[10],
             z=cube_fitter.z, cosmo=cube_fitter.cosmology, slice=1)
         plot_2d(cube_fitter.cube, joinpath("output_$(cube_fitter.name)", "aperture_plot_mid.pdf"); err=false, aperture=aperture[end÷2],
             z=cube_fitter.z, cosmo=cube_fitter.cosmology, slice=shape[3]÷2)
-        plot_2d(cube_fitter.cube, joinpath("output_$(cube_fitter.name)", "aperture_plot_end.pdf"); err=false, aperture=aperture[end],
+        plot_2d(cube_fitter.cube, joinpath("output_$(cube_fitter.name)", "aperture_plot_end.pdf"); err=false, aperture=aperture[end-9],
             z=cube_fitter.z, cosmo=cube_fitter.cosmology, slice=shape[3])
     end
 

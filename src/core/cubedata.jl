@@ -619,8 +619,8 @@ function get_physical_scales(data::DataCube, cosmo::Union{Cosmology.AbstractCosm
         dA = angular_diameter_dist(u"pc", cosmo, z)
         # Remove units
         dA = uconvert(NoUnits, dA/u"pc")
-        # l = d * theta (") where theta is chosen as 1/4 the horizontal extent of the image
-        l = dA * (size(data.I, 1) * pix_as / 4) * π/180 / 3600  
+        # l = d * theta (") where theta is chosen as 1/5 the horizontal extent of the image
+        l = dA * (size(data.I, 1) * pix_as / 5) * π/180 / 3600  
         # Round to a nice even number
         l = Int(round(l, sigdigits=1))
         # new angular size for this scale
@@ -639,7 +639,7 @@ function get_physical_scales(data::DataCube, cosmo::Union{Cosmology.AbstractCosm
             l = Int(l / 10^9)
             unit = "Gpc"
         end
-        scalebar_text_dist = cosmo.h ≈ 1.0 ? L"%$l$h^{-1}$ %$unit" : L"%$l %$unit"
+        scalebar_text_dist = cosmo.h ≈ 1.0 ? L"%$l$h^{-1}$ %$unit" : L"$%$l$ %$unit"
     else
         pix_as = sqrt(data.Ω) * 180/π * 3600
         n_pix = 1/pix_as
@@ -686,7 +686,7 @@ A plotting utility function for 2D maps of the raw intensity / error
 See also [`DataCube`](@ref), [`plot_1d`](@ref)
 """
 function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=true, logᵢ::Union{Integer,Nothing}=10,
-    logₑ::Union{Integer,Nothing}=nothing, colormap::Symbol=:cubehelix, name::Union{String,Nothing}=nothing, 
+    logₑ::Union{Integer,Nothing}=nothing, colormap=py_colormap.cubehelix, name::Union{String,Nothing}=nothing, 
     slice::Union{Integer,Nothing}=nothing, z::Union{Real,Nothing}=nothing, cosmo::Union{Cosmology.AbstractCosmology,Nothing}=nothing, 
     aperture::Union{Aperture.AbstractAperture,Nothing}=nothing)
 
@@ -730,6 +730,7 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
     # 1D, no NaNs/Infs
     pix_as = sqrt(data.Ω) * 180/π * 3600
     n_pix, scalebar_text_dist, scalebar_text_ang = get_physical_scales(data, cosmo, z)
+    colormap.set_bad(color="k")
 
     fig = plt.figure(figsize=intensity && err ? (12, 6) : (12,12))
     if intensity
@@ -744,17 +745,17 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
         
         if !isnothing(z) && !isnothing(cosmo)
             scalebar_1 = py_anchored_artists.AnchoredSizeBar(ax1.transData, n_pix, scalebar_text_dist, "upper center", pad=0, borderpad=0, 
-                color="k", frameon=false, size_vertical=0.1, label_top=false, bbox_to_anchor=(0.17, 0.1), bbox_transform=ax1.transAxes)
+                color="w", frameon=false, size_vertical=0.1, label_top=false, bbox_to_anchor=(0.17, 0.1), bbox_transform=ax1.transAxes)
             ax1.add_artist(scalebar_1)
         end
         scalebar_2 = py_anchored_artists.AnchoredSizeBar(ax1.transData, n_pix, scalebar_text_ang, "lower center", pad=0, borderpad=0, 
-            color="k", frameon=false, size_vertical=0.1, label_top=true, bbox_to_anchor=(0.17, 0.1), bbox_transform=ax1.transAxes)
+            color="w", frameon=false, size_vertical=0.1, label_top=true, bbox_to_anchor=(0.17, 0.1), bbox_transform=ax1.transAxes)
         ax1.add_artist(scalebar_2)
 
-        psf = plt.Circle(size(I) .* 0.9, (isnothing(slice) ? median(data.psf) : data.psf[slice]) / pix_as / 2, color="k")
+        r = (isnothing(slice) ? median(data.psf) : data.psf[slice]) / pix_as / 2
+        psf = plt.Circle(size(I) .* (0.93, 0.05) .+ (-r, r), r, color="w")
         ax1.add_patch(psf)
-        ax1.annotate("PSF", size(I) .* 0.9 .- (0., median(data.psf) / pix_as / 2 * 1.5 + 1.75), ha=:center, va=:center,
-            bbox=Dict(:facecolor => "white", :edgecolor => "white", :pad => 5.0))    
+        ax1.annotate("PSF", size(I) .* (0.93, 0.05) .+ (-r, 2.5r + 1.75), ha=:center, va=:center, color="w")    
 
         if !isnothing(aperture)
             patches = get_patches(aperture)
@@ -777,17 +778,17 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
 
         if !isnothing(z) && !isnothing(cosmo)
             scalebar_1 = py_anchored_artists.AnchoredSizeBar(ax2.transData, n_pix, scalebar_text_dist, "upper center", pad=0, borderpad=0, 
-                color="k", frameon=false, size_vertical=0.1, label_top=false, bbox_to_anchor=(0.17, 0.1), bbox_transform=ax2.transAxes)
+                color="w", frameon=false, size_vertical=0.1, label_top=false, bbox_to_anchor=(0.17, 0.1), bbox_transform=ax2.transAxes)
             ax2.add_artist(scalebar_1)
         end
         scalebar_2 = py_anchored_artists.AnchoredSizeBar(ax2.transData, n_pix, scalebar_text_ang, "lower center", pad=0, borderpad=0, 
-            color="k", frameon=false, size_vertical=0.1, label_top=true, bbox_to_anchor=(0.17, 0.1), bbox_transform=ax2.transAxes)
+            color="w", frameon=false, size_vertical=0.1, label_top=true, bbox_to_anchor=(0.17, 0.1), bbox_transform=ax2.transAxes)
         ax2.add_artist(scalebar_2)
 
-        psf = plt.Circle(size(I) .* 0.9, (isnothing(slice) ? median(data.psf) : data.psf[slice]) / pix_as / 2, color="k")
+        r = (isnothing(slice) ? median(data.psf) : data.psf[slice]) / pix_as / 2
+        psf = plt.Circle(size(I) .* (0.93, 0.05) .+ (-r, r), r, color="w")
         ax1.add_patch(psf)
-        ax1.annotate("PSF", size(I) .* 0.9 .- (0., median(data.psf) / pix_as / 2 * 1.5 + 1.75), ha=:center, va=:center,
-            bbox=Dict(:facecolor => "white", :edgecolor => "white", :pad => 5.0))
+        ax1.annotate("PSF", size(I) .* (0.93, 0.05) .+ (-r, 2.5r + 1.75), ha=:center, va=:center, color="w")    
 
         if !isnothing(aperture)
             patches = get_patches(aperture)

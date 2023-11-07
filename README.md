@@ -49,11 +49,13 @@ Whereas the optical spectrum is decomposed into
 - An arbitrary number of power laws to potentially model an AGN continuum.
 - Emission lines from hydrogen recombination and ionized species, modeled using Gaussian, Lorentzian, Gauss-Hermite, or pseudo-Voigt profiles.
 
-The code uses the [MPFIT](https://pages.physics.wisc.edu/~craigm/idl/cmpfit.html) ([Markwardt 2009](https://ui.adsabs.harvard.edu/abs/2009ASPC..411..251M)) implementation of the Levenberg-Marquardt (LM) least-squares minimization routine, as well as the differential evolution (DE) global minimization method as implemented by [BlackBoxOptim.jl](https://github.com/robertfeldt/BlackBoxOptim.jl/tree/master), and optionally may estimate uncertainties using bootstrapping. Depending on how the code is configured, the fitting procedure may be performed in multiple steps. By default, the configuration contains two steps:
+In the MIR regime, arbitrary templates may be included in the model with fitted normalizations. These may be used, for example, to model out and subtract the contamination from a nuclear quasar spectrum dispersed by the point-spread function (PSF). The code contains routines for creating templates in such a scenario, but the model for the PSF must be provided by the user.
+
+Note that the code is very flexible and many of these continuum options can be changed, adjusted, or added/removed to fit one's individual needs. The code uses the [MPFIT](https://pages.physics.wisc.edu/~craigm/idl/cmpfit.html) ([Markwardt 2009](https://ui.adsabs.harvard.edu/abs/2009ASPC..411..251M)) implementation of the Levenberg-Marquardt (LM) least-squares minimization routine, as well as the simulated annealing (SA) global minimization method as implemented by [Optim.jl](https://github.com/JuliaNLSolvers/Optim.jl), and optionally may estimate uncertainties using bootstrapping. Depending on how the code is configured, the fitting procedure may be performed in multiple steps (up to 3). By default, the configuration contains two steps:
 1. The emission lines are masked and the continuum + PAH features are fit with LM
 2. The continuum + PAH features are subtracted and the emission lines are fit to the residual spectrum with DE, followed by LM
 
-However, if one wishes, the code can be configured to fit the continuum and emission lines simultaneously in one step (using DE and/or LM), or it may be further broken down into 3 steps by splitting the continuum and PAH features up into 2 individual steps.
+However, if one wishes, the code can be configured to fit the continuum and emission lines simultaneously in one step (using SA and/or LM), or it may be further broken down into 3 steps by splitting the continuum and PAH features up into 2 individual steps and fitting the PAHs with templates.
 
 For a more detailed description of the PAHFIT decomposition and fitting methods, see [Smith et al. (2007)](https://ui.adsabs.harvard.edu/abs/2007ApJ...656..770S), and for a detailed overview of the changes and updates made by LOKI, see Reefe et al. (2023, in prep.).
 
@@ -156,9 +158,23 @@ This boolean option determines whether or not to save the full 3D model, evaluat
 
 This option determines what dust extinction template to use, and has different options for the MIR and optical. 
 
-The possible values for the MIR are "kvt" for the [Kemper, Vriend, & Tielens (2004)](https://ui.adsabs.harvard.edu/abs/2004ApJ...609..826K) template, "ct" for the [Chiar & Tielens (2006)](https://ui.adsabs.harvard.edu/abs/2006ApJ...637..774C/abstract) template, "ohm" for the [Ossenkopt, Henning, & Mathis (1992)](https://ui.adsabs.harvard.edu/abs/1992A&A...261..567O) template, or "d+" for the [Donnan et al. (2023)](https://ui.adsabs.harvard.edu/abs/2023MNRAS.519.3691D) template. Note that the template used for the warm silicate *emission* component is always the "ohm" template, regardless of what this option is.
+The possible values for the MIR are "kvt" for the [Kemper, Vriend, & Tielens (2004)](https://ui.adsabs.harvard.edu/abs/2004ApJ...609..826K) template, "ct" for the [Chiar & Tielens (2006)](https://ui.adsabs.harvard.edu/abs/2006ApJ...637..774C/abstract) template, "ohm" for the [Ossenkopt, Henning, & Mathis (1992)](https://ui.adsabs.harvard.edu/abs/1992A&A...261..567O) template, or "d+" for the [Donnan et al. (2023)](https://ui.adsabs.harvard.edu/abs/2023MNRAS.519.3691D) template. Note that the template used for the warm silicate *emission* component is always the "ohm" template, regardless of what this option is. Finally, if set to "decompose", the extinction curve will be decomposed into absorption profiles from three different species of silicates (amorphous olivine, amorphous pyroxene, and crystalline forsterite) with independent column densities as fitting parameters (this is only recommended for high S/N spectra that are not fit well by one of the other profiles).
 
 The possible values for the optical are "ccm" for the [Cardelli, Clayton, & Mathis (1989)](https://ui.adsabs.harvard.edu/abs/1989ApJ...345..245C/abstract) template, or "calzetti" for the [Calzetti et al. (2000)](https://ui.adsabs.harvard.edu/abs/2000ApJ...533..682C/abstract) template.
+
+Finally, the "custom" option allows one to input a custom template for the extinction profile using the `custom_ext_template` option (see below).
+
+`olivine_y = 0.5`
+
+This gives the Magnesium content for amorphous olivine (${\rm Mg}_{2y}{\rm Fe}_{2(1-y)}{\rm SiO}_{4}$) to be used when calculating the olivine absorption efficiencies and opacity profile as a function of wavelength. This option is only relevant if the extinction curve option is set to "decompose".
+
+`pyroxene_x = 0.5`
+
+This gives the Magnesium content for amorphous pyroxene (${\rm Mg}_{x}{\rm Fe}_{1-x}{\rm SiO}_{3}$) to be used when calculating the pyroxene absorption efficiencies and opacity profile as a function of wavelength. This option is only relevant if the extinction curve option is set to "decompose".
+
+`grain_size = 0.1`
+
+This gives the dust grain size in microns to be used when calculating the opacity profiles for both olivine and pyroxene. This option is only relevant if the extinction curve option is set to "decompose".
 
 `extinction_screen = true`
 
@@ -171,6 +187,11 @@ This boolean option determines whether or not to include the stellar continuum c
 `fit_sil_emission = true`
 
 This boolean option determines whether or not to include the warm silicate dust emission component of [Gallimore et al. (2010)](https://ui.adsabs.harvard.edu/abs/2010ApJS..187..172G) in the MIR model.
+
+`fit_temp_multexp = false`
+
+This option, if enabled, will apply 4 multiplicative exponential profiles onto all of the input templates. This option can be utilized if one does not know the spatial or spectral shape of the PSF model ahead of time, with the hope that the flexibility afforded by these profiles will allow any generic PSF shape to be modeled. The exponential profiles obtained from [Rupke et al. (2017)](https://arxiv.org/pdf/1708.05139.pdf) equation 2:
+$$a_1e^{-b_1\bar{\lambda}},~a_2e^{-b_2(1-\bar{\lambda})},~a_3(1-e^{-b_3\bar{\lambda}}),~{\rm and}~a_4(1-e^{-b_4(1-\bar{\lambda})})$$ 
 
 `fit_opt_na_feii = false`
 
@@ -216,14 +237,18 @@ This sets a threshold value on the F-test, where F is defined as $$F = \frac{(\c
 
 Whether or not to plot the line test results showing models with different numbers of components and their F values.
 
+`subtract_cubic_spline = false`
+
+If set to true, for the emission line fit, a cubic spline fit to the continuum will be subtracted instead of the actual continuum fit. Use this option if your continuum model is not fitting as accurately as you would like around emission lines of interest, but you still want to extract accurate fluxes for those lines.
+
 ```toml
 [cosmology]
-h = 1.0           # Hubble constant (in km s^-1 Mpc^-1) / 100
+h = 0.7           # Hubble constant (in km s^-1 Mpc^-1) / 100
 omega_m = 0.27    # matter density parameter
 omega_K = 0.0     # curvature density parameter
 omega_r = 0.0     # radiation density parameter
 ```
-The cosmology options determine the cosmology that the code assumes. Currently this is only used to calculate angular diameter distances for usage in physical scale bars on the 2D maps. $h$ is the standard Hubble constant normalized to $100\ {\rm km}\ {\rm s}^{-1}\ {\rm Mpc}^{-1}$, and $\Omega_m$, $\Omega_K$, and $\Omega_r$ are the standard matter, curvature, and radiation density parameters.
+The cosmology options determine the cosmology that the code assumes. Currently this is only used to calculate angular diameter distances for usage in physical scale bars on the 2D maps. $h$ is the standard Hubble constant normalized to $100\ {\rm km}\ {\rm s}^{-1}\ {\rm Mpc}^{-1}$, and $\Omega_m$, $\Omega_K$, and $\Omega_r$ are the standard matter, curvature, and radiation density parameters. The default values give $H_0 = 70\ {\rm km}\ {\rm s}^{-1}\ {\rm Mpc}^{-1}$, $\Omega_m = 0.27$, and $\Omega_\Lambda = 0.73$.
 
 ---
 
@@ -269,6 +294,18 @@ This may be a vector of two tuples specifying wavelength ranges, in the same for
 
 This allows the user to provide a 2D grid of either the 9.7-micron optical depth (for MIR fitting) or the reddening E(B-V) (for optical fitting) for each spaxel. The values in the grid will be used as the values for the corresponding spaxels in the fitting process, and they will be locked to these values. This is useful in cases where one wishes to fit a region of the spectrum that doesn't constrain the extinction very well, but has results from fitting another region of the spectrum that does constrain it well and can use those results to constrain the extinction in the other region.
 
+`custom_ext_template`
+
+This allows the user to provide a 1D template for the normalized optical depth $\tau$ as a function of wavelength. It should be normalized such that the value at 9.7 $\mu$m is 1, to fit with the normalization of the other extinction curves and allow the $\tau_{9.7}$ fitting parameter to be interpreted as intended.
+
+`pah_template_map`
+
+A 2D map of boolean values where, if true, the spaxel at the corresponding location will be fit using the PAH templates, and where false they will be fit without the templates. This is useful if one wants to spatially divide up the fitting into regions where fitting with the templates is necessary while leaving the other regions to be fit more freely without the templates.
+
+`sort_line_components = :flux`
+
+Oftentimes one may desire to sort the components of lines fit with more than 1 profile based on a fitting quantity. This is controlled by the `sort_line_components` option, which by default is set to sort by the flux. Other sorting options are :amp for amplitude, :fwhm for FWHM, or :voff for velocity offsets. To disable sorting, set to `nothing`. N.B. sorting should be disabled if the additional line components are using relative parameters (see emission line options below), otherwise the sorting will not work correctly. The sorting order (increasing or decreasing) is also set by the emission line options.
+
 ### ii. MIR Continuum and PAH Options
 These options are found in `src/options/dust.toml`
 
@@ -285,7 +322,7 @@ This option allows the user to modify the temperature of the stellar blackbody c
 
 **Dust Continuum:**
 
-The dust continuum components are enumerated in a list signified by the double square brackets. By default there are 9.
+The dust continuum components are enumerated in a list signified by the double square brackets. The default setup is arbitrary and can be changed easily. In general, one should use dust temperatures between 35--300 K for host galaxy emission (this is the range of temperatures used by PAHFIT), and potentially hotter for AGN continuum (up to 1500 K, the dust sublimation temperature). One can choose between fewer components (2-3) with free temperatures, or more components (9+) with fixed temperatures, depending on the kind of decomposition that is desired. Both should provide relatively similar quality fits to the continuum.
 
 ```toml
 [[dust_continuum_temps]]
@@ -306,7 +343,7 @@ plim = [-3.0, 3.0]
 locked = true
 ```
 
-where the index α is defined as $(\lambda/9.7)^\alpha$. By default, no power laws are included in the MIR continuum, as they are degenerate with the blackbodies.
+where the index α is defined as $(\lambda/9.7)^\alpha$. By default, no power laws are included in the MIR continuum, as they are degenerate with the blackbodies. In general, one should fit one or the other, but not both.
 
 **Templates:**
 
@@ -335,11 +372,11 @@ The first option for each PAH feature is the central wavelength. `val` and `lock
 
 ```toml
 [dust_features."PAH_3.29".fwhm]
-val = 0.060
-plim = [0.4, 1.4]
+val = 0.050
+plim = [0.9, 1.1]
 locked = false
 ```
-The second option for each PAH feature is the FWHM. `val` and `locked` again work the same as always, but here `plim` is *multiplicative* with `val`. In other words, a `plim` of `[0.4, 1.4]` means that this value is allowed to vary from `0.060*0.4 = 0.024` to `0.060*1.4 = 0.084`.
+The second option for each PAH feature is the FWHM. `val` and `locked` again work the same as always, but here `plim` is *multiplicative* with `val`. In other words, a `plim` of `[0.9, 1.1]` means that this value is allowed to vary from `0.050*0.9 = 0.045` to `0.050*1.1 = 0.055`.
 
 Note: If one wishes to model a PAH feature with a Pearson type-IV profile (currently we model all PAHs with Drude profiles), then additional entries for the power index $m$ (`dust_features."PAH_3.29".index`) and exponential cutoff $\nu$ (`dust_features."PAH_3.29".cutoff`) are required. The `plim` entires for these two values are normal, i.e. they work the same way as the temperatures.
 
@@ -369,7 +406,7 @@ The `complex` entry should be a uniquely identifying string for that complex tha
 
 **Absorption Features:**
 
-Entries for absorption features modeled with Drude profiles work the exact same way as PAH features, with the exception that their names should be prefixed by "abs_".  One may set the "local" keyword to true if the feature in question is local (either from the Milky Way, or an instrumental effect), which will redshift the feature by the same amount as the source to keep it at the same observed wavelength. The example below shows a feature that models the spectral leak artifact at ~12.2 μm that is present in early versions of the JWST reduction pipeline.
+Entries for absorption features modeled with Drude profiles work the exact same way as PAH features, with the exception that their names should be prefixed by "abs_".  One may set the "local" keyword to true if the feature in question is local (either from the Milky Way, or an instrumental effect), which will redshift the feature by the same amount as the source to keep it at the same observed wavelength. The example below shows a feature that models the spectral leak artifact at ~12.2 μm that is present in early versions of the JWST reduction pipeline. Note that this is not strictly correct, since the leak should be additive whereas the absorption features are multiplicative, but this is just for demonstrational purposes. There are no absorption features defined this way that are enabled by default.
 ```toml
 [absorption_features."abs_leak_12.22"]
 local = true
@@ -422,6 +459,34 @@ plim = [0.0, 1.0]
 locked = true
 ```
 $\tau_{9.7}$ is the optical depth of dust extinction at 9.7 μm (which is the peak of a large silicate absorption feature), and $\beta$ is a mixing ratio between the extinction profile specified in `options.toml` and a $-1.7$ index power law. $\beta$ is only relevant for the "kvt" and "d+" curves, and is typically locked to a value of 0.1.
+
+```toml
+[extinction.N_oli]
+val = 1.7e-3
+plim = [0.0, 3e-3]
+locked = false
+
+[extinction.N_pyr]
+val = 5.0e-5
+plim = [0.0, 3e-3]
+locked = false
+
+[extinction.N_for]
+val = 1.0e-4
+plim = [0.0, 3e-3]
+locked = false
+```
+
+If using the `"decompose"` option for the extinction curve, these three parameters become relevant. $N_{\rm oli}$, $N_{\rm pyr}$, and $N_{\rm for}$ are the mass column densities of the three dust species included in the model (olivine, pyroxene, and forsterite), and essentially act as amplitudes in the fitting. The units for all of these values are ${\rm g}~{\rm cm}^{-2}$.
+
+```toml
+[extinction.frac]
+val = 1.0
+plim = [0.5, 1.0]
+locked = true
+```
+
+Finally, this parameter defines a covering fraction $C_f$ such that the extinction is only applied to this fraction of the continuum. The model then becomes $(1-C_f) \times {\rm continuum} + C_f \times {\rm continuum} \times {\rm extinction}$. By default, this is locked to 1, applying the extinction to the full continuum.
 
 **Warm Silicate Emission:**
 
@@ -582,6 +647,10 @@ These options are found in `src/options/lines.toml`.
 
 This boolean option determines whether or not the mixing ratio of all lines with pseudo-Voigt profiles are tied or not.
 
+`combined_maps = []`
+
+This may be formatted as a list of lists to produce combined flux parameter maps for any lines. For example, to create a combined flux map for the [O II] doublet, `combined_maps = [["OII_03727", "OII_03729"]]`.
+
 `voff_plim = [-500.0, 500.0]`
 
 This tuple gives the (minimum, maximum) allowable velocity offset from the rest-frame wavelength of each line, in km/s.
@@ -600,6 +669,8 @@ These tuples give the (minimum, maximum) allowable 3rd-order and 4th-order Gauss
 
 This tuple gives the (minimum, maximum) allowable mixing ratio for each line. This is only relevant for lines that are fit with pseudo-Voigt profiles, where a mixing ratio of 1 signifies a pure Gaussian profile and 0 signifies a pure Lorentzian profile.
 
+One may also provide values for `X_init` or `X_locked` where X is any of voff, fwhm, h3, h4, or eta. These specify the initial values and whether or not the paramter is locked during fitting.
+
 **Additional Component Options:**
 
 `n_acomps = 1`
@@ -617,6 +688,8 @@ This is the same as `voff_plim`, but for the additional line profiles given by `
 `acomp_fwhm_plim = [[1.0, 5.0]]`
 
 This is the same as `fwhm_plim`, but for the additional line profiles given by `n_acomps`. Like `acomp_amp_plim`, this is a 2D list where the first dimension should have a length of `n_acomps` and the second dimension should be 2. **N.B.** that the FWHM of the additional components here are **multiplicative factors with the main component.** So limits of `[1.0, 5.0]` signify that the additional component may have a FWHM 1-5x larger than the main FWHM.
+
+As above, `acomp_X_init` and `acomp_X_locked` may also be specified.
 
 **Kinematic Groups:**
 
@@ -646,6 +719,10 @@ flexible_wavesol = false
 wavesol_unc = 30.0 
 ```
 These options allow some flexibility in the relative velocity offsets of lines that are tied together. By default, lines with tied kinematics must have exactly the same velocity offset, but allowing `flexible_wavesol` to be `true` will allow some small variation in the velocity offsets of lines that are "tied" together, with the maximum allowed variation in km/s given by `wavesol_unc`. These options are intended for use if one believes the wavelength solution of the spectrum may not be accurate enough to tie certain lines together otherwise, as was the case with early versions of the JWST pipeline (these issues have since been resolved so there should be no problems with keeping the `flexible_wavesol` option disabled for MIRI data).
+
+`default_sort_order = -1`
+
+This specifies the order that line components are sorted in, with 1 being increasing (smallest first) and -1 being decreasing (largest first). Sort orders for individual lines may also be specified that override the default value.
 
 **Rest Wavelengths:**
 
@@ -680,7 +757,7 @@ Lines may be arbitrarily added to or removed from this list based on what the us
 * For molecular hydrogen lines, names should be formatted as "H2[VV]_[RR]" where [VV] are the vibrational quantum numbers of the transition and [RR] are the rotational quantum numbers of the transition, i.e. "H200_S3" for the H<sub>2</sub> 0-0 S(3) line.
 * Lines for ionized species should be formatted as "[ION]_[WAVE]" where [ION] is the name of the ion and [WAVE] is the wavelength of the line in microns to three decimals, with the decimal removed. For example, "NeVI_7652" for the [Ne VI] λ7.652 line.
 
-The `latex` entry is used for plotting purposes, and will be displayed on 1D spectra if the `annotate` option is enabled.  Otherwise, all lines will get a vertical dashed line denoting their position regardless of if the `annotate` option is enabled. These line annotations can get overcrowded very quickly if one tries annotating every single line that is fit, especially in the region from 4-6 μm which has a lot of closely-packed lines, so it is not recommended to have `annotate` enabled for every single line.  The default list provided only gives annotations for the lines likely to be the brightest in a typical galaxy.  The $\LaTeX$ labels are still necessary even for lines that are not annotated, since they are also used to label 2D parameter maps.
+The `latex` entry is used for plotting purposes, and will be displayed on 1D spectra if the `annotate` option is enabled.  Otherwise, all lines will get a vertical dashed line denoting their position regardless of if the `annotate` option is enabled. These line annotations can get overcrowded very quickly if one tries annotating every single line that is fit, especially in the region from 4-6 μm which has a lot of closely-packed lines, so it is not recommended to have `annotate` enabled for every single line.  The default list provided only gives annotations for the lines likely to be the brightest in a typical galaxy.  The $\LaTeX$ labels are still necessary even for lines that are not annotated, since they are also used to label 2D parameter maps. One may also add a `sort_order` option to override the default sort order for a particular line.
 
 **Profiles:**
 
@@ -689,14 +766,14 @@ The `latex` entry is used for plotting purposes, and will be displayed on 1D spe
 default = "Voigt"
 ```
 
-The [profiles] dictionary gives the master reference for while profiles to use for each line in the fit. The "default" keyword provides the default profile used for all lines. The available profiles are "Gaussian", "Lorentzian", "Voigt", or "GaussHermite". Individual lines may have unique provides that override the default profile by adding additional keys that have the same name as the keys in the [lines] dictionary.
+The [profiles] dictionary gives the master reference for which profiles to use for each line in the fit. The "default" keyword provides the default profile used for all lines. The available profiles are "Gaussian", "Lorentzian", "Voigt", or "GaussHermite". Individual lines may have unique provides that override the default profile by adding additional keys that have the same name as the keys in the [lines] dictionary.
 
 ```toml
 [acomps]
 NeVI_7652 = ["Voigt"]
 ```
 
-The [acomps] dictionary acts similarly to the [profiles] dictionary, but for the additional line components specified by `n_acomps.` In other words, this is the location where you actually specify which lines, if any, should have additional profiles, and what types of profiles they should be. In the example above, the [Ne VI] λ7.652 line is given one additional Voigt profile. This means that, in total, this line will be fit with two Voigt profiles. You will notice that the entries here are lists of strings, meaning one can add an arbitrary number of additional profiles to each line. However, there is an upper limit on the number of additional profiles given by `n_acomps.`
+The [acomps] dictionary acts similarly to the [profiles] dictionary, but for the additional line components specified by `n_acomps.` In other words, this is the location where you actually specify which lines, if any, should have additional profiles, and what types of profiles they should be. In the example above, the [Ne VI] λ7.652 line is given one additional Voigt profile. This means that, in total, this line will be fit with two Voigt profiles (assuming any testing for additional components is successful for a given fit, or one is not doing component testing). You will notice that the entries here are lists of strings, meaning one can add an arbitrary number of additional profiles to each line. However, there is an upper limit on the number of additional profiles given by `n_acomps.`
 
 **Advanced Usage:**
 
@@ -1016,13 +1093,15 @@ The units of outputs for different quantities are listed here. When relevant, ou
 - All optical depths are unitless
     - If the `extinction_screen` option is true, then the extinction factor at 9.7 μm is $e^{-\tau_{9.7}}$. Otherwise, it is $(1-e^{-\tau_{9.7}})/\tau_{9.7}$.
     - $\tau_{\rm warm}$, $\tau_{\rm cold}$, and $\tau_{\rm CH}$ all satisfy $e^{-\tau}$.
+- Mass column densities for the "decompose" extinction profile: ${\rm g}\ {\rm cm}^{-2}$
+- Covering fractions are unitless
 - Line & PAH amplitudes: $\log_{10}(I/{\rm erg}\ {\rm s}^{-1}\ {\rm cm}^{-2}\ {\rm Hz}^{-1}\ {\rm sr}^{-1})$
 - Line & PAH fluxes: $\log_{10}(F/{\rm erg}\ {\rm s}^{-1}\ {\rm cm}^{-2})$
 - PAH peak wavelengths: μm
 - PAH FWHMs: μm
 - Line velocity offsets: ${\rm km}\ {\rm s}^{-1}$
 - Line FWHMs: ${\rm km}\ {\rm s}^{-1}$
-- Mixing ratios: unitless
+- Line Voigt mixing ratios: unitless
 - Signal-to-noise ratios: unitless
 - Simple Stellar Population masses: $\log_{10}(M/M_\odot)$ (note: because SSPs are given in units of $L_\odot/M_\odot/{\rm \mathring{A}}$, this quantity is dependent on your chosen cosmology and scales inversely with the luminosity distance squared, so it also scales with $h^2$. This is also dependent on the IMF used for the stellar populations, which in this code is the Salpeter function.)
 - Stellar velocity and dispersion: ${\rm km}\ {\rm s}^{-1}$
@@ -1055,31 +1134,43 @@ obs = from_fits(["file_1.fits", "file_2.fits", ...], 0.0)
 ```julia
 correct!(obs)
 ```
-4. Preliminary testing on MIRI data has shown that there is sometimes jumps in the continuum flux levels at the boundaries between channels and subchannels due to small misalignments between the WCS grids of each channel.  Hopefully these problems will be minimized by improvements in the data reduction pipeline in the future, but in the meantime we have attempted to minimize this problem by creating functions to adjust the WCS parameters of each subchannel and reproject them all onto the same grid. This tends to work well for subchannels, but sometimes jumps still remain between full channels, so we also include a multiplicative scaling factor, which can be constrained if one so chooses. These adjustments can be applied by calling the "reproject_channels!" function on the `Observation` object while specifying which channels/subchannels to reproject and combine. The example below shows an application that combines channels 1, 2, and 3 and saves the full spectrum into a channel ID of 0. (Check the documentation using `?reproject_channels!` in the REPL for more info on what all of the different keyword arguments do).
+4. Preliminary testing on MIRI data has shown that there is sometimes jumps in the continuum flux levels at the boundaries between channels and subchannels due to small misalignments between the WCS grids of each channel.  Hopefully these problems will be minimized by improvements in the data reduction pipeline in the future, but in the meantime we have attempted to minimize this problem by creating functions to combine observations from different subchannels by adjusting the WCS parameters of each subchannel, reprojecting them all onto the same grid, and resampling while conserving flux in the wavelength dimension. This tends to work well for subchannels, but sometimes jumps still remain between full channels, so we also include a multiplicative scaling factor, which can be constrained if one so chooses. We also provide an option for extracting a spectrum within an aperture centered at each spaxel location to reduce artifacts from the 3D resampling process. These adjustments can all be applied by calling the "combine_channels!" function on the `Observation` object while specifying which channels/subchannels to reproject and combine. The example below shows an application that combines channels 1, 2, and 3 using a linear (order=1) reprojection and saves the full spectrum into a channel ID of 0. (Check the documentation using `?combine_channels!` in the REPL for more info on what all of the different keyword arguments do).
 ```julia
-reproject_channels!(obs, [1,2,3], out_id=0, order=1, adjust_wcs_headerinfo=true, rescale_channels=8.0, rescale_limits=(0.0, Inf), rescale_snr=3., match_psf=false)
+combine_channels!(obs, [1,2,3], out_id=0, order=1, adjust_wcs_headerinfo=true, rescale_channels=8.0, rescale_limits=(0.0, Inf), rescale_snr=3., extract_from_ap=0.)
 ```
-5. Bad pixels can then be interpolated using the "interpolate_nans!" function on the desired channels. These pixels will be ignored during the fitting, but this step is necessary because the minimizer cannot deal with NaNs and Infs. 
+5. (Optional) It is often desirable to rotate the cubes to be aligned with the sky axes rather than the IFU axes, which can be achieved using the `rotate_to_sky_axes!` function:
+```julia
+rotate_to_sky_axes!(obs.channels[0])
+```
+6. Bad pixels can then be interpolated using the "interpolate_nans!" function on the desired channels. These pixels will be ignored during the fitting, but this step is necessary because the minimizer cannot deal with NaNs and Infs. 
 ```julia
 interpolate_nans!(obs.channels[0])
 ```
-6. (Optional) The errors in the cube can be replaced with the "statistical errors", which are calculated as the standard deviation of the residuals between the flux and a cubic spline fit to the flux (with emission lines masked out) within a small window (60 pixels) around each pixel.  This is performed with the "calculate_statistical_errors!" function.
+7. The errors in the cube can be replaced with the "statistical errors", which are calculated as the standard deviation of the residuals between the flux and a cubic spline fit to the flux (with emission lines masked out) within a small window (60 pixels) around each pixel.  This is performed with the "calculate_statistical_errors!" function.
 ```julia
 calculate_statistical_errors!(obs.channels[0])
 ```
-7. Create the CubeFitter object, which contains all of the fitting data and options for fitting a cube. Here you can overwrite any options from the `options.toml` file, which will otherwise be the defaults when creating any CubeFitter object:
+8. Create the CubeFitter object, which contains all of the fitting data and options for fitting a cube. Here you can overwrite any options from the `options.toml` file, which will otherwise be the defaults when creating any CubeFitter object:
 ```julia
 cube_fitter = CubeFitter(obs.channels[0], obs.z, name; parallel=true, plot_spaxels=:pyplot, plot_maps=true, save_fits=true)
 ```
-8. If fitting each spaxel individually, simply call the "fit_cube!" function on the CubeFitter object
+9. If fitting each spaxel individually, simply call the "fit_cube!" function on the CubeFitter object
 ```julia
 fit_cube!(cube_fitter)
 ```
-9. If fitting an integrated spectrum within an aperture, first create the aperture with the "make_aperture" function, then call the "fit_cube!" function with the aperture. Apertures can be specified as `:Circular`, `:Rectangular`, or `:Elliptical`. The following two arguments are the R.A. in sexagesimal hours and the Dec. in sexagesimal degrees of the center of the aperture. Then, if the aperture is circular, the next argument is the radius of the aperture in arcseconds. For rectangular apertures, there are 3 arguments for the width and height in arcseconds and rotation angle in degrees. For elliptical apertures, there are 3 arguments for the semimajor and semiminor axes in arcseconds and rotation angle in degrees. The `auto_centroid` option will automatically adjust the centroid of the aperture to the local flux peak. The `scale_psf` argument creates a list of apertures with increasing sizes that scale up at the same rate as the FWHM of the PSF scales up over the input wavelength range.
+10. If fitting an integrated spectrum within an aperture, first create the aperture with the "make_aperture" function, then call the "fit_cube!" function with the aperture. Apertures can be specified as `:Circular`, `:Rectangular`, or `:Elliptical`. The following two arguments are the R.A. in sexagesimal hours and the Dec. in sexagesimal degrees of the center of the aperture. Then, if the aperture is circular, the next argument is the radius of the aperture in arcseconds. For rectangular apertures, there are 3 arguments for the width and height in arcseconds and rotation angle in degrees. For elliptical apertures, there are 3 arguments for the semimajor and semiminor axes in arcseconds and rotation angle in degrees. The `auto_centroid` option will automatically adjust the centroid of the aperture to the local flux peak. The `scale_psf` argument creates a list of apertures with increasing sizes that scale up at the same rate as the FWHM of the PSF scales up over the input wavelength range.
 ```julia
 ap = make_aperture(obs.channels[0], :Circular, "23:03:15.610", "+8:52:26.10", 0.5, auto_centroid=true, scale_psf=false)
 fit_cube!(cube_fitter, ap)
 ```
+
+If one wishes to model the PSF from a bright point source and include it in the model to separate it from the host galaxy emission, there are some additional utility functions that one can utilize:
+
+`generate_psf_model!(obs)`: This function acts on an observation object and generates a PSF model cube that has been resized to match the size of the observation, shifted such that the centroids are aligned, background annulus subtracted, and interpolated over the spectral leak artifact at 12.2 microns. For this function to work, the input observation data MUST be aligned to the IFU axes, not the sky axes. One must have also prepared a data cube to be used as the PSF model for each channel/band and placed them in the `src/templates/psfs_stars/` directory (these files are too large to provide by default on github). The recommendation is to use a bright star that was observed during the calibration programs - i.e. proposal IDs 1536 and 1538 - to construct these PSF models. Applying this function should be done BEFORE step 3 in the above roadmap, as steps after this automatically apply themselves to both the data itself and the PSF model to ensure that they are transformed in the same way.
+
+`splinefit_psf_model!(obs.channels[0], 100)`: To be used strictly after the `generate_psf_model` function, this function takes the PSF model generated by the previous function and fits a cubic spline to it, with a knot spacing given by the second argument (in pixels), since the PSF is expected to vary gradually in the wavelength dimension. This function should be applied between steps 4 and 5 in the above roadmap. This function is not required if one wishes to keep the more noisy PSF model generated in the previous step.
+
+`generate_nuclear_template(obs.channels[0], 0.)`: This function, applied between steps 7-8 above, takes the PSF model and combines it with the spectrum of the brightest spaxel in the data cube (or, if the second argument defining the aperture radius in units of the PSF FWHM is > 0, it takes an integrated spectrum around the brightest point). This creates a 3D cube that is formatted such that it can be inputted directly into the CubeFitter object with the `templates` argument.
 
 ---
 

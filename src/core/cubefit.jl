@@ -240,6 +240,7 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_dust_cont::S, n_power_law::S, cf
         lines_comp[cf_lines.names[i]][:n_comps] = copy(nan_arr)
         lines_comp[cf_lines.names[i]][:w80] = copy(nan_arr)
         lines_comp[cf_lines.names[i]][:delta_v] = copy(nan_arr)
+        lines_comp[cf_lines.names[i]][:vmed] = copy(nan_arr)
     end
 
     statistics = Dict{Symbol, Array{Float64, 2}}()
@@ -357,6 +358,7 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_ssps::S, n_power_law::S, n_lines
         lines_comp[cf_lines.names[i]][:n_comps] = copy(nan_arr)
         lines_comp[cf_lines.names[i]][:w80] = copy(nan_arr)
         lines_comp[cf_lines.names[i]][:delta_v] = copy(nan_arr)
+        lines_comp[cf_lines.names[i]][:vmed] = copy(nan_arr)
     end
 
     statistics = Dict{Symbol, Array{Float64, 2}}()
@@ -927,7 +929,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             out[:guess_tau] = nothing
         end
         if !haskey(out, :sort_line_components)
-            out[:sort_line_components] = nothing
+            out[:sort_line_components] = :flux
         else
             out[:sort_line_components] = Symbol(out[:sort_line_components])
         end
@@ -988,7 +990,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             @debug msg
 
             # Only use PAH features within +/-0.5 um of the region being fit (to include wide tails)
-            df_filt = [(minimum(λ) < dust_features_0.mean[i].value < maximum(λ)) for i ∈ 1:length(dust_features_0.mean)]
+            df_filt = [((minimum(λ)-0.5) < dust_features_0.mean[i].value < (maximum(λ)+0.5)) for i ∈ 1:length(dust_features_0.mean)]
             if !isnothing(out[:user_mask])
                 for pair in out[:user_mask]
                     df_filt .&= [~(pair[1] < dust_features_0.mean[i].value < pair[2]) for i ∈ 1:length(dust_features_0.mean)]
@@ -1010,7 +1012,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             @debug msg
 
             # Only use absorption features within +/-0.5 um of the region being fit
-            ab_filt = [(minimum(λ) < abs_features_0.mean[i].value < maximum(λ)) for i ∈ 1:length(abs_features_0.mean)]
+            ab_filt = [((minimum(λ)-0.5) < abs_features_0.mean[i].value < (maximum(λ)+0.5)) for i ∈ 1:length(abs_features_0.mean)]
             if !isnothing(out[:user_mask])
                 for pair in out[:user_mask]
                     ab_filt .&= [~(pair[1] < abs_features_0.mean[i].value < pair[2]) for i ∈ 1:length(abs_features_0.mean)]
@@ -1227,7 +1229,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
                 end
             end
         end
-        n_params_extra = 3 * (n_dust_features + n_lines + n_acomps) + 3n_lines
+        n_params_extra = 3 * (n_dust_features + n_lines + n_acomps) + 4n_lines
         @debug "### There is a total of $(n_params_cont) continuum parameters ###"
         @debug "### There is a total of $(n_params_lines) emission line parameters ###"
         @debug "### There is a total of $(n_params_extra) extra parameters ###"
@@ -1277,7 +1279,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             p_init_cube_lines = ones(size(cube.I)[1:2]..., n_params_lines) .* NaN
 
             # Filter out dust features
-            df_filt = [(minimum(p_init_cube_λ) < dust_features_0.mean[i].value < maximum(p_init_cube_λ)) for i ∈ 1:length(dust_features_0.mean)]
+            df_filt = [((minimum(p_init_cube_λ)-0.5) < dust_features_0.mean[i].value < (maximum(p_init_cube_λ)+0.5)) for i ∈ 1:length(dust_features_0.mean)]
             if !isnothing(out[:user_mask])
                 for pair in out[:user_mask]
                     df_filt .&= [~(pair[1] < dust_features_0.mean[i].value < pair[2]) for i ∈ 1:length(dust_features_0.mean)]
@@ -1311,7 +1313,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             end
 
             # Repeat for absorption features
-            ab_filt = [(minimum(p_init_cube_λ) < abs_features_0.mean[i].value < maximum(p_init_cube_λ)) for i ∈ 1:length(abs_features_0.mean)]
+            ab_filt = [((minimum(p_init_cube_λ)-0.5) < abs_features_0.mean[i].value < (maximum(p_init_cube_λ)+0.5)) for i ∈ 1:length(abs_features_0.mean)]
             if !isnothing(out[:user_mask])
                 for pair in out[:user_mask]
                     ab_filt .&= [~(pair[1] < abs_features_0.mean[i].value < pair[2]) for i ∈ 1:length(abs_features_0.mean)]
@@ -1892,12 +1894,7 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         end
 
         # Template amplitudes (not rescaled)
-        if !cube_fitter.fit_temp_multexp
-            for n ∈ 1:cube_fitter.n_templates
-                p₀[pᵢ] = 1.0
-                pᵢ += 1
-            end
-        else
+        if cube_fitter.fit_temp_multexp
             tamp = sum(p₀[[pᵢ,pᵢ+2,pᵢ+4,pᵢ+6]]) / 4
             for _ ∈ 1:4
                 p₀[pᵢ] = tamp

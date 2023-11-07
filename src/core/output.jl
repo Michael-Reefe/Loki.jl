@@ -4,10 +4,146 @@ const ascii_lowercase = "abcdefghijklmnopqrstuvwxyz"
 
 
 """
+    sort_line_components!(cube_fitter, params)
+
+A helper function that sorts line parameters based on a sorting criterion (flux, FWHM, voff, etc.) so that
+the bootstrapped values are correct. This method sorts the parameters before they have been sorted into cubes.
+This is necessary before taking the 50th, 16th, and 84th percentiles of the parameters since they may fit 
+different line components during different bootstrap iterations, forming bimodal distributions. This function
+sorts the parameters first to prevent this from happening.
+"""
+function sort_line_components!(cube_fitter::CubeFitter, params::Vector{<:Real}; mask_zeros::Bool=true)
+
+    # Do not sort
+    if isnothing(cube_fitter.sort_line_components)
+        return
+    end
+    if any(cube_fitter.relative_flags)
+        return
+    end
+
+    pᵢ = cube_fitter.n_params_cont + 1
+    pⱼ = pᵢ + cube_fitter.n_params_lines + (cube_fitter.spectral_region == :MIR ? 3cube_fitter.n_dust_feat : 0)
+
+    for k ∈ 1:cube_fitter.n_lines
+        amps = Int64[]
+        voffs = Int64[]
+        voff_indivs = Int64[]
+        fwhms = Int64[]
+        h3s = Int64[]
+        h4s = Int64[]
+        etas = Int64[]
+        fluxes = Int64[]
+        eqws = Int64[]
+        snrs = Int64[]
+        n_prof = 0
+        @assert all(cube_fitter.lines.profiles[k,:][.!isnothing.(cube_fitter.lines.profiles[k,:])] .== 
+            cube_fitter.lines.profiles[k,1]) "All line profiles must be the same to use sorted bootstrapping"
+
+        for j ∈ 1:cube_fitter.n_comps
+            if isnothing(cube_fitter.lines.profiles[k,j])
+                continue
+            end
+            n_prof += 1
+
+            # set parameters to nan so they are ignored when calculating the percentiles
+            mask_line = (params[pᵢ] == 0.) && (j > 1) && mask_zeros
+            if mask_line
+                # amplitude is not overwritten so that the zeros downweight the final amplitude (same for flux, eqw, snr)
+                params[pᵢ+1] = NaN
+            end
+
+            push!(amps, pᵢ)
+            push!(voffs, pᵢ+1)
+            if !isnothing(cube_fitter.lines.tied_voff[k, j]) && cube_fitter.flexible_wavesol && isone(j)
+                error("Cannot use the flexible_wavesol option with sorted bootstrapping!")
+                # push!(voff_indivs, pᵢ+2)
+                # push!(fwhms, pᵢ+3)
+                # pᵢ += 4
+            else
+                push!(fwhms, pᵢ+2)
+                if mask_line
+                    params[pᵢ+2] = NaN
+                end
+                pᵢ += 3
+            end
+            if cube_fitter.lines.profiles[k,j] == :GaussHermite
+                push!(h3s, pᵢ)
+                push!(h4s, pᵢ+1)
+                if mask_line
+                    params[pᵢ:pᵢ+1] .= NaN
+                end
+                pᵢ += 2
+            elseif cube_fitter.lines.profiles[k,j] == :Voigt
+                push!(etas, pᵢ)
+                if mask_line
+                    params[pᵢ] = NaN
+                end
+                pᵢ += 1
+            end
+            push!(fluxes, pⱼ)
+            push!(eqws, pⱼ+1)
+            push!(snrs, pⱼ+2)
+            pⱼ += 3
+        end
+        # Dont forget to count the composite line parameters
+        pⱼ += 4
+
+        # Dont need to sort if there is only 1 profile
+        if n_prof < 2
+            continue
+        end
+
+        # always sort by voff for bootstrap iterations!
+        if cube_fitter.sort_line_components == :flux
+            sort_quantity = params[fluxes]
+        elseif cube_fitter.sort_line_components == :amp
+            sort_quantity = params[amps]
+        elseif cube_fitter.sort_line_components == :fwhm
+            sort_quantity = params[fwhms]
+        elseif cube_fitter.sort_line_components == :voff
+            sort_quantity = params[voffs]
+        else
+            error("Unrecognized sorting quantity: $(cube_fitter.sort_line_components)")
+        end
+
+        # Sort by the relevant sorting quantity (NaNs are always placed at the end)
+        #  1 = sort in increasing order
+        # -1 = sort in decreasing order
+        if cube_fitter.lines.sort_order[k] == 1
+            ss = sortperm(sort_quantity)
+        elseif cube_fitter.lines.sort_order[k] == -1
+            # Cant just reverse because then NaNs would be placed at the beginning
+            n_inf = sum(.~isfinite.(sort_quantity))
+            ss = [sortperm(sort_quantity, rev=true)[n_inf+1:end]; findall(.~isfinite.(sort_quantity))]
+        else
+            error("Unrecognized sort order: $(cube_fitter.lines.sort_order[k]) (must be 1 or -1)")
+        end
+
+        # Reassign the parameters in the new order
+        params[amps] .= params[amps][ss]
+        params[voffs] .= params[voffs][ss]
+        params[fwhms] .= params[fwhms][ss]
+        if length(h3s) > 0
+            params[h3s] .= params[h3s][ss]
+            params[h4s] .= params[h4s][ss]
+        end
+        if length(etas) > 0
+            params[etas] .= params[etas][ss]
+        end
+        params[fluxes] .= params[fluxes][ss]
+        params[eqws] .= params[eqws][ss]
+        params[snrs] .= params[snrs][ss]
+    end
+
+end
+
+
+"""
     sort_line_components!(cube_fitter, param_maps, param_errs, index, cube_data)
 
 A helper function that sorts line parameters based on a sorting criterion (flux, FWHM, voff, etc.) so that
-the parameter maps look continuous.
+the parameter maps look continuous. This method sorts the parameters after the full fitting procedure.
 """
 function sort_line_components!(cube_fitter::CubeFitter, param_maps::ParamMaps, param_errs::Vector{<:ParamMaps}, 
     index::CartesianIndex, cube_data::NamedTuple)
@@ -17,7 +153,7 @@ function sort_line_components!(cube_fitter::CubeFitter, param_maps::ParamMaps, p
         for k ∈ 1:cube_fitter.n_lines
             # n_prof = sum([!isnothing(cube_fitter.lines.profiles[k, j]) for j ∈ 1:cube_fitter.n_comps])
             n_prof = param_maps.lines_comp[cube_fitter.lines.names[k]][:n_comps][index]
-            n_prof = isfinite(n_prof) ? Int(n_prof) : n_prof
+            n_prof = isfinite(n_prof) ? floor(Int, n_prof) : n_prof
 
             if n_prof > 1
 
@@ -47,6 +183,9 @@ function sort_line_components!(cube_fitter::CubeFitter, param_maps::ParamMaps, p
                 fluxes = zeros(n_prof)
                 flux_errs_lo = zeros(n_prof)
                 flux_errs_hi = zeros(n_prof)
+                eqws = zeros(n_prof)
+                eqw_errs_lo = zeros(n_prof)
+                eqw_errs_hi = zeros(n_prof)
                 snrs = zeros(n_prof)
 
                 for j ∈ 1:n_prof
@@ -82,6 +221,9 @@ function sort_line_components!(cube_fitter::CubeFitter, param_maps::ParamMaps, p
                     fluxes[j] = param_maps.lines[lnj][:flux][index]
                     flux_errs_lo[j] = param_errs[1].lines[lnj][:flux][index]
                     flux_errs_hi[j] = param_errs[2].lines[lnj][:flux][index]
+                    eqws[j] = param_maps.lines[lnj][:eqw][index]
+                    eqw_errs_lo[j] = param_errs[1].lines[lnj][:eqw][index]
+                    eqw_errs_hi[j] = param_errs[2].lines[lnj][:eqw][index]
                     snrs[j] = param_maps.lines[lnj][:SNR][index]
                 end     
 
@@ -169,6 +311,9 @@ function sort_line_components!(cube_fitter::CubeFitter, param_maps::ParamMaps, p
                     param_maps.lines[lni][:flux][index] = fluxes[ss[i]]
                     param_errs[1].lines[lni][:flux][index] = flux_errs_lo[ss[i]]
                     param_errs[2].lines[lni][:flux][index] = flux_errs_hi[ss[i]]
+                    param_maps.lines[lni][:eqw][index] = eqws[ss[i]]
+                    param_errs[1].lines[lni][:eqw][index] = eqw_errs_lo[ss[i]]
+                    param_errs[2].lines[lni][:eqw][index] = eqw_errs_hi[ss[i]]
                     param_maps.lines[lni][:SNR][index] = snrs[ss[i]]
                 end
             end
@@ -577,7 +722,10 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             param_maps.lines_comp[ln][:delta_v][index] = out_params[index, pᵢ+2]
             param_errs[1].lines_comp[ln][:delta_v][index] = out_errs[index, pᵢ+2, 1]
             param_errs[2].lines_comp[ln][:delta_v][index] = out_errs[index, pᵢ+2, 2]
-            pᵢ += 3
+            param_maps.lines_comp[ln][:vmed][index] = out_params[index, pᵢ+3]
+            param_errs[1].lines_comp[ln][:vmed][index] = out_errs[index, pᵢ+3, 1]
+            param_errs[2].lines_comp[ln][:vmed][index] = out_errs[index, pᵢ+3, 2]
+            pᵢ += 4
         end
 
         # Sort the dust continuum parameters based on the temperature
@@ -959,7 +1107,10 @@ function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             param_maps.lines_comp[ln][:delta_v][index] = out_params[index, pᵢ+2]
             param_errs[1].lines_comp[ln][:delta_v][index] = out_errs[index, pᵢ+2, 1]
             param_errs[2].lines_comp[ln][:delta_v][index] = out_errs[index, pᵢ+2, 2]
-            pᵢ += 3
+            param_maps.lines_comp[ln][:vmed][index] = out_params[index, pᵢ+3]
+            param_errs[1].lines_comp[ln][:vmed][index] = out_errs[index, pᵢ+3, 1]
+            param_errs[2].lines_comp[ln][:vmed][index] = out_errs[index, pᵢ+3, 2]
+            pᵢ += 4
         end
 
         # Sort the parameters for multicomponent lines
@@ -1073,6 +1224,8 @@ function paramstring_to_latex(name_i, cosmo)
         bunit = L"$W_{80}$ (km s$^{-1}$)"
     elseif occursin("delta_v", name_i)
         bunit = L"$\Delta v$ (km s$^{-1}$)"
+    elseif occursin("vmed", name_i)
+        bunit = L"$v_{\rm med}$ (km s$^{-1}$)"
     elseif occursin("SNR", name_i)
         bunit = L"$S/N$"
     elseif occursin("n_comps", name_i)
@@ -1234,7 +1387,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
     nan_color = "k"
     text_color = "w"
     # if taking a voff, make sure vmin/vmax are symmetric and change the colormap to coolwarm
-    if occursin("voff", name_i) || occursin("index", name_i) || occursin("vel", name_i) || occursin("delta_v", name_i)
+    if occursin("voff", name_i) || occursin("index", name_i) || occursin("vel", name_i) || occursin("delta_v", name_i) || occursin("vmed", name_i)
         vabs = max(abs(vmin), abs(vmax))
         vmin = -vabs
         vmax = vabs
@@ -1261,7 +1414,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
         if !isfinite(n_comps)
             n_comps = 1
         else
-            n_comps = Int(n_comps)
+            n_comps = floor(Int, n_comps)
         end
         @assert n_comps < 20 "More than 20 components are unsupported!"
         # cmap_colors = py_colormap.rainbow(collect(range(0, 1, 21)))
@@ -1351,7 +1504,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, save_path::St
             if !isfinite(n_comps)
                 n_comps = 1
             else
-                n_comps = Int(n_comps)
+                n_comps = floor(Int, n_comps)
             end
             ticks = collect(0:n_comps)
             cbar = fig.colorbar(cdata, ax=ax, label=bunit, ticks=ticks)
@@ -2492,7 +2645,7 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     name_i = join(["lines", line, parameter], "_")
                     if occursin("n_comps", name_i)
                         bunit = "-"
-                    elseif occursin("w80", name_i) || occursin("delta_v", name_i)
+                    elseif occursin("w80", name_i) || occursin("delta_v", name_i) || occursin("vmed", name_i)
                         bunit = "km/s"
                     end
                     write(f, data; name=uppercase(name_i))
@@ -2785,7 +2938,7 @@ function write_fits_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                     name_i = join(["lines", line, parameter], "_")
                     if occursin("n_comps", name_i)
                         bunit = "-"
-                    elseif occursin("w80", name_i) || occursin("delta_v", name_i)
+                    elseif occursin("w80", name_i) || occursin("delta_v", name_i) || occursin("vmed", name_i)
                         bunit = "km/s"
                     end
                     write(f, data; name=uppercase(name_i))

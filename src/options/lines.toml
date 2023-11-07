@@ -991,6 +991,9 @@ OIII_05008 = ["Voigt"]
 
 ### MIR lines ###
 
+HI_Br_alpha = ["Voigt"]
+HI_Pf_alpha = ["Voigt"]
+
 H200_S0 = ["Voigt"]
 H200_S1 = ["Voigt"]
 H200_S2 = ["Voigt"]
