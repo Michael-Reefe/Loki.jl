@@ -9,6 +9,7 @@ using Distributed
 using Distributions
 using Random
 using Statistics
+using StatsBase
 using NaNStatistics
 using QuadGK
 using NumericalIntegration

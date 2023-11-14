@@ -2489,6 +2489,13 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                 open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$(fname)_p_boots.csv"), "w") do f
                     writedlm(f, p_boot) 
                 end
+
+                # Filter out any large (>5 sigma) outliers
+                p_med = nanmedian(p_boot, dims=2)
+                p_mad = nanmad(p_boot, dims=2) .* 1.4826   # factor of 1.4826 to normalize the MAD it so it is interpretable as a standard deviation
+                p_mask = (p_boot .< (p_med .- 5 .* p_mad)) .| (p_boot .> (p_med .+ 5 .* p_mad))
+                p_boot[p_mask] .= NaN
+
                 p_out = dropdims(nanquantile(p_boot, 0.50, dims=2), dims=2)
                 p_err_lo = p_out .- dropdims(nanquantile(p_boot, 0.159, dims=2), dims=2)
                 p_err_up = dropdims(nanquantile(p_boot, 0.841, dims=2), dims=2) .- p_out

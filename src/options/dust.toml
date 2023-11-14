@@ -15,10 +15,10 @@ locked = true
 
 # dust_continuum_temps: the blackbody temperatures of the dust
 # continuum components of the model. 
-[[dust_continuum_temps]]
-val = 400.0
-plim = [35.0, 1500.0]
-locked = false
+# [[dust_continuum_temps]]
+# val = 400.0
+# plim = [35.0, 1500.0]
+# locked = false
 [[dust_continuum_temps]]
 val = 200.0
 plim = [35.0, 300.0]
