@@ -1424,10 +1424,10 @@ This is essentially convolving the data with a tophat kernel, and it may be nece
 - `channels=nothing`: The list of channels to be rebinned. If nothing, rebin all channels.
 - `ap_r::Real`: The size of the aperture to extract from at each spaxel, in units of the PSF FWHM.
 """
-function extract_from_aperture!(obs::Observation, channels::Vector, ap_r::Real)
+function extract_from_aperture!(obs::Observation, channels::Vector, ap_r::Real; output_wcs_frame::Integer=1)
 
+    pixel_scale = sqrt(obs.channels[channels[output_wcs_frame]].Ω) * 180/π * 3600
     for ch_in ∈ channels
-        pixel_scale = sqrt(obs.channels[ch_in].Ω) * 180/π * 3600
         mm = .~isfinite.(obs.channels[ch_in].I) .| .~isfinite.(obs.channels[ch_in].σ)
         obs.channels[ch_in].I[mm] .= 0.
         obs.channels[ch_in].σ[mm] .= 0.
@@ -1435,7 +1435,8 @@ function extract_from_aperture!(obs::Observation, channels::Vector, ap_r::Real)
             obs.channels[ch_in].psf_model[mm] .= 0.
         end
 
-        for wi in axes(obs.channels[ch_in].I, 3)
+        @info "Extracting from an aperture of size $ap_r x FWHM..."
+        @showprogress for wi in axes(obs.channels[ch_in].I, 3)
             # aperture radius in units of the PSF FWHM
             ap_size = ap_r * obs.channels[ch_in].psf[wi] / pixel_scale
 
@@ -1455,6 +1456,105 @@ function extract_from_aperture!(obs::Observation, channels::Vector, ap_r::Real)
             obs.channels[ch_in].psf_model[mm] .= NaN
         end
     end
+end
+
+
+function calc_psf_fwhm(cube::DataCube)
+
+    fwhms = zeros(size(cube.I, 3))
+
+    for wi in axes(cube.I, 3)
+        
+        # Get centroid
+        region = max(wi-10,1):min(wi+10,size(cube.I,3))
+        data2d = dropdims(nansum(cube.psf_model[:, :, region], dims=3), dims=3)
+        data2d[.~isfinite.(data2d)] .= 0.
+        _, mx = findmax(data2d)
+        c = centroid_com(data2d[mx[1]-10:mx[1]+10, mx[2]-10:mx[2]+10]) .+ (mx.I .- 10) .- 1
+
+        # Create a 1D PSF profile
+        r = 0:0.5:10
+        f = zeros(20)
+        for i in 1:20
+            ap = CircularAnnulus(c..., r[i], r[i+1])
+            f[i] = photometry(ap, cube.psf_model[:, :, wi]).aperture_sum / (π * (r[i+1]^2 - r[i]^2))
+        end
+
+        # Fit a gaussian
+        gaussian_model(x, p) = @. p[1] * exp(-(x - p[2])^2 / (2p[3]^2))
+
+        parinfo = CMPFit.Parinfo(3)
+        parinfo[1].limited = (1,1)    # amplitude
+        parinfo[1].limits = (0, Inf)
+        parinfo[2].fixed = 1          # shift = 0
+        parinfo[3].limited = (1,1)    # dispersion 
+        parinfo[3].limits = (0, Inf)
+    
+        m = isfinite.(f)
+        res = cmpfit(r[1:end-1][m], f[m], ones(length(f[m])), gaussian_model, [1., 0., 1.], parinfo=parinfo)
+
+        fwhms[wi] = res.param[3] * 2.355
+    end
+
+    fwhms
+end
+
+
+"""
+    apply_gaussian_smoothing!(obs, channels; max_λ)
+
+Blur the data using a gaussian kernel such that the psf size matches the maximum psf size in the full data cube.
+"""
+function apply_gaussian_smoothing!(obs::Observation, channels::Vector; output_wcs_frame::Integer=1, max_λ::Real=Inf)
+
+    pixel_scale = sqrt(obs.channels[channels[output_wcs_frame]].Ω) * 180/π * 3600
+    λ_out = vcat([obs.channels[ch_i].λ for ch_i ∈ channels]...)
+    psf_out = []
+    for ch_i ∈ channels
+        fwhm_i = obs.channels[ch_i].psf ./ pixel_scale
+        if !isnothing(obs.channels[ch_i].psf_model)
+            fwhm_i = calc_psf_fwhm(obs.channels[ch_i])
+        end
+        append!(psf_out, fwhm_i)
+    end
+
+    region = λ_out .< max_λ
+    out_fwhm = maximum(psf_out[region])  # target FWHM in pixels
+
+    for ch_in ∈ channels
+        mm = .~isfinite.(obs.channels[ch_in].I) .| .~isfinite.(obs.channels[ch_in].σ)
+        obs.channels[ch_in].I[mm] .= 0.
+        obs.channels[ch_in].σ[mm] .= 0.
+        psf_ch = obs.channels[ch_in].psf ./ pixel_scale
+        if !isnothing(obs.channels[ch_in].psf_model)
+            obs.channels[ch_in].psf_model[mm] .= 0.
+            psf_ch = calc_psf_fwhm(obs.channels[ch_in])
+        end
+
+        @info "Smoothing the data with a gaussian kernel to match PSF sizes"
+        @showprogress for wi in axes(obs.channels[ch_in].I, 3)
+            in_fwhm = psf_ch[wi]                    # current FWHM in pixels
+            FWHM_blur = √(out_fwhm^2 - in_fwhm^2)   # FWHM needed to blur the data to
+            σ_blur = FWHM_blur/2.355                # sigma needed to blur the data to in pixels 
+
+            # Apply the filtering
+            obs.channels[ch_in].I[:, :, wi] .= imfilter(obs.channels[ch_in].I[:, :, wi], Kernel.gaussian(σ_blur))
+            σ² = imfilter(obs.channels[ch_in].σ[:, :, wi].^2, Kernel.gaussian(σ_blur))
+            σ²[σ² .≤ 0.] .= 0.
+            obs.channels[ch_in].σ[:, :, wi] .= sqrt.(σ²)
+            if !isnothing(obs.channels[ch_in].psf_model)
+                obs.channels[ch_in].psf_model[:, :, wi] .= imfilter(obs.channels[ch_in].psf_model[:, :, wi], Kernel.gaussian(σ_blur))
+            end
+        end
+
+        obs.channels[ch_in].I[mm] .= NaN
+        obs.channels[ch_in].σ[mm] .= NaN
+        if !isnothing(obs.channels[ch_in].psf_model)
+            obs.channels[ch_in].psf_model[mm] .= NaN
+        end
+    end
+
+    out_fwhm * pixel_scale
 end
 
 
@@ -1478,10 +1578,11 @@ backwards.
     for the actual data.
 - `rescale_all_psf::Bool=false`: If true, force all PSF spaxels to be rescaled (use this if you generated PSF models using
     webbpsf, but not if you are using PSF models from real data)
+- `scale_psf_only::Bool=false`: Rescale just the PSF 
 """
 function rescale_channels!(λ_out::Vector{<:Real}, I_out::Array{<:Real,3}, σ_out::Array{<:Real,3}, 
     mask_out::BitArray{3}, psf_out::Union{Array{<:Real,3},Nothing}=nothing, ref_λ::Real=8.0; rescale_limits::Tuple=(0., Inf),
-    rescale_snr::Real=0., force_match_psf_scalefactors::Bool=false, rescale_all_psf::Bool=false)
+    rescale_snr::Real=0., force_match_psf_scalefactors::Bool=false, rescale_all_psf::Bool=false, scale_psf_only::Bool=false)
 
     # Need an additional correction (fudge) factor for overall channels
     jumps = findall(diff(λ_out) .< 0.)
@@ -1552,11 +1653,25 @@ function rescale_channels!(λ_out::Vector{<:Real}, I_out::Array{<:Real,3}, σ_ou
             scale_left_psf, scale_right_psf = get_scale_factors(psf_out, I_out, σ_out, rescale_psf_snr)
         end
 
+        # Rescale the PSF model so that the jumps in the psf match the jumps in the data
+        if do_psf_model && scale_psf_only
+            data2d = dropdims(nansum(I_out, dims=3), dims=3)
+            data2d[.~isfinite.(data2d)] .= 0.
+            _, mx = findmax(data2d)
+            nuc1d = I_out[mx, :] ./ psf_out[mx, :]
+            nuc3d = [nuc1d[kk] * psf_out[ii, jj, kk] for ii in axes(psf_out,1), jj in axes(psf_out,2), kk in axes(psf_out, 3)]
+            scale_left_psf, scale_right_psf = get_scale_factors(nuc3d, I_out, σ_out, rescale_psf_snr)
+            scale_left_psf ./= scale_left_data
+            scale_right_psf ./= scale_right_data
+        end
+
         # Apply the scale factors
         if wave_left < ref_λ
-            I_out[:, :, 1:jump] .*= scale_left_data
-            σ_out[:, :, 1:jump] .*= scale_left_data
+            if !scale_psf_only
+                I_out[:, :, 1:jump] .*= scale_left_data
+                σ_out[:, :, 1:jump] .*= scale_left_data
             scale_factors["$(i+1)"] = scale_left_data
+            end
             if do_psf_model
                 psf_out[:, :, 1:jump] .*= scale_left_psf
                 scale_factors["$(i+1)_PSF"] = scale_left_psf
@@ -1564,9 +1679,11 @@ function rescale_channels!(λ_out::Vector{<:Real}, I_out::Array{<:Real,3}, σ_ou
             @info "Rescaling LEFT channel"
             @info "Minimum/Maximum scale factor for channel $(i+1): $(nanextrema(scale_left_data))"
         else
-            I_out[:, :, jump+1:end] .*= scale_right_data
-            σ_out[:, :, jump+1:end] .*= scale_right_data
-            scale_factors["$(i+1)"] = scale_right_data
+            if !scale_psf_only
+                I_out[:, :, jump+1:end] .*= scale_right_data
+                σ_out[:, :, jump+1:end] .*= scale_right_data
+                scale_factors["$(i+1)"] = scale_right_data
+            end
             if do_psf_model
                 psf_out[:, :, jump+1:end] .*= scale_right_psf
                 scale_factors["$(i+1)_PSF"] = scale_right_psf
@@ -1627,6 +1744,11 @@ function resample_channel_wavelengths!(λ_out::Vector{<:Real}, jumps::Vector{<:I
                 λ_out[i1:i2][ss], I_out[:, :, (i1:i2)[ss]], σ_out[:, :, (i1:i2)[ss]], mask_out[:, :, (i1:i2)[ss]])
             if do_psf_model
                 psf_resamp = resample_flux_permuted3D(λ_resamp, λ_out[i1:i2][ss], psf_out[:, :, (i1:i2)[ss]])
+                # knots = λ_out[i1:i2][ss][7:7:end-7]
+                # psf_resamp = zeros(size(psf_out)[1:2]..., length(λ_resamp))
+                # for j in axes(psf_out, 1), k in axes(psf_out, 2)
+                #     psf_resamp[j, k, :] .= Spline1D(λ_out[i1:i2][ss], psf_out[j, k, (i1:i2)[ss]], knots, k=3)(λ_resamp)
+                # end
             end
             # replace overlapping regions in outputs
             λ_con = [λ_con; λ_out[prev_i2:i1-1]; λ_resamp]
@@ -1683,6 +1805,8 @@ end
 Perform a number of transformations on data from different channels/subchannels to combine them into a single 3D cube:
     1. Reproject all of the channels onto the same spatial WCS grid using interpolation
     2. Optionally extract from an aperture larger than 1 spaxel at the location of each spaxel (effectively convolving the data spatially)
+       -OR-
+       Apply a gaussian smoothing kernel onto the data with some size to ensure the PSFs of each channel match
     3. Optionally apply scaling factors to make the flux levels match at the boundaries of the subchannels
     4. Resample along the spectral axis onto a linear wavelength grid while conserving flux
 
@@ -1709,16 +1833,19 @@ Perform a number of transformations on data from different channels/subchannels 
 - `output_wcs_frame::Integer=1`: Which WCS frame to project the inputs onto. Defaults to 1 (the first channel in channels).
 - `extract_from_ap::Real=0.`: The size of the aperture to extract from at each spaxel, in units of the PSF FWHM. If 0, just takes the single spaxel.
     This may be necessary for MIRI data to reduce resampling noise.
+- `match_psf::Bool=true`: If true, convolves the data with a gaussian kernel such that the spatial PSF sizes match
 - `force_match_psf_scalefactors::Bool=false`: If a PSF model is present, this will force the rescaling factors between the subchannels to be the
     same between the data and PSF models (the PSF models will use the scaling factors derived from the data).1
 - `rescale_all_psf::Bool=false`: If true, force all PSF spaxels to be rescaled (use this if you generated PSF models using
     webbpsf, but not if you are using PSF models from real data)
+- `scale_psf_only::Bool=false`: If true, only apply scaling factors to the PSF. The scaling factors that are applied in this case are
+    made such that the jumps in the PSF match the jumps in the data.
 """
 function combine_channels!(obs::Observation, channels=nothing, concat_type=:full; out_id=0,
-    order::Union{Integer,String}=1, rescale_channels::Union{Real,Nothing}=nothing, adjust_wcs_headerinfo::Bool=true, 
+    order::Union{Integer,String}=1, rescale_channels::Union{Real,Nothing}=nothing, adjust_wcs_headerinfo::Bool=false, 
     min_λ::Real=-Inf, max_λ::Real=Inf, rescale_limits::Tuple{<:Real,<:Real}=(0., Inf), rescale_snr::Real=0.0, 
-    output_wcs_frame::Integer=1, extract_from_ap::Real=0., force_match_psf_scalefactors::Bool=false,
-    rescale_all_psf::Bool=false)
+    output_wcs_frame::Integer=1, extract_from_ap::Real=0., match_psf::Bool=false, force_match_psf_scalefactors::Bool=false,
+    rescale_all_psf::Bool=false, scale_psf_only::Bool=false)
 
     @assert obs.spectral_region == :MIR "The reproject_channels! function is only supported for MIR cubes!"
 
@@ -1743,7 +1870,12 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
 
     # 2. Optionally extract from an aperture
     if extract_from_ap > 0
-        extract_from_aperture!(obs, channels, extract_from_ap)
+        extract_from_aperture!(obs, channels, extract_from_ap, output_wcs_frame=output_wcs_frame)
+    end
+    # Smooth with the psf
+    out_fwhm = 0.
+    if match_psf
+        out_fwhm = apply_gaussian_smoothing!(obs, channels; output_wcs_frame=output_wcs_frame, max_λ=max_λ)
     end
 
     # Now we concatenate the data from each channel/subchannel along the wavelength axis
@@ -1761,7 +1893,7 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
     if !isnothing(rescale_channels)
         I_out, σ_out, mask_out, psf_out, scale_factors, jumps = rescale_channels!(λ_out, I_out, σ_out, mask_out, psf_out, 
             rescale_channels, rescale_limits=rescale_limits, rescale_snr=rescale_snr, force_match_psf_scalefactors=force_match_psf_scalefactors,
-            rescale_all_psf=rescale_all_psf)
+            rescale_all_psf=rescale_all_psf, scale_psf_only=scale_psf_only)
     else
         jumps = findall(diff(λ_out) .< 0)
         scale_factors = nothing
@@ -1785,6 +1917,9 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
         psf_fwhm_out = @. 0.033 * λ_out * (1 + obs.z) + 0.106
     else
         psf_fwhm_out = @. 0.033 * λ_out + 0.106
+    end
+    if match_psf
+        psf_fwhm_out = repeat([out_fwhm], length(λ_out))
     end
 
     # New LSF FWHM function with input in the rest frame

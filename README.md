@@ -260,7 +260,7 @@ A vector of tuples giving wavelength ranges for which to generate zoomed-in plot
 
 `templates`
 
-This allows one to include arbitrary templates in the fitting of MIR data, where the only fitting parameter is the normalization of the template for each spaxel. Must be a 4-dimensional array where the first 3 axes match the shape of the data cube, and the 4th axis enumerates each different template. If provided, then it is required to also provide "template_names" to give labels to each template.
+This allows one to include arbitrary templates in the fitting of MIR data, where the only fitting parameter is the normalization of the template for each channel in each spaxel (so, each template included adds a number of free parameters equal to the number of channels/bands in the spectrum being fit). Must be a 4-dimensional array where the first 3 axes match the shape of the data cube, and the 4th axis enumerates each different template. If provided, then it is required to also provide "template_names" to give labels to each template.
 
 `template_names`
 
@@ -356,7 +356,7 @@ plim = [0.5, 2.0]
 locked = false
 ```
 
-If there are no templates, these options are ignored.
+If there are no templates, these options are ignored. Note: template amplitudes are assumed to automatically be independent for each channel/band included in the cube being fit. I.e. if you are fitting a channel 3 cube, the amplitudes for the short, medium, and long bands of channel 3 will be fit independently, and all 3 of them will have the parameters specified by the single entry in `[[template_amps]]` that corresponds to that specific template.
 
 **PAH Features:**
 
@@ -1134,9 +1134,9 @@ obs = from_fits(["file_1.fits", "file_2.fits", ...], 0.0)
 ```julia
 correct!(obs)
 ```
-4. Preliminary testing on MIRI data has shown that there is sometimes jumps in the continuum flux levels at the boundaries between channels and subchannels due to small misalignments between the WCS grids of each channel.  Hopefully these problems will be minimized by improvements in the data reduction pipeline in the future, but in the meantime we have attempted to minimize this problem by creating functions to combine observations from different subchannels by adjusting the WCS parameters of each subchannel, reprojecting them all onto the same grid, and resampling while conserving flux in the wavelength dimension. This tends to work well for subchannels, but sometimes jumps still remain between full channels, so we also include a multiplicative scaling factor, which can be constrained if one so chooses. We also provide an option for extracting a spectrum within an aperture centered at each spaxel location to reduce artifacts from the 3D resampling process. These adjustments can all be applied by calling the "combine_channels!" function on the `Observation` object while specifying which channels/subchannels to reproject and combine. The example below shows an application that combines channels 1, 2, and 3 using a linear (order=1) reprojection and saves the full spectrum into a channel ID of 0. (Check the documentation using `?combine_channels!` in the REPL for more info on what all of the different keyword arguments do).
-```julia
-combine_channels!(obs, [1,2,3], out_id=0, order=1, adjust_wcs_headerinfo=true, rescale_channels=8.0, rescale_limits=(0.0, Inf), rescale_snr=3., extract_from_ap=0.)
+4. To combine data from multiple channels/bands, use the `combine_channels!` function, which takes a number of smaller subroutines and combines them into one procedure for combining data for multiple channels. This procedure handles: 1. (optional) adjusting the WCS parameters in the header of each channel such that the centroids match on the overlapping parts of the spectrum, which may aid in refining the WCS parameters provided by the JWST pipeline. This may be enabled with the `adjust_wcs_headerinfo` keyword argument. 2. Reprojecting all of the channels onto the same 2D spaxel grid, which is done with interpolation, the order of which can be adjusted with the `order` keyword argument (default is linear). 3. (optional) extract the data from each spaxel using an aperture (i.e. a tophat kernel) to suppress resampling artifacts produced by the 3D drizzle algorithm. The size of the aperture may be adjusted using the `extract_from_ap` keyword argument, in units of the PSF FWHM. 4. (optional) rescale the data so that the continuum is continuous between channels. Sometimes there are discontinuous jumps in flux between the channels caused by differences in the PSF shape and size between the channels. NOTE: DO NOT rescale the data without knowing what you are doing -- if the jumps are purely caused by differences in the PSF, then it is not correct to simply rescale the data, the PSF should be included in the model (which LOKI has the capability to do). ONLY apply rescaling if the jumps are minor and the PSF is not believed to be a major contributor, otherwise it's best to model the PSF. This is controlled with the `rescale_channels` argument, which can be set to a specific ``reference'' wavelength which is used to select a channel/band which is used as the reference point that all other channels are rescaled to match. 5. The data is resampled in the wavelength direction in the regions where the channels overlap to a median resolution, while conserving flux. There are additional keyword arguments that can be used to adjust how the data is combined with even finer detail, which can be looked up using the code documentation itself. I.e., in the julia terminal, type `?combine_channels!`.
+```julia 
+combine_channels!(obs, [1,2,3], out_id=0, order=1, adjust_wcs_headerinfo=true, rescale_channels=nothing, rescale_limits=(0.0, Inf), rescale_snr=3., extract_from_ap=0.)
 ```
 5. (Optional) It is often desirable to rotate the cubes to be aligned with the sky axes rather than the IFU axes, which can be achieved using the `rotate_to_sky_axes!` function:
 ```julia

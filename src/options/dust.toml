@@ -15,10 +15,10 @@ locked = true
 
 # dust_continuum_temps: the blackbody temperatures of the dust
 # continuum components of the model. 
-# [[dust_continuum_temps]]
-# val = 400.0
-# plim = [35.0, 1500.0]
-# locked = false
+[[dust_continuum_temps]]
+val = 400.0
+plim = [35.0, 1500.0]
+locked = false
 [[dust_continuum_temps]]
 val = 200.0
 plim = [35.0, 300.0]
@@ -74,6 +74,9 @@ locked = false
 # locked = true
 
 # template_amps: amplitude parameters for each template in the fit
+# do NOT repeat entries here for different subchannel amplitudes -- those are handled internally
+# and the initial value/limits/locked are assumed to be the same for each subchannel amplitude for a given
+# template
 [[template_amps]]
 val = 1.0
 plim = [0.5, 2.0]

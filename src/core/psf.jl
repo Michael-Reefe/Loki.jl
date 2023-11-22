@@ -227,6 +227,46 @@ function polyfit_psf_model!(obs::Observation, poly_order::Integer)
 end
 
 
+# function shift_psf_model!(cube::DataCube, z::Real)
+
+#     for i in 1:(length(channel_boundaries)+1)
+        
+#         left = i > 1 ? channel_boundaries[i-1] : 0.
+#         right = i ≤ length(channel_boundaries) ? channel_boundaries[i] : Inf
+
+#         λ = cube.λ
+#         if cube.rest_frame
+#             λ = cube.λ .* (1 .+ z)
+#         end
+#         region = left .< λ .< right
+#         # Skip channels where there is no data
+#         if sum(region) == 0
+#             continue
+#         end
+
+#         fch = dropdims(nansum(cube.I[:, :, region], dims=3), dims=3)
+#         fch[.~isfinite.(fch)] .= 0.
+#         _, mx = findmax(fch)
+#         c1 = centroid_com(fch[mx[1]-10:mx[1]+10, mx[2]-10:mx[2]+10]) .+ (mx.I .- 10) .- 1
+#         println(c1)
+
+#         for ri in findall(region)
+#             psf = cube.psf_model[:, :, ri]
+#             m = .~isfinite.(psf)
+#             psf[m] .= 0.
+#             _, mx = findmax(psf)
+#             c2 = centroid_com(psf[mx[1]-10:mx[1]+10, mx[2]-10:mx[2]+10]) .+ (mx.I .- 10) .- 1
+#             shift = c1 .- c2
+#             cube.psf_model[:, :, ri] .= fshift(psf, shift...)
+#             cube.psf_model[m, ri] .= NaN
+#         end
+#     end
+
+#     cube
+# end
+
+
+
 """
     generate_nuclear_template(cube, ap_r, spline_width, use_psf_model)
 
@@ -236,18 +276,19 @@ that the PSF FWHM does). If `ap_r` is 0, then the template is just extracted fro
 `spline_width` is > 0, a cubic spline interpolation is performed with knots spaced by `spline_width` pixels.
 The 1D template is then combined with a 3D PSF model to create a full 3D nuclear template.
 """
-function generate_nuclear_template(cube::DataCube, ap_r::Real=0.; spline_width::Integer=7, use_psf_model::Bool=true)
+function generate_nuclear_template(cube::DataCube, ap_r::Real=0.; spline_width::Integer=7, use_psf_model::Bool=true,)
 
-    # Get the brightest spaxel
     data2d = dropdims(nansum(cube.I, dims=3), dims=3)
+    data2d[.~isfinite.(data2d)] .= 0.
     _, mx = findmax(data2d)
-
-    # Get the centroid
-    c = centroid_com(data2d[mx[1]-5:mx[1]+5, mx[2]-5:mx[2]+5]) .+ (mx.I .- 5) .- 1
 
     if iszero(ap_r)
         # Just take the brightest spaxel
-        nuc1d = cube.I[mx, :]
+        nuc1d = zeros(eltype(cube.I), length(cube.λ))
+        for i ∈ eachindex(nuc1d)
+            nuc1d[i] = cube.I[:, :, i][mx] / cube.psf_model[:, :, i][mx]
+        end
+
     else
         # Arcseconds per pixel
         pixel_scale = sqrt(cube.Ω) * 180/π * 3600
@@ -258,7 +299,8 @@ function generate_nuclear_template(cube::DataCube, ap_r::Real=0.; spline_width::
             # Convert ap_r into pixels
             ap_size = ap_r * cube.psf[i] / pixel_scale
             ap = CircularAperture(mx.I..., ap_size)
-            nuc1d[i] = photometry(ap, cube.I[:, :, i]).aperture_sum / get_area(ap)
+            nuc1d[i] = photometry(ap, cube.I[:, :, i]).aperture_sum
+            nuc1d[i] /= photometry(ap, cube.psf_model[:, :, i]).aperture_sum
         end
     end
 
@@ -268,17 +310,7 @@ function generate_nuclear_template(cube::DataCube, ap_r::Real=0.; spline_width::
         nuc1d = Spline1D(cube.λ, nuc1d, λknots, k=3, bc="extrapolate")(cube.λ)
     end
 
-    # Normalize the PSF models and combine them
-    if use_psf_model
-        psf_model = copy(cube.psf_model)
-    else
-        psf_model = ones(size(cube.I))
-    end
-    for i ∈ axes(psf_model, 3)
-        psf_model[:, :, i] ./= nanmaximum(psf_model[:, :, i])
-    end
-
-    nuc = [nuc1d[k] * psf_model[i,j,k] for i ∈ axes(psf_model, 1), j ∈ axes(psf_model, 2), k ∈ axes(psf_model, 3)]
+    nuc = [nuc1d[k] * cube.psf_model[i,j,k] for i ∈ axes(cube.psf_model, 1), j ∈ axes(cube.psf_model, 2), k ∈ axes(cube.psf_model, 3)]
 end
 
 

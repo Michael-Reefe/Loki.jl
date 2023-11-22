@@ -522,10 +522,12 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             end
         else
             for (q, tp) ∈ enumerate(cube_fitter.template_names)
-                param_maps.templates[tp][:amp][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
-                param_errs[1].templates[tp][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
-                param_errs[2].templates[tp][:amp][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
-                pᵢ += 1
+                for qi ∈ 1:cube_fitter.n_channels
+                    param_maps.templates[tp][Symbol(:amp, "_$qi")][index] = out_params[index, pᵢ] > 0. ? log10(out_params[index, pᵢ]) : -Inf
+                    param_errs[1].templates[tp][Symbol(:amp, "_$qi")][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 1] / (log(10) * out_params[index, pᵢ]) : NaN
+                    param_errs[2].templates[tp][Symbol(:amp, "_$qi")][index] = out_params[index, pᵢ] > 0. ? out_errs[index, pᵢ, 2] / (log(10) * out_params[index, pᵢ]) : NaN
+                    pᵢ += 1
+                end
             end
         end
 
@@ -557,7 +559,7 @@ function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, 
             I_cont, comps_c = model_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], N, cube_fitter.n_dust_cont, cube_fitter.n_power_law,
                 cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, 
                 cube_fitter.κ_abs, cube_fitter.custom_ext_template, cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, false, 
-                cube_data.templates[index, :, :], true)
+                cube_data.templates[index, :, :], cube_fitter.channel_masks, true)
         end
 
         # Save marker of the point where the continuum parameters end and the line parameters begin

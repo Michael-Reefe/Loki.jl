@@ -1029,7 +1029,7 @@ end
 
 """
     model_continuum(λ, params, N, n_dust_cont, n_power_law, dust_prof, n_abs_feat, extinction_curve, extinction_screen, 
-        κ_abs, custom_ext, fit_sil_emission, use_pah_templates, return_components)
+        κ_abs, custom_ext, fit_sil_emission, use_pah_templates, templates, channel_masks, return_components)
 
 Create a model of the continuum (including stellar+dust continuum, PAH features, and extinction, excluding emission lines)
 at the given wavelengths `λ`, given the parameter vector `params`.
@@ -1053,12 +1053,15 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `fit_sil_emission::Bool`: Whether or not to fit silicate emission with a hot dust continuum component
 - `fit_temp_multexp::Bool`: Whether or not to apply and fit multiplicative exponentials to the provided templates
 - `use_pah_templates::Bool`: Whether or not to use PAH templates to model the PAH emission
+- `templates::Matrix{<:Real}`: The PSF templates to be used in the fit
+- `channel_masks::Vector{BitVector}`: Masks that pick out each subchannel in the data
 - `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
-function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
-    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, κ_abs::Vector{Spline1D}, custom_ext::Union{Spline1D,Nothing},
-    fit_sil_emission::Bool, fit_temp_multexp::Bool, use_pah_templates::Bool, templates::Matrix{<:Real}, return_components::Bool)
+function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, 
+    dust_prof::Vector{Symbol}, n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, κ_abs::Vector{Spline1D}, custom_ext::Union{Spline1D,Nothing},
+    fit_sil_emission::Bool, fit_temp_multexp::Bool, use_pah_templates::Bool, templates::Matrix{<:Real}, channel_masks::Vector{BitVector}, 
+    return_components::Bool)
 
     # Prepare outputs
     out_type = eltype(params)
@@ -1159,9 +1162,13 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
         pᵢ += 8
     else
         for i in axes(templates, 2)
-            comps["templates_$i"] = params[pᵢ] .* templates[:, i] ./ N
+            comps["templates_$i"] = zeros(out_type, length(λ))
+            # scale each subchannel with a separate amplitude to fit the channel jumps
+            for ch_mask in channel_masks
+                comps["templates_$i"][ch_mask] .+= params[pᵢ] .* templates[ch_mask, i] ./ N
+                pᵢ += 1
+            end
             contin .+= comps["templates_$i"]
-            pᵢ += 1
         end
     end
 
@@ -1195,7 +1202,7 @@ end
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
 function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
     n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, κ_abs::Vector{Spline1D}, custom_ext::Union{Spline1D,Nothing}, 
-    fit_sil_emission::Bool, fit_temp_multexp::Bool, use_pah_templates::Bool, templates::Matrix{<:Real})
+    fit_sil_emission::Bool, fit_temp_multexp::Bool, use_pah_templates::Bool, templates::Matrix{<:Real}, channel_masks::Vector{BitVector})
 
     # Prepare outputs
     out_type = eltype(params)
@@ -1283,8 +1290,10 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
         pᵢ += 8
     else
         for i in axes(templates, 2)
-            contin .+= params[pᵢ] .* templates[:, i] ./ N
-            pᵢ += 1
+            for ch_mask in channel_masks
+                contin[ch_mask] .+= params[pᵢ] .* templates[ch_mask, i] ./ N
+                pᵢ += 1
+            end
         end
     end
 
@@ -1886,14 +1895,14 @@ end
 
 
 """
-    calculate_extra_parameters(λ, I, N, comps, n_dust_cont, n_power_law, n_dust_feat, dust_profiles,
+    calculate_extra_parameters(λ, I, N, comps, n_channels, n_dust_cont, n_power_law, n_dust_feat, dust_profiles,
         n_abs_feat, fit_sil_emission, n_lines, n_acomps, n_comps, lines, flexible_wavesol, lsf, popt_c,
         popt_l, perr_c, perr_l, extinction, mask_lines, continuum, area_sr[, propagate_err])
 
 Calculate extra parameters that are not fit, but are nevertheless important to know, for a given spaxel.
 Currently this includes the integrated intensity, equivalent width, and signal to noise ratios of dust features and emission lines.
 """
-function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, comps::Dict, n_dust_cont::Integer,
+function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, comps::Dict, n_channels::Integer, n_dust_cont::Integer,
     n_power_law::Integer, n_dust_feat::Integer, dust_profiles::Vector{Symbol}, n_abs_feat::Integer, fit_sil_emission::Bool, 
     fit_temp_multexp::Bool, n_templates::Integer, n_lines::Integer, n_acomps::Integer, n_comps::Integer, lines::TransitionLines, 
     flexible_wavesol::Bool, lsf::Function, relative_flags::BitVector, popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, 
@@ -1911,7 +1920,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     pₒ = 1
     # Initial parameter vector index where dust profiles start
     pᵢ = 3 + 2n_dust_cont + 2n_power_law + 4 + (extinction_curve == "decompose" ? 3 : 1) + 3n_abs_feat + 
-        (fit_sil_emission ? 6 : 0) + (fit_temp_multexp ? 8 : n_templates)
+        (fit_sil_emission ? 6 : 0) + (fit_temp_multexp ? 8 : n_templates*n_channels)
     # Extinction normalization factor
     # max_ext = 1 / minimum(extinction)
 

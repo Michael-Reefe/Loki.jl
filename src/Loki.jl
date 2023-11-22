@@ -90,6 +90,10 @@ const date_format::String = "yyyy-mm-dd HH:MM:SS"
 # multiple parallel processes may try to write to it at once.
 const file_lock::ReentrantLock = ReentrantLock()
 
+# MIRI channel boundaries
+const channel_boundaries = [5.7, 6.58, 7.58, 8.72, 10.075, 11.625, 13.39, 15.49, 17.84, 20.82, 24.335]
+
+
 # Have to import certain python modules within the __init__ function so that it works after precompilation,
 # so these PyNULL constants are just placeholders before that happens
 function __init__()

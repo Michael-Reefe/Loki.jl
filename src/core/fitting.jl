@@ -6,10 +6,6 @@ then creating a CubeFitter struct from the DataCube struct, followed by calling 
 CubeFitter. An example of this is provided in the test driver files in the test directory.
 =#
 
-# MIRI channel boundaries
-const channel_boundaries = [5.7, 6.58, 7.58, 8.72, 10.075, 11.625, 13.39, 15.49, 17.84, 20.82, 24.335]
-
-
 ############################## FITTING FUNCTIONS AND HELPERS ####################################
 
 
@@ -209,7 +205,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     σ_spax[mask_lines] .= Spline1D(λ_spax[.~mask_lines], σ_spax[.~mask_lines], λknots, k=1, bc="extrapolate").(λ[mask_lines])
     for s in axes(templates_spax, 2)
         m = .~isfinite.(templates_spax[:, s])
-        templates_spax[mask_lines .| m, s] .= Spline1D(λ[.~mask_lines .& .~m], templates_spax[.~mask_lines .& .~m], λknots, 
+        templates_spax[mask_lines .| m, s] .= Spline1D(λ[.~mask_lines .& .~m], templates_spax[.~mask_lines .& .~m, s], λknots, 
             k=1, bc="extrapolate")(λ[mask_lines .| m])
     end
 
@@ -218,6 +214,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     I_spax = I_spax[.~mask_bad]
     σ_spax = σ_spax[.~mask_bad]
     templates_spax = templates_spax[.~mask_bad, :]
+    channel_masks = [ch_mask[.~mask_bad] for ch_mask in cube_fitter.channel_masks]
 
     if !isnothing(cube_fitter.user_mask)
         # Mask out additional regions
@@ -227,6 +224,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
             I_spax = I_spax[.~region]
             σ_spax = σ_spax[.~region]
             templates_spax = templates_spax[.~region, :]
+            channel_masks = [ch_mask[.~region] for ch_mask in channel_masks]
         end
     end
 
@@ -310,7 +308,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         ptot[plock] .= pfix
         model_continuum(x, ptot, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
             cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.κ_abs, 
-            cube_fitter.custom_ext_template, cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, false, templates_spax)
+            cube_fitter.custom_ext_template, cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, false, templates_spax,
+            channel_masks)
     end
     function fit_cont_opt(x, pfree)
         ptot = zeros(Float64, length(pars_0))
@@ -406,7 +405,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     if cube_fitter.spectral_region == :MIR
         I_model, comps = model_continuum(λ, popt, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
             cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.κ_abs, cube_fitter.custom_ext_template, 
-            cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, false, templates, true)
+            cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, false, templates, cube_fitter.channel_masks, true)
         # set optical depth to 0 if the template fits all of the spectrum
         for s in 1:cube_fitter.n_templates
             pₑ = [3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law]
@@ -491,7 +490,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     σ_spax[mask_lines] .= Spline1D(λ_spax[.~mask_lines], σ_spax[.~mask_lines], λknots, k=1, bc="extrapolate").(λ[mask_lines])
     for s in axes(templates_spax, 2)
         m = .~isfinite.(templates_spax[:, s])
-        templates_spax[mask_lines .| m, s] .= Spline1D(λ[.~mask_lines .& .~m], templates_spax[.~mask_lines .& .~m], λknots, 
+        templates_spax[mask_lines .| m, s] .= Spline1D(λ[.~mask_lines .& .~m], templates_spax[.~mask_lines .& .~m, s], λknots, 
             k=1, bc="extrapolate")(λ[mask_lines .| m])
     end
 
@@ -500,6 +499,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     I_spax = I_spax[.~mask_bad]
     σ_spax = σ_spax[.~mask_bad]
     templates_spax = templates_spax[.~mask_bad, :]
+    channel_masks = [ch_mask[.~mask_bad] for ch_mask in cube_fitter.channel_masks]
 
     if !isnothing(cube_fitter.user_mask)
         # Mask out additional regions
@@ -509,6 +509,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
             I_spax = I_spax[.~region]
             σ_spax = σ_spax[.~region]
             templates_spax = templates_spax[.~region, :]
+            channel_masks = [ch_mask[.~region] for ch_mask in channel_masks]
         end
     end
 
@@ -521,10 +522,10 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         templates_spax./N, split=true)
     if bootstrap_iter
         pars_1 = vcat(p1_boots[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.extinction_curve == "decompose" ? 3 : 1)+
-            3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0)+(cube_fitter.fit_temp_multexp ? 8 : cube_fitter.n_templates))], 
+            3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0)+(cube_fitter.fit_temp_multexp ? 8 : cube_fitter.n_templates*cube_fitter.n_channels))], 
             p1_boots[end-1:end])
         pars_2 = p1_boots[(3+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.extinction_curve == "decompose" ? 3 : 1)+
-            3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0)+(cube_fitter.fit_temp_multexp ? 8 : cube_fitter.n_templates)):end-2]
+            3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0)+(cube_fitter.fit_temp_multexp ? 8 : cube_fitter.n_templates*cube_fitter.n_channels)):end-2]
     end
 
     # Constrain optical depth to be at least 80% of the guess
@@ -581,11 +582,13 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         if !return_comps
             model_continuum(x, ptot, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
                 cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.κ_abs, 
-                cube_fitter.custom_ext_template, cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, true, templates_spax)
+                cube_fitter.custom_ext_template, cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, true, templates_spax,
+                channel_masks)
         else
             model_continuum(x, ptot, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
                 cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.κ_abs, 
-                cube_fitter.custom_ext_template, cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, true, templates_spax, true)
+                cube_fitter.custom_ext_template, cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, true, templates_spax,
+                channel_masks, true)
         end
     end
     res_1 = cmpfit(λ_spax, I_spax, σ_spax, fit_step1, p1free, parinfo=parinfo_1, config=config)
@@ -701,7 +704,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # Create the full model, again only if not bootstrapping
     I_model, comps = model_continuum(λ, popt, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
         cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.κ_abs, cube_fitter.custom_ext_template, 
-        cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, false, templates, true)
+        cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, false, templates, cube_fitter.channel_masks, true)
 
     # set optical depth to 0 if the template fits all of the spectrum
     for s in 1:cube_fitter.n_templates
@@ -1405,6 +1408,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     I_spline_spax = I_spline_spax[.~mask_bad]
     σ_spax = σ_spax[.~mask_bad]
     templates_spax = templates_spax[.~mask_bad, :]
+    channel_masks = [ch_mask[.~mask_bad] for ch_mask in cube_fitter.channel_masks]
 
     if !isnothing(cube_fitter.user_mask)
         # Mask out additional regions
@@ -1415,6 +1419,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
             I_spline_spax = I_spline_spax[.~region]
             σ_spax = σ_spax[.~region]
             templates_spax = templates_spax[.~region, :]
+            channel_masks = [ch_mask[.~region] for ch_mask in channel_masks]
         end
     end
 
@@ -1578,7 +1583,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         # Generate the models
         Icont = model_continuum(x, ptot_cont, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
             cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.κ_abs, cube_fitter.custom_ext_template,
-            cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, false, templates_spax)
+            cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, false, templates_spax, channel_masks)
         Ilines = model_line_residuals(x, ptot_lines, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol,
             ext_curve, lsf_interp_func, cube_fitter.relative_flags)
         
@@ -1768,7 +1773,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     if cube_fitter.spectral_region == :MIR
         Icont, comps_cont = model_continuum(λ, popt_cont, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
             cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.κ_abs, cube_fitter.custom_ext_template, 
-            cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, false, templates, true)
+            cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, false, templates, cube_fitter.channel_masks, true)
         ext_key = "extinction"
     else
         Icont, comps_cont = model_continuum(λ, popt_cont, N, cube_fitter.vres, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
@@ -2315,7 +2320,7 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # Add dust feature and line parameters (intensity and SNR)
     if !init
         if cube_fitter.spectral_region == :MIR
-            p_dust, p_lines, p_dust_err, p_lines_err = calculate_extra_parameters(λ, I, norm, comps, cube_fitter.n_dust_cont,
+            p_dust, p_lines, p_dust_err, p_lines_err = calculate_extra_parameters(λ, I, norm, comps, cube_fitter.n_channels, cube_fitter.n_dust_cont,
                 cube_fitter.n_power_law, cube_fitter.n_dust_feat, cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, 
                 cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, cube_fitter.n_templates, cube_fitter.n_lines, cube_fitter.n_acomps, 
                 cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol, lsf_interp_func, cube_fitter.relative_flags, popt_c, 
@@ -2515,7 +2520,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                     I_boot_cont, comps_boot_cont = model_continuum(λ, p_out[1:split1], norm, cube_fitter.n_dust_cont, cube_fitter.n_power_law, 
                         cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, 
                         cube_fitter.κ_abs, cube_fitter.custom_ext_template, cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, false, 
-                        templates, true)
+                        templates, cube_fitter.channel_masks, true)
                     ext_key = "extinction"
                 else
                     I_boot_cont, comps_boot_cont = model_continuum(λ, p_out[1:split1], norm, cube_fitter.vres, cube_fitter.vsyst_ssp, 
