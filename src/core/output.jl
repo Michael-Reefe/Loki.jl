@@ -371,7 +371,7 @@ Create ParamMaps objects for the parameter values and errors, and a CubeModel ob
 fill them with the maximum likelihood values and errors given by out_params and out_errs over each spaxel in
 spaxels.
 """
-assign_outputs(out_params::Array{<:Real}, out_errs::Array{<:Real}, cube_fitter::CubeFitter, 
+assign_outputs(out_params::AbstractArray{<:Real}, out_errs::AbstractArray{<:Real}, cube_fitter::CubeFitter, 
     cube_data::NamedTuple, z::Real, aperture::Bool=false) = 
     cube_fitter.spectral_region == :MIR ? 
         assign_outputs_mir(out_params, out_errs, cube_fitter, cube_data, z, aperture) : 
@@ -379,7 +379,7 @@ assign_outputs(out_params::Array{<:Real}, out_errs::Array{<:Real}, cube_fitter::
 
 
 # MIR implementation of the assign_outputs function
-function assign_outputs_mir(out_params::Array{<:Real}, out_errs::Array{<:Real}, cube_fitter::CubeFitter,
+function assign_outputs_mir(out_params::AbstractArray{<:Real}, out_errs::AbstractArray{<:Real}, cube_fitter::CubeFitter,
     cube_data::NamedTuple, z::Real, aperture::Bool=false)
 
     # Create the CubeModel and ParamMaps structs to be filled in
@@ -830,7 +830,7 @@ end
 
 
 # Optical implementation of the assign_outputs function
-function assign_outputs_opt(out_params::Array{<:Real}, out_errs::Array{<:Real}, cube_fitter::CubeFitter,
+function assign_outputs_opt(out_params::AbstractArray{<:Real}, out_errs::AbstractArray{<:Real}, cube_fitter::CubeFitter,
     cube_data::NamedTuple, z::Real, aperture::Bool=false)
 
     # Create the CubeModel and ParamMaps structs to be filled in

@@ -4,6 +4,7 @@ module Loki
 
 # Parallel computing packages
 using Distributed
+using SharedArrays
 
 # Math packages
 using Distributions

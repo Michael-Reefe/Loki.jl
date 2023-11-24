@@ -740,6 +740,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     plot_maps::Bool
     plot_range::Union{Vector{<:Tuple},Nothing}
     parallel::Bool
+    parallel_strategy::String
     save_fits::Bool
     save_full_model::Bool
     overwrite::Bool
@@ -1479,6 +1480,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             out[:plot_maps], 
             out[:plot_range], 
             out[:parallel], 
+            out[:parallel_strategy],
             out[:save_fits], 
             out[:save_full_model], 
             out[:overwrite], 

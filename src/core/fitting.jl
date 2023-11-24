@@ -2365,12 +2365,6 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
     area_sr = cube_data.area_sr[spaxel, :]
     templates = cube_data.templates[spaxel, :, :]
 
-    # if spaxel ∉ (CartesianIndex(19,19), CartesianIndex(23,22), CartesianIndex(23,23), CartesianIndex(23,28), 
-    #              CartesianIndex(23,32), CartesianIndex(23,33), CartesianIndex(23,34), CartesianIndex(23,37),
-    #              CartesianIndex(22,30), CartesianIndex(21,29), CartesianIndex(19,20))
-    #     return nothing, nothing
-    # end
-
     # if there are any NaNs, skip over the spaxel
     if any(.!isfinite.(I))
         @debug "Non-finite values found in the intensity! Not fitting spaxel $spaxel"
@@ -2827,36 +2821,61 @@ function fit_cube!(cube_fitter::CubeFitter)
         spaxels = CartesianIndices((n_bins,))
     end
 
-    # Wrapper function 
-    fit_spax_i(index::CartesianIndex) = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
-
     # Use multiprocessing (not threading) to iterate over multiple spaxels at once using multiple CPUs
     if cube_fitter.parallel
         @info "===> Beginning individual spaxel fitting... <==="
-        prog = Progress(length(spaxels); showspeed=true)
-        result = progress_pmap(spaxels, progress=prog) do index
-            fit_spax_i(index)
-        end
-        # Populate results into the output arrays
-        for index ∈ spaxels
-            if !isnothing(result[index][1])
-                if vorbin
-                    out_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(index)[1])
-                    for out_index in out_indices
-                        out_params[out_index, :] .= result[index][1]
-                        out_errs[out_index, :, :] .= result[index][2]
+        # For some reason, pmap seems to be causing serialization errors that I cant figure out, so for
+        # now its being relegated to an option if someone can get it to work, since it is better at 
+        # balancing loads between processes than a distributed loop which simply allocates an equal amount
+        # of jobs to each process. But for now, distributed will be the default.
+
+        if cube_fitter.parallel_strategy == "pmap"
+            prog = Progress(length(spaxels))
+            result = progress_pmap(spaxels, progress=prog) do index
+                fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
+            end
+            # Populate results into the output arrays
+            for index ∈ spaxels
+                if !isnothing(result[index][1])
+                    if vorbin
+                        out_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(index)[1])
+                        for out_index in out_indices
+                            out_params[out_index, :] .= result[index][1]
+                            out_errs[out_index, :, :] .= result[index][2]
+                        end
+                    else
+                        out_params[index, :] .= result[index][1]
+                        out_errs[index, :, :] .= result[index][2]
                     end
-                else
-                    out_params[index, :] .= result[index][1]
-                    out_errs[index, :, :] .= result[index][2]
                 end
             end
+        elseif cube_fitter.parallel_strategy == "distributed"
+            # Distributed loops require these to be SharedArrays so that each process accesses the same array
+            out_params = SharedArray(out_params)
+            out_errs = SharedArray(out_errs)
+            @showprogress @distributed for index ∈ spaxels
+                p_out, p_err = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
+                if !isnothing(p_out)
+                    if vorbin
+                        out_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(index)[1])
+                        for out_index in out_indices
+                            out_params[out_index, :] .= p_out
+                            out_errs[out_index, :, :] .= p_err
+                        end
+                    else
+                        out_params[index, :] .= p_out
+                        out_errs[index, :, :] .= p_err
+                    end
+                end
+            end
+        else
+            error("Unrecognized parallel strategy: $(cube_fitter.parallel_strategy). May be \"pmap\" or \"distributed\".")
         end
     else
         @info "===> Beginning individual spaxel fitting... <==="
-        prog = Progress(length(spaxels); showspeed=true)
+        prog = Progress(length(spaxels))
         for index ∈ spaxels
-            p_out, p_err = fit_spax_i(index)
+            p_out, p_err = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
             if !isnothing(p_out)
                 if vorbin
                     out_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(index)[1])
@@ -3028,11 +3047,8 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
     # Get the indices of all spaxels
     spaxels = CartesianIndices((1,1))
 
-    # Wrapper function 
-    fit_spax_i(index::CartesianIndex) = fit_spaxel(cube_fitter, cube_data, index; use_ap=true)
-
     @info "===> Beginning integrated spectrum fitting... <==="
-    p_out, p_err = fit_spax_i(spaxels[1])
+    p_out, p_err = fit_spaxel(cube_fitter, cube_data, spaxels[1]; use_ap=true)
     if !isnothing(p_out)
         out_params[spaxels[1], :] .= p_out
         out_errs[spaxels[1], :, :] .= p_err
