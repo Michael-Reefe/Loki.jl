@@ -2821,6 +2821,37 @@ function fit_cube!(cube_fitter::CubeFitter)
         spaxels = CartesianIndices((n_bins,))
     end
 
+    # Only loop over spaxels with data
+    _m = [any(.~isfinite.(cube_data.I[spaxel, :])) || any(.~isfinite.(cube_data.templates[spaxel, :, :])) for spaxel in spaxels]
+    spaxels = spaxels[.~_m]
+
+    # First (non-parallel) loop over already-completed spaxels
+    _m2 = falses(length(spaxels))
+    if !cube_fitter.overwrite
+        @info "Loading in previous fit results (if any...)"
+        @showprogress for (ii, index) ∈ enumerate(spaxels)
+            fname = vorbin ? "voronoi_bin_$(index[1])" : "spaxel_$(index[1])_$(index[2])"
+            fpath = joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.csv")
+            if isfile(fpath)
+                # just loads in the previous fit results since they already exist
+                p_out, p_err = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
+                if vorbin
+                    out_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(index)[1])
+                    for out_index in out_indices
+                        out_params[out_index, :] .= p_out
+                        out_errs[out_index, :, :] .= p_err
+                    end
+                else
+                    out_params[index, :] .= p_out
+                    out_errs[index, :, :] .= p_err
+                end
+                # remove this spaxel from the list of spaxels that still need to be fit
+                _m2[ii] = 1
+            end
+        end
+    end
+    spaxels = spaxels[.~_m2]
+
     # Use multiprocessing (not threading) to iterate over multiple spaxels at once using multiple CPUs
     if cube_fitter.parallel
         @info "===> Beginning individual spaxel fitting... <==="
@@ -2831,7 +2862,7 @@ function fit_cube!(cube_fitter::CubeFitter)
 
         if cube_fitter.parallel_strategy == "pmap"
             prog = Progress(length(spaxels))
-            result = progress_pmap(spaxels, progress=prog) do index
+            result = progress_pmap(CachingPool(workers()), spaxels, progress=prog) do index
                 fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
             end
             # Populate results into the output arrays
