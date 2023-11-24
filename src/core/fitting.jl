@@ -2855,35 +2855,29 @@ function fit_cube!(cube_fitter::CubeFitter)
     # Use multiprocessing (not threading) to iterate over multiple spaxels at once using multiple CPUs
     if cube_fitter.parallel
         @info "===> Beginning individual spaxel fitting... <==="
-        # For some reason, pmap seems to be causing serialization errors that I cant figure out, so for
-        # now its being relegated to an option if someone can get it to work, since it is better at 
-        # balancing loads between processes than a distributed loop which simply allocates an equal amount
-        # of jobs to each process. But for now, distributed will be the default.
+        # Parallel loops require these to be SharedArrays so that each process accesses the same array
+        out_params = SharedArray(out_params)
+        out_errs = SharedArray(out_errs)
 
         if cube_fitter.parallel_strategy == "pmap"
             prog = Progress(length(spaxels))
-            result = progress_pmap(CachingPool(workers()), spaxels, progress=prog) do index
-                fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
-            end
-            # Populate results into the output arrays
-            for index ∈ spaxels
-                if !isnothing(result[index][1])
+            progress_pmap(CachingPool(workers()), spaxels, progress=prog) do index
+                p_out, p_err = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
+                if !isnothing(p_out)
                     if vorbin
                         out_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(index)[1])
                         for out_index in out_indices
-                            out_params[out_index, :] .= result[index][1]
-                            out_errs[out_index, :, :] .= result[index][2]
+                            out_params[out_index, :] .= p_out
+                            out_errs[out_index, :, :] .= p_err
                         end
                     else
-                        out_params[index, :] .= result[index][1]
-                        out_errs[index, :, :] .= result[index][2]
+                        out_params[index, :] .= p_out
+                        out_errs[index, :, :] .= p_err
                     end
                 end
+                nothing
             end
         elseif cube_fitter.parallel_strategy == "distributed"
-            # Distributed loops require these to be SharedArrays so that each process accesses the same array
-            out_params = SharedArray(out_params)
-            out_errs = SharedArray(out_errs)
             @showprogress @distributed for index ∈ spaxels
                 p_out, p_err = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
                 if !isnothing(p_out)
