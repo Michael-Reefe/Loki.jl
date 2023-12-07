@@ -15,10 +15,10 @@ locked = true
 
 # dust_continuum_temps: the blackbody temperatures of the dust
 # continuum components of the model. 
-# [[dust_continuum_temps]]
-# val = 400.0
-# plim = [35.0, 1500.0]
-# locked = false
+[[dust_continuum_temps]]
+val = 400.0
+plim = [35.0, 1500.0]
+locked = false
 [[dust_continuum_temps]]
 val = 200.0
 plim = [35.0, 300.0]
@@ -525,14 +525,15 @@ val = 1.7e-3
 plim = [0.0, 3e-3]
 locked = false
 
+# pyr and for are measured RELATIVE to olivine (multiplicatively)
 [extinction.N_pyr]
-val = 5.0e-5
-plim = [0.0, 3e-3]
+val = 0.03
+plim = [0.0, 3.0]
 locked = false
 
 [extinction.N_for]
-val = 1.0e-4
-plim = [0.0, 3e-3]
+val = 0.06
+plim = [0.0, 3.0]
 locked = false
 
 # extinction.frac: covering fraction for how much of the dust continuum

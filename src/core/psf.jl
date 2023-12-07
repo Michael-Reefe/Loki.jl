@@ -312,6 +312,3 @@ function generate_nuclear_template(cube::DataCube, ap_r::Real=0.; spline_width::
 
     nuc = [nuc1d[k] * cube.psf_model[i,j,k] for i ∈ axes(cube.psf_model, 1), j ∈ axes(cube.psf_model, 2), k ∈ axes(cube.psf_model, 3)]
 end
-
-
-

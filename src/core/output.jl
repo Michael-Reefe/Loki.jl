@@ -372,15 +372,15 @@ fill them with the maximum likelihood values and errors given by out_params and 
 spaxels.
 """
 assign_outputs(out_params::AbstractArray{<:Real}, out_errs::AbstractArray{<:Real}, cube_fitter::CubeFitter, 
-    cube_data::NamedTuple, z::Real, aperture::Bool=false) = 
+    cube_data::NamedTuple, z::Real, aperture::Bool=false; kwargs...) = 
     cube_fitter.spectral_region == :MIR ? 
-        assign_outputs_mir(out_params, out_errs, cube_fitter, cube_data, z, aperture) : 
-        assign_outputs_opt(out_params, out_errs, cube_fitter, cube_data, z, aperture)
+        assign_outputs_mir(out_params, out_errs, cube_fitter, cube_data, z, aperture; kwargs...) : 
+        assign_outputs_opt(out_params, out_errs, cube_fitter, cube_data, z, aperture; kwargs...)
 
 
 # MIR implementation of the assign_outputs function
 function assign_outputs_mir(out_params::AbstractArray{<:Real}, out_errs::AbstractArray{<:Real}, cube_fitter::CubeFitter,
-    cube_data::NamedTuple, z::Real, aperture::Bool=false)
+    cube_data::NamedTuple, z::Real, aperture::Bool=false; nuc_temp_fit::Bool=false)
 
     # Create the CubeModel and ParamMaps structs to be filled in
     cube_model = generate_cubemodel(cube_fitter, aperture)
@@ -559,7 +559,7 @@ function assign_outputs_mir(out_params::AbstractArray{<:Real}, out_errs::Abstrac
             I_cont, comps_c = model_continuum(cube_fitter.cube.λ, out_params[index, 1:pᵢ-1], N, cube_fitter.n_dust_cont, cube_fitter.n_power_law,
                 cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, 
                 cube_fitter.κ_abs, cube_fitter.custom_ext_template, cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, false, 
-                cube_data.templates[index, :, :], cube_fitter.channel_masks, true)
+                cube_data.templates[index, :, :], cube_fitter.channel_masks, nuc_temp_fit, true)
         end
 
         # Save marker of the point where the continuum parameters end and the line parameters begin
@@ -653,10 +653,12 @@ function assign_outputs_mir(out_params::AbstractArray{<:Real}, out_errs::Abstrac
             # Interpolate the LSF
             lsf_interp = Spline1D(cube_fitter.cube.λ, cube_fitter.cube.lsf, k=1)
             lsf_interp_func = x -> lsf_interp(x)
+            templates_psfnuc = nuc_temp_fit ? comps_c["templates_1"] : nothing
 
             # End of line parameters: recreate the un-extincted (intrinsic) line model
             I_line, comps_l = model_line_residuals(cube_fitter.cube.λ, out_params[index, vᵢ:pᵢ-1], cube_fitter.n_lines, cube_fitter.n_comps,
-                cube_fitter.lines, cube_fitter.flexible_wavesol, comps_c["extinction"], lsf_interp_func, cube_fitter.relative_flags, true)
+                cube_fitter.lines, cube_fitter.flexible_wavesol, comps_c["extinction"], lsf_interp_func, cube_fitter.relative_flags,
+                templates_psfnuc, nuc_temp_fit, true)
 
             # Combine the continuum and line models
             I_model = I_cont .+ I_line
@@ -666,7 +668,9 @@ function assign_outputs_mir(out_params::AbstractArray{<:Real}, out_errs::Abstrac
             I_model .*= N
             for comp ∈ keys(comps)
                 if !((comp == "extinction") || contains(comp, "ext_") || contains(comp, "abs_") || contains(comp, "attenuation"))
-                    comps[comp] .*= N
+                    if !(nuc_temp_fit && contains(comp, "template"))
+                        comps[comp] .*= N
+                    end
                 end
             end
             
@@ -762,7 +766,10 @@ function assign_outputs_mir(out_params::AbstractArray{<:Real}, out_errs::Abstrac
                 cube_model.hot_dust[:, index] .= comps["hot_dust"] .* (1 .+ z)
             end
             for q ∈ 1:cube_fitter.n_templates
-                cube_model.templates[:, index, q] .= comps["templates_$q"] .* (1 .+ z)
+                cube_model.templates[:, index, q] .= comps["templates_$q"] 
+                if !nuc_temp_fit
+                    cube_model.templates[:, index, q] .*= (1 .+ z)
+                end
             end
             for j ∈ 1:cube_fitter.n_comps
                 for k ∈ 1:cube_fitter.n_lines
@@ -831,7 +838,7 @@ end
 
 # Optical implementation of the assign_outputs function
 function assign_outputs_opt(out_params::AbstractArray{<:Real}, out_errs::AbstractArray{<:Real}, cube_fitter::CubeFitter,
-    cube_data::NamedTuple, z::Real, aperture::Bool=false)
+    cube_data::NamedTuple, z::Real, aperture::Bool=false, nuc_temp_fit::Bool=false)
 
     # Create the CubeModel and ParamMaps structs to be filled in
     cube_model = generate_cubemodel(cube_fitter, aperture)
@@ -1050,10 +1057,12 @@ function assign_outputs_opt(out_params::AbstractArray{<:Real}, out_errs::Abstrac
             # Interpolate the LSF
             lsf_interp = Spline1D(cube_fitter.cube.λ, cube_fitter.cube.lsf, k=1)
             lsf_interp_func = x -> lsf_interp(x)
+            templates_psfnuc = nuc_temp_fit ? comps_c["templates_1"] : nothing
 
             # End of line parameters: recreate the un-extincted (intrinsic) line model
             I_line, comps_l = model_line_residuals(cube_fitter.cube.λ, out_params[index, vᵢ:pᵢ-1], cube_fitter.n_lines, cube_fitter.n_comps,
-                cube_fitter.lines, cube_fitter.flexible_wavesol, comps_c["attenuation_gas"], lsf_interp_func, cube_fitter.relative_flags, true)
+                cube_fitter.lines, cube_fitter.flexible_wavesol, comps_c["attenuation_gas"], lsf_interp_func, cube_fitter.relative_flags,
+                templates_psfnuc, nuc_temp_fit, true)
 
             # Combine the continuum and line models
             I_model = I_cont .+ I_line
@@ -1063,7 +1072,9 @@ function assign_outputs_opt(out_params::AbstractArray{<:Real}, out_errs::Abstrac
             I_model .*= N
             for comp ∈ keys(comps)
                 if !((comp == "extinction") || contains(comp, "ext_") || contains(comp, "abs_") || contains(comp, "attenuation"))
-                    comps[comp] .*= N
+                    if !(nuc_temp_fit && contains(comp, "template"))
+                        comps[comp] .*= N
+                    end
                 end
             end
             
@@ -1251,9 +1262,9 @@ function paramstring_to_latex(name_i, cosmo)
     elseif occursin("N_oli", name_i)
         bunit = L"$\log_{10}(N_{\rm oli} / $ g cm$^{-2}$)"
     elseif occursin("N_pyr", name_i)
-        bunit = L"$\log_{10}(N_{\rm pyr} / $ g cm$^{-2}$)"
+        bunit = L"$\log_{10}(N_{\rm pyr} / N_{\rm oli}$)"
     elseif occursin("N_for", name_i)
-        bunit = L"$\log_{10}(N_{\rm for} / $ g cm$^{-2}$)"
+        bunit = L"$\log_{10}(N_{\rm for} / N_{\rm oli}$)"
     elseif occursin("flux", name_i)
         bunit = L"$\log_{10}(F /$ erg s$^{-1}$ cm$^{-2}$)"
     elseif occursin("eqw", name_i)
@@ -1823,7 +1834,7 @@ function plot_mir_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps;
         N_pyr[.~isfinite.(N_pyr)] .= 0.
         N_for = exp10.(param_maps.extinction[:N_for])
         N_for[.~isfinite.(N_for)] .= 0.
-        data = N_oli .* cube_fitter.κ_abs[1](9.7) .+ N_pyr .* cube_fitter.κ_abs[2](9.7) .+ N_for .* cube_fitter.κ_abs[3](9.7)
+        data = N_oli .* cube_fitter.κ_abs[1](9.7) .+ N_oli .* N_pyr .* cube_fitter.κ_abs[2](9.7) .+ N_oli .* N_for .* cube_fitter.κ_abs[3](9.7)
         name_i = join(["extinction", "tau_9_7"], "_")
         save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "extinction", "$(name_i).pdf")
         plot_parameter_map(data, name_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf),
@@ -2308,15 +2319,16 @@ Save the best fit results for the cube into two FITS files: one for the full 3D 
 individual model components, and one for 2D parameter maps of the best-fit parameters for each spaxel in the cube.
 """
 write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel, param_maps::ParamMaps, 
-    param_errs::Vector{<:ParamMaps}; aperture::Union{Vector{<:Aperture.AbstractAperture},String,Nothing}=nothing) =
+    param_errs::Vector{<:ParamMaps}; kwargs...) =
     cube_fitter.spectral_region == :MIR ?
-    write_fits_mir(cube_fitter, cube_data, cube_model, param_maps, param_errs; aperture=aperture) :
-    write_fits_opt(cube_fitter, cube_data, cube_model, param_maps, param_errs; aperture=aperture)
+    write_fits_mir(cube_fitter, cube_data, cube_model, param_maps, param_errs; kwargs...) :
+    write_fits_opt(cube_fitter, cube_data, cube_model, param_maps, param_errs; kwargs...)
 
 
 # MIR implementation of the write_fits function
 function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel, param_maps::ParamMaps, 
-    param_errs::Vector{<:ParamMaps}; aperture::Union{Vector{<:Aperture.AbstractAperture},String,Nothing}=nothing)
+    param_errs::Vector{<:ParamMaps}; aperture::Union{Vector{<:Aperture.AbstractAperture},String,Nothing}=nothing, nuc_temp_fit::Bool=false,
+    nuc_spax::Union{Nothing,CartesianIndex}=nothing)
 
     aperture_keys = []
     aperture_vals = []
@@ -2377,6 +2389,12 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
         aperture_vals = Any["full_cube", median(n_pix[isfinite.(n_pix)])]
         aperture_comments = ["The shape of the spectrum extraction aperture", "Area of aperture in pixels"]
 
+    elseif nuc_temp_fit
+
+        aperture_keys = ["SPAXEL_X", "SPAXEL_Y"]
+        aperture_vals = [nuc_spax.I[1], nuc_spax.I[2]] 
+        aperture_comments = ["x coordinate of nuclear spaxel", "y coordinate of nuclear spaxel"]
+
     end
 
     # Header information
@@ -2407,7 +2425,7 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
 
     if cube_fitter.save_full_model
         # Create the 3D intensity model FITS file
-        FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_full_model.fits"), "w") do f
+        FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_$(nuc_temp_fit ? "nuc_model" : "full_model").fits"), "w") do f
 
             @debug "Writing 3D model FITS HDUs"
             # Permute the wavelength axis here back to the third axis to be consistent with conventions
@@ -2490,7 +2508,7 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
     # Create the 2D parameter map FITS file for the parameters and the errors
     for (index, param_data) ∈ enumerate([param_maps, param_errs[1], param_errs[2]])
 
-        FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_parameter_" * 
+        FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_$(nuc_temp_fit ? "nuc_" : "")parameter_" * 
             ("maps", "errs_low", "errs_upp")[index] * ".fits"), "w") do f
 
             @debug "Writing 2D parameter map FITS HDUs"
@@ -2598,8 +2616,10 @@ function write_fits_mir(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_mod
                 data = param_data.extinction[parameter]
                 name_i = join(["extinction", parameter], "_")
                 bunit = "-"
-                if occursin("N_oli", name_i) || occursin("N_pyr", name_i) || occursin("N_for", name_i)
+                if occursin("N_oli", name_i)
                     bunit = "log(g.cm-2)"
+                elseif occursin("N_pyr", name_i) || occursin("N_for", name_i)
+                    bunit = "log(N_oli)"
                 end
                 write(f, data; name=uppercase(name_i))
                 write_key(f[name_i], "BUNIT", bunit)  

@@ -1055,13 +1055,15 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `use_pah_templates::Bool`: Whether or not to use PAH templates to model the PAH emission
 - `templates::Matrix{<:Real}`: The PSF templates to be used in the fit
 - `channel_masks::Vector{BitVector}`: Masks that pick out each subchannel in the data
+- `nuc_temp_fit::Bool`: If true, the nuclear template is being fit, meaning we are to normalize the model by the templates (which should
+    be the PSF templates here).
 - `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
 function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, 
     dust_prof::Vector{Symbol}, n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, κ_abs::Vector{Spline1D}, custom_ext::Union{Spline1D,Nothing},
     fit_sil_emission::Bool, fit_temp_multexp::Bool, use_pah_templates::Bool, templates::Matrix{<:Real}, channel_masks::Vector{BitVector}, 
-    return_components::Bool)
+    nuc_temp_fit::Bool, return_components::Bool)
 
     # Prepare outputs
     out_type = eltype(params)
@@ -1111,11 +1113,11 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
     elseif extinction_curve == "decompose"
         τ_oli = params[pᵢ] .* κ_abs[1](λ) 
         comps["abs_oli"] = extinction.(τ_oli, 1., screen=extinction_screen)
-        τ_pyr = params[pᵢ+1] .* κ_abs[2](λ)
+        τ_pyr = params[pᵢ] .* params[pᵢ+1] .* κ_abs[2](λ)
         comps["abs_pyr"] = extinction.(τ_pyr, 1., screen=extinction_screen)
-        τ_for = params[pᵢ+2] .* κ_abs[3](λ)
+        τ_for = params[pᵢ] .* params[pᵢ+2] .* κ_abs[3](λ)
         comps["abs_for"] = extinction.(τ_for, 1., screen=extinction_screen)
-        τ_97 = params[pᵢ] * κ_abs[1](9.7) + params[pᵢ+1] * κ_abs[2](9.7) + params[pᵢ+2] * κ_abs[3](9.7)
+        τ_97 = params[pᵢ] * κ_abs[1](9.7) + params[pᵢ] * params[pᵢ+1] * κ_abs[2](9.7) + params[pᵢ] * params[pᵢ+2] * κ_abs[3](9.7)
         comps["extinction"] = extinction.((1 .- params[pᵢ+5]) .* (τ_oli .+ τ_pyr .+ τ_for) .+ params[pᵢ+5] .* τ_97 .* (9.7./λ).^1.7, 1., screen=extinction_screen)
         pᵢ += 3
     else
@@ -1152,23 +1154,35 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
         pᵢ += 6
     end
 
-    # Add generic templates with a normalization parameter
-    if fit_temp_multexp
-        ex = multiplicative_exponentials(λ, params[pᵢ:pᵢ+7])
-        for i in axes(templates, 2)
-            comps["templates_$i"] = sum([ex[:,j] .* templates[:,i] ./ N for j in axes(ex,2)])
-            contin .+= comps["templates_$i"]
+    if !nuc_temp_fit
+        # Add generic templates with a normalization parameter
+        if fit_temp_multexp
+            ex = multiplicative_exponentials(λ, params[pᵢ:pᵢ+7])
+            for i in axes(templates, 2)
+                comps["templates_$i"] = sum([ex[:,j] .* templates[:,i] ./ N for j in axes(ex,2)])
+                contin .+= comps["templates_$i"]
+            end
+            pᵢ += 8
+        else
+            for i in axes(templates, 2)
+                comps["templates_$i"] = zeros(out_type, length(λ))
+                # scale each subchannel with a separate amplitude to fit the channel jumps
+                for ch_mask in channel_masks
+                    comps["templates_$i"][ch_mask] .+= params[pᵢ] .* templates[ch_mask, i] ./ N
+                    pᵢ += 1
+                end
+                contin .+= comps["templates_$i"]
+            end
         end
-        pᵢ += 8
     else
+        # Fitting the nuclear spectrum - here the templates are just the PSF model, which we normalize by to make the spectrum
+        # continuous.
         for i in axes(templates, 2)
             comps["templates_$i"] = zeros(out_type, length(λ))
-            # scale each subchannel with a separate amplitude to fit the channel jumps
             for ch_mask in channel_masks
-                comps["templates_$i"][ch_mask] .+= params[pᵢ] .* templates[ch_mask, i] ./ N
+                comps["templates_$i"][ch_mask] .= params[pᵢ] .* templates[ch_mask, i]
                 pᵢ += 1
             end
-            contin .+= comps["templates_$i"]
         end
     end
 
@@ -1190,6 +1204,10 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
         end
     end
 
+    if nuc_temp_fit
+        contin .*= comps["templates_1"]
+    end
+
     # Return components if necessary
     if return_components
         return contin, comps
@@ -1202,7 +1220,8 @@ end
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
 function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
     n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, κ_abs::Vector{Spline1D}, custom_ext::Union{Spline1D,Nothing}, 
-    fit_sil_emission::Bool, fit_temp_multexp::Bool, use_pah_templates::Bool, templates::Matrix{<:Real}, channel_masks::Vector{BitVector})
+    fit_sil_emission::Bool, fit_temp_multexp::Bool, use_pah_templates::Bool, templates::Matrix{<:Real}, channel_masks::Vector{BitVector},
+    nuc_temp_fit::Bool)
 
     # Prepare outputs
     out_type = eltype(params)
@@ -1247,9 +1266,9 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
         pᵢ += 1
     elseif extinction_curve == "decompose"
         τ_oli = params[pᵢ] .* κ_abs[1](λ)
-        τ_pyr = params[pᵢ+1] .* κ_abs[2](λ)
-        τ_for = params[pᵢ+2] .* κ_abs[3](λ)
-        τ_97 = params[pᵢ] * κ_abs[1](9.7) + params[pᵢ+1] * κ_abs[2](9.7) + params[pᵢ+2] * κ_abs[3](9.7)
+        τ_pyr = params[pᵢ] .* params[pᵢ+1] .* κ_abs[2](λ)
+        τ_for = params[pᵢ] .* params[pᵢ+2] .* κ_abs[3](λ)
+        τ_97 = params[pᵢ] * κ_abs[1](9.7) + params[pᵢ] * params[pᵢ+1] * κ_abs[2](9.7) + params[pᵢ] * params[pᵢ+2] * κ_abs[3](9.7)
         ext = extinction.((1 .- params[pᵢ+5]) .* (τ_oli .+ τ_pyr .+ τ_for) .+ params[pᵢ+5] .* τ_97 .* (9.7./λ).^1.7, 1., screen=extinction_screen)
         pᵢ += 3
     else
@@ -1281,17 +1300,30 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
         pᵢ += 6
     end
 
-    # Add generic templates with a normalization parameter
-    if fit_temp_multexp
-        ex = multiplicative_exponentials(λ, params[pᵢ:pᵢ+7])
-        for i in axes(templates, 2)
-            contin .+= sum([ex[:,j] .* templates[:,i] ./ N for j in axes(ex,2)])
+    nuc_temp_norm = nothing
+    if !nuc_temp_fit
+        # Add generic templates with a normalization parameter
+        if fit_temp_multexp
+            ex = multiplicative_exponentials(λ, params[pᵢ:pᵢ+7])
+            for i in axes(templates, 2)
+                contin .+= sum([ex[:,j] .* templates[:,i] ./ N for j in axes(ex,2)])
+            end
+            pᵢ += 8
+        else
+            for i in axes(templates, 2)
+                for ch_mask in channel_masks
+                    contin[ch_mask] .+= params[pᵢ] .* templates[ch_mask, i] ./ N
+                    pᵢ += 1
+                end
+            end
         end
-        pᵢ += 8
     else
+        # Fitting the nuclear spectrum - here the templates are just the PSF model, which we normalize by to make the spectrum
+        # continuous.
         for i in axes(templates, 2)
+            nuc_temp_norm = zeros(out_type, length(λ))
             for ch_mask in channel_masks
-                contin[ch_mask] .+= params[pᵢ] .* templates[ch_mask, i] ./ N
+                nuc_temp_norm[ch_mask] .= params[pᵢ] .* templates[ch_mask, i] 
                 pᵢ += 1
             end
         end
@@ -1320,6 +1352,10 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
                 contin .+= df .* ext
             end
         end
+    end
+
+    if nuc_temp_fit
+        contin .*= nuc_temp_norm
     end
 
     contin
@@ -1602,15 +1638,17 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 (with modifications)
 
 # Arguments
-- `λ::Vector{<:AbstractFloat}`: Wavelength vector of the spectrum to be fit
-- `params::Vector{<:AbstractFloat}`: Parameter vector. Parameters should be ordered as: `(amp, center, fwhm) for each PAH profile`
+- `λ::Vector{<:Real}`: Wavelength vector of the spectrum to be fit
+- `params::Vector{<:Real}`: Parameter vector. Parameters should be ordered as: `(amp, center, fwhm) for each PAH profile`
 - `dust_prof::Vector{Symbol}`: The profiles of each PAH feature being fit (either :Drude or :PearsonIV)
-- `ext_curve::Vector{<:AbstractFloat}`: The extinction curve that was fit using model_{mir|opt}_continuum
+- `ext_curve::Vector{<:Real}`: The extinction curve that was fit using model_continuum
+- `template_norm::Union{Nothing,Vector{<:Real}}`: The normalization PSF template that was fit using model_continuum
+- `nuc_temp_fit::Bool`: Whether or not to apply the PSF normalization template
 - `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in
     addition to the overall fit
 """
 function model_pah_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, dust_prof::Vector{Symbol}, ext_curve::Vector{<:Real}, 
-    return_components::Bool) 
+    template_norm::Union{Nothing,Vector{<:Real}}, nuc_temp_fit::Bool, return_components::Bool) 
 
     # Prepare outputs
     out_type = eltype(params)
@@ -1632,6 +1670,10 @@ function model_pah_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, dust_pr
 
     # Apply extinction
     contin .*= ext_curve
+    # Apply PSF normalization
+    if nuc_temp_fit
+        contin .*= template_norm
+    end
 
     # Return components, if necessary
     if return_components
@@ -1643,7 +1685,8 @@ end
 
 
 # Multiple dispatch for more efficiency
-function model_pah_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, dust_prof::Vector{Symbol}, ext_curve::Vector{<:Real})
+function model_pah_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, dust_prof::Vector{Symbol}, ext_curve::Vector{<:Real},
+    template_norm::Union{Nothing,Vector{<:Real}}, nuc_temp_fit::Bool)
 
     # Prepare outputs
     out_type = eltype(params)
@@ -1671,6 +1714,10 @@ function model_pah_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, dust_pr
 
     # Apply extinction
     contin .*= ext_curve
+    # Apply PSF normalization
+    if nuc_temp_fit
+        contin .*= template_norm
+    end
 
     contin
 
@@ -1698,11 +1745,14 @@ wavelength solution in the data
 - `lsf::Function`: A function giving the FWHM of the line-spread function in km/s as a function of rest-frame wavelength in microns.
 - `relative_flags::BitVector`: BitVector giving flags for whether the amp, voff, and fwhm of additional line profiles should be
     parametrized relative to the main profile or not.
+- `template_norm::Union{Nothing,Vector{<:Real}}`: The normalization PSF template that was fit using model_continuum
+- `nuc_temp_fit::Bool`: Whether or not to apply the PSF normalization template
 - `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
 addition to the overall fit
 """
 function model_line_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, n_lines::S, n_comps::S, lines::TransitionLines, 
-    flexible_wavesol::Bool, ext_curve::Vector{<:Real}, lsf::Function, relative_flags::BitVector, return_components::Bool) where {S<:Integer}
+    flexible_wavesol::Bool, ext_curve::Vector{<:Real}, lsf::Function, relative_flags::BitVector, template_norm::Union{Nothing,Vector{<:Real}},
+    nuc_temp_fit::Bool, return_components::Bool) where {S<:Integer}
 
     # Prepare outputs
     out_type = eltype(params)
@@ -1791,6 +1841,10 @@ function model_line_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, n_line
 
     # Apply extinction
     contin .*= ext_curve
+    # Apply PSF normalization
+    if nuc_temp_fit
+        contin .*= template_norm
+    end
 
     # Return components if necessary
     if return_components
@@ -1803,7 +1857,8 @@ end
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
 function model_line_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, n_lines::S, n_comps::S, lines::TransitionLines, 
-    flexible_wavesol::Bool, ext_curve::Vector{<:Real}, lsf::Function, relative_flags::BitVector) where {S<:Integer}
+    flexible_wavesol::Bool, ext_curve::Vector{<:Real}, lsf::Function, relative_flags::BitVector, template_norm::Union{Nothing,Vector{<:Real}},
+    nuc_temp_fit::Bool) where {S<:Integer}
 
     # Prepare outputs
     out_type = eltype(params)
@@ -1888,6 +1943,10 @@ function model_line_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, n_line
     
     # Apply extinction
     contin .*= ext_curve
+    # Apply PSF normalization
+    if nuc_temp_fit
+        contin .*= template_norm
+    end
 
     contin
 
@@ -1904,10 +1963,10 @@ Currently this includes the integrated intensity, equivalent width, and signal t
 """
 function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, comps::Dict, n_channels::Integer, n_dust_cont::Integer,
     n_power_law::Integer, n_dust_feat::Integer, dust_profiles::Vector{Symbol}, n_abs_feat::Integer, fit_sil_emission::Bool, 
-    fit_temp_multexp::Bool, n_templates::Integer, n_lines::Integer, n_acomps::Integer, n_comps::Integer, lines::TransitionLines, 
+    fit_temp_multexp::Bool, n_templates::Integer, nuc_temp_fit::Bool, n_lines::Integer, n_acomps::Integer, n_comps::Integer, lines::TransitionLines, 
     flexible_wavesol::Bool, lsf::Function, relative_flags::BitVector, popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, 
-    perr_l::Vector{T}, extinction_pah::Vector{T}, extinction::Vector{T}, extinction_curve::String, mask_lines::BitVector, 
-    continuum::Vector{T}, area_sr::Vector{T}, n_fit_comps::Dict, spaxel::CartesianIndex, propagate_err::Bool=true) where {T<:Real}
+    perr_l::Vector{T}, extinction_pah::Vector{T}, extinction::Vector{T}, templates_psfnuc::Union{Nothing,Vector{<:Real}}, extinction_curve::String, 
+    mask_lines::BitVector, continuum::Vector{T}, area_sr::Vector{T}, n_fit_comps::Dict, spaxel::CartesianIndex, propagate_err::Bool=true) where {T<:Real}
 
     @debug "Calculating extra parameters"
 
@@ -1948,6 +2007,8 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
 
         # Get the extinction profile at the center
         ext = extinction_pah[cent_ind] 
+        tnorm = nuc_temp_fit ? templates_psfnuc : ones(length(λ))
+        tn = tnorm[cent_ind]
 
         prof = dust_profiles[ii]
         if prof == :PearsonIV
@@ -1975,10 +2036,10 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
         else
             error("Unrecognized PAH profile: $prof")
         end
-        feature .*= extinction_pah
+        feature .*= extinction_pah .* tnorm
         if propagate_err
-            feature_err[:,1] .*= extinction_pah
-            feature_err[:,2] .*= extinction_pah
+            feature_err[:,1] .*= extinction_pah .* tnorm
+            feature_err[:,2] .*= extinction_pah .* tnorm
         end
 
         # Calculate the flux using the utility function
@@ -1987,9 +2048,9 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
         
         # Calculate the equivalent width using the utility function
         eqw, e_err = calculate_eqw(λ, feature, comps, false, n_dust_cont, n_power_law, n_abs_feat, n_dust_feat, fit_sil_emission,
-            n_templates, feature_err=feature_err, propagate_err=propagate_err)
+            n_templates, nuc_temp_fit, feature_err=feature_err, propagate_err=propagate_err)
         
-        snr = A*N*ext / std(I[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)] .- continuum[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)])
+        snr = A*N*ext*tn / std(I[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)] .- continuum[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)])
 
         @debug "PAH feature ($prof) with ($A_cgs, $μ, $fwhm, $m, $ν) and errors ($A_cgs_err, $μ_err, $fwhm_err, $m_err, $ν_err)"
         @debug "Flux=$flux +/- $f_err, EQW=$eqw +/- $e_err, SNR=$snr"
@@ -2133,6 +2194,8 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
 
                 # Get the extinction factor at the line center
                 ext = extinction[cent_ind]
+                tnorm = nuc_temp_fit ? templates_psfnuc : ones(length(λ))
+                tn = tnorm[cent_ind]        
                 
                 # Create the extincted line profile in units matching the continuum
                 feature_err = nothing
@@ -2163,10 +2226,10 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                 else
                     error("Unrecognized line profile $(lines.profiles[k, j])")
                 end
-                feature .*= extinction
+                feature .*= extinction .* tnorm
                 if propagate_err
-                    feature_err[:,1] .*= extinction
-                    feature_err[:,2] .*= extinction
+                    feature_err[:,1] .*= extinction .* tnorm
+                    feature_err[:,2] .*= extinction .* tnorm
                 end
 
                 # Calculate line flux using the helper function
@@ -2175,10 +2238,10 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                 
                 # Calculate equivalent width using the helper function
                 p_lines[pₒ+1], p_lines_err[pₒ+1] = calculate_eqw(λ, feature, comps, true, n_dust_cont, n_power_law, n_abs_feat,
-                    n_dust_feat, fit_sil_emission, n_templates, feature_err=feature_err, propagate_err=propagate_err)
+                    n_dust_feat, fit_sil_emission, n_templates, nuc_temp_fit, feature_err=feature_err, propagate_err=propagate_err)
 
                 # SNR
-                p_lines[pₒ+2] = amp*N*ext / std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)])
+                p_lines[pₒ+2] = amp*N*ext*tn / std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)])
 
                 # Add to the total line profile
                 total_profile .+= feature
@@ -2562,8 +2625,8 @@ integral of the ratio of the feature profile to the underlying continuum.
 """
 function calculate_eqw(λ::Vector{T}, feature::Vector{T}, comps::Dict, line::Bool,
     n_dust_cont::Integer, n_power_law::Integer, n_abs_feat::Integer, n_dust_feat::Integer, 
-    fit_sil_emission::Bool, n_templates::Integer; feature_err::Union{Matrix{T},Nothing}=nothing, 
-    propagate_err::Bool=true) where {T<:Real}
+    fit_sil_emission::Bool, n_templates::Integer, nuc_temp_fit::Bool; 
+    feature_err::Union{Matrix{T},Nothing}=nothing, propagate_err::Bool=true) where {T<:Real}
 
     contin = zeros(length(λ))
     contin .+= comps["obscured_continuum"] .+ comps["unobscured_continuum"]
@@ -2576,14 +2639,22 @@ function calculate_eqw(λ::Vector{T}, feature::Vector{T}, comps::Dict, line::Boo
             contin .+= comps["hot_dust"] .* comps["abs_ice"] .* comps["abs_ch"] .* abs_tot
         end
     end
+    templates_norm_nuc = nothing
     for q ∈ 1:n_templates
-        contin .+= comps["templates_$q"]
+        if !nuc_temp_fit
+            contin .+= comps["templates_$q"]
+        else
+            templates_norm_nuc = comps["templates_$q"]
+        end
     end
     # For line EQWs, we consider PAHs as part of the "continuum"
     if line
         for l ∈ 1:n_dust_feat
             contin .+= comps["dust_feat_$l"] .* comps["extinction"]
         end
+    end
+    if nuc_temp_fit
+        contin .*= templates_norm_nuc
     end
 
     # May blow up for spaxels where the continuum is close to 0

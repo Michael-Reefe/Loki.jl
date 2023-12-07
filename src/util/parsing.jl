@@ -132,13 +132,13 @@ end
 
 
 """
-    parse_dust(n_channels)
+    parse_dust(n_channels, ch4c)
 
 Read in the dust.toml configuration file, checking that it is formatted correctly,
 and convert it into a julia dictionary with Parameter objects for dust fitting parameters.
 This deals with continuum, PAH features, and extinction options.
 """
-function parse_dust(n_channels::Integer=0)
+function parse_dust(n_channels::Integer=0, ch4c::Bool=false)
 
     @debug """\n
     Parsing dust file
@@ -217,8 +217,13 @@ function parse_dust(n_channels::Integer=0)
     if haskey(dust, "template_amps")
         temp_A = []
         for i ∈ eachindex(dust["template_amps"])
-            for _ ∈ 1:n_channels
-                push!(temp_A, from_dict(dust["template_amps"][i]))
+            for nc ∈ 1:n_channels
+                if ch4c && nc == n_channels
+                    # allow channel 4C to vary more than the other channels 
+                    push!(temp_A, Parameter(1.0, false, (0.1, 10.0)))
+                else
+                    push!(temp_A, from_dict(dust["template_amps"][i]))
+                end
             end
         end
         msg = "Template amplitudes:"

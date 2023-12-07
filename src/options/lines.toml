@@ -1023,6 +1023,8 @@ SIV_10511 = ["Voigt"]
 NeII_12813 = ["Voigt"]
 NeV_14322 = ["Voigt"]
 
+NeIII_15555 = ["Voigt"]
+
 # optional: add [parameters] key to specify individual line priors that 
 # are different from the defaults
 

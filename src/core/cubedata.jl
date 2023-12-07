@@ -497,7 +497,7 @@ function rotate_to_sky_axes!(cube::DataCube)
         # update WCS parameters
         cube.wcs.pc = [-1. 0. 0.; 0. 1. 0.; 0. 0. 1.]
         cube.wcs.cdelt = abs.(cube.wcs.cdelt)
-        cube.wcs.crpix = [((size(cube.I)[1:2].÷2).+0.5)...; cube.wcs.crpix[3]]
+        cube.wcs.crpix = [((size(cube.I)[1:2]./2).+0.5)...; cube.wcs.crpix[3]]
 
         cube.nx = size(I_rot, 1)
         cube.ny = size(I_rot, 2)
@@ -1698,7 +1698,7 @@ end
 
 
 """
-    resample_channel_wavelengths!(λ_out, I_out, σ_out, mask_out[, psf_out, concat_type])
+    resample_channel_wavelengths!(λ_out, z, I_out, σ_out, mask_out[, psf_out, concat_type, fix_4c])
 
 If resampling subchannels (concat_type = :sub), resamples `I_out`, `σ_out`, `mask_out`, and `psf_out` onto
 a linear wavelength grid while conserving flux. Otherwise (concat_type = :full), only resample the parts of the
@@ -1707,6 +1707,7 @@ the surrounding channels. The inputs are expected to already be concatenated fro
 
 # Arguments
 - `λ_out::Vector{<:Real}`: The 1D concatenated wavelength vector for all channels
+- `z::Real`: The redshift
 - `jumps::Vector{<:Integer}`: The indices in `λ_out` that specify the channel boundaries (i.e. where the diff of λ_out is negative)
 - `I_out::Array{<:Real,3}`: The 3D concatenated intensity array for all channels
 - `σ_out::Array{<:Real,3}`: The 3D concatenated error array for all channels
@@ -1715,8 +1716,8 @@ the surrounding channels. The inputs are expected to already be concatenated fro
 - `concat_type::Symbol=:sub`: Either :sub for subchannels or :full for full channels
 
 """
-function resample_channel_wavelengths!(λ_out::Vector{<:Real}, jumps::Vector{<:Integer}, I_out::Array{<:Real,3}, σ_out::Array{<:Real,3},
-    mask_out::BitArray{3}, psf_out::Union{Array{<:Real,3},Nothing}=nothing, concat_type::Symbol=:sub)
+function resample_channel_wavelengths!(λ_out::Vector{<:Real}, z::Real, jumps::Vector{<:Integer}, I_out::Array{<:Real,3}, σ_out::Array{<:Real,3},
+    mask_out::BitArray{3}, psf_out::Union{Array{<:Real,3},Nothing}=nothing, concat_type::Symbol=:sub, fix_4c::Bool=false)
 
     do_psf_model = !isnothing(psf_out)
 
@@ -1744,11 +1745,6 @@ function resample_channel_wavelengths!(λ_out::Vector{<:Real}, jumps::Vector{<:I
                 λ_out[i1:i2][ss], I_out[:, :, (i1:i2)[ss]], σ_out[:, :, (i1:i2)[ss]], mask_out[:, :, (i1:i2)[ss]])
             if do_psf_model
                 psf_resamp = resample_flux_permuted3D(λ_resamp, λ_out[i1:i2][ss], psf_out[:, :, (i1:i2)[ss]])
-                # knots = λ_out[i1:i2][ss][7:7:end-7]
-                # psf_resamp = zeros(size(psf_out)[1:2]..., length(λ_resamp))
-                # for j in axes(psf_out, 1), k in axes(psf_out, 2)
-                #     psf_resamp[j, k, :] .= Spline1D(λ_out[i1:i2][ss], psf_out[j, k, (i1:i2)[ss]], knots, k=3)(λ_resamp)
-                # end
             end
             # replace overlapping regions in outputs
             λ_con = [λ_con; λ_out[prev_i2:i1-1]; λ_resamp]
@@ -1840,12 +1836,13 @@ Perform a number of transformations on data from different channels/subchannels 
     webbpsf, but not if you are using PSF models from real data)
 - `scale_psf_only::Bool=false`: If true, only apply scaling factors to the PSF. The scaling factors that are applied in this case are
     made such that the jumps in the PSF match the jumps in the data.
+- `fix_4c::Bool=false`: If set to true, the PSF model in the transition between channels 4B/4C will be set to a constant value.
 """
 function combine_channels!(obs::Observation, channels=nothing, concat_type=:full; out_id=0,
     order::Union{Integer,String}=1, rescale_channels::Union{Real,Nothing}=nothing, adjust_wcs_headerinfo::Bool=false, 
     min_λ::Real=-Inf, max_λ::Real=Inf, rescale_limits::Tuple{<:Real,<:Real}=(0., Inf), rescale_snr::Real=0.0, 
     output_wcs_frame::Integer=1, extract_from_ap::Real=0., match_psf::Bool=false, force_match_psf_scalefactors::Bool=false,
-    rescale_all_psf::Bool=false, scale_psf_only::Bool=false)
+    rescale_all_psf::Bool=false, scale_psf_only::Bool=false, fix_4c::Bool=false)
 
     @assert obs.spectral_region == :MIR "The reproject_channels! function is only supported for MIR cubes!"
 
@@ -1900,7 +1897,7 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
     end
 
     # 4. Resample along the spectral axis onto a linear wavelength grid while conserving flux
-    λ_out, I_out, σ_out, mask_out, psf_out = resample_channel_wavelengths!(λ_out, jumps, I_out, σ_out, mask_out, psf_out, concat_type)
+    λ_out, I_out, σ_out, mask_out, psf_out = resample_channel_wavelengths!(λ_out, obs.z, jumps, I_out, σ_out, mask_out, psf_out, concat_type, fix_4c)
 
     # Cut off at large wavelength, if specified
     λmask = min_λ .≤ λ_out .≤ max_λ

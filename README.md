@@ -467,17 +467,17 @@ plim = [0.0, 3e-3]
 locked = false
 
 [extinction.N_pyr]
-val = 5.0e-5
-plim = [0.0, 3e-3]
+val = 0.03
+plim = [0.0, 3.0]
 locked = false
 
 [extinction.N_for]
-val = 1.0e-4
-plim = [0.0, 3e-3]
+val = 0.06
+plim = [0.0, 3.0]
 locked = false
 ```
 
-If using the `"decompose"` option for the extinction curve, these three parameters become relevant. $N_{\rm oli}$, $N_{\rm pyr}$, and $N_{\rm for}$ are the mass column densities of the three dust species included in the model (olivine, pyroxene, and forsterite), and essentially act as amplitudes in the fitting. The units for all of these values are ${\rm g}~{\rm cm}^{-2}$.
+If using the `"decompose"` option for the extinction curve, these three parameters become relevant. $N_{\rm oli}$, $N_{\rm pyr}$, and $N_{\rm for}$ are the mass column densities of the three dust species included in the model (olivine, pyroxene, and forsterite), and essentially act as amplitudes in the fitting. The units for olivine are ${\rm g}~{\rm cm}^{-2}$, whereas pyroxene and forsterite are measured relative to olivine (multiplicatively).
 
 ```toml
 [extinction.frac]
@@ -1093,7 +1093,8 @@ The units of outputs for different quantities are listed here. When relevant, ou
 - All optical depths are unitless
     - If the `extinction_screen` option is true, then the extinction factor at 9.7 μm is $e^{-\tau_{9.7}}$. Otherwise, it is $(1-e^{-\tau_{9.7}})/\tau_{9.7}$.
     - $\tau_{\rm warm}$, $\tau_{\rm cold}$, and $\tau_{\rm CH}$ all satisfy $e^{-\tau}$.
-- Mass column densities for the "decompose" extinction profile: ${\rm g}\ {\rm cm}^{-2}$
+- Olivine mass column density for the "decompose" extinction profile: ${\rm g}\ {\rm cm}^{-2}$
+- Pyroxene and forsterite mass column densities for the "decompose" extinction profile are measured in units of the olivine mass column density: $N_{\rm oli}$.
 - Covering fractions are unitless
 - Line & PAH amplitudes: $\log_{10}(I/{\rm erg}\ {\rm s}^{-1}\ {\rm cm}^{-2}\ {\rm Hz}^{-1}\ {\rm sr}^{-1})$
 - Line & PAH fluxes: $\log_{10}(F/{\rm erg}\ {\rm s}^{-1}\ {\rm cm}^{-2})$

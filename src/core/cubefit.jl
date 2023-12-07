@@ -970,11 +970,15 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
         if spectral_region == :MIR
 
             # Calculate the number of subchannels
+            # NOTE: do not use n_channels to count the ACTUAL number of channels/bands in an observation,
+            #  as n_channels counts the overlapping regions between channels as separate channels altogether
+            #  to allow them to have different normalizations
             n_channels = 0
             channel_masks = []
-            for i in 1:(length(channel_boundaries)+1)
-                left = i > 1 ? channel_boundaries[i-1] : 0.
-                right = i < length(channel_boundaries) ? channel_boundaries[i] : Inf
+            ch_edge_sort = sort(channel_edges)
+            for i in 2:(length(ch_edge_sort))
+                left = ch_edge_sort[i-1]
+                right = ch_edge_sort[i]
                 ch_mask = left .< (λ .* (1 .+ z)) .< right
                 n_region = sum(ch_mask)
 
@@ -984,18 +988,19 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
                 end
             end
             # filter out small beginning/end sections
-            if sum(channel_masks[1]) < 100
+            if sum(channel_masks[1]) < 200
                 channel_masks[2] .|= channel_masks[1]
                 popfirst!(channel_masks)
                 n_channels -= 1
             end
-            if sum(channel_masks[end]) < 100
+            if sum(channel_masks[end]) < 200
                 channel_masks[end-1] .|= channel_masks[end]
                 pop!(channel_masks)
                 n_channels -= 1
             end
+            ch4c = any(λ.*(1 .+ z) .> channel_edges[end-2]+0.01)
 
-            continuum, dust_features_0, abs_features_0, abs_taus_0 = parse_dust(n_channels)
+            continuum, dust_features_0, abs_features_0, abs_taus_0 = parse_dust(n_channels, ch4c)
 
             # Adjust wavelengths/FWHMs for any local absorption features
             for i in 1:length(abs_features_0.names)
@@ -2592,10 +2597,11 @@ end
 Get the line limits vector for a given CubeFitter object. Also returns boolean locked values and
 names of each parameter as strings.
 """
-function get_line_plimits(cube_fitter::CubeFitter, init::Bool, ext_curve::Union{Vector{<:Real},Nothing}=nothing)
+function get_line_plimits(cube_fitter::CubeFitter, init::Bool, nuc_temp_fit::Bool, 
+    ext_curve::Union{Vector{<:Real},Nothing}=nothing)
 
     if !isnothing(ext_curve)
-        amp_plim = (0., clamp(1 / minimum(ext_curve), 1., Inf))
+        amp_plim = (0., clamp(1 / minimum(ext_curve), 1., Inf) * (nuc_temp_fit ? 1000. : 1.))
     else
         if cube_fitter.spectral_region == :MIR
             max_amp = 1 / exp(-cube_fitter.continuum.τ_97.limits[2])
@@ -2611,7 +2617,7 @@ function get_line_plimits(cube_fitter::CubeFitter, init::Bool, ext_curve::Union{
                     Cf=Cf_dust)[1]
             end
         end 
-        amp_plim = (0., clamp(max_amp, 1., Inf))
+        amp_plim = (0., clamp(max_amp, 1., Inf) * (nuc_temp_fit ? 1000. : 1.))
     end
     ln_plims = Vector{Tuple}()
     ln_lock = BitVector()
@@ -2860,34 +2866,34 @@ function get_line_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex
     # Absolute step size vector (0 tells CMPFit to use a default value)
     ln_astep = zeros(length(ln_pars))
 
-    if !init
-        ln_astep = Float64[]
-        for i ∈ 1:cube_fitter.n_lines
-            for j ∈ 1:cube_fitter.n_comps
-                if !isnothing(cube_fitter.lines.profiles[i, j])
+    # if !init
+    #     ln_astep = Float64[]
+    #     for i ∈ 1:cube_fitter.n_lines
+    #         for j ∈ 1:cube_fitter.n_comps
+    #             if !isnothing(cube_fitter.lines.profiles[i, j])
 
-                    amp_step = 0.
-                    voff_step = 1.
-                    fwhm_step = j > 1 && cube_fitter.relative_flags[3] ? 0. : 1.
+    #                 amp_step = 0.
+    #                 voff_step = 1.
+    #                 fwhm_step = j > 1 && cube_fitter.relative_flags[3] ? 0. : 1.
 
-                    # Depending on flexible_wavesol option, we need to add 2 voffs
-                    if !isnothing(cube_fitter.lines.tied_voff[i, j]) && cube_fitter.flexible_wavesol && isone(j)
-                        append!(ln_astep, [amp_step, voff_step, voff_step, fwhm_step])
-                    else
-                        append!(ln_astep, [amp_step, voff_step, fwhm_step])
-                    end
+    #                 # Depending on flexible_wavesol option, we need to add 2 voffs
+    #                 if !isnothing(cube_fitter.lines.tied_voff[i, j]) && cube_fitter.flexible_wavesol && isone(j)
+    #                     append!(ln_astep, [amp_step, voff_step, voff_step, fwhm_step])
+    #                 else
+    #                     append!(ln_astep, [amp_step, voff_step, fwhm_step])
+    #                 end
 
-                    if cube_fitter.lines.profiles[i, j] == :GaussHermite
-                        # 2 extra parameters: h3 and h4
-                        append!(ln_astep, [0., 0.])
-                    elseif cube_fitter.lines.profiles[i, j] == :Voigt
-                        # 1 extra parameter: eta
-                        append!(ln_astep, [0.])
-                    end
-                end
-            end
-        end 
-    end
+    #                 if cube_fitter.lines.profiles[i, j] == :GaussHermite
+    #                     # 2 extra parameters: h3 and h4
+    #                     append!(ln_astep, [0., 0.])
+    #                 elseif cube_fitter.lines.profiles[i, j] == :Voigt
+    #                     # 1 extra parameter: eta
+    #                     append!(ln_astep, [0.])
+    #                 end
+    #             end
+    #         end
+    #     end 
+    # end
 
     ln_pars, ln_astep
 
