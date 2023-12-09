@@ -246,9 +246,6 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     end
     if force_noext
         pₑ = [3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law]
-        if cube_fitter.extinction_curve == "decompose"
-            pₑ = pₑ[1]:(pₑ[1]+2)
-        end
         pars_0[pₑ] .= 0.
         plock[pₑ] .= 1
     end
@@ -411,11 +408,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         # set optical depth to 0 if the template fits all of the spectrum
         for s in 1:cube_fitter.n_templates
             pₑ = [3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law]
-            if cube_fitter.extinction_curve == "decompose"
-                pₑ = pₑ[1]:(pₑ[1]+2)
-            end
             sil_abs_region = 9.0 .< λ .< 11.0
-            if any(.~plock[pₑ]) && !force_noext && any(popt[pₑ] .≠ 0) && sum(sil_abs_region) > 100
+            if any(.~plock[pₑ]) && !init && !force_noext && any(popt[pₑ] .≠ 0) && sum(sil_abs_region) > 100
                 if sum((abs.(I_model .- comps["templates_$s"])[sil_abs_region]) .< (σ[sil_abs_region]./N)) > (sum(sil_abs_region)/2)
                     @debug "Redoing the fit with optical depth locked to 0 due to template amplitudes"
                     return continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, templates, mask_lines, mask_bad, N, false, init=init,
@@ -537,9 +531,6 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     end
     if force_noext
         pₑ = [3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law]
-        if cube_fitter.extinction_curve == "decompose"
-            pₑ = pₑ[1]:(pₑ[1]+2)
-        end
         pars_1[pₑ] .= 0.
         lock_1[pₑ] .= 1
     end
@@ -719,11 +710,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # set optical depth to 0 if the template fits all of the spectrum
     for s in 1:cube_fitter.n_templates
         pₑ = [3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law]
-        if cube_fitter.extinction_curve == "decompose"
-            pₑ = pₑ[1]:(pₑ[1]+2)
-        end
         sil_abs_region = 9.0 .< λ .< 11.0
-        if any(.~lock_1[pₑ]) && !force_noext && any(popt[pₑ] .≠ 0) && sum(sil_abs_region) > 100
+        if any(.~lock_1[pₑ]) && !init && !force_noext && any(popt[pₑ] .≠ 0) && sum(sil_abs_region) > 100
             if sum((abs.(I_model .- comps["templates_$s"])[sil_abs_region]) .< (σ[sil_abs_region]./N)) > (sum(sil_abs_region)/2)
                 @debug "Redoing the fit with optical depth locked to 0 due to template amplitudes"
                 return continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, templates, mask_lines, mask_bad, N, split_flag, init=init,
@@ -3276,9 +3264,11 @@ function fit_nuclear_template!(cube_fitter::CubeFitter, decompose_lock_column_de
             ]
     end
     # Lock the column densities if fitting a decomposed extinction curve
-    if cube_fitter.extinction_curve == "decompose"
+    if cube_fitter.extinction_curve == "decompose" && decompose_lock_column_densities
         cube_fitter.continuum.N_oli.locked = false
+        cube_fitter.continuum.N_pyr.value = exp10(param_maps.extinction[:N_pyr][1,1])
         cube_fitter.continuum.N_pyr.locked = true   # normalization relative to oli
+        cube_fitter.continuum.N_for.value = exp10(param_maps.extinction[:N_for][1,1])
         cube_fitter.continuum.N_for.locked = true   # normalization relative to oli
     end
 

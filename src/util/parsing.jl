@@ -220,7 +220,7 @@ function parse_dust(n_channels::Integer=0, ch4c::Bool=false)
             for nc ∈ 1:n_channels
                 if ch4c && nc == n_channels
                     # allow channel 4C to vary more than the other channels 
-                    push!(temp_A, Parameter(1.0, false, (0.1, 10.0)))
+                    push!(temp_A, Parameter(1.0, false, (0.05, 20.0)))
                 else
                     push!(temp_A, from_dict(dust["template_amps"][i]))
                 end
