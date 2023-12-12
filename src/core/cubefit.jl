@@ -640,6 +640,13 @@ continuum will be fit, then the continuum is subtracted and the lines are fit to
 curve is "calzetti".
 - `fit_covering_frac::Bool`: Whether or not to fit a dust covering fraction in the attenuation profile. Only applies if the
 extinction curve is "calzetti".
+- `tie_template_amps::Bool`: If true, the template amplitudes in each channel are tied to the same value. Otherwise they may have separate
+normalizations in each channel. By default this is false, but it is always enforced during the initial fit to the integrated spectrum over
+all spaxels.
+- `decompose_lock_column_densities::Bool`: If true and if using the "decompose" extinction profile, then the column densities for
+pyroxene and forsterite (N_pyr and N_for) will be locked to their values after the initial fit to the integrated spectrum over all 
+spaxels. These parameters are measured relative to olivine (N_oli) so this, in effect, locks the relative abundances of these three silicates
+over the full FOV of the cube.
 
 ## Continuum parameters
 - `continuum::Continuum`: A Continuum structure holding information about various continuum fitting parameters.
@@ -765,6 +772,8 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     fit_joint::Bool
     fit_uv_bump::Bool
     fit_covering_frac::Bool
+    tie_template_amps::Bool
+    decompose_lock_column_densities::Bool
 
     # Continuum parameters
     continuum::Continuum
@@ -1509,6 +1518,8 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             out[:fit_joint], 
             out[:fit_uv_bump], 
             out[:fit_covering_frac], 
+            out[:tie_template_amps],
+            out[:decompose_lock_column_densities],
             continuum, 
             n_channels,
             channel_masks,
@@ -1623,14 +1634,14 @@ Get the continuum limits vector for a given CubeFitter object, possibly split up
 Also returns a boolean vector for which parameters are allowed to vary.
 """
 get_continuum_plimits(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vector{<:Real},
-    init::Bool, templates_spax::Matrix{<:Real}; split::Bool=false) = cube_fitter.spectral_region == :MIR ? 
-    get_mir_continuum_plimits(cube_fitter, spaxel, I, σ, init, templates_spax; split=split) : 
+    init::Bool, templates_spax::Matrix{<:Real}; split::Bool=false, tie_template_amps::Bool=false) = cube_fitter.spectral_region == :MIR ? 
+    get_mir_continuum_plimits(cube_fitter, spaxel, I, σ, init, templates_spax; split=split, tie_template_amps=tie_template_amps) : 
     get_opt_continuum_plimits(cube_fitter, λ, I, init)
 
 
 # MIR implementation of the get_continuum_plimits function
 function get_mir_continuum_plimits(cube_fitter::CubeFitter, spaxel::CartesianIndex, I::Vector{<:Real}, σ::Vector{<:Real}, 
-    init::Bool, templates_spax::Matrix{<:Real}; split::Bool=false)
+    init::Bool, templates_spax::Matrix{<:Real}; split::Bool=false, tie_template_amps::Bool=false)
 
     dust_features = cube_fitter.dust_features
     abs_features = cube_fitter.abs_features
@@ -1683,15 +1694,10 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, spaxel::CartesianInd
     if nanmedian(I) ≤ 2nanmedian(σ)
         ext_lock[:] .= true
     end
-    # if !init
-    #     for t in 1:cube_fitter.n_templates
-    #         m = minimum(I .- templates_spax[:, t])
-    #         if m < nanmedian(σ)
-    #             ext_lock[1:4] .= true
-    #             ab_lock .= true
-    #         end
-    #     end
-    # end
+    # Lock N_pyr and N_for if the option is given
+    if cube_fitter.extinction_curve == "decompose" && cube_fitter.decompose_lock_column_densities && !init
+        ext_lock[2:3] .= true
+    end
 
     hd_plim = cube_fitter.fit_sil_emission ? [amp_dc_plim, continuum.T_hot.limits, continuum.Cf_hot.limits, 
         continuum.τ_warm.limits, continuum.τ_cold.limits, continuum.sil_peak.limits] : []
@@ -1705,18 +1711,27 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, spaxel::CartesianInd
         temp_plim = [ta.limits for ta in continuum.temp_amp]
         temp_lock = [ta.locked for ta in continuum.temp_amp]
     end
+    temp_ind_0 = 1 + length(stellar_lock) + length(dc_lock) + length(pl_lock) + length(ext_lock) + length(ab_lock) + length(hd_lock)
+    temp_ind_1 = temp_ind_0 + length(temp_lock) - 1 
+    tied_pairs = []
+    if tie_template_amps
+        for i in (temp_ind_0+1):temp_ind_1
+            push!(tied_pairs, (temp_ind_0, i, 1.0))
+        end
+    end
+    tied_indices = sort([tp[2] for tp in tied_pairs])
 
     if !split
         plims = Vector{Tuple}(vcat(stellar_plim, dc_plim, pl_plim, ext_plim, ab_plim, hd_plim, temp_plim, df_plim))
         lock = BitVector(vcat(stellar_lock, dc_lock, pl_lock, ext_lock, ab_lock, hd_lock, temp_lock, df_lock))
-        plims, lock
+        plims, lock, tied_pairs, tied_indices
     else
         # Split up for the two different stages of continuum fitting -- with templates and then with the PAHs
         plims_1 = Vector{Tuple}(vcat(stellar_plim, dc_plim, pl_plim, ext_plim, ab_plim, hd_plim, temp_plim, [amp_df_plim, amp_df_plim]))
         lock_1 = BitVector(vcat(stellar_lock, dc_lock, pl_lock, ext_lock, ab_lock, hd_lock, temp_lock, [false, false]))
         plims_2 = Vector{Tuple}(df_plim)
         lock_2 = BitVector(df_lock)
-        plims_1, plims_2, lock_1, lock_2
+        plims_1, plims_2, lock_1, lock_2, tied_pairs, tied_indices
     end
 
 end
