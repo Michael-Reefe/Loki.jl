@@ -161,6 +161,25 @@ function generate_psf_model!(obs::Observation, psf_model_dir::String=""; interpo
     for ch in keys(obs.channels)
         generate_psf_model!(obs.channels[ch], psf_model_dir; interpolate_leak_artifact=interpolate_leak_artifact, z=obs.z)
     end
+
+    # do not trust the channel 4C centroiding
+    if :C4 in keys(obs.channels) && :B4 in keys(obs.channels)
+
+        data2d = dropdims(nansum(obs.channels[:B4].I, dims=3), dims=3)
+        _, mx = findmax(data2d)
+        c1 = centroid_com(data2d[mx[1]-5:mx[1]+5, mx[2]-5:mx[2]+5]) .+ (mx.I .- 5) .- 1
+
+        psf = obs.channels[:C4].psf_model
+        psf2d = dropdims(nansum(psf, dims=3), dims=3)
+        _, mx = findmax(psf2d)
+        c2 = centroid_com(psf2d[mx[1]-5:mx[1]+5, mx[2]-5:mx[2]+5]) .+ (mx.I .- 5) .- 1
+
+        dx = c1 .- c2
+        for i in axes(psf, 3)
+            psf[:, :, i] .= fshift(psf[:, :, i], dx...)
+        end
+
+    end
 end
 
 

@@ -79,7 +79,7 @@ locked = false
 # template
 [[template_amps]]
 val = 1.0
-plim = [0.5, 2.0]
+plim = [0.5, 1.5]
 locked = false
 
 # dust_features: each of these specifies a Polycyclic Aromatic 

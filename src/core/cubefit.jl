@@ -641,8 +641,7 @@ curve is "calzetti".
 - `fit_covering_frac::Bool`: Whether or not to fit a dust covering fraction in the attenuation profile. Only applies if the
 extinction curve is "calzetti".
 - `tie_template_amps::Bool`: If true, the template amplitudes in each channel are tied to the same value. Otherwise they may have separate
-normalizations in each channel. By default this is false, but it is always enforced during the initial fit to the integrated spectrum over
-all spaxels.
+normalizations in each channel. By default this is false.
 - `decompose_lock_column_densities::Bool`: If true and if using the "decompose" extinction profile, then the column densities for
 pyroxene and forsterite (N_pyr and N_for) will be locked to their values after the initial fit to the integrated spectrum over all 
 spaxels. These parameters are measured relative to olivine (N_oli) so this, in effect, locks the relative abundances of these three silicates
@@ -773,6 +772,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     fit_uv_bump::Bool
     fit_covering_frac::Bool
     tie_template_amps::Bool
+    lock_hot_dust::BitVector
     decompose_lock_column_densities::Bool
 
     # Continuum parameters
@@ -853,6 +853,12 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     p_init_cube_wcs::Union{WCSTransform,Nothing}
     p_init_cube_coords::Union{Vector{Vector{T}},Nothing}
     p_init_cube_Ω::Union{T,Nothing}
+
+    # A flag that is set after fitting the nuclear spectrum
+    nuc_fit_flag::BitVector
+    # A set of template amplitudes that is relevant only if fitting a model to the nuclear template. In this case,
+    # the model fits amplitudes to the PSF model which are helpful to store.
+    nuc_temp_amps::Vector{T}
 
     #= Constructor function --> the default inputs are all taken from the configuration files, but may be overwritten
     by the kwargs object using the same syntax as any keyword argument. The rest of the fields are generated in the function 
@@ -950,8 +956,8 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             out[:guess_tau] = nothing
         end
         if !haskey(out, :sort_line_components)
-            out[:sort_line_components] = :flux
-        else
+            out[:sort_line_components] = nothing
+        elseif !isnothing(out[:sort_line_components])
             out[:sort_line_components] = Symbol(out[:sort_line_components])
         end
         if !haskey(out, :custom_ext_template)
@@ -959,6 +965,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
         else
             custom_ext_template = Spline1D(out[:custom_ext_template][:,1], out[:custom_ext_template][:,2], k=1, bc="extrapolate")
         end
+        
 
         #############################################################
 
@@ -973,7 +980,10 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
         extinction_map = nothing
         if haskey(out, :extinction_map) && !isnothing(out[:extinction_map])
             extinction_map = out[:extinction_map]
-            @assert size(extinction_map) == size(cube.I)[1:2] "The extinction map must match the shape of the first two dimensions of the intensity map!"
+            @assert size(extinction_map)[1:2] == size(cube.I)[1:2] "The extinction map must match the shape of the first two dimensions of the intensity map!"
+            if ndims(extinction_map) == 2
+                extinction_map = reshape(extinction_map, (size(extinction_map)..., 1))
+            end
         end
 
         if spectral_region == :MIR
@@ -1007,9 +1017,8 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
                 pop!(channel_masks)
                 n_channels -= 1
             end
-            ch4c = any(λ.*(1 .+ z) .> channel_edges[end-2]+0.01)
 
-            continuum, dust_features_0, abs_features_0, abs_taus_0 = parse_dust(n_channels, ch4c)
+            continuum, dust_features_0, abs_features_0, abs_taus_0 = parse_dust(n_channels)
 
             # Adjust wavelengths/FWHMs for any local absorption features
             for i in 1:length(abs_features_0.names)
@@ -1140,6 +1149,13 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             n_channels = 0
             channel_masks = []
 
+        end
+
+        # If we are using AGN templates, lock the hot dust component to 0
+        if !haskey(out, :lock_hot_dust)
+            lock_hot_dust = n_templates > 0
+        else
+            lock_hot_dust = out[:lock_hot_dust]
         end
 
         lines_0, tied_kinematics, flexible_wavesol, tie_voigt_mixing, voigt_mix_tied = parse_lines()
@@ -1483,6 +1499,11 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
 
         end
 
+        # Nuclear template fitting attributes
+        nuc_fit_flag = BitVector([0])
+        nuc_temp_amps = ones(Float64, n_channels)
+        lock_hot_dust = BitVector([lock_hot_dust])
+
         ctype = isnothing(feii_templates_fft) ? ComplexF64 : eltype(feii_templates_fft)
         new{typeof(z), typeof(n_lines), ctype}(
             cube, 
@@ -1519,6 +1540,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             out[:fit_uv_bump], 
             out[:fit_covering_frac], 
             out[:tie_template_amps],
+            lock_hot_dust,
             out[:decompose_lock_column_densities],
             continuum, 
             n_channels,
@@ -1575,7 +1597,9 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             p_init_cube_lines, 
             p_init_cube_wcs, 
             p_init_cube_coords, 
-            p_init_cube_Ω
+            p_init_cube_Ω,
+            nuc_fit_flag,
+            nuc_temp_amps
         )
     end
 end
@@ -1634,14 +1658,14 @@ Get the continuum limits vector for a given CubeFitter object, possibly split up
 Also returns a boolean vector for which parameters are allowed to vary.
 """
 get_continuum_plimits(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vector{<:Real},
-    init::Bool, templates_spax::Matrix{<:Real}; split::Bool=false, tie_template_amps::Bool=false) = cube_fitter.spectral_region == :MIR ? 
-    get_mir_continuum_plimits(cube_fitter, spaxel, I, σ, init, templates_spax; split=split, tie_template_amps=tie_template_amps) : 
+    init::Bool, templates_spax::Matrix{<:Real}; kwargs...) = cube_fitter.spectral_region == :MIR ? 
+    get_mir_continuum_plimits(cube_fitter, spaxel, I, σ, init, templates_spax; kwargs...) : 
     get_opt_continuum_plimits(cube_fitter, λ, I, init)
 
 
 # MIR implementation of the get_continuum_plimits function
 function get_mir_continuum_plimits(cube_fitter::CubeFitter, spaxel::CartesianIndex, I::Vector{<:Real}, σ::Vector{<:Real}, 
-    init::Bool, templates_spax::Matrix{<:Real}; split::Bool=false, tie_template_amps::Bool=false)
+    init::Bool, templates_spax::Matrix{<:Real}; split::Bool=false)
 
     dust_features = cube_fitter.dust_features
     abs_features = cube_fitter.abs_features
@@ -1657,6 +1681,9 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, spaxel::CartesianInd
     dc_lock = vcat([[false, Ti.locked] for Ti ∈ continuum.T_dc]...)
     pl_plim = vcat([[amp_dc_plim, pl.limits] for pl ∈ continuum.α]...)
     pl_lock = vcat([[false, pl.locked] for pl ∈ continuum.α]...)
+    if cube_fitter.lock_hot_dust[1] || cube_fitter.nuc_fit_flag[1]
+        dc_lock[1:2] .= true
+    end
 
     df_plim = Tuple{Float64,Float64}[]
     df_lock = Bool[]
@@ -1713,13 +1740,16 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, spaxel::CartesianInd
     end
     temp_ind_0 = 1 + length(stellar_lock) + length(dc_lock) + length(pl_lock) + length(ext_lock) + length(ab_lock) + length(hd_lock)
     temp_ind_1 = temp_ind_0 + length(temp_lock) - 1 
-    tied_pairs = []
-    if tie_template_amps
+    if cube_fitter.tie_template_amps
+        tied_pairs = []
         for i in (temp_ind_0+1):temp_ind_1
             push!(tied_pairs, (temp_ind_0, i, 1.0))
         end
+        tied_indices = sort([tp[2] for tp in tied_pairs])
+    else
+        tied_pairs = []
+        tied_indices = []
     end
-    tied_indices = sort([tp[2] for tp in tied_pairs])
 
     if !split
         plims = Vector{Tuple}(vcat(stellar_plim, dc_plim, pl_plim, ext_plim, ab_plim, hd_plim, temp_plim, df_plim))
@@ -1804,8 +1834,8 @@ Get the vectors of starting values and relative step sizes for the continuum fit
 Again, the vector may be split up by the 2 continuum fitting steps in the MIR case.
 """
 get_continuum_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real},
-    σ::Vector{<:Real}, N::Real, init::Bool, templates_spax::Matrix{<:Real}; split::Bool=false) = cube_fitter.spectral_region == :MIR ? 
-    get_mir_continuum_initial_values(cube_fitter, spaxel, λ, I, σ, N, init, templates_spax, split=split) :
+    σ::Vector{<:Real}, N::Real, init::Bool, templates_spax::Matrix{<:Real}; kwargs...) = cube_fitter.spectral_region == :MIR ? 
+    get_mir_continuum_initial_values(cube_fitter, spaxel, λ, I, σ, N, init, templates_spax; kwargs...) :
     get_opt_continuum_initial_values(cube_fitter, spaxel, λ, I, N, init)
 
 
@@ -1896,8 +1926,11 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         pᵢ = 3
 
         # Dust continuum amplitudes (rescaled)
-        for _ ∈ 1:cube_fitter.n_dust_cont
+        for di ∈ 1:cube_fitter.n_dust_cont
             p₀[pᵢ] = p₀[pᵢ] * scale 
+            if (cube_fitter.lock_hot_dust[1] || cube_fitter.nuc_fit_flag[1]) && isone(di)
+                p₀[pᵢ] = 0.
+            end
             pᵢ += 2
         end
 
@@ -1931,14 +1964,22 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         end
 
         # Override if an extinction_map was provided
-        if !isnothing(cube_fitter.extinction_map) && (cube_fitter.extinction_curve != "decompose")
-            @debug "Using the provided τ_9.7 values from the extinction_map and rescaling starting point"
+        if !isnothing(cube_fitter.extinction_map)
+            @debug "Using the provided τ_9.7 values from the extinction_map"
+            pₑ = [pᵢ]
+            if cube_fitter.extinction_curve == "decompose"
+                append!(pₑ, [pᵢ+1, pᵢ+2])
+            end
             if !isnothing(cube_fitter.cube.voronoi_bins)
                 data_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(spaxel)[1])
-                p₀[pᵢ] = mean(cube_fitter.extinction_map[data_indices])
+                for i in eachindex(pₑ)
+                    p₀[pₑ[i]] = mean(cube_fitter.extinction_map[data_indices, i])
+                end
             else
                 data_index = spaxel
-                p₀[pᵢ] = cube_fitter.extinction_map[data_index]
+                for i in eachindex(pₑ)
+                    p₀[pₑ[i]] = cube_fitter.extinction_map[data_index, i]
+                end
             end
         end
 
@@ -2004,6 +2045,9 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         λ_dc = clamp.([Wein(Ti.value) for Ti ∈ continuum.T_dc], minimum(λ), maximum(λ))
         A_dc = clamp.([cubic_spline(λ_dci) * N / Blackbody_ν(λ_dci, T_dci.value) for (λ_dci, T_dci) ∈ 
             zip(λ_dc, continuum.T_dc)] .* (λ_dc ./ 9.7).^2 ./ (cube_fitter.n_dust_cont / 2), 0., Inf)
+        if cube_fitter.lock_hot_dust[1] || cube_fitter.nuc_fit_flag[1]
+            A_dc[1] = 0.
+        end
         
         # Power law amplitudes
         A_pl = [clamp(nanmedian(I), 0., Inf)/exp(-continuum.τ_97.value)/cube_fitter.n_power_law for αi ∈ continuum.α]
@@ -2048,6 +2092,10 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
             temp_pars = [0.25, 0.0, 0.25, 0.0, 0.25, 0.0, 0.25, 0.0]
         else
             temp_pars = [ta.value for ta in continuum.temp_amp]
+        end
+        # apply the nuclear template amplitudes for the initial fit
+        if cube_fitter.nuc_fit_flag[1]
+            temp_pars ./= cube_fitter.nuc_temp_amps
         end
 
         # Initial parameter vector
@@ -2142,7 +2190,7 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         ebv_factor = p₀[pₑ+1]
 
         if !isnothing(cube_fitter.extinction_map)
-            @debug "Using the provided E(B-V) values from the extinction_map and rescaling starting point"
+            @debug "Using the provided E(B-V) values from the extinction_map"
             if !isnothing(cube_fitter.cube.voronoi_bins)
                 data_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(spaxel)[1])
                 ebv_new = mean(cube_fitter.extinction_map[data_indices])
@@ -2935,8 +2983,8 @@ function get_line_parinfo(n_free, lb, ub, dp)
     # Create a `config` structure
     config = CMPFit.Config()
     # Lower tolerance level for lines fit
-    config.ftol = 1e-18
-    config.xtol = 1e-18
+    config.ftol = 1e-16
+    config.xtol = 1e-16
     config.maxiter = 500
 
     parinfo, config

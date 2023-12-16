@@ -1608,11 +1608,11 @@ function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMap
             # Get the minimum/maximum for the color scale based on the combined dataset
             vmin, vmax = 0., 0.
             if parameter == :flux && plot_total
-                vmin = quantile(total_flux[isfinite.(total_flux) .& (snr_filter .> 3)], 0.01)
-                vmax = quantile(total_flux[isfinite.(total_flux) .& (snr_filter .> 3)], 0.99)
+                vmin = quantile([0.; total_flux[isfinite.(total_flux) .& (snr_filter .> 3)]], 0.01)
+                vmax = quantile([0.; total_flux[isfinite.(total_flux) .& (snr_filter .> 3)]], 0.99)
             elseif parameter == :eqw && plot_total
-                vmin = quantile(total_eqw[isfinite.(total_eqw) .& (snr_filter .> 3)], 0.01)
-                vmax = quantile(total_eqw[isfinite.(total_eqw) .& (snr_filter .> 3)], 0.99)
+                vmin = quantile([0.; total_eqw[isfinite.(total_eqw) .& (snr_filter .> 3)]], 0.01)
+                vmax = quantile([0.; total_eqw[isfinite.(total_eqw) .& (snr_filter .> 3)]], 0.99)
             else
                 # Each element of 'minmax' is a tuple with the minimum and maximum for that spaxel
                 minmax = dropdims(nanextrema(cat([param_maps.lines[comp][parameter] for comp in component_keys]..., dims=3), dims=3), dims=3)

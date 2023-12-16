@@ -8,12 +8,12 @@ tie_voigt_mixing = true     # tie the Voigt mixing ratios of all lines
 #                    lines you want in each group
 
 # Tie molecular Hydrogen lines
-kinematic_group_H2 = [
-    "H200_"
-]
-acomp_1_kinematic_group_H2 = [
-    "H200_"
-]
+# kinematic_group_H2 = [
+#     "H200_"
+# ]
+# acomp_1_kinematic_group_H2 = [
+#     "H200_"
+# ]
 
 # Atomic hydrogen recombination lines
 # kinematic_group_Balmer = [
@@ -33,79 +33,132 @@ acomp_1_kinematic_group_H2 = [
 #     "HI_",
 # ]
 
-kinematic_group_lo = [
-    "HI_",
-    "HeI_",
-    "ArII_",
-    "NeII_",
-    "FeII_",
-    "OII_",
-    "SII_"
-]
-acomp_1_kinematic_group_lo = [
-    "HI_",
-    "HeI_",
-    "ArII_",
-    "NeII_",
-    "FeII_",
-    "OII_",
-    "SII_"
-]
+# kinematic_group_lo = [
+#     "HI_",
+#     "HeI_",
+#     "ArII_",
+#     "NeII_",
+#     "FeII_",
+#     "OII_",
+#     "SII_"
+# ]
+# acomp_1_kinematic_group_lo = [
+#     "HI_",
+#     "HeI_",
+#     "ArII_",
+#     "NeII_",
+#     "FeII_",
+#     "OII_",
+#     "SII_"
+# ]
 
-kinematic_group_med = [
-    "ArIII_",
-    "SIV_",
-    "MgIV_",
-    "ArVI_",
-    "OIII_",
-    "NeIII_",
-    "HeII_"
-]
-acomp_1_kinematic_group_med = [
-    "ArIII_",
-    "SIV_",
-    "MgIV_",
-    "ArVI_",
-    "OIII_",
-    "NeIII_",
-    "HeII_"
-]
-
-kinematic_group_hi = [
-    "NeV_",
-    "NeVI_",
-    "MgV_",
-    "MgVII_",
-    "FeVII_",
-    "FeVIII_",
-    "SiIX_",
-]
-acomp_1_kinematic_group_hi = [
-    "NeV_",
-    "NeVI_",
-    "MgV_",
-    "MgVII_",
-    "FeVII_",
-    "FeVIII_",
-    "SiIX_",
-]
-
-# kinematic_group_l3 = [
+# kinematic_group_med = [
 #     "ArIII_",
 #     "SIV_",
+#     "MgIV_",
+#     "ArVI_",
+#     "OIII_",
+#     "NeIII_",
+#     "HeII_"
 # ]
-# acomp_1_kinematic_group_l3 = [
+# acomp_1_kinematic_group_med = [
 #     "ArIII_",
 #     "SIV_",
+#     "MgIV_",
+#     "ArVI_",
+#     "OIII_",
+#     "NeIII_",
+#     "HeII_"
 # ]
-# kinematic_group_h3 = [
+
+# kinematic_group_hi = [
+#     "NeV_",
 #     "NeVI_",
+#     "MgV_",
 #     "MgVII_",
+#     "FeVII_",
+#     "FeVIII_",
+#     "SiIX_",
 # ]
-# acomp_1_kinematic_group_h3 = [
+# acomp_1_kinematic_group_hi = [
+#     "NeV_",
 #     "NeVI_",
+#     "MgV_",
 #     "MgVII_",
+#     "FeVII_",
+#     "FeVIII_",
+#     "SiIX_",
 # ]
+
+# Kinematic groups separated by gas phase (cold molecular, low, med, and high ionized)
+# and by channel. (Different channels have different PSFs so it may not be appropriate to
+# tie lines from, say, channel 1 and channel 4 together)
+
+kinematic_group_m1 = [
+    "MgIV_",
+    "ArVI_"
+]
+acomp_1_kinematic_group_m1 = [
+    "MgIV_",
+    "ArVI_"
+]
+
+kinematic_group_c2 = [
+    "H200_S5",
+    "H200_S6",
+    "H200_S7",
+    "H200_S8"
+]
+acomp_1_kinematic_group_c2 = [
+    "H200_S5",
+    "H200_S6",
+    "H200_S7",
+    "H200_S8"
+]
+kinematic_group_l2 = [
+    "FeII_",
+    "ArII_"
+]
+acomp_1_kinematic_group_l2 = [
+    "FeII_",
+    "ArII_"
+]
+kinematic_group_h2 = [
+    "MgVII_5503",
+    "MgV_5609",
+    "FeVIII_5447"
+]
+acomp_1_kinematic_group_h2 = [
+    "MgVII_5503",
+    "MgV_5609",
+    "FeVIII_5447"
+]
+
+kinematic_group_c3 = [
+    "H200_S4",
+    "H200_S3"
+]
+acomp_1_kinematic_group_c3 = [
+    "H200_S4",
+    "H200_S3"
+]
+kinematic_group_m3 = [
+    "ArIII_",
+    "SIV_",
+]
+acomp_1_kinematic_group_m3 = [
+    "ArIII_",
+    "SIV_",
+]
+kinematic_group_h3 = [
+    "NeVI_7652",
+    "MgVII_9009",
+]
+acomp_1_kinematic_group_h3 = [
+    "NeVI_7652",
+    "MgVII_9009",
+]
+
 
 # # Lines to make combined flux/eqw maps for
 combined_maps = [["OII_03727", "OII_03729"]]
