@@ -105,6 +105,44 @@ end
 
 
 """
+    mask_vectors!(mask_bad, user_mask, λ, I, σ, templates, channel_masks[, I_spline])
+
+Apply two masks (mask_bad and user_mask) to a set of vectors (λ, I, σ, templates, channel_masks) to prepare
+them for fitting. The mask_bad is a pixel-by-pixel mask flagging bad data, while the user_mask is a set of pairs
+of wavelengths specifying entire regions to mask out.  The vectors are modified in-place.
+"""
+function mask_vectors!(mask_bad::BitVector, user_mask::Union{Nothing,Vector{<:Tuple}}, λ::Vector{<:Real}, I::Vector{<:Real}, 
+    σ::Vector{<:Real}, templates::Matrix{<:Real}, channel_masks::Vector{BitVector}, I_spline::Union{Nothing,Vector{<:Real}}=nothing)
+
+    do_spline = !isnothing(I_spline)
+
+    λ = λ[.~mask_bad]
+    I = I[.~mask_bad]
+    σ = σ[.~mask_bad]
+    templates = templates[.~mask_bad, :]
+    channel_masks = [ch_mask[.~mask_bad] for ch_mask in channel_masks]
+    if do_spline 
+        I_spline = I_spline[.~mask_bad]
+    end
+
+    if !isnothing(user_mask)
+        for pair in user_mask
+            region = pair[1] .< λ .< pair[2]
+            λ = λ[.~region]
+            I = I[.~region]
+            σ = σ[.~region]
+            templates = templates[.~region, :]
+            channel_masks = [ch_mask[.~region] for ch_mask in channel_masks]
+            if do_spline
+                I_spline = I_spline[.~region]
+            end
+        end
+    end
+    
+end
+
+
+"""
     continuum_cubic_spline(λ, I, σ, spectral_region)
 
 Mask out the emission lines in a given spectrum using `mask_emission_lines` and replace them with
@@ -155,6 +193,46 @@ end
 
 
 """
+    repeat_fit_jitter(λ_spax, I_spax, σ_spax, fit_func, params, lb, ub, parinfo, config, res0, fit_type; check_cont_snr)
+
+Checks the status of a fit to see if it has gotten stuck at the initial position (i.e. if number of iterations is < 5),
+and if so it jitters the starting parameters and tries to fit again.  It will try up to 10 times before giving up.
+"""
+function repeat_fit_jitter(λ_spax::Vector{<:Real}, I_spax::Vector{<:Real}, σ_spax::Vector{<:Real}, fit_func::Function,
+    params::Vector{<:Real}, lb::Vector{<:Real}, ub::Vector{<:Real}, parinfo::Vector{CMPFit.Parinfo}, 
+    config::CMPFit.Config, res0::CMPFit.Result, fit_type::String, spaxel::CartesianIndex; check_cont_snr::Bool=false)
+
+    res = res0
+    cont_snr = 10.
+    if check_cont_snr
+        cont_snr = nanmedian(I_spax ./ σ_spax)
+    end
+    n = 1
+    while (res.niter < 5) && (cont_snr > 3)
+        @warn "LM Solver is stuck on the initial state for the $fit_type fit of spaxel $spaxel. Jittering starting params..."
+        # Jitter the starting parameters a bit
+        jit_lo = (lb .- params) ./ 20  # defined to be negative
+        jit_hi = (ub .- params) ./ 20  # defined to be positive
+        # handle infinite upper bounds
+        jit_hi[.~isfinite.(jit_hi)] .= .-jit_lo[.~isfinite.(jit_hi)]
+        jit = dropdims(minimum(abs, [jit_lo jit_hi], dims=2), dims=2)
+        # sample from a uniform distribution
+        jitter = [j > 0 ? rand(Uniform(-j, j)) : 0.0 for j in jit]
+        # redo the fit with the slightly jittered starting parameters
+        @debug "Jittered starting parameters: $(params .+ jitter)"
+        res = cmpfit(λ_spax, I_spax, σ_spax, fit_func, params .+ jitter, parinfo=parinfo, config=config)
+        n += 1
+        if n > 10
+            @warn "LM solver has exceeded 10 tries on the continuum fit of spaxel $spaxel. Aborting."
+            break
+        end   
+    end
+
+    return res
+end
+
+
+"""
     continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, mask_lines, mask_bad, N; 
         [init, use_ap, bootstrap_iter, p1_boots])
 
@@ -198,6 +276,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     I_spax = I ./ N
     σ_spax = σ ./ N
     templates_spax = copy(templates)
+    channel_masks = copy(cube_fitter.channel_masks)
 
     scale = 7
     # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
@@ -212,23 +291,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     end
 
     # Masked spectrum
-    λ_spax = λ_spax[.~mask_bad]
-    I_spax = I_spax[.~mask_bad]
-    σ_spax = σ_spax[.~mask_bad]
-    templates_spax = templates_spax[.~mask_bad, :]
-    channel_masks = [ch_mask[.~mask_bad] for ch_mask in cube_fitter.channel_masks]
-
-    if !isnothing(cube_fitter.user_mask)
-        # Mask out additional regions
-        for pair in cube_fitter.user_mask
-            region = pair[1] .< λ_spax .< pair[2]
-            λ_spax = λ_spax[.~region]
-            I_spax = I_spax[.~region]
-            σ_spax = σ_spax[.~region]
-            templates_spax = templates_spax[.~region, :]
-            channel_masks = [ch_mask[.~region] for ch_mask in channel_masks]
-        end
-    end
+    mask_vectors!(mask_bad, cube_fitter.user_mask, λ_spax, I_spax, σ_spax, templates_spax, channel_masks)
 
     # Get the priors and "locked" booleans for each parameter, split up by the 2 steps for the continuum fit
     plims, plock, tied_pairs, tied_indices = get_continuum_plimits(cube_fitter, spaxel, λ_spax, I_spax, σ_spax, init || use_ap, templates_spax./N)
@@ -250,41 +313,17 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         plock[pₑ] .= 1
     end
 
-    pars_tied = copy(pars_0)
-    dstep_tied = copy(dstep_0)
-    plims_tied = copy(plims)
-    plock_tied = copy(plock)
-    deleteat!(pars_tied, tied_indices)
-    deleteat!(dstep_tied, tied_indices)
-    deleteat!(plims_tied, tied_indices)
-    deleteat!(plock_tied, tied_indices)
-
-    # Sort parameters by those that are locked and those that are unlocked
-    pfix_tied = pars_tied[plock_tied]
-    pfree_tied = pars_tied[.~plock_tied]
-    dfree_tied = dstep_tied[.~plock_tied]
-
-    # Count free parameters
-    n_free = sum(.~plock_tied)
-
-    # Lower/upper bounds
-    lb_tied = [pl[1] for pl in plims_tied]
-    ub_tied = [pl[2] for pl in plims_tied]
-    lbfree_tied = lb_tied[.~plock_tied]
-    ubfree_tied = ub_tied[.~plock_tied]
-
-    # Convert parameter limits into CMPFit object
-    parinfo, config = get_continuum_parinfo(n_free, lbfree_tied, ubfree_tied, dfree_tied)
-
     @debug """\n
     ##########################################################################################################
     ########################################## FITTING THE CONTINUUM #########################################
     ##########################################################################################################
     """
-    @debug "Continuum Parameters: \n $pars_tied"
-    @debug "Continuum Parameters locked? \n $plock_tied"
-    @debug "Continuum Lower limits: \n $lb_tied"
-    @debug "Continuum Upper limits: \n $ub_tied"
+
+    @debug "Continuum Parameters:"
+    pfree_tied, pfix_tied, dfree_tied, plock_tied, lbfree_tied, ubfree_tied, n_free, n_tied = split_parameters(pars_0, dstep_0, plims, plock, tied_indices)
+
+    # Convert parameter limits into CMPFit object
+    parinfo, config = get_continuum_parinfo(n_free, lbfree_tied, ubfree_tied, dfree_tied)
 
     # Pre-compute the stellar templates, if all the ages and metallicities are locked
     # (to speed up fitting)
@@ -313,30 +352,14 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
 
     # Fitting functions for either optical or MIR continuum
     function fit_cont_mir(x, pfree_tied)
-        ptot = zeros(Float64, length(pars_tied))
-        ptot[.~plock_tied] .= pfree_tied
-        ptot[plock_tied] .= pfix_tied
-        for tind in tied_indices
-            insert!(ptot, tind, 0.)
-        end
-        for tie in tied_pairs
-            ptot[tie[2]] = ptot[tie[1]] * tie[3]
-        end
+        ptot = rebuild_full_parameters(pfree_tied, pfix_tied, plock_tied, tied_pairs, tied_indices, n_tied)
         model_continuum(x, ptot, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
             cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.κ_abs, 
             cube_fitter.custom_ext_template, cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, false, templates_spax,
             channel_masks, nuc_temp_fit)
     end
     function fit_cont_opt(x, pfree_tied)
-        ptot = zeros(Float64, length(pars_tied))
-        ptot[.~plock_tied] .= pfree_tied
-        ptot[plock_tied] .= pfix_tied
-        for tind in tied_indices
-            insert!(ptot, tind, 0.)
-        end
-        for tie in tied_pairs
-            ptot[tie[2]] = ptot[tie[1]] * tie[3]
-        end
+        ptot = rebuild_full_parameters(pfree_tied, pfix_tied, plock_tied, tied_pairs, tied_indices, n_tied)
         model_continuum(x, ptot, N, cube_fitter.vres, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
             cube_fitter.n_ssps, cube_fitter.ssp_λ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, 
             cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, 
@@ -344,146 +367,28 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     end
     fit_cont = cube_fitter.spectral_region == :MIR ? fit_cont_mir : fit_cont_opt
 
-    # If fitting optical data, do a global fit for the initial fit because the stellar templates can be cooky crazy
-    _fit_global = false
-    if (cube_fitter.spectral_region == :OPT) && (init || use_ap || cube_fitter.fit_all_global) && !bootstrap_iter
-    # if false
-        @debug "Beginning Continuum fitting with Simulated Annealing:"
-
-        fit_func = (x, p) -> -ln_likelihood(I_spax, fit_cont(x, p), σ_spax)
-        x_tol = 1e-5
-        f_tol = abs(fit_func(λ_spax, pfree_tied) - fit_func(λ_spax, clamp.(pfree_tied .* (1 .- x_tol), lbfree_tied, ubfree_tied)))
-        f_tol = 10^floor(log10(f_tol))
-        lb_global = lbfree_tied
-        ub_global = [isfinite(ubi) ? ubi : 1e10 for ubi in ubfree_tied]
-
-        # First, perform a bounded Simulated Annealing search for the optimal parameters with a generous max iterations and temperature rate (rt)
-        res = Optim.optimize(p -> fit_func(λ_spax, p), lb_global, ub_global, pfree_tied, 
-            SAMIN(;rt=0.9, nt=5, ns=5, neps=5, f_tol=f_tol, x_tol=x_tol, verbosity=0), Optim.Options(iterations=10^6))
-        p₁ = res.minimizer 
-
-        # Write convergence results to file, if specified
-        if cube_fitter.track_convergence
-            global file_lock
-            # use the ReentrantLock to prevent multiple processes from trying to write to the same file at once
-            lock(file_lock) do 
-                open(joinpath("output_$(cube_fitter.name)", "loki.convergence.log"), "a") do conv
-                    redirect_stdout(conv) do
-                        label = isone(length(spaxel)) ? "Voronoi bin $(spaxel[1])" : "Spaxel ($(spaxel[1]),$(spaxel[2]))"
-                        println("$label on worker $(myid()):")
-                        println(res)
-                        println("-------------------------------------------------------")
-                    end
-                end
-            end
-        end
-        _fit_global = true
-
-    else
-        p₁ = pfree_tied
-
-    end
-
-    res = cmpfit(λ_spax, I_spax, σ_spax, fit_cont, p₁, parinfo=parinfo, config=config)
-
-    cont_snr = nanmedian(I_spax ./ σ_spax)
-    n = 1
-    while (res.niter < 5) && (cont_snr > 3) && !_fit_global
-        @warn "LM Solver is stuck on the initial state for the continuum fit of spaxel $spaxel. Jittering starting params..."
-        # Jitter the starting parameters a bit
-        jit_lo = (lbfree_tied .- pfree_tied) ./ 20  # defined to be negative
-        jit_hi = (ubfree_tied .- pfree_tied) ./ 20  # defined to be positive
-        # handle infinite upper bounds
-        jit_hi[.~isfinite.(jit_hi)] .= .-jit_lo[.~isfinite.(jit_hi)]
-        jit = dropdims(minimum(abs, [jit_lo jit_hi], dims=2), dims=2)
-        # sample from a uniform distribution
-        jitter = [j > 0 ? rand(Uniform(-j, j)) : 0.0 for j in jit]
-        # redo the fit with the slightly jittered starting parameters
-        @debug "Jittered starting parameters: $(pfree_tied .+ jitter)"
-        res = cmpfit(λ_spax, I_spax, σ_spax, fit_cont, pfree_tied .+ jitter, parinfo=parinfo, config=config)
-        n += 1
-        if n > 10
-            @warn "LM solver has exceeded 10 tries on the continuum fit of spaxel $spaxel. Aborting."
-            break
-        end
-    end 
-
-    popt_0 = zeros(length(pars_tied))
-    popt_0[.~plock_tied] .= res.param
-    popt_0[plock_tied] .= pfix_tied
-    for tind in tied_indices
-        insert!(popt_0, tind, 0.)
-    end
-    for tie in tied_pairs
-        popt_0[tie[2]] = popt_0[tie[1]] * tie[3]
-    end
+    # Do initial fit
+    res = cmpfit(λ_spax, I_spax, σ_spax, fit_cont, pfree_tied, parinfo=parinfo, config=config)
+    # This function checks how many iterations the first fit took, and if its less than 5 it repeats it with slightly different
+    # starting parameters to try to get it to converge better. This is because rarely the first fit can get stuck in the starting
+    # position.
+    res = repeat_fit_jitter(λ_spax, I_spax, σ_spax, fit_cont, pfree_tied, lbfree_tied, ubfree_tied, parinfo, config, res, "continuum",
+        spaxel; check_cont_snr=true)
+    
+    popt_0 = rebuild_full_parameters(res.param, pfix_tied, plock_tied, tied_pairs, tied_indices, n_tied)
 
     # if fitting the nuclear template, minimize the distance from 1.0 for the PSF template amplitudes and move
     # the residual amplitude to the continuum
     if nuc_temp_fit
-        p_temp_0 = 1 + 2 + 2*cube_fitter.n_dust_cont + 2*cube_fitter.n_power_law + 4 + (cube_fitter.extinction_curve == "decompose" ? 3 : 1) +
-            3*cube_fitter.n_abs_feat + (cube_fitter.fit_sil_emission ? 6 : 0)
-        p_temp_1 = p_temp_0 + (cube_fitter.fit_temp_multexp ? 8 : cube_fitter.n_templates*cube_fitter.n_channels) - 1
-
-        resid_amp = nanmean(popt_0[p_temp_0:p_temp_1])
-        # normalize the residual amplitude from the PSF normalizations
-        popt_0[p_temp_0:p_temp_1] ./= resid_amp
-
-        # add the same amount of amplitude back into the continuum
-        popt_0[1] *= resid_amp
-        pᵢ = 3
-        for _ in 1:cube_fitter.n_dust_cont
-            popt_0[pᵢ] *= resid_amp
-            pᵢ += 2
-        end
-        for _ in 1:cube_fitter.n_power_law
-            popt_0[pᵢ] *= resid_amp
-            pᵢ += 2
-        end
-        pᵢ += cube_fitter.extinction_curve == "decompose" ? 3 : 1
-        pᵢ += 4
-        pᵢ += 3*cube_fitter.n_abs_feat
-        if cube_fitter.fit_sil_emission
-            popt_0[pᵢ] *= resid_amp
-            pᵢ += 6
-        end
-        pᵢ += cube_fitter.fit_temp_multexp ? 8 : cube_fitter.n_channels*cube_fitter.n_templates
-        for prof in enumerate(cube_fitter.dust_features.profiles)
-            popt_0[pᵢ] *= resid_amp
-            if prof == :Drude
-                pᵢ += 3
-            elseif prof == :PearsonIV
-                pᵢ += 5
-            end
-        end
+        nuc_temp_fit_minimize_psftemp_amp!(cube_fitter, popt_0)
     end
-    popt_0_tied = copy(popt_0)
-    deleteat!(popt_0_tied, tied_indices)
-    popt_0_free_tied = popt_0_tied[.~plock_tied]
 
     @debug "Continuum CMPFit Status: $(res.status)"
 
-    popt = zeros(length(pars_tied))
-    popt[.~plock_tied] .= popt_0_free_tied
-    popt[plock_tied] .= pfix_tied
-    for tind in tied_indices
-        insert!(popt, tind, 0.)
-    end
-    for tie in tied_pairs
-        popt[tie[2]] = popt[tie[1]] * tie[3]
-    end
-
+    popt = popt_0
+    perr = zeros(Float64, length(popt))
     if !bootstrap_iter
-        perr = zeros(Float64, length(pars_tied))
-        perr[.~plock_tied] .= res.perror
-        for tind in tied_indices
-            insert!(perr, tind, 0.)
-        end
-        for tie in tied_pairs
-            perr[tie[2]] = perr[tie[1]] * tie[3]
-        end
-    else
-        perr = zeros(Float64, length(popt))
+        perr = rebuild_full_parameters(res.perror, zeros(length(pfix_tied)), plock_tied, tied_pairs, tied_indices, n_tied)
     end
 
     @debug "Best fit continuum parameters: \n $popt"
@@ -567,6 +472,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     I_spax = I ./ N
     σ_spax = σ ./ N
     templates_spax = copy(templates)
+    channel_masks = copy(cube_fitter.channel_masks)
 
     scale = 7
     # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
@@ -581,23 +487,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     end
 
     # Masked spectrum
-    λ_spax = λ_spax[.~mask_bad]
-    I_spax = I_spax[.~mask_bad]
-    σ_spax = σ_spax[.~mask_bad]
-    templates_spax = templates_spax[.~mask_bad, :]
-    channel_masks = [ch_mask[.~mask_bad] for ch_mask in cube_fitter.channel_masks]
-
-    if !isnothing(cube_fitter.user_mask)
-        # Mask out additional regions
-        for pair in cube_fitter.user_mask
-            region = pair[1] .< λ_spax .< pair[2]
-            λ_spax = λ_spax[.~region]
-            I_spax = I_spax[.~region]
-            σ_spax = σ_spax[.~region]
-            templates_spax = templates_spax[.~region, :]
-            channel_masks = [ch_mask[.~region] for ch_mask in channel_masks]
-        end
-    end
+    mask_vectors!(mask_bad, cube_fitter.user_mask, λ_spax, I_spax, σ_spax, templates_spax, channel_masks)
 
     # Get the priors and "locked" booleans for each parameter, split up by the 2 steps for the continuum fit
     plims_1, plims_2, lock_1, lock_2, tied_pairs, tied_indices = get_continuum_plimits(cube_fitter, spaxel, λ_spax, I_spax, σ_spax, init || use_ap,
@@ -625,19 +515,15 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         lock_1[pₑ] .= 1
     end
 
-    # Sort parameters by those that are locked and those that are unlocked
-    pars_1_tied = copy(pars_1)
-    dstep_1_tied = copy(dstep_1)
-    plims_1_tied = copy(plims_1)
-    lock_1_tied = copy(lock_1)
-    deleteat!(pars_1_tied, tied_indices)
-    deleteat!(dstep_1_tied, tied_indices)
-    deleteat!(plims_1_tied, tied_indices)
-    deleteat!(lock_1_tied, tied_indices)
+    @debug """\n
+    ##########################################################################################################
+    ########################## STEP 1 - FIT THE BLACKBODY CONTINUUM WITH PAH TEMPLATES #######################
+    ##########################################################################################################
+    """
 
-    p1fix_tied = pars_1_tied[lock_1_tied]
-    p1free_tied = pars_1_tied[.~lock_1_tied]
-    d1free_tied = dstep_1_tied[.~lock_1_tied]
+    @debug "Continuum Step 1 Parameters:"
+    p1free_tied, p1fix_tied, d1free_tied, lock_1_tied, lb_1_free_tied, ub_1_free_tied, n_free_1, n_tied_1 = split_parameters(
+        pars_1, dstep_1, plims_1, lock_1, tied_indices)
 
     # None of the step 2 parameters can be tied
     p2fix = pars_2[lock_2]
@@ -645,43 +531,19 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     d2free = dstep_2[.~lock_2]
 
     # Count free parameters
-    n_free_1 = sum(.~lock_1_tied)
     n_free_2 = sum(.~lock_2)
 
-    # Lower/upper bounds
-    lb_1_tied = [pl[1] for pl in plims_1_tied]
-    ub_1_tied = [pl[2] for pl in plims_1_tied]
-    lb_1_free_tied = lb_1_tied[.~lock_1_tied]
-    ub_1_free_tied = ub_1_tied[.~lock_1_tied]
-
+    # Lower/upper limits
     lb_2 = [pl[1] for pl in plims_2[.~lock_2]]
     ub_2 = [pl[2] for pl in plims_2[.~lock_2]]
 
     # Convert parameter limits into CMPFit object
     parinfo_1, parinfo_2, config = get_continuum_parinfo(n_free_1, n_free_2, lb_1_free_tied, ub_1_free_tied, lb_2, ub_2, d1free_tied, d2free)
 
-    @debug """\n
-    ##########################################################################################################
-    ########################## STEP 1 - FIT THE BLACKBODY CONTINUUM WITH PAH TEMPLATES #######################
-    ##########################################################################################################
-    """
-    @debug "Continuum Step 1 Parameters: \n $pars_1_tied"
-    @debug "Continuum Parameters locked? \n $lock_1_tied"
-    @debug "Continuum Lower limits: \n $lb_1_tied"
-    @debug "Continuum Upper limits: \n $ub_1_tied"
-
     @debug "Beginning continuum fitting with Levenberg-Marquardt least squares (CMPFit):"
 
     function fit_step1(x, pfree_tied, return_comps=false)
-        ptot = zeros(Float64, length(pars_1_tied))
-        ptot[.~lock_1_tied] .= pfree_tied
-        ptot[lock_1_tied] .= p1fix_tied
-        for tind in tied_indices
-            insert!(ptot, tind, 0.)
-        end
-        for tie in tied_pairs
-            ptot[tie[2]] = ptot[tie[1]] * tie[3]
-        end
+        ptot = rebuild_full_parameters(pfree_tied, p1fix_tied, lock_1_tied, tied_pairs, tied_indices, n_tied_1)
         if !return_comps
             model_continuum(x, ptot, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
                 cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.κ_abs, 
@@ -695,71 +557,17 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         end
     end
     res_1 = cmpfit(λ_spax, I_spax, σ_spax, fit_step1, p1free_tied, parinfo=parinfo_1, config=config)
-
-    cont_snr = nanmedian(I_spax ./ σ_spax)
-    n = 1
-    while (res_1.niter < 5) && (cont_snr > 3)
-        @warn "LM Solver is stuck on the initial state for the continuum fit (step 1) of spaxel $spaxel. Jittering starting params..."
-        # Jitter the starting parameters a bit
-        jit_lo = (lb_1_free_tied .- p1free_tied) ./ 20  # defined to be negative
-        jit_hi = (ub_1_free_tied .- p1free_tied) ./ 20  # defined to be positive
-        # handle infinite upper bounds
-        jit_hi[.~isfinite.(jit_hi)] .= .-jit_lo[.~isfinite.(jit_hi)]
-        jit = dropdims(minimum(abs, [jit_lo jit_hi], dims=2), dims=2)
-        # sample from a uniform distribution
-        jitter = [j > 0 ? rand(Uniform(-j, j)) : 0.0 for j in jit]
-        # redo the fit with the slightly jittered starting parameters
-        @debug "Jittered starting parameters: $(p1free_tied .+ jitter)"
-        res_1 = cmpfit(λ_spax, I_spax, σ_spax, fit_step1, p1free_tied .+ jitter, parinfo=parinfo_1, config=config)
-        n += 1
-        if n > 10
-            @warn "LM solver has exceeded 10 tries on the continuum fit of spaxel $spaxel. Aborting."
-            break
-        end
-    end 
+    res_1 = repeat_fit_jitter(λ_spax, I_spax, σ_spax, fit_step1, p1free_tied, lb_1_free_tied, ub_1_free_tied, parinfo_1, config,
+        res_1, "continuum (step 1)", spaxel; check_cont_snr=true)
 
     @debug "Continuum CMPFit Status: $(res_1.status)"
 
-    popt_0 = zeros(length(pars_1_tied))
-    popt_0[.~lock_1_tied] .= res_1.param
-    popt_0[lock_1_tied] .= p1fix_tied
-    for tind in tied_indices
-        insert!(popt_0, tind, 0.)
-    end
-    for tie in tied_pairs
-        popt_0[tie[2]] = popt_0[tie[1]] * tie[3]
-    end
+    popt_0 = rebuild_full_parameters(res_1.param, p1fix_tied, lock_1_tied, tied_pairs, tied_indices, n_tied_1)
 
     # if fitting the nuclear template, minimize the distance from 1.0 for the PSF template amplitudes and move
     # the residual amplitude to the continuum
     if nuc_temp_fit
-        p_temp_0 = 1 + 2 + 2*cube_fitter.n_dust_cont + 2*cube_fitter.n_power_law + 4 + (cube_fitter.extinction_curve == "decompose" ? 3 : 1) +
-            3*cube_fitter.n_abs_feat + (cube_fitter.fit_sil_emission ? 6 : 0)
-        p_temp_1 = p_temp_0 + (cube_fitter.fit_temp_multexp ? 8 : cube_fitter.n_templates*cube_fitter.n_channels) - 1
-
-        resid_amp = nanmean(popt_0[p_temp_0:p_temp_1])
-        # normalize the residual amplitude from the PSF normalizations
-        popt_0[p_temp_0:p_temp_1] ./= resid_amp
-
-        # add the same amount of amplitude back into the continuum
-        popt_0[1] *= resid_amp
-        pᵢ = 3
-        for _ in 1:cube_fitter.n_dust_cont
-            popt_0[pᵢ] *= resid_amp
-            pᵢ += 2
-        end
-        for _ in 1:cube_fitter.n_power_law
-            popt_0[pᵢ] *= resid_amp
-            pᵢ += 2
-        end
-        pᵢ += cube_fitter.extinction_curve == "decompose" ? 3 : 1
-        pᵢ += 4
-        pᵢ += 3*cube_fitter.n_abs_feat
-        if cube_fitter.fit_sil_emission
-            popt_0[pᵢ] *= resid_amp
-            pᵢ += 6
-        end
-        popt_0[end-1:end] .*= resid_amp
+        nuc_temp_fit_minimize_psftemp_amp!(cube_fitter, popt_0)
     end
     popt_0_tied = copy(popt_0)
     deleteat!(popt_0_tied, tied_indices)
@@ -812,62 +620,26 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         end
     end
     res_2 = cmpfit(λ_spax, I_spax.-I_cont, σ_spax, fit_step2, p2free, parinfo=parinfo_2, config=config)
-    n = 1
-    while (res_2.niter < 5) && (cont_snr > 3)
-        @warn "LM Solver is stuck on the initial state for the continuum fit (step 2) of spaxel $spaxel. Jittering starting params..."
-        # Jitter the starting parameters a bit
-        jit_lo = (lb_2 .- p2free) ./ 20  # defined to be negative
-        jit_hi = (ub_2 .- p2free) ./ 20  # defined to be positive
-        # handle infinite upper bounds
-        jit_hi[.~isfinite.(jit_hi)] .= .-jit_lo[.~isfinite.(jit_hi)]
-        jit = dropdims(minimum(abs, [jit_lo jit_hi], dims=2), dims=2)
-        # sample from a uniform distribution
-        jitter = [j > 0 ? rand(Uniform(-j, j)) : 0.0 for j in jit]
-        # redo the fit with the slightly jittered starting parameters
-        @debug "Jittered starting parameters: $(p2free .+ jitter)"
-        res_2 = cmpfit(λ_spax, I_spax.-I_cont, σ_spax, fit_step2, p2free .+ jitter, parinfo=parinfo_2, config=config)
-        n += 1
-        if n > 10
-            @warn "LM solver has exceeded 10 tries on the continuum fit of spaxel $spaxel. Aborting."
-            break
-        end
-    end 
+    res_2 = repeat_fit_jitter(λ_spax, I_spax.-I_cont, σ_spax, fit_step2, p2free, lb_2, ub_2, parinfo_2, config, res_2, 
+        "continuum (step 2)", spaxel; check_cont_snr=true)
 
     @debug "Continuum CMPFit Step 2 status: $(res_2.status)"
 
-    popt_1 = zeros(length(pars_1_tied))
-    popt_1[.~lock_1_tied] .= popt_0_free_tied
-    popt_1[lock_1_tied] .= p1fix_tied
-    for tind in tied_indices
-        insert!(popt_1, tind, 0.)
-    end
-    for tie in tied_pairs
-        popt_1[tie[2]] = popt_1[tie[1]] * tie[3]
-    end
+    popt_1 = rebuild_full_parameters(popt_0_free_tied, p1fix_tied, lock_1_tied, tied_pairs, tied_indices, n_tied_1)
     # remove the PAH template amplitudes
     popt_1 = popt_1[1:end-2]
+    perr_1 = zeros(length(popt_1))
     if !bootstrap_iter
-        perr_1 = zeros(length(pars_1_tied))
-        perr_1[.~lock_1_tied] .= res_1.perror
-        for tind in tied_indices
-            insert!(perr_1, tind, 0.)
-        end
-        for tie in tied_pairs
-            perr_1[tie[2]] = perr_1[tie[1]] * tie[3]
-        end
+        perr_1 = rebuild_full_parameters(res_1.perror, zeros(length(p1fix_tied)), lock_1_tied, tied_pairs, tied_indices, n_tied_1)
         perr_1 = perr_1[1:end-2]
-    else
-        perr_1 = zeros(length(popt_1))
     end
 
     popt_2 = zeros(length(pars_2))
     popt_2[.~lock_2] .= res_2.param
     popt_2[lock_2] .= p2fix
+    perr_2 = zeros(length(pars_2))
     if !bootstrap_iter
-        perr_2 = zeros(length(pars_2))
         perr_2[.~lock_2] .= res_2.perror
-    else
-        perr_2 = zeros(length(pars_2))
     end
 
     popt = [popt_1; popt_2]
@@ -1257,37 +1029,9 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
             lsf_interp_func, bootstrap_iter=bootstrap_iter)
     end
 
-    # Combine all of the tied parameters
-    p_tied = copy(p₀)
-    step_tied = copy(step)
-    plims_tied = copy(plimits)
-    param_lock_tied = copy(param_lock)
-    param_names_tied = copy(param_names)
-    deleteat!(p_tied, tied_indices)
-    deleteat!(step_tied, tied_indices)
-    deleteat!(plims_tied, tied_indices)
-    deleteat!(param_lock_tied, tied_indices)
-    deleteat!(param_names_tied, tied_indices)
-
-    # Split up into free and locked parameters
-    pfree_tied = p_tied[.~param_lock_tied]
-    pfix_tied = p_tied[param_lock_tied]
-    dfree_tied = step_tied[.~param_lock_tied]
-
-    # Count free parameters
-    n_free = sum(.~param_lock_tied)
-
-    # Lower and upper limits on each parameter
-    lower_bounds_tied = [pl[1] for pl in plims_tied]
-    upper_bounds_tied = [pl[2] for pl in plims_tied]
-    lbfree_tied = lower_bounds_tied[.~param_lock_tied]
-    ubfree_tied = upper_bounds_tied[.~param_lock_tied]
-
-    @debug "Line Parameter labels: \n $param_names_tied"
-    @debug "Line starting values: \n $p_tied"
-
-    @debug "Line Lower limits: \n $(lower_bounds_tied)"
-    @debug "Line Upper Limits: \n $(upper_bounds_tied))"
+    @debug "Line Parameters:"
+    pfree_tied, pfix_tied, dfree_tied, param_lock_tied, lbfree_tied, ubfree_tied, pnames_tied, n_free, n_tied = split_parameters(
+        p₀, step, plimits, param_lock, tied_indices; param_names=param_names)
 
     # Get CMPFit parinfo object from bounds
     parinfo, config = get_line_parinfo(n_free, lbfree_tied, ubfree_tied, dfree_tied)
@@ -1297,16 +1041,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
 
     # Wrapper function for fitting only the free, tied parameters
     function fit_step3(x, pfree_tied, func; n=0)
-        ptot = zeros(Float64, length(p_tied))
-        ptot[.~param_lock_tied] .= pfree_tied
-        ptot[param_lock_tied] .= pfix_tied
-
-        for tind in tied_indices
-            insert!(ptot, tind, 0.)
-        end
-        for tie in tied_pairs
-            ptot[tie[2]] = ptot[tie[1]] * tie[3]
-        end
+        ptot = rebuild_full_parameters(pfree_tied, pfix_tied, param_lock_tied, tied_pairs, tied_indices, n_tied)
         func(x, ptot, n)
     end
 
@@ -1369,57 +1104,20 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
         nuc_temp_fit ? template_norm[1+n:end-n] : nothing, nuc_temp_fit)
     
     res = cmpfit(λnorm, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func_2), p₁, parinfo=parinfo, config=config)
-
-    n = 1
-    while (res.niter < 5) && !_fit_global
-        @warn "LM Solver is stuck on the initial state for the line fit of spaxel $spaxel. Jittering starting params..."
-        # for j in eachindex(parinfo)
-        #     parinfo[j].step = 0.
-        # end
-        # res = cmpfit(λnorm, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func_2), p₁, parinfo=parinfo, config=config)
-        # Jitter the starting parameters a bit
-        jit_lo = (lbfree_tied .- p₁) ./ 20  # defined to be negative
-        jit_hi = (ubfree_tied .- p₁) ./ 20  # defined to be positive
-        # handle infinite upper bounds
-        jit_hi[.~isfinite.(jit_hi)] .= .-jit_lo[.~isfinite.(jit_hi)]
-        jit = dropdims(minimum(abs, [jit_lo jit_hi], dims=2), dims=2)
-        # sample from a uniform distribution
-        jitter = [j > 0 ? rand(Uniform(-j, j)) : 0.0 for j in jit]
-        # redo the fit with the slightly jittered starting parameters
-        @debug "Jittered starting parameters: $(p₁ .+ jitter)"
-        res = cmpfit(λnorm, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func_2), p₁ .+ jitter, parinfo=parinfo, config=config)
-        n += 1
-        if n > 10
-            @warn "LM solver has exceeded 10 tries on the line fit of spaxel $spaxel. Aborting."
-            break
-        end
-    end 
+    if !_fit_global
+        res = repeat_fit_jitter(λnorm, Inorm, σnorm, (x, p) -> fit_step3(x, p, fit_func_2), p₁, lbfree_tied, ubfree_tied,
+            parinfo, config, res, "line", spaxel)
+    end
 
     @debug "Line CMPFit status: $(res.status)"
 
     # Get the results and errors
-    popt = zeros(Float64, length(p_tied))
-    popt[.~param_lock_tied] .= res.param
-    popt[param_lock_tied] .= pfix_tied
-    for tind in tied_indices
-        insert!(popt, tind, 0.)
-    end
-    for tie in tied_pairs
-        popt[tie[2]] = popt[tie[1]] * tie[3]
-    end
+    popt = rebuild_full_parameters(res.param, pfix_tied, param_lock_tied, tied_pairs, tied_indices, n_tied)
 
     # Dont both with uncertainties if bootstrapping
+    perr = zeros(Float64, length(popt))
     if !bootstrap_iter
-        perr = zeros(Float64, length(p_tied))
-        perr[.~param_lock_tied] .= res.perror
-        for tind in tied_indices
-            insert!(perr, tind, 0.)
-        end
-        for tie in tied_pairs
-            perr[tie[2]] = perr[tie[1]] * tie[3]
-        end
-    else
-        perr = zeros(Float64, length(popt))
+        perr = rebuild_full_parameters(res.perror, zeros(length(pfix_tied)), param_lock_tied, tied_pairs, tied_indices, n_tied)
     end
 
     ######################################################################################################################
@@ -1432,90 +1130,11 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     I_model, comps = model_line_residuals(λ, popt, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
         cube_fitter.flexible_wavesol, ext_curve, lsf_interp_func, cube_fitter.relative_flags, template_norm, nuc_temp_fit, true)
     
-    # Clean up the initial parameters to be more amenable to individual spaxel fits
     if init
-        pᵢ = 1
-        for i in 1:cube_fitter.n_lines
-            pstart = Int[]
-            pfwhm = Int[]
-            pend = Int[]
-            amp_main = popt[pᵢ]
-            voff_main = popt[pᵢ+1]
-            fwhm_main = (!isnothing(cube_fitter.lines.tied_voff[i, 1]) && cube_fitter.flexible_wavesol) ? popt[pᵢ+3] : popt[pᵢ+2]
-
-            for j in 1:cube_fitter.n_comps
-                n_prof = sum(.~isnothing.(cube_fitter.lines.profiles[i, :]))
-                if !isnothing(cube_fitter.lines.profiles[i, j])
-                    push!(pstart, pᵢ)
-
-                    # If additional components arent detected, set them to a small nonzero value
-                    replace_line = iszero(popt[pᵢ])
-                    if replace_line
-                        if j > 1
-                            popt[pᵢ] = cube_fitter.relative_flags[1] ? 0.1 * 1/(n_prof-1) : 0.1 * 1/(n_prof-1) * amp_main
-                            popt[pᵢ+1] = cube_fitter.relative_flags[2] ? 0.0 : voff_main
-                            popt[pᵢ+2] = cube_fitter.relative_flags[3] ? 1.0 : fwhm_main
-                        else
-                            popt[pᵢ] = 0.9 * popt[pᵢ]
-                            if isnothing(cube_fitter.lines.tied_voff[i, j])
-                                popt[pᵢ+1] = voff_main = 0. # voff
-                            end
-                            if isnothing(cube_fitter.lines.tied_fwhm[i, j])
-                                popt[pᵢ+2] = fwhm_main = (lower_bounds[pᵢ+2]+upper_bounds[pᵢ+2])/2 # fwhm
-                            end
-                        end
-                    end
-                    # Velocity offsets for the integrated spectrum shouldnt be too large
-                    # if abs(popt[pᵢ+1]) > 500.
-                    if !cube_fitter.fit_all_global
-                        popt[pᵢ+1] = 0.
-                    end
-
-                    if replace_line && !isnothing(cube_fitter.lines.tied_voff[i, j]) && isone(j) && cube_fitter.flexible_wavesol
-                        popt[pᵢ+2] = 0. # individual voff
-                    end
-
-                    # Check if using a flexible_wavesol tied voff -> if so there is an extra voff parameter
-                    if !isnothing(cube_fitter.lines.tied_voff[i, j]) && cube_fitter.flexible_wavesol && isone(j)
-                        pc = 4
-                        push!(pfwhm, pᵢ+3)
-                    else
-                        pc = 3
-                        push!(pfwhm, pᵢ+2)
-                    end
-
-                    if cube_fitter.lines.profiles[i, j] == :GaussHermite
-                        pc += 2
-                    elseif cube_fitter.lines.profiles[i, j] == :Voigt
-                        # Set the Voigt mixing ratios back to 0.5 since a summed fit may lose the structure of the line-spread function
-                        if !cube_fitter.tie_voigt_mixing && !cube_fitter.lines.η[i, j].locked
-                            popt[pᵢ+pc] = 0.5
-                        elseif cube_fitter.tie_voigt_mixing && !cube_fitter.voigt_mix_tied.locked
-                            popt[pᵢ+pc] = 0.5
-                        end
-                        pc += 1
-                    end
-
-                    pᵢ += pc
-                    push!(pend, pᵢ-1)
-                end
-            end
-            # resort line components by decreasing flux
-            if all(.~cube_fitter.relative_flags) && !cube_fitter.flexible_wavesol
-                pnew = copy(popt)
-                # pstart gives the amplitude indices
-                ss = sortperm(popt[pstart].*popt[pfwhm], rev=true)
-                for k in eachindex(ss)
-                    pnew[pstart[k]:pend[k]] .= popt[pstart[ss[k]]:pend[ss[k]]]
-                end
-                popt = pnew
-            end
-        end
-    end
-
-    if init
-        cube_fitter.p_init_line[:] .= copy(popt)
+        # Clean up the initial parameters to be more amenable to individual spaxel fits
+        popt = clean_line_parameters(cube_fitter, popt, lower_bounds, upper_bounds)
         # Save results to file
+        cube_fitter.p_init_line[:] .= copy(popt)
         open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_line.csv"), "w") do f
             writedlm(f, cube_fitter.p_init_line, ',')
         end
@@ -1579,6 +1198,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     I_spline_spax = I_spline ./ N
     σ_spax = σ ./ N
     templates_spax = copy(templates)
+    channel_masks = copy(cube_fitter.channel_masks)
 
     scale = 7
     λknots = λ[(1+scale):scale:(length(λ)-scale)]
@@ -1588,25 +1208,13 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     end
 
     # Masked spectrum
-    λ_spax = λ_spax[.~mask_bad]
-    I_spax = I_spax[.~mask_bad]
-    I_spline_spax = I_spline_spax[.~mask_bad]
-    σ_spax = σ_spax[.~mask_bad]
-    templates_spax = templates_spax[.~mask_bad, :]
-    channel_masks = [ch_mask[.~mask_bad] for ch_mask in cube_fitter.channel_masks]
+    mask_vectors!(mask_bad, cube_fitter.user_mask, λ_spax, I_spax, σ_spax, templates_spax, channel_masks, I_spline_spax)
 
-    if !isnothing(cube_fitter.user_mask)
-        # Mask out additional regions
-        for pair in cube_fitter.user_mask
-            region = pair[1] .< λ_spax .< pair[2]
-            λ_spax = λ_spax[.~region]
-            I_spax = I_spax[.~region]
-            I_spline_spax = I_spline_spax[.~region]
-            σ_spax = σ_spax[.~region]
-            templates_spax = templates_spax[.~region, :]
-            channel_masks = [ch_mask[.~region] for ch_mask in channel_masks]
-        end
-    end
+    @debug """\n
+    ##################################################################################################################
+    ########################################## FITTING THE CONTINUUM & LINES #########################################
+    ##################################################################################################################
+    """
 
     # Get the priors and "locked" booleans for each parameter, split up by the 2 steps for the continuum fit
     plims_cont, lock_cont, tied_pairs_cont, tied_indices_cont = get_continuum_plimits(cube_fitter, spaxel, λ_spax, I_spax, σ_spax, 
@@ -1619,28 +1227,9 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         pars_0_cont = p1_boots_cont
     end
 
-    pars_0_cont_tied = copy(pars_0_cont)
-    dstep_0_cont_tied = copy(dstep_0_cont)
-    plims_cont_tied = copy(plims_cont)
-    lock_cont_tied = copy(lock_cont)
-    deleteat!(pars_0_cont_tied, tied_indices_cont)
-    deleteat!(dstep_0_cont_tied, tied_indices_cont)
-    deleteat!(plims_cont_tied, tied_indices_cont)
-    deleteat!(lock_cont_tied, tied_indices_cont)
-    
-    # Sort parameters by those that are locked and those that are unlocked
-    pfix_cont_tied = pars_0_cont_tied[lock_cont_tied]
-    pfree_cont_tied = pars_0_cont_tied[.~lock_cont_tied]
-    dstep_cont_tied = dstep_0_cont_tied[.~lock_cont_tied]
-
-    # Count free parameters
-    n_free_cont = sum(.~lock_cont_tied)
-
-    # Lower/upper bounds
-    lb_cont_tied = [pl[1] for pl in plims_cont_tied]
-    ub_cont_tied = [pl[2] for pl in plims_cont_tied]
-    lbfree_cont_tied = lb_cont_tied[.~lock_cont_tied]
-    ubfree_cont_tied = ub_cont_tied[.~lock_cont_tied]
+    @debug "Continuum Parameters:"
+    s_params = split_parameters(pars_0_cont, dstep_0_cont, plims_cont, lock_cont, tied_indices_cont)
+    pfree_cont_tied, pfix_cont_tied, dfree_cont_tied, lock_cont_tied, lbfree_cont_tied, ubfree_cont_tied, n_free_cont, n_tied_cont = s_params
 
     plims_lines, lock_lines, names_lines, tied_pairs_lines, tied_indices_lines = get_line_plimits(cube_fitter, init || use_ap, nuc_temp_fit)
     pars_0_lines, dstep_0_lines = get_line_initial_values(cube_fitter, spaxel, init || use_ap)
@@ -1656,50 +1245,12 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
             λ_spax, I_spax .- I_spline_spax, σ_spax, lsf_interp_func, bootstrap_iter=bootstrap_iter)
     end
 
-    # Combine all of the tied parameters
-    p_lines_tied = copy(pars_0_lines)
-    dstep_lines_tied = copy(dstep_0_lines)
-    plims_lines_tied = copy(plims_lines)
-    lock_lines_tied = copy(lock_lines)
-    names_lines_tied = copy(names_lines)
-    deleteat!(p_lines_tied, tied_indices_lines)
-    deleteat!(dstep_lines_tied, tied_indices_lines)
-    deleteat!(plims_lines_tied, tied_indices_lines)
-    deleteat!(lock_lines_tied, tied_indices_lines)
-    deleteat!(names_lines_tied, tied_indices_lines)
-
-    # Split up into free and locked parameters
-    pfree_lines_tied = p_lines_tied[.~lock_lines_tied]
-    pfix_lines_tied = p_lines_tied[lock_lines_tied]
-    dfree_lines_tied = dstep_lines_tied[.~lock_lines_tied]
-
-    # Count free parameters
-    n_free_lines = sum(.~lock_lines_tied)
-
-    # Lower and upper limits on each parameter
-    lower_bounds_lines_tied = [pl[1] for pl in plims_lines_tied]
-    upper_bounds_lines_tied = [pl[2] for pl in plims_lines_tied]
-    lbfree_lines_tied = lower_bounds_lines_tied[.~lock_lines_tied]
-    ubfree_lines_tied = upper_bounds_lines_tied[.~lock_lines_tied]
+    @debug "Line Parameters:"
+    s_params = split_parameters(pars_0_lines, dstep_0_lines, plims_lines, lock_lines, tied_indices_lines; param_names=names_lines)
+    pfree_lines_tied, pfix_lines_tied, dfree_lines_tied, lock_lines_tied, lbfree_lines_tied, ubfree_lines_tied, names_lines_tied, n_free_lines, n_tied_lines = s_params
 
     # Place initial values within the lower/upper limits (amplitudes may be too large if the extinction levels differ between spaxels)
     pfree_lines_tied = clamp.(pfree_lines_tied, lbfree_lines_tied, ubfree_lines_tied)
-
-    @debug """\n
-    ##################################################################################################################
-    ########################################## FITTING THE CONTINUUM & LINES #########################################
-    ##################################################################################################################
-    """
-    @debug "Continuum Parameters: \n $pars_0_cont_tied"
-    @debug "Continuum Parameters locked? \n $lock_cont_tied"
-    @debug "Continuum Lower limits: \n $lb_cont_tied"
-    @debug "Continuum Upper limits: \n $ub_cont_tied"
-
-    @debug "Line Parameter labels: \n $names_lines_tied"
-    @debug "Line starting values: \n $p_lines_tied"
-
-    @debug "Line Lower limits: \n $(lower_bounds_lines_tied)"
-    @debug "Line Upper Limits: \n $(upper_bounds_lines_tied))"
 
     # Pre-compute the stellar templates, if all the ages and metallicities are locked
     if cube_fitter.spectral_region == :OPT
@@ -1733,29 +1284,9 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         pfree_cont_tied = pfree_tied_all[1:n_free_cont]
         pfree_lines_tied = pfree_tied_all[n_free_cont+1:end]
 
-        # Organize continuum parameters
-        ptot_cont = zeros(out_type, length(pars_0_cont_tied))
-        ptot_cont[.~lock_cont_tied] .= pfree_cont_tied
-        ptot_cont[lock_cont_tied] .= pfix_cont_tied
-
-        for tind in tied_indices_cont
-            insert!(ptot_cont, tind, 0.)
-        end
-        for tie in tied_pairs_cont
-            ptot_cont[tie[2]] = ptot_cont[tie[1]] * tie[3]
-        end
-
-        # Organize lines parameters
-        ptot_lines = zeros(out_type, length(p_lines_tied))
-        ptot_lines[.~lock_lines_tied] .= pfree_lines_tied
-        ptot_lines[lock_lines_tied] .= pfix_lines_tied
-
-        for tind in tied_indices_lines
-            insert!(ptot_lines, tind, 0.)
-        end
-        for tie in tied_pairs_lines
-            ptot_lines[tie[2]] = ptot_lines[tie[1]] * tie[3]
-        end
+        # Organize parameters
+        ptot_cont = rebuild_full_parameters(pfree_cont_tied, pfix_cont_tied, lock_cont_tied, tied_pairs_cont, tied_indices_cont, n_tied_cont)
+        ptot_lines = rebuild_full_parameters(pfree_lines_tied, pfix_lines_tied, lock_lines_tied, tied_pairs_lines, tied_indices_lines, n_tied_lines)
 
         # Generate the extinction curve beforehand so it can be used for the lines
         pₑ = 3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law
@@ -1819,29 +1350,9 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         pfree_cont_tied = pfree_tied_all[1:n_free_cont]
         pfree_lines_tied = pfree_tied_all[n_free_cont+1:end]
 
-        # Organize continuum parameters
-        ptot_cont = zeros(out_type, length(pars_0_cont_tied))
-        ptot_cont[.~lock_cont_tied] .= pfree_cont_tied
-        ptot_cont[lock_cont_tied] .= pfix_cont_tied
-
-        for tind in tied_indices_cont
-            insert!(ptot_cont, tind, 0.)
-        end
-        for tie in tied_pairs_cont
-            ptot_cont[tie[2]] = ptot_cont[tie[1]] * tie[3]
-        end
-
-        # Organize lines parameters
-        ptot_lines = zeros(out_type, length(p_lines_tied))
-        ptot_lines[.~lock_lines_tied] .= pfree_lines_tied
-        ptot_lines[lock_lines_tied] .= pfix_lines_tied
-
-        for tind in tied_indices_lines
-            insert!(ptot_lines, tind, 0.)
-        end
-        for tie in tied_pairs_lines
-            ptot_lines[tie[2]] = ptot_lines[tie[1]] * tie[3]
-        end
+        # Organize parameters
+        ptot_cont = rebuild_full_parameters(pfree_cont_tied, pfix_cont_tied, lock_cont_tied, tied_pairs_cont, tied_indices_cont, n_tied_cont)
+        ptot_lines = rebuild_full_parameters(pfree_lines_tied, pfix_lines_tied, lock_lines_tied, tied_pairs_lines, tied_indices_lines, n_tied_lines)
 
         # Generate the attenuation curve beforehand so it can be used for the lines
         pₑ = 1 + 3cube_fitter.n_ssps + 2
@@ -1884,9 +1395,9 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
        
     # Combine parameters
     p₀ = [pfree_cont_tied; pfree_lines_tied]
-    lower_bounds = [lb_cont_tied; lbfree_lines_tied]
-    upper_bounds = [ub_cont_tied; ubfree_lines_tied]
-    dstep = [dstep_cont_tied; dfree_lines_tied]
+    lower_bounds = [lbfree_cont_tied; lbfree_lines_tied]
+    upper_bounds = [ubfree_cont_tied; ubfree_lines_tied]
+    dstep = [dfree_cont_tied; dfree_lines_tied]
 
     _fit_global = false
     if (init || use_ap || cube_fitter.fit_all_global) && !bootstrap_iter
@@ -1930,79 +1441,28 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
 
     # Parinfo and config objects
     parinfo, config = get_continuum_parinfo(n_free_cont+n_free_lines, lower_bounds, upper_bounds, dstep)
-    # Lower tolerance level for line fit
-    config.ftol = 1e-14
-    config.xtol = 1e-14
 
     res = cmpfit(λ_spax, I_spax, σ_spax, fit_joint, p₁, parinfo=parinfo, config=config)
-
-    cont_snr = nanmedian(I_spax ./ σ_spax)
-    n = 1
-    while (res.niter < 5) && (cont_snr > 3) && !_fit_global
-        @warn "LM Solver is stuck on the initial state for the continuum+lines fit of spaxel $spaxel. Jittering starting params..."
-        # Jitter the starting parameters a bit
-        jit_lo = (lower_bounds .- p₁) ./ 20  # defined to be negative
-        jit_hi = (upper_bounds .- p₁) ./ 20  # defined to be positive
-        # handle infinite upper bounds
-        jit_hi[.~isfinite.(jit_hi)] .= .-jit_lo[.~isfinite.(jit_hi)]
-        jit = dropdims(minimum(abs, [jit_lo jit_hi], dims=2), dims=2)
-        # sample from a uniform distribution
-        jitter = [j > 0 ? rand(Uniform(-j, j)) : 0.0 for j in jit]
-        # redo the fit with the slightly jittered starting parameters
-        @debug "Jittered starting parameters: $(p₁ .+ jitter)"
-        res = cmpfit(λ_spax, I_spax, σ_spax, fit_joint, p₁ .+ jitter, parinfo=parinfo, config=config)
-        n += 1
-        if n > 10
-            @warn "LM solver has exceeded 10 tries on the continuum+lines fit of spaxel $spaxel. Aborting."
-            break
-        end
-    end 
+    if !_fit_global
+        res = repeat_fit_jitter(λ_spax, I_spax, σ_spax, fit_joint, p₁, lower_bounds, upper_bounds, parinfo, config, res,
+            "continuum+lines", spaxel; check_cont_snr=true)
+    end
 
     @debug "Continuum+Lines CMPFit Status: $(res.status)"
 
     # Split back up into continuum and lines parameters
-    popt_cont = zeros(Float64, length(pars_0_cont_tied))
-    popt_cont[.~lock_cont_tied] .= res.param[1:n_free_cont]
-    popt_cont[lock_cont_tied] .= pfix_cont_tied
-    for tind in tied_indices_cont
-        insert!(popt_cont, tind, 0.)
-    end
-    for tie in tied_pairs_cont
-        popt_cont[tie[2]] = popt_cont[tie[1]] * tie[3]
-    end
+    popt_cont = rebuild_full_parameters(res.param[1:n_free_cont], pfix_cont_tied, lock_cont_tied, tied_pairs_cont, tied_indices_cont, n_tied_cont)
+    perr_cont = zeros(Float64, length(popt_cont))
     if !bootstrap_iter
-        perr_cont = zeros(Float64, length(pars_0_cont_tied))
-        perr_cont[.~lock_cont_tied] .= res.perror[1:n_free_cont]
-        for tind in tied_indices_cont
-            insert!(perr_cont, tind, 0.)
-        end
-        for tie in tied_pairs_cont
-            perr_cont[tie[2]] = perr_cont[tie[1]] * tie[3]
-        end
-    else
-        perr_cont = zeros(Float64, length(popt_cont))
+        perr_cont = rebuild_full_parameters(res.perror[1:n_free_cont], zeros(length(pfix_cont_tied)), lock_cont_tied, tied_pairs_cont, 
+            tied_indices_cont, n_tied_cont)
     end
 
-    popt_lines = zeros(Float64, length(p_lines_tied))
-    popt_lines[.~lock_lines_tied] .= res.param[n_free_cont+1:end]
-    popt_lines[lock_lines_tied] .= pfix_lines_tied
-    for tind in tied_indices_lines
-        insert!(popt_lines, tind, 0.)
-    end
-    for tie in tied_pairs_lines
-        popt_lines[tie[2]] = popt_lines[tie[1]] * tie[3]
-    end
+    popt_lines = rebuild_full_parameters(res.param[n_free_cont+1:end], pfix_lines_tied, lock_lines_tied, tied_pairs_lines, tied_indices_lines, n_tied_lines)
+    perr_lines = zeros(Float64, length(popt_lines))
     if !bootstrap_iter
-        perr_lines = zeros(Float64, length(p_lines_tied))
-        perr_lines[.~lock_lines_tied] .= res.perror[n_free_cont+1:end]
-        for tind in tied_indices_lines
-            insert!(perr_lines, tind, 0.)
-        end
-        for tie in tied_pairs_lines
-            perr_lines[tie[2]] = perr_lines[tie[1]] * tie[3]
-        end
-    else
-        perr_lines = zeros(Float64, length(popt_lines))
+        perr_lines = rebuild_full_parameters(res.perror[n_free_cont+1:end], zeros(length(pfix_lines_tied)), lock_lines_tied, tied_pairs_lines, 
+            tied_indices_lines, n_tied_lines)
     end
 
     @debug "Best fit continuum parameters: \n $popt_cont"
@@ -3408,6 +2868,111 @@ end
 
 
 """
+    fit_nuclear_template!(cube_fitter)
+
+A helper function to fit a model to the nuclear template spectrum when decomposing a bright QSO into the QSO portion
+dispersed by the PSF and the host galaxy portion. This routine produces a model for the nuclear spectrum normalized by the
+nuclear PSF model, which should be continuous after the fitting procedure. 
+
+The templates across the full field of view can then be produced by doing (nuclear model) x (PSF model) for the PSF model
+in each spaxel. These should be fed into the full cube fitting routine after running this function to fully decompose the
+host and the QSO.
+"""
+function fit_nuclear_template!(cube_fitter::CubeFitter)
+
+    @info """\n
+    BEGINNING NUCELAR TEMPLATE FITTING ROUTINE FOR $(cube_fitter.name)
+    """
+    # copy the main log file
+    cp(joinpath(@__DIR__, "..", "loki.main.log"), joinpath("output_$(cube_fitter.name)", "loki.main.log"), force=true)
+
+    shape = (1,1,size(cube_fitter.cube.I, 3))
+    # Unlock the hot dust component for the nuclear template fits
+    cube_fitter.lock_hot_dust[1] = false
+
+    # Prepare output array
+    @info "===> Preparing output data structures... <==="
+    out_params = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
+        cube_fitter.n_params_extra + 2) .* NaN
+    out_errs = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
+        cube_fitter.n_params_extra + 2, 2) .* NaN
+
+    cube = cube_fitter.cube
+
+    data2d = dropdims(nansum(cube.I, dims=3), dims=3)
+    data2d[.~isfinite.(data2d)] .= 0.
+    _, mx = findmax(data2d)
+
+    I = zeros(Float32, shape)
+    σ = zeros(Float32, shape)
+    templates = zeros(Float32, shape..., cube_fitter.n_templates)
+    area_sr = zeros(shape)
+
+    # Take the brightest spaxel
+    I[1,1,:] .= cube.I[mx,:]
+    σ[1,1,:] .= cube.σ[mx,:]
+    for s in 1:cube_fitter.n_templates
+        templates[1,1,:,s] .= cube_fitter.templates[mx, :, s]
+    end
+    area_sr[1,1,:] .= cube_fitter.cube.Ω
+
+    cube_data = (λ=cube_fitter.cube.λ, I=I, σ=σ, templates=templates, area_sr=area_sr)
+
+    @debug """
+    $(InteractiveUtils.varinfo(all=true, imported=true, recursive=true))
+    """
+    # copy the main log file
+    cp(joinpath(@__DIR__, "..", "loki.main.log"), joinpath("output_$(cube_fitter.name)", "loki.main.log"), force=true)
+
+    @info "===> Beginning nuclear spectrum fitting... <==="
+    p_out, p_err = fit_spaxel(cube_fitter, cube_data, CartesianIndex(1,1); use_ap=true, nuc_temp_fit=true)
+    if !isnothing(p_out)
+        out_params[1, 1, :] .= p_out
+        out_errs[1, 1, :, :] .= p_err
+    end
+
+    @info "===> Generating parameter maps and model cubes... <==="
+
+    # Create the ParamMaps and CubeModel structs containing the outputs
+    param_maps, param_errs, cube_model = assign_outputs(out_params, out_errs, cube_fitter, cube_data, cube_fitter.z, true,
+        nuc_temp_fit=true)
+
+    if cube_fitter.save_fits
+        @info "===> Writing FITS outputs... <==="
+        write_fits(cube_fitter, cube_data, cube_model, param_maps, param_errs, nuc_temp_fit=true, nuc_spax=mx)
+    end
+
+    # copy the main log file again
+    cp(joinpath(@__DIR__, "..", "loki.main.log"), joinpath("output_$(cube_fitter.name)", "loki.main.log"), force=true)
+
+    # Update the templates in perparation for the full fitting procedure
+    for s in 1:cube_fitter.n_templates
+        cube_fitter.templates[:, :, :, s] .= [
+            # cube_model.model[k,1,1] / (1 + cube_fitter.z) / cube_model.templates[k,1,1,1] * cube_fitter.templates[i,j,k,s] for 
+            cube_model.model[k,1,1] / (1 + cube_fitter.z) / cube_fitter.templates[mx,k,s] * cube_fitter.templates[i,j,k,s] for
+                i in axes(cube_fitter.templates, 1),
+                j in axes(cube_fitter.templates, 2),
+                k in axes(cube_fitter.templates, 3)
+            ]
+    end
+    cube_fitter.nuc_fit_flag[1] = true
+    # Save the template amplitudes 
+    for nch in 1:cube_fitter.n_channels
+        tp = cube_fitter.template_names[1]
+        cube_fitter.nuc_temp_amps[nch] = exp10(param_maps.templates[tp][Symbol("amp_$nch")][1,1])
+    end
+    # lock the hot dust component for the rest of the fits
+    cube_fitter.lock_hot_dust[1] = true
+
+    @info "Done!!"
+
+    # Return the final cube_fitter object, along with the param maps/errs and cube model
+    cube_fitter, param_maps, param_errs, cube_model
+
+end
+
+
+"""
     post_fit_nuclear_template!(cube_fitter, agn_templates)
 
 A helper function to fit a model to the nuclear template spectrum when decomposing a bright QSO into the QSO portion
@@ -3512,114 +3077,4 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, full_cube_model::Cu
         agn_templates .*= 1.597
     end
     post_fit_nuclear_template!(cube_fitter, agn_templates)
-end
-
-
-"""
-    fit_nuclear_template!(cube_fitter)
-
-A helper function to fit a model to the nuclear template spectrum when decomposing a bright QSO into the QSO portion
-dispersed by the PSF and the host galaxy portion. This routine produces a model for the nuclear spectrum normalized by the
-nuclear PSF model, which should be continuous after the fitting procedure. 
-
-The templates across the full field of view can then be produced by doing (nuclear model) x (PSF model) for the PSF model
-in each spaxel. These should be fed into the full cube fitting routine after running this function to fully decompose the
-host and the QSO.
-
-N.B. This method is generally NOT recommended, as if your nuclear model is even slightly off it can ruin the decomposition
-for the entire cube. You can instead generate a nuclear template directly from the data using the `generate_nuclear_template`
-function, which is the recommended approach.  If you require a model for your central point source (AGN), you can always
-use the `post_fit_nuclear_template!` function after fitting the cube.
-"""
-function fit_nuclear_template!(cube_fitter::CubeFitter)
-
-    @info """\n
-    BEGINNING NUCELAR TEMPLATE FITTING ROUTINE FOR $(cube_fitter.name)
-    """
-    # copy the main log file
-    cp(joinpath(@__DIR__, "..", "loki.main.log"), joinpath("output_$(cube_fitter.name)", "loki.main.log"), force=true)
-
-    shape = (1,1,size(cube_fitter.cube.I, 3))
-    # Unlock the hot dust component for the nuclear template fits
-    cube_fitter.lock_hot_dust[1] = false
-
-    # Prepare output array
-    @info "===> Preparing output data structures... <==="
-    out_params = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
-        cube_fitter.n_params_extra + 2) .* NaN
-    out_errs = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
-        cube_fitter.n_params_extra + 2, 2) .* NaN
-
-    cube = cube_fitter.cube
-
-    data2d = dropdims(nansum(cube.I, dims=3), dims=3)
-    data2d[.~isfinite.(data2d)] .= 0.
-    _, mx = findmax(data2d)
-
-    I = zeros(Float32, shape)
-    σ = zeros(Float32, shape)
-    templates = zeros(Float32, shape..., cube_fitter.n_templates)
-    area_sr = zeros(shape)
-
-    # Take the brightest spaxel
-    I[1,1,:] .= cube.I[mx,:]
-    σ[1,1,:] .= cube.σ[mx,:]
-    for s in 1:cube_fitter.n_templates
-        templates[1,1,:,s] .= cube_fitter.templates[mx, :, s]
-    end
-    area_sr[1,1,:] .= cube_fitter.cube.Ω
-
-    cube_data = (λ=cube_fitter.cube.λ, I=I, σ=σ, templates=templates, area_sr=area_sr)
-
-    @debug """
-    $(InteractiveUtils.varinfo(all=true, imported=true, recursive=true))
-    """
-    # copy the main log file
-    cp(joinpath(@__DIR__, "..", "loki.main.log"), joinpath("output_$(cube_fitter.name)", "loki.main.log"), force=true)
-
-    @info "===> Beginning nuclear spectrum fitting... <==="
-    p_out, p_err = fit_spaxel(cube_fitter, cube_data, CartesianIndex(1,1); use_ap=true, nuc_temp_fit=true)
-    if !isnothing(p_out)
-        out_params[1, 1, :] .= p_out
-        out_errs[1, 1, :, :] .= p_err
-    end
-
-    @info "===> Generating parameter maps and model cubes... <==="
-
-    # Create the ParamMaps and CubeModel structs containing the outputs
-    param_maps, param_errs, cube_model = assign_outputs(out_params, out_errs, cube_fitter, cube_data, cube_fitter.z, true,
-        nuc_temp_fit=true)
-
-    if cube_fitter.save_fits
-        @info "===> Writing FITS outputs... <==="
-        write_fits(cube_fitter, cube_data, cube_model, param_maps, param_errs, nuc_temp_fit=true, nuc_spax=mx)
-    end
-
-    # copy the main log file again
-    cp(joinpath(@__DIR__, "..", "loki.main.log"), joinpath("output_$(cube_fitter.name)", "loki.main.log"), force=true)
-
-    # Update the templates in perparation for the full fitting procedure
-    for s in 1:cube_fitter.n_templates
-        cube_fitter.templates[:, :, :, s] .= [
-            # cube_model.model[k,1,1] / (1 + cube_fitter.z) / cube_model.templates[k,1,1,1] * cube_fitter.templates[i,j,k,s] for 
-            cube_model.model[k,1,1] / (1 + cube_fitter.z) / cube_fitter.templates[mx,k,s] * cube_fitter.templates[i,j,k,s] for
-                i in axes(cube_fitter.templates, 1),
-                j in axes(cube_fitter.templates, 2),
-                k in axes(cube_fitter.templates, 3)
-            ]
-    end
-    cube_fitter.nuc_fit_flag[1] = true
-    # Save the template amplitudes 
-    for nch in 1:cube_fitter.n_channels
-        tp = cube_fitter.template_names[1]
-        cube_fitter.nuc_temp_amps[nch] = exp10(param_maps.templates[tp][Symbol("amp_$nch")][1,1])
-    end
-    # lock the hot dust component for the rest of the fits
-    cube_fitter.lock_hot_dust[1] = true
-
-    @info "Done!!"
-
-    # Return the final cube_fitter object, along with the param maps/errs and cube model
-    cube_fitter, param_maps, param_errs, cube_model
-
 end

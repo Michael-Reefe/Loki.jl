@@ -1652,6 +1652,83 @@ end
 
 
 """
+    split_parameters(pars, dstep, plims, plock, tied_indices)
+
+Sorts parameters into vectors containing only the tied, free parameters and separates the
+locked parameters into a separate vector. Also sorts the step, limits, and lock vectors 
+accordingly.
+"""
+function split_parameters(pars::Vector{<:Real}, dstep::Vector{<:Real}, plims::Vector{Tuple}, plock::BitVector,
+    tied_indices::Vector{<:Integer}; param_names::Union{Nothing,Vector{String}}=nothing)
+
+    do_names = !isnothing(param_names)
+
+    # Copy the input vectors
+    pars_tied = copy(pars)
+    dstep_tied = copy(dstep)
+    plims_tied = copy(plims)
+    plock_tied = copy(plock)
+
+    # Delete the entries at points where they should be tied to another entry
+    deleteat!(pars_tied, tied_indices)
+    deleteat!(dstep_tied, tied_indices)
+    deleteat!(plims_tied, tied_indices)
+    deleteat!(plock_tied, tied_indices)
+
+    # Sort the parameters into those that are locked and those that are unlocked
+    pfix_tied = pars_tied[plock_tied]
+    pfree_tied = pars_tied[.~plock_tied]
+    dfree_tied = dstep_tied[.~plock_tied]
+
+    # Count free parameters
+    n_free = sum(.~plock_tied)
+    n_tied = length(pars_tied)
+
+    # Lower/upper bounds
+    lb_tied = [pl[1] for pl in plims_tied]
+    ub_tied = [pl[2] for pl in plims_tied]
+    lbfree_tied = lb_tied[.~plock_tied]
+    ubfree_tied = ub_tied[.~plock_tied]
+
+    @debug "Parameters: \n $pars_tied"
+    @debug "Parameters locked? \n $plock_tied"
+    @debug "Lower limits: \n $lb_tied"
+    @debug "Upper limits: \n $ub_tied"
+
+    if do_names
+        pnames_tied = copy(param_names)
+        deleteat!(pnames_tied, tied_indices)
+        @debug "Parameter Names: \n $pnames_tied"
+        return pfree_tied, pfix_tied, dfree_tied, plock_tied, lbfree_tied, ubfree_tied, pnames_tied, n_free, n_tied
+    end
+
+    return pfree_tied, pfix_tied, dfree_tied, plock_tied, lbfree_tied, ubfree_tied, n_free, n_tied
+end
+
+
+"""
+    rebuild_full_parameters(pfree_tied, pfix_tied, plock_tied, tied_pairs, tied_indices, n_tied)
+
+The opposite of split_parameters.  Takes a split up parameter vector and rebuilds the full vector including
+all of the free+locked parameters and the tied parameters.
+"""
+function rebuild_full_parameters(pfree_tied::Vector{<:Real}, pfix_tied::Vector{<:Real}, plock_tied::BitVector, 
+    tied_pairs::Vector{Tuple}, tied_indices::Vector{<:Integer}, n_tied::Integer)
+    pfull = zeros(eltype(pfree_tied), n_tied)
+    pfull[.~plock_tied] .= pfree_tied
+    pfull[plock_tied] .= pfix_tied
+    for tind in tied_indices
+        insert!(pfull, tind, 0.)
+    end
+    for tie in tied_pairs
+        pfull[tie[2]] = pfull[tie[1]] * tie[3]
+    end
+
+    return pfull
+end
+
+
+"""
     get_continuum_plimits(cube_fitter, spaxel, λ, I, σ, init; split)
 
 Get the continuum limits vector for a given CubeFitter object, possibly split up by the 2 continuum fitting steps.
@@ -2418,6 +2495,53 @@ end
 
 
 """
+    nuc_temp_fit_minimize_psftemp_amp!(cube_fitter, popt_0)
+
+If fitting the nuclear spectrum with individual PSF template amplitudes, this function cleans the posteriors
+by minimizing their mean distance from 1. It does so by moving the amplitude in the PSF template amplitudes to
+the amplitudes of the other parts of the continuum. The resulting model should be identical.
+"""
+function nuc_temp_fit_minimize_psftemp_amp!(cube_fitter::CubeFitter, popt_0::Vector{<:Real})
+    p_temp_0 = 1 + 2 + 2*cube_fitter.n_dust_cont + 2*cube_fitter.n_power_law + 4 + (cube_fitter.extinction_curve == "decompose" ? 3 : 1) +
+        3*cube_fitter.n_abs_feat + (cube_fitter.fit_sil_emission ? 6 : 0)
+    p_temp_1 = p_temp_0 + (cube_fitter.fit_temp_multexp ? 8 : cube_fitter.n_templates*cube_fitter.n_channels) - 1
+
+    resid_amp = nanmean(popt_0[p_temp_0:p_temp_1])
+    # normalize the residual amplitude from the PSF normalizations
+    popt_0[p_temp_0:p_temp_1] ./= resid_amp
+
+    # add the same amount of amplitude back into the continuum
+    popt_0[1] *= resid_amp
+    pᵢ = 3
+    for _ in 1:cube_fitter.n_dust_cont
+        popt_0[pᵢ] *= resid_amp
+        pᵢ += 2
+    end
+    for _ in 1:cube_fitter.n_power_law
+        popt_0[pᵢ] *= resid_amp
+        pᵢ += 2
+    end
+    pᵢ += cube_fitter.extinction_curve == "decompose" ? 3 : 1
+    pᵢ += 4
+    pᵢ += 3*cube_fitter.n_abs_feat
+    if cube_fitter.fit_sil_emission
+        popt_0[pᵢ] *= resid_amp
+        pᵢ += 6
+    end
+    pᵢ += cube_fitter.fit_temp_multexp ? 8 : cube_fitter.n_channels*cube_fitter.n_templates
+    for prof in enumerate(cube_fitter.dust_features.profiles)
+        popt_0[pᵢ] *= resid_amp
+        if prof == :Drude
+            pᵢ += 3
+        elseif prof == :PearsonIV
+            pᵢ += 5
+        end
+    end
+    return popt_0
+end
+
+
+"""
     pretty_print_continuum_results(cube_fitter, popt, perr, I)
 
 Print out a nicely formatted summary of the continuum fit results for a given CubeFitter object.
@@ -2990,6 +3114,95 @@ function get_line_parinfo(n_free, lb, ub, dp)
     config.maxiter = 500
 
     parinfo, config
+end
+
+
+"""
+    clean_line_parameters(cube_fitter, popt, lower_bounds, upper_bounds)
+
+Takes the results of an initial global line fit and prepares the parameters for individual spaxel
+fits by sorting the line components, fixing the voffs/FWHMs for lines that are not detected, and 
+various other small adjustments.
+"""
+function clean_line_parameters(cube_fitter::CubeFitter, popt::Vector{<:Real}, lower_bounds::Vector{<:Real}, upper_bounds::Vector{<:Real})
+    pᵢ = 1
+    for i in 1:cube_fitter.n_lines
+        pstart = Int[]
+        pfwhm = Int[]
+        pend = Int[]
+        amp_main = popt[pᵢ]
+        voff_main = popt[pᵢ+1]
+        fwhm_main = (!isnothing(cube_fitter.lines.tied_voff[i, 1]) && cube_fitter.flexible_wavesol) ? popt[pᵢ+3] : popt[pᵢ+2]
+
+        for j in 1:cube_fitter.n_comps
+            n_prof = sum(.~isnothing.(cube_fitter.lines.profiles[i, :]))
+            if !isnothing(cube_fitter.lines.profiles[i, j])
+                push!(pstart, pᵢ)
+
+                # If additional components arent detected, set them to a small nonzero value
+                replace_line = iszero(popt[pᵢ])
+                if replace_line
+                    if j > 1
+                        popt[pᵢ] = cube_fitter.relative_flags[1] ? 0.1 * 1/(n_prof-1) : 0.1 * 1/(n_prof-1) * amp_main
+                        popt[pᵢ+1] = cube_fitter.relative_flags[2] ? 0.0 : voff_main
+                        popt[pᵢ+2] = cube_fitter.relative_flags[3] ? 1.0 : fwhm_main
+                    else
+                        popt[pᵢ] = 0.9 * popt[pᵢ]
+                        if isnothing(cube_fitter.lines.tied_voff[i, j])
+                            popt[pᵢ+1] = voff_main = 0. # voff
+                        end
+                        if isnothing(cube_fitter.lines.tied_fwhm[i, j])
+                            popt[pᵢ+2] = fwhm_main = (lower_bounds[pᵢ+2]+upper_bounds[pᵢ+2])/2 # fwhm
+                        end
+                    end
+                end
+                # Velocity offsets for the integrated spectrum shouldnt be too large
+                # if abs(popt[pᵢ+1]) > 500.
+                if !cube_fitter.fit_all_global
+                    popt[pᵢ+1] = 0.
+                end
+
+                if replace_line && !isnothing(cube_fitter.lines.tied_voff[i, j]) && isone(j) && cube_fitter.flexible_wavesol
+                    popt[pᵢ+2] = 0. # individual voff
+                end
+
+                # Check if using a flexible_wavesol tied voff -> if so there is an extra voff parameter
+                if !isnothing(cube_fitter.lines.tied_voff[i, j]) && cube_fitter.flexible_wavesol && isone(j)
+                    pc = 4
+                    push!(pfwhm, pᵢ+3)
+                else
+                    pc = 3
+                    push!(pfwhm, pᵢ+2)
+                end
+
+                if cube_fitter.lines.profiles[i, j] == :GaussHermite
+                    pc += 2
+                elseif cube_fitter.lines.profiles[i, j] == :Voigt
+                    # Set the Voigt mixing ratios back to 0.5 since a summed fit may lose the structure of the line-spread function
+                    if !cube_fitter.tie_voigt_mixing && !cube_fitter.lines.η[i, j].locked
+                        popt[pᵢ+pc] = 0.5
+                    elseif cube_fitter.tie_voigt_mixing && !cube_fitter.voigt_mix_tied.locked
+                        popt[pᵢ+pc] = 0.5
+                    end
+                    pc += 1
+                end
+
+                pᵢ += pc
+                push!(pend, pᵢ-1)
+            end
+        end
+        # resort line components by decreasing flux
+        if all(.~cube_fitter.relative_flags) && !cube_fitter.flexible_wavesol
+            pnew = copy(popt)
+            # pstart gives the amplitude indices
+            ss = sortperm(popt[pstart].*popt[pfwhm], rev=true)
+            for k in eachindex(ss)
+                pnew[pstart[k]:pend[k]] .= popt[pstart[ss[k]]:pend[ss[k]]]
+            end
+            popt = pnew
+        end
+    end
+    return popt
 end
 
 
