@@ -2929,34 +2929,36 @@ function get_line_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex
     # Absolute step size vector (0 tells CMPFit to use a default value)
     ln_astep = zeros(length(ln_pars))
 
-    # if !init
-    #     ln_astep = Float64[]
-    #     for i ∈ 1:cube_fitter.n_lines
-    #         for j ∈ 1:cube_fitter.n_comps
-    #             if !isnothing(cube_fitter.lines.profiles[i, j])
+    if !init
+        ln_astep = Float64[]
+        for i ∈ 1:cube_fitter.n_lines
+            for j ∈ 1:cube_fitter.n_comps
+                if !isnothing(cube_fitter.lines.profiles[i, j])
 
-    #                 amp_step = 0.
-    #                 voff_step = 1.
-    #                 fwhm_step = j > 1 && cube_fitter.relative_flags[3] ? 0. : 1.
+                    # A small absolute step size of 1e-5 for the velocities / FWHMs helps in particular when
+                    # the starting value is 0 to get out of becoming stuck
+                    amp_step = 0.
+                    voff_step = 1e-5
+                    fwhm_step = j > 1 && cube_fitter.relative_flags[3] ? 0. : 1e-5
 
-    #                 # Depending on flexible_wavesol option, we need to add 2 voffs
-    #                 if !isnothing(cube_fitter.lines.tied_voff[i, j]) && cube_fitter.flexible_wavesol && isone(j)
-    #                     append!(ln_astep, [amp_step, voff_step, voff_step, fwhm_step])
-    #                 else
-    #                     append!(ln_astep, [amp_step, voff_step, fwhm_step])
-    #                 end
+                    # Depending on flexible_wavesol option, we need to add 2 voffs
+                    if !isnothing(cube_fitter.lines.tied_voff[i, j]) && cube_fitter.flexible_wavesol && isone(j)
+                        append!(ln_astep, [amp_step, voff_step, voff_step, fwhm_step])
+                    else
+                        append!(ln_astep, [amp_step, voff_step, fwhm_step])
+                    end
 
-    #                 if cube_fitter.lines.profiles[i, j] == :GaussHermite
-    #                     # 2 extra parameters: h3 and h4
-    #                     append!(ln_astep, [0., 0.])
-    #                 elseif cube_fitter.lines.profiles[i, j] == :Voigt
-    #                     # 1 extra parameter: eta
-    #                     append!(ln_astep, [0.])
-    #                 end
-    #             end
-    #         end
-    #     end 
-    # end
+                    if cube_fitter.lines.profiles[i, j] == :GaussHermite
+                        # 2 extra parameters: h3 and h4
+                        append!(ln_astep, [0., 0.])
+                    elseif cube_fitter.lines.profiles[i, j] == :Voigt
+                        # 1 extra parameter: eta
+                        append!(ln_astep, [0.])
+                    end
+                end
+            end
+        end 
+    end
 
     ln_pars, ln_astep
 
