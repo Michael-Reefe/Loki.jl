@@ -294,12 +294,18 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     mask_vectors!(mask_bad, cube_fitter.user_mask, λ_spax, I_spax, σ_spax, templates_spax, channel_masks)
 
     # Get the priors and "locked" booleans for each parameter, split up by the 2 steps for the continuum fit
-    plims, plock, tied_pairs, tied_indices = get_continuum_plimits(cube_fitter, spaxel, λ_spax, I_spax, σ_spax, init || use_ap, templates_spax./N)
+    plims, plock, tied_pairs, tied_indices = get_continuum_plimits(cube_fitter, spaxel, λ_spax, I_spax, σ_spax, init || use_ap, 
+        templates_spax./N)
 
     # Split up the initial parameter vector into the components that we need for each fitting step
     pars_0, dstep_0 = get_continuum_initial_values(cube_fitter, spaxel, λ_spax, I_spax, σ_spax, N, init || use_ap, templates_spax./N)
     if bootstrap_iter
         pars_0 = p1_boots
+    end
+    if nuc_temp_fit && cube_fitter.spectral_region == :OPT
+        # for optical fits there should be no channel splits so just lock the PSF amplitude to 1 during the nuclear fit
+        plock[end-cube_fitter.n_templates+1:end] .= 1
+        pars_0[end-cube_fitter.n_templates+1:end] .= 1.0
     end
 
     # Constrain optical depth to be at least 80% of the guess
@@ -320,7 +326,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     """
 
     @debug "Continuum Parameters:"
-    pfree_tied, pfix_tied, dfree_tied, plock_tied, lbfree_tied, ubfree_tied, n_free, n_tied = split_parameters(pars_0, dstep_0, plims, plock, tied_indices)
+    pfree_tied, pfix_tied, dfree_tied, plock_tied, lbfree_tied, ubfree_tied, n_free, n_tied = split_parameters(
+        pars_0, dstep_0, plims, plock, tied_indices)
 
     # Convert parameter limits into CMPFit object
     parinfo, config = get_continuum_parinfo(n_free, lbfree_tied, ubfree_tied, dfree_tied)
@@ -363,7 +370,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         model_continuum(x, ptot, N, cube_fitter.vres, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
             cube_fitter.n_ssps, cube_fitter.ssp_λ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, 
             cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, 
-            cube_fitter.extinction_curve)
+            cube_fitter.extinction_curve, templates_spax, cube_fitter.fit_temp_multexp, nuc_temp_fit)
     end
     fit_cont = cube_fitter.spectral_region == :MIR ? fit_cont_mir : fit_cont_opt
 
@@ -379,7 +386,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
 
     # if fitting the nuclear template, minimize the distance from 1.0 for the PSF template amplitudes and move
     # the residual amplitude to the continuum
-    if nuc_temp_fit
+    if nuc_temp_fit && cube_fitter.spectral_region == :MIR
         nuc_temp_fit_minimize_psftemp_amp!(cube_fitter, popt_0)
     end
 
@@ -415,7 +422,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     else
         I_model, comps = model_continuum(λ, popt, N, cube_fitter.vres, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
             cube_fitter.n_ssps, cube_fitter.ssp_λ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, 
-            cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve, true)
+            cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve, templates,
+            cube_fitter.fit_temp_multexp, nuc_temp_fit, true)
     end
     
     # Estimate PAH template amplitude
@@ -1226,6 +1234,11 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     if bootstrap_iter
         pars_0_cont = p1_boots_cont
     end
+    if nuc_temp_fit && cube_fitter.spectral_region == :OPT
+        # for optical fits there should be no channel splits so just lock the PSF amplitude to 1 during the nuclear fit
+        lock_cont[end-cube_fitter.n_templates+1:end] .= 1
+        pars_0_cont[end-cube_fitter.n_templates+1:end] .= 1.0
+    end
 
     @debug "Continuum Parameters:"
     s_params = split_parameters(pars_0_cont, dstep_0_cont, plims_cont, lock_cont, tied_indices_cont)
@@ -1324,11 +1337,9 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
 
         template_norm = nothing
         if nuc_temp_fit
-            for i in axes(templates_spax, 2)
-                template_norm = zeros(eltype(ptot_cont), length(x))
-                for ch_mask in channel_masks
-                    template_norm[ch_mask] .= ptot_cont[pₑ] .* templates_spax[ch_mask, i]
-                end
+            template_norm = zeros(eltype(ptot_cont), length(x))
+            for ch_mask in channel_masks
+                template_norm[ch_mask] .= ptot_cont[pₑ] .* templates_spax[ch_mask, 1]
             end
         end
 
@@ -1360,12 +1371,13 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         E_BV_factor = ptot_cont[pₑ+1]
         δ_UV = nothing
         Cf_dust = 0.
+        pₑ += 2
         if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
-            δ_UV = ptot_cont[pₑ+2]
+            δ_UV = ptot_cont[pₑ]
             pₑ += 1
         end
         if cube_fitter.fit_covering_frac && cube_fitter.extinction_curve == "calzetti"
-            Cf_dust = ptot_cont[pₑ+2]
+            Cf_dust = ptot_cont[pₑ]
             pₑ += 1
         end
         # E(B-V)_stars = 0.44E(B-V)_gas
@@ -1380,13 +1392,19 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         else
             error("Unrecognized extinction curve $(cube_fitter.extinction_curve)")
         end
+
+        template_norm = nothing
+        if nuc_temp_fit
+            template_norm = ptot_cont[pₑ] .* templates_spax[:, 1]
+        end
         
         # Generate the models
         Icont = model_continuum(x, ptot_cont, N, cube_fitter.vres, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
             cube_fitter.n_ssps, cube_fitter.ssp_λ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, 
-            cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve)
+            cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve,
+            templates_spax, cube_fitter.fit_temp_multexp, nuc_temp_fit)
         Ilines = model_line_residuals(x, ptot_lines, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol,
-            ext_curve_gas, lsf_interp_func, cube_fitter.relative_flags, nothing, false)
+            ext_curve_gas, lsf_interp_func, cube_fitter.relative_flags, template_norm, nuc_temp_fit)
 
         # Return the sum of the models
         Icont .+ Ilines
@@ -1479,11 +1497,12 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     else
         Icont, comps_cont = model_continuum(λ, popt_cont, N, cube_fitter.vres, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
             cube_fitter.n_ssps, cube_fitter.ssp_λ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, 
-            cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve, true)
+            cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve, templates,
+            cube_fitter.fit_temp_multexp, nuc_temp_fit, true)
         ext_key = "attenuation_gas"
     end
     Ilines, comps_lines = model_line_residuals(λ, popt_lines, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol,
-        comps_cont[ext_key], lsf_interp_func, cube_fitter.relative_flags, comps_cont["templates_1"], nuc_temp_fit, true)
+        comps_cont[ext_key], lsf_interp_func, cube_fitter.relative_flags, nuc_temp_fit ? comps_cont["templates_1"] : nothing, nuc_temp_fit, true)
 
     # Estimate PAH template amplitude
     if cube_fitter.spectral_region == :MIR
@@ -1584,10 +1603,6 @@ function plot_spaxel_fit(spectral_region::Symbol, λ_um::Vector{<:Real}, I::Vect
         if !isnothing(range_um)
             range = range_um
         end
-        nuc_temp_norm = ones(length(λ))
-        if nuc_temp_fit
-            nuc_temp_norm = comps["templates_1"]
-        end
     else
         fit_sil_emission = false
         fit_opt_na_feii = haskey(comps, "na_feii")
@@ -1602,7 +1617,10 @@ function plot_spaxel_fit(spectral_region::Symbol, λ_um::Vector{<:Real}, I::Vect
         if !isnothing(range_um)
             range = range_um .* 1e4
         end
-        nuc_temp_norm = ones(length(λ))
+    end
+    nuc_temp_norm = ones(length(λ))
+    if nuc_temp_fit
+        nuc_temp_norm = comps["templates_1"]
     end
 
     # Plotly ---> useful interactive plots for visually inspecting data, but not publication-quality
@@ -1626,16 +1644,16 @@ function plot_spaxel_fit(spectral_region::Symbol, λ_um::Vector{<:Real}, I::Vect
                 append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* maximum(I_model) .* 1.1, mode="lines", line=Dict(:color => "orange", :width => 1, :dash => "dash"),
                     name="Forsterite Absorption")])
             elseif occursin("hot_dust", comp)
-                append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* abs_full, mode="lines", line=Dict(:color => "yellow", :width => 1),
+                append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* abs_full .* nuc_temp_norm, mode="lines", line=Dict(:color => "yellow", :width => 1),
                     name="Hot Dust")])
             elseif occursin("unobscured_continuum", comp)
                 append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* nuc_temp_norm, mode="lines", line=Dict(:color => "black", :width => 0.5), 
                     name="Unobscured Continuum")])
             elseif occursin("na_feii", comp)
-                append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* att_gas, mode="lines", line=Dict(:color => "yellow", :width => 1),
+                append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* att_gas .* nuc_temp_norm, mode="lines", line=Dict(:color => "yellow", :width => 1),
                     name="Narrow Fe II")])
             elseif occursin("br_feii", comp)
-                append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* att_gas, mode="lines", line=Dict(:color => "yellow", :width => 2),
+                append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* att_gas .* nuc_temp_norm, mode="lines", line=Dict(:color => "yellow", :width => 2),
                     name="Broad Fe II")])
             elseif occursin("line", comp)
                 append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* (spectral_region == :MIR ? comps["extinction"] : att_gas) .* nuc_temp_norm, 
@@ -1670,12 +1688,18 @@ function plot_spaxel_fit(spectral_region::Symbol, λ_um::Vector{<:Real}, I::Vect
             end
         else
             # Add the summed up continuum
-            append!(traces, [PlotlyJS.scatter(x=λ, y=att_stars .* sum([comps["SSP_$i"] for i ∈ 1:n_ssps], dims=1)[1] .+
+            append!(traces, [PlotlyJS.scatter(x=λ, y=nuc_temp_norm .* (att_stars .* sum([comps["SSP_$i"] for i ∈ 1:n_ssps], dims=1)[1] .+
                 (fit_opt_na_feii ? comps["na_feii"] .* att_gas : zeros(length(λ))) .+ (fit_opt_br_feii ? comps["br_feii"] .* att_gas : zeros(length(λ))) .+
-                (n_power_law > 0 ? sum([comps["power_law_$j"] for j in 1:n_power_law], dims=1)[1] : zeros(length(λ))), mode="lines",
+                (n_power_law > 0 ? sum([comps["power_law_$j"] for j in 1:n_power_law], dims=1)[1] : zeros(length(λ)))), mode="lines",
                 line=Dict(:color => "green", :width => 1), name="Continuum")])
             for i in 1:n_ssps
-                append!(traces, [PlotlyJS.scatter(x=λ, y=att_stars .* comps["SSP_$i"], mode="lines", line=Dict(:color => "green", :width => 0.5))])
+                append!(traces, [PlotlyJS.scatter(x=λ, y=att_stars .* comps["SSP_$i"] .* nuc_temp_norm, mode="lines", line=Dict(:color => "green", :width => 0.5))])
+            end
+            # Individual templates
+            if !nuc_temp_fit
+                for j in 1:n_templates
+                    append!(traces, [PlotlyJS.scatter(x=λ, y=comps["templates_$j"], mode="lines", line=Dict(:color => "green", :width => 1), name="Template $j")])
+                end
             end
         end
 
@@ -1795,23 +1819,24 @@ function plot_spaxel_fit(spectral_region::Symbol, λ_um::Vector{<:Real}, I::Vect
                 end
             end
         else
-            ax1.plot(λ, (att_stars .* sum([comps["SSP_$i"] for i ∈ 1:n_ssps], dims=1)[1] .+
+            ax1.plot(λ, (((n_templates > 0) && !nuc_temp_fit ? sum([comps["templates_$k"] for k ∈ 1:n_templates], dims=1)[1] : zeros(length(λ))) .+
+                att_stars .* sum([comps["SSP_$i"] for i ∈ 1:n_ssps], dims=1)[1] .+
                 (fit_opt_na_feii ? comps["na_feii"] .* att_gas : zeros(length(λ))) .+ 
                 (fit_opt_br_feii ? comps["br_feii"] .* att_gas : zeros(length(λ))) .+
                 (n_power_law > 0 ? sum([comps["power_law_$j"] for j in 1:n_power_law], dims=1)[1] : zeros(length(λ)))) ./ 
-                norm .* factor, "k-", lw=2, alpha=0.5, label="Continuum")
+                norm .* nuc_temp_norm .* factor, "k-", lw=2, alpha=0.5, label="Continuum")
             # individual continuum components
             for i in 1:n_ssps
-                ax1.plot(λ, comps["SSP_$i"] .* att_stars ./ norm .* factor, "g-", alpha=0.75, label="SSPs")
+                ax1.plot(λ, comps["SSP_$i"] .* att_stars ./ norm .* nuc_temp_norm .* factor, "g-", alpha=0.75, label="SSPs")
             end
             for i in 1:n_power_law
-                ax1.plot(λ, comps["power_law_$i"] ./ norm .* factor, "k-", alpha=0.5, label="Power Law")
+                ax1.plot(λ, comps["power_law_$i"] ./ norm .* nuc_temp_norm .* factor, "k-", alpha=0.5, label="Power Law")
             end
             if haskey(comps, "na_feii")
-                ax1.plot(λ, comps["na_feii"] .* att_gas ./ norm .* factor, "-", color="goldenrod", alpha=0.8, label="Narrow Fe II")
+                ax1.plot(λ, comps["na_feii"] .* att_gas ./ norm .* nuc_temp_norm .* factor, "-", color="goldenrod", alpha=0.8, label="Narrow Fe II")
             end
             if haskey(comps, "br_feii")
-                ax1.plot(λ, comps["br_feii"] .* att_gas ./ norm .* factor, "--", color="goldenrod", alpha=0.8, label="Broad Fe II")
+                ax1.plot(λ, comps["br_feii"] .* att_gas ./ norm .* nuc_temp_norm .* factor, "--", color="goldenrod", alpha=0.8, label="Broad Fe II")
             end
         end
         # full line profile
@@ -2058,7 +2083,7 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
             p_lines, p_lines_err = calculate_extra_parameters(λ, I, norm, comps, cube_fitter.n_ssps, cube_fitter.n_power_law,
                 cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.n_lines, cube_fitter.n_acomps, cube_fitter.n_comps, 
                 cube_fitter.lines, cube_fitter.flexible_wavesol, lsf_interp_func, cube_fitter.relative_flags, popt_l, perr_l, comps[ext_key], 
-                mask_lines, I_spline, area_sr, cube_fitter.n_fit_comps, spaxel, !bootstrap_iter)
+                mask_lines, I_spline, area_sr, cube_fitter.n_fit_comps, cube_fitter.n_templates, nuc_temp_fit, spaxel, !bootstrap_iter)
             p_out = [popt_c; popt_l; p_lines; χ2; dof]
             p_err = [perr_c; perr_l; p_lines_err; 0.; 0.]
         end
@@ -2255,12 +2280,13 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                     I_boot_cont, comps_boot_cont = model_continuum(λ, p_out[1:split1], norm, cube_fitter.vres, cube_fitter.vsyst_ssp, 
                         cube_fitter.vsyst_feii, cube_fitter.npad_feii, cube_fitter.n_ssps, cube_fitter.ssp_λ, cube_fitter.ssp_templates,
                          cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, 
-                         cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve, true)
+                         cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve, templates, cube_fitter.fit_temp_multexp,
+                         nuc_temp_fit, true)
                     ext_key = "attenuation_gas"
                 end
                 I_boot_line, comps_boot_line = model_line_residuals(λ, p_out[split1+1:split2], cube_fitter.n_lines, cube_fitter.n_comps,
                     cube_fitter.lines, cube_fitter.flexible_wavesol, comps_boot_cont[ext_key], lsf_interp_func, cube_fitter.relative_flags,
-                    comps_boot_cont["templates_1"], nuc_temp_fit, true)
+                    nuc_temp_fit ? comps_boot_cont["templates_1"] : nothing, nuc_temp_fit, true)
 
                 # Reconstruct the full model
                 I_model = I_boot_cont .+ I_boot_line
@@ -2671,7 +2697,7 @@ function fit_cube!(cube_fitter::CubeFitter)
     @info "===> Generating parameter maps and model cubes... <==="
 
     # Create the ParamMaps and CubeModel structs containing the outputs
-    param_maps, param_errs, cube_model = assign_outputs(out_params, out_errs, cube_fitter, cube_data, cube_fitter.z, false)
+    param_maps, cube_model = assign_outputs(out_params, out_errs, cube_fitter, cube_data, cube_fitter.z, false)
 
     if cube_fitter.plot_maps
         @info "===> Plotting parameter maps... <==="
@@ -2680,7 +2706,7 @@ function fit_cube!(cube_fitter::CubeFitter)
 
     if cube_fitter.save_fits
         @info "===> Writing FITS outputs... <==="
-        write_fits(cube_fitter, cube_data, cube_model, param_maps, param_errs)
+        write_fits(cube_fitter, cube_data, cube_model, param_maps)
     end
 
     # Save a copy of the options file used to run the code, so the settings can be referenced/reused
@@ -2705,7 +2731,7 @@ function fit_cube!(cube_fitter::CubeFitter)
     """
 
     # Return the final cube_fitter object, along with the param maps/errs and cube model
-    cube_fitter, param_maps, param_errs, cube_model
+    cube_fitter, param_maps, cube_model
 
 end
 
@@ -2833,11 +2859,11 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
     @info "===> Generating parameter maps and model cubes... <==="
 
     # Create the ParamMaps and CubeModel structs containing the outputs
-    param_maps, param_errs, cube_model = assign_outputs(out_params, out_errs, cube_fitter, cube_data, cube_fitter.z, true)
+    param_maps, cube_model = assign_outputs(out_params, out_errs, cube_fitter, cube_data, cube_fitter.z, true)
 
     if cube_fitter.save_fits
         @info "===> Writing FITS outputs... <==="
-        write_fits(cube_fitter, cube_data, cube_model, param_maps, param_errs, aperture=aperture)
+        write_fits(cube_fitter, cube_data, cube_model, param_maps, aperture=aperture)
     end
 
     # Save a copy of the options file used to run the code, so the settings can be referenced/reused
@@ -2862,7 +2888,7 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
     """
 
     # Return the final cube_fitter object, along with the param maps/errs and cube model
-    cube_fitter, param_maps, param_errs, cube_model
+    cube_fitter, param_maps, cube_model
 
 end
 
@@ -2934,12 +2960,12 @@ function fit_nuclear_template!(cube_fitter::CubeFitter)
     @info "===> Generating parameter maps and model cubes... <==="
 
     # Create the ParamMaps and CubeModel structs containing the outputs
-    param_maps, param_errs, cube_model = assign_outputs(out_params, out_errs, cube_fitter, cube_data, cube_fitter.z, true,
+    param_maps, cube_model = assign_outputs(out_params, out_errs, cube_fitter, cube_data, cube_fitter.z, true,
         nuc_temp_fit=true)
 
     if cube_fitter.save_fits
         @info "===> Writing FITS outputs... <==="
-        write_fits(cube_fitter, cube_data, cube_model, param_maps, param_errs, nuc_temp_fit=true, nuc_spax=mx)
+        write_fits(cube_fitter, cube_data, cube_model, param_maps, nuc_temp_fit=true, nuc_spax=mx)
     end
 
     # copy the main log file again
@@ -2948,18 +2974,22 @@ function fit_nuclear_template!(cube_fitter::CubeFitter)
     # Update the templates in perparation for the full fitting procedure
     for s in 1:cube_fitter.n_templates
         cube_fitter.templates[:, :, :, s] .= [
-            # cube_model.model[k,1,1] / (1 + cube_fitter.z) / cube_model.templates[k,1,1,1] * cube_fitter.templates[i,j,k,s] for 
-            cube_model.model[k,1,1] / (1 + cube_fitter.z) / cube_fitter.templates[mx,k,s] * cube_fitter.templates[i,j,k,s] for
+            cube_model.model[k,1,1] / cube_fitter.templates[mx,k,s] * cube_fitter.templates[i,j,k,s] for
                 i in axes(cube_fitter.templates, 1),
                 j in axes(cube_fitter.templates, 2),
                 k in axes(cube_fitter.templates, 3)
             ]
+        if cube_fitter.spectral_region == :MIR
+            cube_fitter.templates ./= (1 .+ cube_fitter.z)
+        else
+            cube_fitter.templates .*= (1 .+ cube_fitter.z)
+        end
     end
     cube_fitter.nuc_fit_flag[1] = true
     # Save the template amplitudes 
     for nch in 1:cube_fitter.n_channels
         tp = cube_fitter.template_names[1]
-        cube_fitter.nuc_temp_amps[nch] = exp10(param_maps.templates[tp][Symbol("amp_$nch")][1,1])
+        cube_fitter.nuc_temp_amps[nch] = exp10(get(param_maps, CartesianIndex(1,1), "templates.$tp.amp_$nch"))
     end
     # lock the hot dust component for the rest of the fits
     cube_fitter.lock_hot_dust[1] = true
@@ -2967,7 +2997,7 @@ function fit_nuclear_template!(cube_fitter::CubeFitter)
     @info "Done!!"
 
     # Return the final cube_fitter object, along with the param maps/errs and cube model
-    cube_fitter, param_maps, param_errs, cube_model
+    cube_fitter, param_maps, cube_model
 
 end
 
@@ -3032,12 +3062,12 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, agn_templates::Arra
     @info "===> Generating parameter maps and model cubes... <==="
 
     # Create the ParamMaps and CubeModel structs containing the outputs
-    param_maps, param_errs, cube_model = assign_outputs(out_params, out_errs, cube_fitter, cube_data, cube_fitter.z, true,
+    param_maps, cube_model = assign_outputs(out_params, out_errs, cube_fitter, cube_data, cube_fitter.z, true,
         nuc_temp_fit=false)
 
     if cube_fitter.save_fits
         @info "===> Writing FITS outputs... <==="
-        write_fits(cube_fitter, cube_data, cube_model, param_maps, param_errs, nuc_temp_fit=false, aperture="all")
+        write_fits(cube_fitter, cube_data, cube_model, param_maps, nuc_temp_fit=false, aperture="all")
     end
     # lock the hot dust component for the rest of the fits
     cube_fitter.lock_hot_dust[1] = true
@@ -3047,7 +3077,7 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, agn_templates::Arra
     @info "Done!!"
 
     # Return the final cube_fitter object, along with the param maps/errs and cube model
-    cube_fitter, param_maps, param_errs, cube_model
+    cube_fitter, param_maps, cube_model
 
 end
 
@@ -3058,12 +3088,12 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, full_cube_model::St
 end
 
 function post_fit_nuclear_template!(cube_fitter::CubeFitter, full_cube_model::FITS, template_name::String)
-    agn_templates = read(full_cube_model["TEMPLATE_$template_name"])
+    agn_templates = read(full_cube_model["TEMPLATES.$(uppercase(template_name))"])
     # shift back into the rest frame
     if cube_fitter.spectral_region == :MIR
-        agn_templates ./= 1.597
+        agn_templates ./= (1 .+ cube_fitter.z)
     elseif cube_fitter.spectral_region == :OPT
-        agn_templates .*= 1.597
+        agn_templates .*= (1 .+ cube_fitter.z)
     end
     post_fit_nuclear_template!(cube_fitter, agn_templates)
 end
@@ -3072,9 +3102,10 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, full_cube_model::Cu
     agn_templates = full_cube_model.templates[:,:,:,template_index]
     # shift back into the rest frame
     if cube_fitter.spectral_region == :MIR
-        agn_templates ./= 1.597
+        agn_templates ./= (1 .+ cube_fitter.z)
     elseif cube_fitter.spectral_region == :OPT
-        agn_templates .*= 1.597
+        agn_templates .*= (1 .+ cube_fitter.z)
     end
     post_fit_nuclear_template!(cube_fitter, agn_templates)
 end
+

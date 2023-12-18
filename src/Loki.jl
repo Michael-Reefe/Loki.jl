@@ -249,10 +249,21 @@ include("util/parameters.jl")
 include("util/parsing.jl")
 include("util/math.jl")
 
+include("core/model_mir.jl")
+include("core/model_opt.jl")
+
 include("core/cubedata.jl")
+
 include("core/cubefit.jl")
+include("core/cubefit_mir.jl")
+include("core/cubefit_opt.jl")
+
 include("core/fitting.jl")
+
 include("core/output.jl")
+include("core/output_mir.jl")
+include("core/output_opt.jl")
+
 include("core/psf.jl")
 
 include("util/aperture_utils.jl")

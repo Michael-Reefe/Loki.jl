@@ -221,6 +221,16 @@ This boolean option determines whether to include the UV bump in the dust attenu
 
 This boolean option determines whether to include a dust covering fraction in the attenuation curve. This only applies if `extinction_curve` is set to `"calzetti"`.
 
+`tie_template_amps = false`
+
+This option determines whether or not template amplitudes should be tied between different channels - the default (false) means that a template may have different normalizations in each subchannel in the fit, allowing it to fit jumps in the continuum. This option only applies for MIR data. Optical data is assumed to only have 1 channel.
+
+`decompose_lock_column_densities = true`
+
+This option is used when fitting a "decompose"-type extinction curve. If enabled, the relative column densities of
+olivine, pyroxene, and forsterite will be locked to their best-fit values after the initial fit. Thus, they will not be allowed to vary
+for individual spaxel fits.
+
 `user_mask = []`
 
 This option allows the user to mask out predefined regions of the spectrum that will be ignored during the fitting process. To mask out a region bounded between $\lambda_1 < \lambda < \lambda_2$, add a tuple to the user mask of the format $(\lambda_1, \lambda_2)$. For example, `user_mask = [(5.5, 6.0), (10.2, 10.3)]` will mask out the regions between 5.5-6 μm and 10.2-10.3 μm.
@@ -292,7 +302,8 @@ This may be a vector of two tuples specifying wavelength ranges, in the same for
 
 `extinction_map`
 
-This allows the user to provide a 2D grid of either the 9.7-micron optical depth (for MIR fitting) or the reddening E(B-V) (for optical fitting) for each spaxel. The values in the grid will be used as the values for the corresponding spaxels in the fitting process, and they will be locked to these values. This is useful in cases where one wishes to fit a region of the spectrum that doesn't constrain the extinction very well, but has results from fitting another region of the spectrum that does constrain it well and can use those results to constrain the extinction in the other region.
+This allows the user to provide a 2D grid of either the 9.7-micron optical depth (for MIR fitting) or the reddening E(B-V) (for optical fitting) for each spaxel. The values in the grid will be used as the values for the corresponding spaxels in the fitting process, and they will be locked to these values. This is useful in cases where one wishes to fit a region of the spectrum that doesn't constrain the extinction very well, but has results from fitting another region of the spectrum that does constrain it well and can use those results to constrain the extinction in the other region. If using a "decompose"-type extinction curve, one may provide a 3D array where
+the third axis runs over the olivine, pyroxene, and forsterite column densities.
 
 `custom_ext_template`
 
@@ -305,6 +316,11 @@ A 2D map of boolean values where, if true, the spaxel at the corresponding locat
 `sort_line_components = :flux`
 
 Oftentimes one may desire to sort the components of lines fit with more than 1 profile based on a fitting quantity. This is controlled by the `sort_line_components` option, which by default is set to sort by the flux. Other sorting options are :amp for amplitude, :fwhm for FWHM, or :voff for velocity offsets. To disable sorting, set to `nothing`. N.B. sorting should be disabled if the additional line components are using relative parameters (see emission line options below), otherwise the sorting will not work correctly. The sorting order (increasing or decreasing) is also set by the emission line options.
+
+`lock_hot_dust`
+
+A boolean option that, if enabled, locks the hottest dust continuum component to 0 in the MIR. By default, this option is enabled if there are any templates in the fit, and disabled if there are no templates, but it can be overriden to whatever the user wants. The idea
+is that an AGN template should be used to fit the hotter dust components and the other dust components should be from the host galaxy.
 
 ### ii. MIR Continuum and PAH Options
 These options are found in `src/options/dust.toml`
@@ -360,10 +376,11 @@ If there are no templates, these options are ignored. Note: template amplitudes 
 
 **PAH Features:**
 
-Each PAH feature is labeled by its name, taking the format "PAH_X.XX" where X.XX is the central wavelength of the PAH to a precision of 2 decimal places.
+Each PAH feature is labeled by its name, taking the format "PAH_XXX" where XXX is the central wavelength of the PAH to a precision of 2 decimal places. The decimal place is always assumed to come before the last 2 digits. This is only important for record-keeping purposes though, and it should have no affect on the code if this convention is broken. The only thing that may look weird is the PAH
+labels in some parameter maps which assume the decimal is located before the last 2 digits.
 
 ```toml
-[dust_features."PAH_3.29".wave]
+[dust_features."PAH_329".wave]
 val = 3.29
 plim = [-0.05, 0.05]
 locked = false
@@ -371,7 +388,7 @@ locked = false
 The first option for each PAH feature is the central wavelength. `val` and `locked` work the same as before, but here `plim` is *additive* with `val`. In other words, a `plim` of `[-0.05, 0.05]` means that this value is allowed to vary from `3.29-0.05 = 3.24` to `3.29+0.05 = 3.34`.
 
 ```toml
-[dust_features."PAH_3.29".fwhm]
+[dust_features."PAH_329".fwhm]
 val = 0.050
 plim = [0.9, 1.1]
 locked = false
@@ -383,22 +400,22 @@ Note: If one wishes to model a PAH feature with a Pearson type-IV profile (curre
 Finally, PAHs can be combined into complexes with multiple Drude profiles using the "complex" keyword:
 
 ```toml
-[dust_features."PAH_7.42"]
+[dust_features."PAH_742"]
 complex = "7.7"
 
-[dust_features."PAH_7.52"]
+[dust_features."PAH_752"]
 complex = "7.7"
 
-[dust_features."PAH_7.60"]
+[dust_features."PAH_760"]
 complex = "7.7"
 
-[dust_features."PAH_7.75"]
+[dust_features."PAH_775"]
 complex = "7.7"
 
-[dust_features."PAH_7.85"]
+[dust_features."PAH_785"]
 complex = "7.7"
 
-[dust_features."PAH_7.96"]
+[dust_features."PAH_796"]
 complex = "7.7"
 ```
 
@@ -406,22 +423,22 @@ The `complex` entry should be a uniquely identifying string for that complex tha
 
 **Absorption Features:**
 
-Entries for absorption features modeled with Drude profiles work the exact same way as PAH features, with the exception that their names should be prefixed by "abs_".  One may set the "local" keyword to true if the feature in question is local (either from the Milky Way, or an instrumental effect), which will redshift the feature by the same amount as the source to keep it at the same observed wavelength. The example below shows a feature that models the spectral leak artifact at ~12.2 μm that is present in early versions of the JWST reduction pipeline. Note that this is not strictly correct, since the leak should be additive whereas the absorption features are multiplicative, but this is just for demonstrational purposes. There are no absorption features defined this way that are enabled by default.
+Entries for absorption features modeled with Drude profiles work the exact same way as PAH features, with the exception that their names should be prefixed by "abs_".  One may set the "local" keyword to true if the feature in question is local (either from the Milky Way, or an instrumental effect), which will redshift the feature by the same amount as the source to keep it at the same observed wavelength. The example below shows a feature that models the spectral leak artifact at ~12.2 μm that is present in early versions of the JWST reduction pipeline. Note that this is just an example, and for real fitting purposes an absorption feature should not be used for this feature since it is an additive and not a multiplicative effect. There are no absorption features defined this way that are enabled by default.
 ```toml
-[absorption_features."abs_leak_12.22"]
+[absorption_features."abs_leak_1222"]
 local = true
 
-[absorption_features."abs_leak_12.22".tau]
+[absorption_features."abs_leak_1222".tau]
 val = 0.1
 plim = [0.0, 0.2]
 locked = false
 
-[absorption_features."abs_leak_12.22".wave]
+[absorption_features."abs_leak_1222".wave]
 val = 12.22
 plim = [-0.1, 0.1]
 locked = true
 
-[absorption_features."abs_leak_12.22".fwhm]
+[absorption_features."abs_leak_1222".fwhm]
 val = 0.133
 plim = [0.4, 1.4]
 locked = true
@@ -998,33 +1015,33 @@ The parameter maps are organized as follows. Each model parameter has its own He
 ```
 No.  Name                          Ver Type         Cards   Dimensions Format
   0  PRIMARY                         1 PrimaryHDU      29   (0,)
-  1  STELLAR_CONTINUUM_TEMP          1 ImageHDU         9   (49, 44)   float64
-  2  STELLAR_CONTINUUM_AMP           1 ImageHDU         9   (49, 44)   float64
+  1  CONTINUUM.STELLAR.TEMP          1 ImageHDU         9   (49, 44)   float64
+  2  CONTINUUM.STELLAR.AMP           1 ImageHDU         9   (49, 44)   float64
 ...
- 19  DUST_CONTINUUM_1_TEMP           1 ImageHDU         9   (49, 44)   float64
- 20  DUST_CONTINUUM_1_AMP            1 ImageHDU         9   (49, 44)   float64
- 21  HOT_DUST_TAU_COLD               1 ImageHDU         9   (49, 44)   float64
- 22  HOT_DUST_TEMP                   1 ImageHDU         9   (49, 44)   float64
- 23  HOT_DUST_AMP                    1 ImageHDU         9   (49, 44)   float64
- 24  HOT_DUST_FRAC                   1 ImageHDU         9   (49, 44)   float64
- 25  HOT_DUST_TAU_WARM               1 ImageHDU         9   (49, 44)   float64
- 26  HOT_DUST_SIL_PEAK               1 ImageHDU         9   (49, 44)   float64
+ 19  CONTINUUM.DUST.1.TEMP           1 ImageHDU         9   (49, 44)   float64
+ 20  CONTINUUM.DUST.1.AMP            1 ImageHDU         9   (49, 44)   float64
+ 21  CONTINUUM.HOT_DUST.TAU_COLD     1 ImageHDU         9   (49, 44)   float64
+ 22  CONTINUUM.HOT_DUST.TEMP         1 ImageHDU         9   (49, 44)   float64
+ 23  CONTINUUM.HOT_DUST.AMP          1 ImageHDU         9   (49, 44)   float64
+ 24  CONTINUUM.HOT_DUST.FRAC         1 ImageHDU         9   (49, 44)   float64
+ 25  CONTINUUM.HOT_DUST.TAU_WARM     1 ImageHDU         9   (49, 44)   float64
+ 26  CONTINUUM.HOT_DUST.SIL_PEAK     1 ImageHDU         9   (49, 44)   float64
  ...
- 57  DUST_FEATURES_PAH_11.00_FLUX    1 ImageHDU         9   (49, 44)   float64
- 58  DUST_FEATURES_PAH_11.00_SNR     1 ImageHDU         9   (49, 44)   float64
- 59  DUST_FEATURES_PAH_11.00_MEAN    1 ImageHDU         9   (49, 44)   float64
- 60  DUST_FEATURES_PAH_11.00_FWHM    1 ImageHDU         9   (49, 44)   float64
- 61  DUST_FEATURES_PAH_11.00_AMP     1 ImageHDU         9   (49, 44)   float64
+ 57  DUST_FEATURES.PAH_1100.FLUX     1 ImageHDU         9   (49, 44)   float64
+ 58  DUST_FEATURES.PAH_1100.SNR      1 ImageHDU         9   (49, 44)   float64
+ 59  DUST_FEATURES.PAH_1100.MEAN     1 ImageHDU         9   (49, 44)   float64
+ 60  DUST_FEATURES.PAH_1100.FWHM     1 ImageHDU         9   (49, 44)   float64
+ 61  DUST_FEATURES.PAH_1100.AMP      1 ImageHDU         9   (49, 44)   float64
  ...
- 305  LINES_SIV_10511_2_FLUX         1 ImageHDU         9   (49, 44)   float64
- 306  LINES_SIV_10511_2_SNR          1 ImageHDU         9   (49, 44)   float64
- 307  LINES_SIV_10511_2_VOFF         1 ImageHDU         9   (49, 44)   float64
- 308  LINES_SIV_10511_2_MIXING       1 ImageHDU         9   (49, 44)   float64
- 309  LINES_SIV_10511_2_FWHM         1 ImageHDU         9   (49, 44)   float64
- 310  LINES_SIV_10511_2_AMP          1 ImageHDU         9   (49, 44)   float64
+ 305  LINES.SIV_10511.2.FLUX         1 ImageHDU         9   (49, 44)   float64
+ 306  LINES.SIV_10511.2.SNR          1 ImageHDU         9   (49, 44)   float64
+ 307  LINES.SIV_10511.2.VOFF         1 ImageHDU         9   (49, 44)   float64
+ 308  LINES.SIV_10511.2.MIXING       1 ImageHDU         9   (49, 44)   float64
+ 309  LINES.SIV_10511.2.FWHM         1 ImageHDU         9   (49, 44)   float64
+ 310  LINES.SIV_10511.2.AMP          1 ImageHDU         9   (49, 44)   float64
  ...
- 515  STATISTICS_DOF                 1 ImageHDU         9   (49, 44)   float64
- 516  STATISTICS_CHI2                1 ImageHDU         9   (49, 44)   float64
+ 515  STATISTICS.DOF                 1 ImageHDU         9   (49, 44)   float64
+ 516  STATISTICS.CHI2                1 ImageHDU         9   (49, 44)   float64
 ```
 This data can be accessed using Julia's FITSIO package or python's Astropy package. Examples of how to do so are provided below.
 
@@ -1033,7 +1050,7 @@ Using Julia:
 using FITSIO
 hdu = FITS("path/to/file.fits")
 # Read the full 2D map
-Pfa_flux_map = read(hdu["lines_HI_Pf_alpha_1_flux"])
+Pfa_flux_map = read(hdu["LINES.HI_PF_ALPHA.1.FLUX"])
 # Pick out a specific spaxel
 Pfa_flux = Pfa_flux_map[15,23]
 ```
@@ -1042,7 +1059,7 @@ Using Python:
 from astropy.io import fits
 hdu = fits.open("path/to/file.fits")
 # Read the full 2D map
-Pfa_flux_map = hdu["lines_HI_Pf_alpha_1_flux"].data
+Pfa_flux_map = hdu["LINES.HI_PF_ALPHA.1.FLUX"].data
 # Pick out a specific spaxel
 Pfa_flux = Pfa_flux_map[22,14]
 ```
@@ -1050,22 +1067,22 @@ When switching between python and julia, recall that python uses 0-based, row-ma
 
 The model cubes are organized in a very similar manner. There are individual HDUs for the data, error, full model, and each component of the model. An example of the format, in the same manner as the parameter maps, is given below:
 ```
-No.  Name               Ver Type         Cards   Dimensions       Format
-  0  PRIMARY              1 PrimaryHDU      29   (0,)
-  1  DATA                 1 ImageHDU        10   (47, 42, 8985)   float32
-  2  ERROR                1 ImageHDU        10   (47, 42, 8985)   float32
-  3  MODEL                1 ImageHDU        10   (47, 42, 8985)   float32
-  4  STELLAR_CONTINUUM    1 ImageHDU        10   (47, 42, 8985)   float32
-  5  DUST_CONTINUUM_1     1 ImageHDU        10   (47, 42, 8985)   float32
+No.  Name                 Ver Type         Cards   Dimensions       Format
+  0  PRIMARY                1 PrimaryHDU      29   (0,)
+  1  DATA                   1 ImageHDU        10   (47, 42, 8985)   float32
+  2  ERROR                  1 ImageHDU        10   (47, 42, 8985)   float32
+  3  MODEL                  1 ImageHDU        10   (47, 42, 8985)   float32
+  4  CONTINUUM.STELLAR      1 ImageHDU        10   (47, 42, 8985)   float32
+  5  CONTINUUM.DUST.1       1 ImageHDU        10   (47, 42, 8985)   float32
  ...
- 14  PAH_5.24             1 ImageHDU        10   (47, 42, 8985)   float32
+ 14  DUST_FEATURES.PAH_524  1 ImageHDU        10   (47, 42, 8985)   float32
  ...
- 62  H200_S8              1 ImageHDU        10   (47, 42, 8985)   float32
+ 62  LINES.H200_S8          1 ImageHDU        10   (47, 42, 8985)   float32
  ...
- 96  EXTINCTION           1 ImageHDU        10   (47, 42, 8985)   float32
- 97  ABS_ICE              1 ImageHDU        10   (47, 42, 8985)   float32
- 98  ABS_CH               1 ImageHDU        10   (47, 42, 8985)   float32
- 99  WAVELENGTH           1 BinTableHDU     12   8985R x 1C       [1D]
+ 96  EXTINCTION             1 ImageHDU        10   (47, 42, 8985)   float32
+ 97  EXTINCTION.ABS_ICE     1 ImageHDU        10   (47, 42, 8985)   float32
+ 98  EXTINCTION.ABS_CH      1 ImageHDU        10   (47, 42, 8985)   float32
+ 99  WAVELENGTH             1 BinTableHDU     12   8985R x 1C       [1D]
 ```
 They can be loaded in the same manner as the parameter maps, bearing in mind that there are now 3 dimensions to index for each HDU instead of 2. The "WAVELENGTH" HDU is an exception, being a table with one entry ("wave") that gives the 1-dimensional wavelength array that corresponds to the third axis of all the other HDUs. This was necessary because the wavelength arrays fitted by the code may not strictly be linear, especially when fitting multi-channel data, and trying to represent this with a 3D WCS is not possible. This is why the included WCS information in these outputs is strictly 2-dimensional, covering the 2 spatial dimensions of the cubes.
 

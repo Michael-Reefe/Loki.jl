@@ -456,8 +456,23 @@ function parse_optical()
     msg *= "\nfrac $frac"
     @debug msg
 
+    # template parameters
+    if haskey(optical, "template_amps")
+        temp_A = []
+        for i ∈ eachindex(optical["template_amps"])
+            push!(temp_A, from_dict(optical["template_amps"][i]))
+        end
+        msg = "Template amplitudes:"
+        for Ai ∈ temp_A
+            msg *= "\n$Ai"
+        end
+        @debug msg
+    else
+        temp_A = []
+    end
+
     continuum = OpticalContinuum(ssp_ages, ssp_metallicities, stel_vel, stel_vdisp, na_feii_vel, na_feii_vdisp, 
-        br_feii_vel, br_feii_vdisp, α, E_BV, E_BV_factor, δ_uv, frac)
+        br_feii_vel, br_feii_vdisp, α, E_BV, E_BV_factor, δ_uv, frac, temp_A)
 
     continuum
 end

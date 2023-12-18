@@ -161,6 +161,9 @@ struct OpticalContinuum <: Continuum
     δ_uv::Parameter
     frac::Parameter
 
+    # Template amplitudes
+    temp_amp::Vector{Parameter}
+
 end
 
 
