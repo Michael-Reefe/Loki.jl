@@ -20,6 +20,9 @@ save_fits = true
 # is used to estimate the uncertainties on parameters given the uncertainties in the data.
 n_bootstrap = 0
 
+# bootstrap_use: "med" for median or "best" for original best-fit values
+bootstrap_use = "med"
+
 # random_seed: Set the random seed for bootstrapping
 random_seed = 123456789
 
@@ -110,6 +113,14 @@ fit_uv_bump = false
 
 # whether or not to fit a dust covering fraction for the calzetti attenuation curve
 fit_covering_frac = false
+
+# whether or not template amplitudes should be tied between different channels - the default (false) means that a
+# template may have different normalizations in each subchannel in the fit, allowing it to fit jumps in the continuum.
+tie_template_amps = false
+
+# this option, if enabled, will lock the relative abundances of olivine, pyroxene, and forsterite to the values obtained
+# from the initial fit to the integrated spectrum (the overall normalization may still change).
+decompose_lock_column_densities = true
 
 user_mask = []
 

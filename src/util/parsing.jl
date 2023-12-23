@@ -138,7 +138,7 @@ Read in the dust.toml configuration file, checking that it is formatted correctl
 and convert it into a julia dictionary with Parameter objects for dust fitting parameters.
 This deals with continuum, PAH features, and extinction options.
 """
-function parse_dust(n_channels::Integer=0)
+function parse_dust(n_channels::Int=0)
 
     @debug """\n
     Parsing dust file
@@ -217,7 +217,7 @@ function parse_dust(n_channels::Integer=0)
     if haskey(dust, "template_amps")
         temp_A = []
         for i ∈ eachindex(dust["template_amps"])
-            for _ ∈ 1:n_channels
+            for _ in 1:n_channels
                 push!(temp_A, from_dict(dust["template_amps"][i]))
             end
         end
@@ -456,8 +456,23 @@ function parse_optical()
     msg *= "\nfrac $frac"
     @debug msg
 
+    # template parameters
+    if haskey(optical, "template_amps")
+        temp_A = []
+        for i ∈ eachindex(optical["template_amps"])
+            push!(temp_A, from_dict(optical["template_amps"][i]))
+        end
+        msg = "Template amplitudes:"
+        for Ai ∈ temp_A
+            msg *= "\n$Ai"
+        end
+        @debug msg
+    else
+        temp_A = []
+    end
+
     continuum = OpticalContinuum(ssp_ages, ssp_metallicities, stel_vel, stel_vdisp, na_feii_vel, na_feii_vdisp, 
-        br_feii_vel, br_feii_vdisp, α, E_BV, E_BV_factor, δ_uv, frac)
+        br_feii_vel, br_feii_vdisp, α, E_BV, E_BV_factor, δ_uv, frac, temp_A)
 
     continuum
 end
@@ -567,7 +582,7 @@ function parse_lines()
     for (i, line) ∈ enumerate(keys(lines["lines"]))
 
         # Define the initial values of line parameters given the values in the options file (if present)
-        fwhm_init = haskey(lines, "fwhm_init") ? lines["fwhm_init"] : 250.0
+        fwhm_init = haskey(lines, "fwhm_init") ? lines["fwhm_init"] : 300.0
         voff_init = haskey(lines, "voff_init") ? lines["voff_init"] : 0.0
         h3_init = haskey(lines, "h3_init") ? lines["h3_init"] : 0.0        # gauss-hermite series start fully gaussian,
         h4_init = haskey(lines, "h4_init") ? lines["h4_init"] : 0.0        # with both h3 and h4 moments starting at 0

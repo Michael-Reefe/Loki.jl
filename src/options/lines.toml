@@ -26,13 +26,6 @@ acomp_1_kinematic_group_H2 = [
 # tie_amp_Balmer = [0.105, 0.158, 0.256, 0.466, 1.0, 2.87]
 # tie_acomp_1_amp_Balmer = [0.105, 0.158, 0.256, 0.466, 1.0, 2.87]
 
-# kinematic_group_HI = [
-#     "HI_",
-# ]
-# acomp_1_kinematic_group_HI = [
-#     "HI_",
-# ]
-
 kinematic_group_lo = [
     "HI_",
     "HeI_",
@@ -90,24 +83,7 @@ acomp_1_kinematic_group_hi = [
     "SiIX_",
 ]
 
-# kinematic_group_l3 = [
-#     "ArIII_",
-#     "SIV_",
-# ]
-# acomp_1_kinematic_group_l3 = [
-#     "ArIII_",
-#     "SIV_",
-# ]
-# kinematic_group_h3 = [
-#     "NeVI_",
-#     "MgVII_",
-# ]
-# acomp_1_kinematic_group_h3 = [
-#     "NeVI_",
-#     "MgVII_",
-# ]
-
-# # Lines to make combined flux/eqw maps for
+# Lines to make combined flux/eqw maps for
 combined_maps = [["OII_03727", "OII_03729"]]
 
 # Line voff and FWHM limits
@@ -1022,6 +998,8 @@ SIV_10511 = ["Voigt"]
 
 NeII_12813 = ["Voigt"]
 NeV_14322 = ["Voigt"]
+
+NeIII_15555 = ["Voigt"]
 
 # optional: add [parameters] key to specify individual line priors that 
 # are different from the defaults

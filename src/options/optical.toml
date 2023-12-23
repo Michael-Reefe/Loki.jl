@@ -103,3 +103,10 @@ locked = false
 val = 0.5
 plim = [0.0, 1.0]
 locked = false
+
+
+# template_amps: amplitude parameters for each template in the fit
+[[template_amps]]
+val = 1.0
+plim = [0.5, 1.5]
+locked = false
