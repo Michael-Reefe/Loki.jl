@@ -130,6 +130,12 @@ This boolean option enables or disables saving the final model parameters and un
 
 This option sets the number of bootstrap iterations that are performed on each fit. Setting it to 0 (the default) disables bootstrapping. When bootstrapping is disabled, the provided uncertainties will be calculated based on the covariance matrix of the LM fit.
 
+`bootstrap_use = "med"`
+
+Determines what the output values are when bootstrapping. The default "med" outputs the median (50th percentile) of each bootstrap
+iteration. The other option is "best" which outputs the best-fit parameters for the actual non-bootstrapped data. This option does
+not affect the uncertainties, which are always calculated as the (84.1st - 50th, 50th - 15.9th) percentiles.
+
 `random_seed = 123456789`
 
 This option sets the random seed that is used when resampling the data for bootstrapping iterations. By using the same seed, you are guaranteed to get the same results after repeated runs (assuming all other inputs are the same).
