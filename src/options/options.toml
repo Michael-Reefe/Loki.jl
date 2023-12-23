@@ -56,6 +56,10 @@ make_movies = false
 # fitting data for each spaxel will already be saved)
 save_full_model = true
 
+# sys_err: Optional systematic error to add in quadrature. I.e. sys_err = 0.1 adds a 10%
+# systematic error.
+sys_err = 0.0
+
 # extinction_curve: May be "kvt" for the Kemper, Vriend, & Tielens (2004) 
 # extinction profile, "ct" for the Chiar & Tielens (2005) extinction profile,
 # "ohm" for the Ossenkopf, Henning, & Mathis (1992) extinction profile, or "d+" for the 

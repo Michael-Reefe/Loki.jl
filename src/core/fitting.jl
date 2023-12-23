@@ -2172,6 +2172,9 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
         σ = sqrt.(σ.^2 .+ σ_min.^2)
     end
 
+    # Add systematic error in quadrature
+    σ = sqrt.(σ.^2 .+ (cube_fitter.sys_err .* I).^2)
+
     # Check if the fit has already been performed
     fname = use_vorbins ? "voronoi_bin_$(spaxel[1])" : "spaxel_$(spaxel[1])_$(spaxel[2])"
     if nuc_temp_fit

@@ -160,6 +160,10 @@ This boolean option determines whether or not to generate an mp4 movie of the da
 
 This boolean option determines whether or not to save the full 3D model, evaluated at the same grid points as the input data, in a FITS cube format at the end of fitting. N.B. these files tend to be very large (multiple gigabytes) and can take a while to generate.
 
+`sys_err = 0.0`
+
+This option allows one to add a systematic error in quadrature with the input errors as a fraction of the flux. For example, `sys_err = 0.1` will add a 10% systematic error. The default is to not add any systematic errors.
+
 `extinction_curve = "kvt"`
 
 This option determines what dust extinction template to use, and has different options for the MIR and optical. 

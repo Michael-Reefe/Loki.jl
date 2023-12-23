@@ -254,6 +254,8 @@ specific emission lines of interest).
 - `make_movies::Bool`: Whether or not to save mp4 files of the final model
 
 ## Basic fitting options
+- `sys_err::Real`: Optional systematic uncertainty quantified as a ratio (0-1) of the flux. I.e. to add a 10% systematic 
+    uncertainty use fσ_sys = 0.1
 - `extinction_curve::String`: The type of extinction curve being used, i.e. `"kvt"` or `"d+"`
 - `extinction_screen::Bool`: Whether or not the extinction is modeled as a screen
 - `κ_abs::Vector{Spline1D}`: Mass absorption coefficient for amorphous olivine Mg(2y)Fe(2-2y)SiO4, amorphous pyroxene Mg(x)Fe(1-x)SiO3, and 
@@ -398,6 +400,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     track_convergence::Bool
     make_movies::Bool
 
+    sys_err::Real
     extinction_curve::String
     extinction_screen::Bool
     κ_abs::Vector{Spline1D}
@@ -1180,6 +1183,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             out[:track_memory], 
             out[:track_convergence], 
             out[:make_movies], 
+            out[:sys_err],
             out[:extinction_curve], 
             out[:extinction_screen], 
             [κ_oli, κ_pyr, κ_for], 
