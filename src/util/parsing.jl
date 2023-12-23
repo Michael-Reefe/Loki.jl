@@ -582,7 +582,7 @@ function parse_lines()
     for (i, line) ∈ enumerate(keys(lines["lines"]))
 
         # Define the initial values of line parameters given the values in the options file (if present)
-        fwhm_init = haskey(lines, "fwhm_init") ? lines["fwhm_init"] : 250.0
+        fwhm_init = haskey(lines, "fwhm_init") ? lines["fwhm_init"] : 300.0
         voff_init = haskey(lines, "voff_init") ? lines["voff_init"] : 0.0
         h3_init = haskey(lines, "h3_init") ? lines["h3_init"] : 0.0        # gauss-hermite series start fully gaussian,
         h4_init = haskey(lines, "h4_init") ? lines["h4_init"] : 0.0        # with both h3 and h4 moments starting at 0

@@ -203,6 +203,9 @@ export DataCube,   # DataCube struct
        # ParamMaps and CubeModel structs
        ParamMaps,
        CubeModel,
+       get,
+       get_err,
+       get_label,
 
        # initialization functions
        parammaps_empty,

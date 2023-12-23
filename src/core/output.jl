@@ -87,7 +87,7 @@ function sort_line_components!(cube_fitter::CubeFitter, params::Vector{<:Real}; 
             pⱼ += 3
         end
         # Dont forget to count the composite line parameters
-        pⱼ += 4
+        pⱼ += 5
 
         # Dont need to sort if there is only 1 profile
         if n_prof < 2

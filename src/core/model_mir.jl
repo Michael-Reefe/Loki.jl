@@ -557,8 +557,8 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     end
 
     # Loop through lines
-    p_lines = zeros(3n_lines+3n_acomps+4n_lines)
-    p_lines_err = zeros(3n_lines+3n_acomps+4n_lines)
+    p_lines = zeros(3n_lines+3n_acomps+5n_lines)
+    p_lines_err = zeros(3n_lines+3n_acomps+5n_lines)
 
     # Unpack the relative flags
     rel_amp, rel_voff, rel_fwhm = relative_flags
@@ -743,23 +743,26 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
 
         # W80 and Δv parameters
         fwhm_inst = lsf(λ0)
-        w80, Δv, vmed = calculate_composite_params(λ, total_profile, λ0, fwhm_inst)
+        w80, Δv, vmed, vpeak = calculate_composite_params(λ, total_profile, λ0, fwhm_inst)
         p_lines[pₒ+1] = w80
         p_lines[pₒ+2] = Δv
         p_lines[pₒ+3] = vmed
+        p_lines[pₒ+4] = vpeak
         if propagate_err
-            w80_lo, Δv_lo, vmed_lo = calculate_composite_params(λ, profile_err_lo, λ0, fwhm_inst)
-            w80_hi, Δv_hi, vmed_hi = calculate_composite_params(λ, profile_err_hi, λ0, fwhm_inst)
+            w80_lo, Δv_lo, vmed_lo, vpeak_lo = calculate_composite_params(λ, profile_err_lo, λ0, fwhm_inst)
+            w80_hi, Δv_hi, vmed_hi, vpeak_hi = calculate_composite_params(λ, profile_err_hi, λ0, fwhm_inst)
             w80_err = mean([w80 - w80_lo, w80_hi - w80])
             Δv_err = mean([Δv - Δv_lo, Δv_hi - Δv])
             vmed_err = mean([vmed - vmed_lo, vmed_hi - vmed])
+            vpeak_err = mean([vpeak - vpeak_lo, vpeak_hi - vpeak])
             p_lines_err[pₒ+1] = w80_err
             p_lines_err[pₒ+2] = Δv_err
             p_lines_err[pₒ+3] = vmed_err
+            p_lines_err[pₒ+4] = vpeak_err
         end
-        @debug "W80=$(w80), DELTA_V=$(Δv), VMED=$(vmed)"
+        @debug "W80=$(w80), DELTA_V=$(Δv), VMED=$(vmed), VPEAK=$(vpeak)"
 
-        pₒ += 4
+        pₒ += 5
 
     end
 

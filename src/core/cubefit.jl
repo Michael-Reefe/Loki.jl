@@ -194,13 +194,14 @@ function _get_line_names_and_transforms(cf_lines::TransitionLines, n_lines::Inte
                 append!(line_extra_perfreq, p_extra_pf)
             end
         end
-        pnames_comp = ["n_comps", "w80", "delta_v", "vmed"]
-        punits_comp = ["-", "km/s", "km/s", "km/s"]
-        plabels_comp = [L"$n_{\rm comp}$", L"$W_{80}$ (km s$^{-1}$)", L"$\Delta v$ (km s$^{-1}$)", L"$v_{\rm med}$ (km s$^{-1}$)"]
-        p_comp_rf = [0, 0, 0, 0]
-        p_comp_log = [0, 0, 0, 0]
-        p_comp_norm = [0, 0, 0, 0]
-        p_comp_pf = [0, 0, 0, 0]
+        pnames_comp = ["n_comps", "w80", "delta_v", "vmed", "vpeak"]
+        punits_comp = ["-", "km/s", "km/s", "km/s", "km/s"]
+        plabels_comp = [L"$n_{\rm comp}$", L"$W_{80}$ (km s$^{-1}$)", L"$\Delta v$ (km s$^{-1}$)", L"$v_{\rm med}$ (km s$^{-1}$)",
+            L"$v_{\rm peak}$ (km s$^{-1}$)"]
+        p_comp_rf = [0, 0, 0, 0, 0]
+        p_comp_log = [0, 0, 0, 0, 0]
+        p_comp_norm = [0, 0, 0, 0, 0]
+        p_comp_pf = [0, 0, 0, 0, 0]
         append!(line_names_extra, [join([line, pname], ".") for pname in pnames_comp])
         append!(line_units_extra, punits_comp)
         append!(line_labels_extra, plabels_comp)
@@ -344,6 +345,8 @@ at each point in the wavelength grid.
     for a bad wavelength solution
 - `n_bootstrap::S`: The number of bootstrapping iterations that should be performed for each fit.
 - `random_seed::S`: An optional number to use as a seed for the RNG utilized during bootstrapping, to ensure consistency between
+- `bootstrap_use::Symbol`: Determines what to output for the resulting parameter values when bootstrapping. May be :med for the 
+    median or :best for the original best-fit values.
 attempts.
 - `line_test_lines::Vector{Vector{Symbol}}`: A list of lines which should be tested for additional components. They may be grouped
 together (hence the vector-of-a-vector structure) such that lines in a group will all be given the maximum number of parameters that
@@ -469,6 +472,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     flexible_wavesol::Bool
     n_bootstrap::S
     random_seed::S
+    bootstrap_use::Symbol
     line_test_lines::Vector{Vector{Symbol}}
     line_test_threshold::T
     plot_line_test::Bool
@@ -515,6 +519,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
         end
         out[:line_test_lines] = [[Symbol(ln) for ln in group] for group in out[:line_test_lines]]
         out[:plot_spaxels] = Symbol(out[:plot_spaxels])
+        out[:bootstrap_use] = Symbol(out[:bootstrap_use])
         if !haskey(out, :plot_range)
             out[:plot_range] = nothing
         else
@@ -952,7 +957,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
                 end
             end
         end
-        n_params_extra = 3 * (n_dust_features + n_lines + n_acomps) + 4n_lines
+        n_params_extra = 3 * (n_dust_features + n_lines + n_acomps) + 5n_lines
         @debug "### There is a total of $(n_params_cont) continuum parameters ###"
         @debug "### There is a total of $(n_params_lines) emission line parameters ###"
         @debug "### There is a total of $(n_params_extra) extra parameters ###"
@@ -1232,6 +1237,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             flexible_wavesol, 
             out[:n_bootstrap], 
             out[:random_seed], 
+            out[:bootstrap_use],
             out[:line_test_lines], 
             out[:line_test_threshold], 
             out[:plot_line_test], 

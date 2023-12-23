@@ -1368,7 +1368,7 @@ function calculate_composite_params(λ::Vector{<:Real}, flux::Vector{<:Real}, λ
     # Get the cumulative distribution function
     m = flux .> 0
     if sum(m) < 2
-        return 0., 0., 0.
+        return 0., 0., 0., 0.
     end
 
     line_cdf = cumsum(flux[m] ./ sum(flux[m]))
@@ -1378,12 +1378,12 @@ function calculate_composite_params(λ::Vector{<:Real}, flux::Vector{<:Real}, λ
     w = (line_cdf .> 0.01) .& (line_cdf .< 0.99)
     line_cdf = line_cdf[w]
     velocity = velocity[w]
-    if length(line_cdf) < 2
-        return 0., 0., 0.
+    if length(line_cdf) < 10
+        return 0., 0., 0., 0
     end
 
     # Interpolate to find where velocity is at 5, 10 and 90, and 95%
-    vinterp = Spline1D(line_cdf, velocity, k=1, bc="extrapolate")
+    vinterp = Spline1D(line_cdf, velocity, k=3, bc="extrapolate")
     v5 = vinterp(0.05)
     v10 = vinterp(0.10)
     vmed = vinterp(0.50)
@@ -1396,8 +1396,14 @@ function calculate_composite_params(λ::Vector{<:Real}, flux::Vector{<:Real}, λ
     w80_inst = 1.09 * fwhm_inst
     w80 = sqrt(clamp(w80^2 - w80_inst^2, 0., Inf))
 
+    # Calculate peak velocity
+    finterp = Spline1D(velocity, flux[m][w], k=3, bc="extrapolate")
+    guess = velocity[nanargmax(flux[m][w])]
+    res = Optim.optimize(v -> -finterp(v), guess-50., guess+50.)
+    vpeak = res.minimizer[1]
+
     # Calculate Δv (see Harrison et al. 2014: https://ui.adsabs.harvard.edu/abs/2014MNRAS.441.3306H/abstract)
     Δv = (v5 + v95)/2 
 
-    w80, Δv, vmed
+    w80, Δv, vmed, vpeak
 end
