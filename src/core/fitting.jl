@@ -437,7 +437,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, Î
         pah_amp = zeros(2)
     end
 
-    if init
+    if init || (use_ap && !bootstrap_iter && cube_fitter.n_bootstrap > 0) 
         cube_fitter.p_init_cont[:] .= popt
         # Save the results to a file 
         # save running best fit parameters in case the fitting is interrupted
@@ -678,7 +678,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, Î
         end
     end
 
-    if init
+    if init || (use_ap && !bootstrap_iter && cube_fitter.n_bootstrap > 0)
         cube_fitter.p_init_cont[:] .= popt
         cube_fitter.p_init_pahtemp[:] .= res_1.param[end-1:end]
         # Save the results to a file 
@@ -1138,7 +1138,7 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, Î»::Ve
     I_model, comps = model_line_residuals(Î», popt, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
         cube_fitter.flexible_wavesol, ext_curve, lsf_interp_func, cube_fitter.relative_flags, template_norm, nuc_temp_fit, true)
     
-    if init
+    if init || (use_ap && !bootstrap_iter && cube_fitter.n_bootstrap > 0)
         # Clean up the initial parameters to be more amenable to individual spaxel fits
         popt = clean_line_parameters(cube_fitter, popt, lower_bounds, upper_bounds)
         # Save results to file
