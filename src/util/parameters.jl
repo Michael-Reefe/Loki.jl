@@ -229,6 +229,39 @@ end
 
 
 """
+    make_single_transitionline_object(lines, i)
+
+Takes a TransitionLine object and an index i and creates a new TransitionLine
+object which contains only the single line at index i in the original object.
+"""
+function make_single_transitionline_object(lines::TransitionLines, i::Integer)
+    n_comps = size(lines.profiles, 2)
+
+    TransitionLines(
+        [lines.names[i]], 
+        [lines.latex[i]], 
+        [lines.annotate[i]],
+        [lines.λ₀[i]], 
+        [lines.sort_order[i]],
+        reshape(lines.profiles[i, :], (1, n_comps)), 
+        reshape(lines.tied_amp[i, :], (1, n_comps)),
+        reshape(lines.tied_voff[i, :], (1, n_comps)),
+        reshape(lines.tied_fwhm[i, :], (1, n_comps)), 
+        reshape(lines.acomp_amp[i, :], (1, n_comps-1)), 
+        reshape(lines.voff[i, :], (1, n_comps)), 
+        reshape(lines.fwhm[i, :], (1, n_comps)), 
+        reshape(lines.h3[i, :], (1, n_comps)),
+        reshape(lines.h4[i, :], (1, n_comps)), 
+        reshape(lines.η[i, :], (1, n_comps)),
+        lines.combined, 
+        lines.rel_amp,
+        lines.rel_voff,
+        lines.rel_fwhm
+    )
+end
+
+
+"""
     TiedKinematics(key_amp, amp, key_voff, voff, key_fwhm, fwhm)
 
 A container for tied amplitude and kinematic parameter information.

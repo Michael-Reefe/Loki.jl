@@ -6,18 +6,10 @@ A constructor function for making a default empty OpticalParamMaps structure wit
 fit of an optical DataCube.
 
 # Arguments {S<:Integer}
+- `cube_fitter::CubeFitter`: The CubeFitter object
 - `shape::Tuple{S,S,S}`: Tuple specifying the 3D shape of the input data cube.
-- `n_ssps::S`: The number of simple stellar populations in the fit.
-- `n_power_law::S`: The number of power law continuum components in the fit.
-- `n_lines::S`: The number of emission lines in the fit.
-- `n_comps::S`: The maximum number of profiles that are being fit to a line.
-- `cf_lines::TransitionLines`: A TransitionLines object specifying all of the line emission in the fit.
-- `flexible_wavesol::Bool`: See the CubeFitter's `flexible_wavesol` parameter.
 """
-function parammaps_empty(shape::Tuple{S,S,S}, n_ssps::S, n_power_law::S, n_lines::S, n_comps::S, 
-    cf_lines::TransitionLines, flexible_wavesol::Bool, fit_na_feii::Bool, fit_br_feii::Bool,
-    fit_uv_bump::Bool, fit_covering_frac::Bool, temp_names::Vector{String}, fit_temp_multexp::Bool,
-    cosmo::Cosmology.AbstractCosmology)::ParamMaps where {S<:Integer}
+function parammaps_opt_empty(cube_fitter::CubeFitter, shape::Tuple{S,S,S})::ParamMaps where {S<:Integer}
 
     @debug """\n
     Creating OpticalParamMaps struct with shape $shape
@@ -25,149 +17,124 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_ssps::S, n_power_law::S, n_lines
     """
 
     # Add stellar population fitting parameters
-    stellar_pop_names = String[]
-    stellar_pop_units = String[]
-    stellar_pop_labels = String[]
-    stellar_pop_restframe = Int[]
-    stellar_pop_log = Int[]
-    stellar_pop_normalize = Int[]
-    stellar_pop_perfreq = Int[]
-    for i ∈ 1:n_ssps
+    parameter_names = String[]
+    parameter_units = String[]
+    parameter_labels = String[]
+    restframe_tf = Int[]
+    log_tf = Int[]
+    norm_tf = Int[]
+    perfreq_tf = Int[]
+    for i ∈ 1:cube_fitter.n_ssps
         si = ["continuum.stellar_populations.$(i).mass", "continuum.stellar_populations.$(i).age", "continuum.stellar_populations.$(i).metallicity"]
-        append!(stellar_pop_names, si)
-        append!(stellar_pop_units, ["log(Msun)", "Gyr", "[M/H]"])
-        append!(stellar_pop_labels, [cosmo.h ≈ 1.0 ? L"$\log_{10}(Mh^2 / M_{\odot})$" : L"$\log_{10}(M / M_{\odot})$",
+        append!(parameter_names, si)
+        append!(parameter_units, ["log(Msun)", "Gyr", "[M/H]"])
+        append!(parameter_labels, [cube_fitter.cosmology.h ≈ 1.0 ? L"$\log_{10}(Mh^2 / M_{\odot})$" : L"$\log_{10}(M / M_{\odot})$",
             L"$t$ (Gyr)", L"[M$/$H]"])
-        append!(stellar_pop_restframe, [1, 0, 0])
-        append!(stellar_pop_log, [1, 0, 0])
-        append!(stellar_pop_normalize, [1, 0, 0])
-        append!(stellar_pop_perfreq, [0, 0, 0])
+        append!(restframe_tf, [1, 0, 0])
+        append!(log_tf, [1, 0, 0])
+        append!(norm_tf, [1, 0, 0])
+        append!(perfreq_tf, [0, 0, 0])
     end
-    @debug "stellar population maps with keys $stellar_pop_names"
 
     # Add stellar kinematics
-    stellar_kinematics_names = ["continuum.stellar_kinematics.vel", "continuum.stellar_kinematics.vdisp"]
-    stellar_kinematics_units = ["km/s", "km/s"]
-    stellar_kinematics_labels = [L"$v_*$ (km s$^{-1}$)", L"$\sigma_*$ (km s$^{-1}$)"]
-    stellar_kin_restframe = [0, 0]
-    stellar_kin_log = [0, 0]
-    stellar_kin_normalize = [0, 0]
-    stellar_kin_perfreq = [0, 0]
-    @debug "stellar kinematics maps with keys $stellar_kinematics_names"
-
-    # Add Fe II kinematics
-    feii_names = String[]
-    feii_units = String[]
-    feii_labels = String[]
-    feii_restframe = Int[]
-    feii_log = Int[]
-    feii_normalize = Int[]
-    feii_perfreq = Int[]
-    if fit_na_feii 
-        append!(feii_names, ["continuum.feii.na.amp", "continuum.feii.na.vel", "continuum.feii.na.vdisp"])
-        append!(feii_units, ["log(erg.s-1.cm-2.Hz-1.sr-1)", "km/s", "km/s"])
-        append!(feii_labels, [L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$", L"$v$ (km s$^{-1}$)",
-            L"$\sigma$ (km s$^{-1}$)"])
-        append!(feii_restframe, [1, 0, 0])
-        append!(feii_log, [1, 0, 0])
-        append!(feii_normalize, [1, 0, 0])
-        append!(feii_perfreq, [1, 0, 0])
-    end
-    if fit_br_feii
-        append!(feii_names, ["continuum.feii.br.amp", "continuum.feii.br.vel", "continuum.feii.br.vdisp"])
-        append!(feii_units, ["log(erg.s-1.cm-2.Hz-1.sr-1)", "km/s", "km/s"])
-        append!(feii_labels, [L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$", L"$v$ (km s$^{-1}$)",
-            L"$\sigma$ (km s$^{-1}$)"])
-        append!(feii_restframe, [1, 0, 0])
-        append!(feii_log, [1, 0, 0])
-        append!(feii_normalize, [1, 0, 0])
-        append!(feii_perfreq, [1, 0, 0])
-    end
-    @debug "Fe II maps with keys $feii_names"
-
-    # Add power laws
-    power_law_names = String[]
-    power_law_units = String[]
-    power_law_labels = String[]
-    pl_restframe = Int[]
-    pl_log = Int[]
-    pl_normalize = Int[]
-    pl_perfreq = Int[]
-    for i ∈ 1:n_power_law
-        append!(power_law_names, ["continuum.power_law.$(i).amp", "continuum.power_law.$(i).index"])
-        append!(power_law_units, ["log(erg.s-1.cm-2.Hz-1.sr-1)", "-"])
-        append!(power_law_labels, [L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$", L"$\alpha$"])
-        append!(pl_restframe, [1, 0])
-        append!(pl_log, [1, 0])
-        append!(pl_normalize, [1, 0])
-        append!(pl_perfreq, [1, 0])
-    end
+    append!(parameter_names, ["continuum.stellar_kinematics.vel", "continuum.stellar_kinematics.vdisp"])
+    append!(parameter_units, ["km/s", "km/s"])
+    append!(parameter_labels, [L"$v_*$ (km s$^{-1}$)", L"$\sigma_*$ (km s$^{-1}$)"])
+    append!(restframe_tf, [0, 0])
+    append!(log_tf, [0, 0])
+    append!(norm_tf, [0, 0])
+    append!(perfreq_tf, [0, 0])
 
     # Add attenuation parameters
-    attenuation_names = ["attenuation.E_BV", "attenuation.E_BV_factor"]
-    attenuation_units = ["mag", "-"]
-    attenuation_labels = [L"$E(B-V)_{\rm gas}$", L"$E(B-V)_{\rm stars}/E(B-V)_{\rm gas}$"]
-    atten_restframe = [0, 0]
-    atten_log = [0, 0]
-    atten_normalize = [0, 0]
-    atten_perfreq = [0, 0]
-    if fit_uv_bump
-        push!(attenuation_names, "attenuation.delta_UV")
-        push!(attenuation_units, "-")
-        push!(attenuation_labels, L"$\delta_{\rm UV}$")
-        push!(atten_restframe, 0)
-        push!(atten_log, 0)
-        push!(atten_normalize, 0)
-        push!(atten_perfreq, 0)
+    append!(parameter_names, ["attenuation.E_BV", "attenuation.E_BV_factor"])
+    append!(parameter_units, ["mag", "-"])
+    append!(parameter_labels, [L"$E(B-V)_{\rm gas}$", L"$E(B-V)_{\rm stars}/E(B-V)_{\rm gas}$"])
+    append!(restframe_tf, [0, 0])
+    append!(log_tf, [0, 0])
+    append!(norm_tf, [0, 0])
+    append!(perfreq_tf, [0, 0])
+    if cube_fitter.fit_uv_bump
+        push!(parameter_names, "attenuation.delta_UV")
+        push!(parameter_units, "-")
+        push!(parameter_labels, L"$\delta_{\rm UV}$")
+        push!(restframe_tf, 0)
+        push!(log_tf, 0)
+        push!(norm_tf, 0)
+        push!(perfreq_tf, 0)
     end
-    if fit_covering_frac
-        push!(attenuation_names, "attenuation.frac")
-        push!(attenuation_units, "-")
-        push!(attenuation_labels, L"$C_f$")
-        push!(atten_restframe, 0)
-        push!(atten_log, 0)
-        push!(atten_normalize, 0)
-        push!(atten_perfreq, 0)
+    if cube_fitter.fit_covering_frac
+        push!(parameter_names, "attenuation.frac")
+        push!(parameter_units, "-")
+        push!(parameter_labels, L"$C_f$")
+        push!(restframe_tf, 0)
+        push!(log_tf, 0)
+        push!(norm_tf, 0)
+        push!(perfreq_tf, 0)
     end
-    @debug "attenuation maps with keys $attenuation_names"
+
+    # Add Fe II kinematics
+    if cube_fitter.fit_opt_na_feii 
+        append!(parameter_names, ["continuum.feii.na.amp", "continuum.feii.na.vel", "continuum.feii.na.vdisp"])
+        append!(parameter_units, ["log(erg.s-1.cm-2.Hz-1.sr-1)", "km/s", "km/s"])
+        append!(parameter_labels, [L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$", L"$v$ (km s$^{-1}$)",
+            L"$\sigma$ (km s$^{-1}$)"])
+        append!(restframe_tf, [1, 0, 0])
+        append!(log_tf, [1, 0, 0])
+        append!(norm_tf, [1, 0, 0])
+        append!(perfreq_tf, [1, 0, 0])
+    end
+    if cube_fitter.fit_opt_br_feii
+        append!(parameter_names, ["continuum.feii.br.amp", "continuum.feii.br.vel", "continuum.feii.br.vdisp"])
+        append!(parameter_units, ["log(erg.s-1.cm-2.Hz-1.sr-1)", "km/s", "km/s"])
+        append!(parameter_labels, [L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$", L"$v$ (km s$^{-1}$)",
+            L"$\sigma$ (km s$^{-1}$)"])
+        append!(restframe_tf, [1, 0, 0])
+        append!(log_tf, [1, 0, 0])
+        append!(norm_tf, [1, 0, 0])
+        append!(perfreq_tf, [1, 0, 0])
+    end
+
+    # Add power laws
+    for i ∈ 1:cube_fitter.n_power_law
+        append!(parameter_names, ["continuum.power_law.$(i).amp", "continuum.power_law.$(i).index"])
+        append!(parameter_units, ["log(erg.s-1.cm-2.Hz-1.sr-1)", "-"])
+        append!(parameter_labels, [L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$", L"$\alpha$"])
+        append!(restframe_tf, [1, 0])
+        append!(log_tf, [1, 0])
+        append!(norm_tf, [1, 0])
+        append!(perfreq_tf, [1, 0])
+    end
 
     # Add template fitting parameters
-    template_names = String[]
-    template_units = String[]
-    template_labels = String[]
-    template_restframe = Int[]
-    template_log = Int[]
-    template_normalize = Int[]
-    template_perfreq = Int[]
-    for (ni, n) ∈ enumerate(temp_names)
-        if !fit_temp_multexp
-            push!(template_names, "templates.$(n).amp_1")
-            push!(template_units, "-")
-            push!(template_labels, L"$\log_{10}(A_{\rm template})$")
-            push!(template_restframe, 0)
-            push!(template_log, 1)
-            push!(template_normalize, 0)
-            push!(template_perfreq, 0)
+    for (ni, n) ∈ enumerate(cube_fitter.template_names)
+        if !cube_fitter.fit_temp_multexp
+            push!(parameter_names, "templates.$(n).amp_1")
+            push!(parameter_units, "-")
+            push!(parameter_labels, L"$\log_{10}(A_{\rm template})$")
+            push!(restframe_tf, 0)
+            push!(log_tf, 1)
+            push!(norm_tf, 0)
+            push!(perfreq_tf, 0)
         else
             if ni > 1
                 break
             end 
             for i ∈ 1:4
-                append!(template_names, ["templates.amp_$i", "templates.index_$i"])
-                append!(template_units, ["-", "-"])
-                append!(template_labels, [L"$\log_{10}(A_{\rm template})$", L"$b$"])
-                append!(template_restframe, [0, 0])
-                append!(template_log, [1, 0])
-                append!(template_normalize, [0, 0])
-                append!(template_perfreq, [0, 0])
+                append!(parameter_names, ["templates.amp_$i", "templates.index_$i"])
+                append!(parameter_units, ["-", "-"])
+                append!(parameter_labels, [L"$\log_{10}(A_{\rm template})$", L"$b$"])
+                append!(restframe_tf, [0, 0])
+                append!(log_tf, [1, 0])
+                append!(norm_tf, [0, 0])
+                append!(perfreq_tf, [0, 0])
             end
         end
     end
-    @debug "template maps with keys $template_names"
 
     line_names, line_names_extra, line_units, line_units_extra, line_labels, line_labels_extra, line_restframe, line_extra_restframe, 
         line_log, line_extra_log, line_normalize, line_extra_normalize, line_perfreq, line_extra_perfreq = 
-            _get_line_names_and_transforms(cf_lines, n_lines, n_comps, flexible_wavesol, perfreq=1)
+            _get_line_names_and_transforms(cube_fitter.lines, cube_fitter.n_lines, cube_fitter.n_comps, 
+                cube_fitter.flexible_wavesol, perfreq=1)
 
     statistics_names = ["statistics.chi2", "statistics.dof"]
     statistics_units = ["-", "-"]
@@ -179,21 +146,14 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_ssps::S, n_power_law::S, n_lines
     @debug "chi^2 map"
     @debug "dof map"
 
-    parameter_names = [stellar_pop_names; stellar_kinematics_names; attenuation_names; feii_names; power_law_names; template_names; 
-        line_names; line_names_extra; statistics_names]
-    parameter_units = [stellar_pop_units; stellar_kinematics_units; attenuation_units; feii_units; power_law_units; template_units; 
-        line_units; line_units_extra; statistics_units]
-    parameter_labels = [stellar_pop_labels; stellar_kinematics_labels; attenuation_labels; feii_labels; power_law_labels;
-        template_labels; line_labels; line_labels_extra; statistics_labels]
-    restframe_tf = [stellar_pop_restframe; stellar_kin_restframe; atten_restframe; feii_restframe; pl_restframe; template_restframe; 
-        line_restframe; line_extra_restframe; statistics_restframe]
-    log_tf = BitVector([stellar_pop_log; stellar_kin_log; atten_log; feii_log; pl_log; template_log; line_log; line_extra_log; 
-        statistics_log])
-    norm_tf = BitVector([stellar_pop_normalize; stellar_kin_normalize; atten_normalize; feii_normalize; pl_normalize; template_normalize; 
-        line_normalize; line_extra_normalize; statistics_normalize])
+    parameter_names = [parameter_names; line_names; line_names_extra; statistics_names]
+    parameter_units = [parameter_units; line_units; line_units_extra; statistics_units]
+    parameter_labels = [parameter_labels; line_labels; line_labels_extra; statistics_labels]
+    restframe_tf = [restframe_tf; line_restframe; line_extra_restframe; statistics_restframe]
+    log_tf = BitVector([log_tf; line_log; line_extra_log; statistics_log])
+    norm_tf = BitVector([norm_tf; line_normalize; line_extra_normalize; statistics_normalize])
     line_tf = BitVector([contains(pname, "lines") for pname in parameter_names])
-    perfreq_tf = BitVector([stellar_pop_perfreq; stellar_kin_perfreq; atten_perfreq; feii_perfreq; pl_perfreq; template_perfreq; line_perfreq;
-        line_extra_perfreq; statistics_perfreq])
+    perfreq_tf = BitVector([perfreq_tf; line_perfreq; line_extra_perfreq; statistics_perfreq])
 
     n_params = length(parameter_names)
 
@@ -297,8 +257,90 @@ function cubemodel_empty(shape::Tuple, n_ssps::Integer, n_power_law::Integer, li
 end
 
 
+# Helper function for preparing continuum and SSP parameters for 
+# a CubeFitter object
+function cubefitter_opt_prepare_continuum(λ::Vector{<:Real}, z::Real, out::Dict, name::String, cube::DataCube)
+
+    continuum = parse_optical()
+
+    # Create the simple stellar population templates with FSPS
+    ssp_λ, ages, metals, ssp_templates = generate_stellar_populations(λ, cube.lsf, z, out[:cosmology], name)
+    # Create a 2D linear interpolation over the ages/metallicities
+    ssp_templates = [Spline2D(ages, metals, ssp_templates[:, :, i], kx=1, ky=1) for i in eachindex(ssp_λ)]
+
+    # Load in the Fe II templates from Veron-Cetty et al. (2004)
+    npad_feii, feii_λ, na_feii_fft, br_feii_fft = generate_feii_templates(λ, cube.lsf)
+    # Create a matrix containing both templates
+    feii_templates_fft = [na_feii_fft br_feii_fft]
+
+    ### PREPARE OUTPUTS ###
+    n_ssps = length(continuum.ssp_ages)
+    msg = "### Model will include $n_ssps simple stellar population components ###"
+    for (age, z) ∈ zip(continuum.ssp_ages, continuum.ssp_metallicities)
+        msg *= "\n### at age = $(age.value) Gyr and [M/H] = $(z.value) ###"
+    end
+    @debug msg
+
+    n_power_law = length(continuum.α)
+    msg = "### Model will include $n_power_law power law components ###"
+    for pl ∈ continuum.α
+        msg *= "\n### with index = $(pl.value) ###"
+    end
+    @debug msg
+
+    # Calculate velocity scale and systemic velocity offset b/w templates and input
+    vres = log(λ[2]/λ[1]) * C_KMS
+    vsyst_ssp = log(ssp_λ[1]/λ[1]) * C_KMS
+    vsyst_feii = log(feii_λ[1]/λ[1]) * C_KMS
+
+    n_templates = size(out[:templates], 4)
+
+    if n_templates == 0
+        # Ignore any template amplitude entries in the dust.toml options if there are no templates
+        continuum = OpticalContinuum(continuum.ssp_ages, continuum.ssp_metallicities, continuum.stel_vel,
+            continuum.stel_vdisp, continuum.na_feii_vel, continuum.na_feii_vdisp, continuum.br_feii_vel,
+            continuum.br_feii_vdisp, continuum.α, continuum.E_BV, continuum.E_BV_factor, continuum.δ_uv,
+            continuum.frac, Parameter[])
+    end
+
+    # If we are using AGN templates, lock the hot dust component to 0
+    if !haskey(out, :lock_hot_dust)
+        lock_hot_dust = n_templates > 0
+    else
+        lock_hot_dust = out[:lock_hot_dust]
+    end
+
+    continuum, ssp_λ, ssp_templates, feii_templates_fft, npad_feii, vres, vsyst_ssp, vsyst_feii,
+        n_ssps, n_power_law, n_templates
+end
+
+
+# Total number of parameters for the continuum and line fits
+function cubefitter_opt_count_cont_parameters(fit_opt_na_feii::Bool, fit_opt_br_feii::Bool, fit_uv_bump::Integer,
+    fit_covering_frac::Bool, n_ssps::Integer, n_power_law::Integer, n_templates::Integer)
+
+    n_params_cont = 3n_ssps + 2 + 2 + 2n_power_law + n_templates
+    if fit_opt_na_feii
+        n_params_cont += 3
+    end
+    if fit_opt_br_feii
+        n_params_cont += 3
+    end
+    if fit_uv_bump
+        n_params_cont += 1
+    end
+    if fit_covering_frac
+        n_params_cont += 1
+    end
+
+    n_params_cont
+end
+
+
+
 # Optical implementation of the get_continuum_plimits function
-function get_opt_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, init::Bool)
+function get_opt_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, init::Bool,
+    nuc_temp_fit::Bool)
 
     continuum = cube_fitter.continuum
 
@@ -362,191 +404,197 @@ function get_opt_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, 
     tied_pairs = Tuple[]
     tied_indices = Int[]
 
-    plims, lock, tied_pairs, tied_indices
+    if nuc_temp_fit 
+        # for optical fits there should be no channel splits so just lock the PSF amplitude to 1 during the nuclear fit
+        lock[end-cube_fitter.n_templates+1:end] .= 1
+    end
 
+    plims, lock, tied_pairs, tied_indices
 end
 
 
-# Optical implementation of the get_continuum_initial_values function
-function get_opt_continuum_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
-    N::Real, init::Bool)
+# Helper function for getting optical parameters based on the initial fit
+function get_opt_continuum_initial_values_from_previous(cube_fitter::CubeFitter, spaxel::CartesianIndex, 
+    continuum::OpticalContinuum, λ::Vector{<:Real}, I::Vector{<:Real})
 
-    continuum = cube_fitter.continuum
+    # Set the parameters to the best parameters
+    p₀ = copy(cube_fitter.p_init_cont)
 
-    # Check if the cube fitter has initial fit parameters 
-    if !init
+    # scale all flux amplitudes by the difference in medians between the spaxel and the summed spaxels
+    I_init = sumdim(cube_fitter.cube.I, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+    N0 = Float64(abs(maximum(I_init[isfinite.(I_init)])))
+    N0 = N0 ≠ 0. ? N0 : 1.
+    # Here we use the normalization from the initial combined intensity because the amplitudes we are rescaling
+    # are normalized with respect to N0, not N. This is different from the MIR case where the amplitudes are not
+    # normalized to any particular N (at least for the blackbody components).
+    scale = max(nanmedian(I), 1e-10) * N0 / nanmedian(I_init)
 
-        @debug "Using initial best fit continuum parameters..."
+    pₑ = 1 + 3cube_fitter.n_ssps + 2
+    ebv_orig = p₀[pₑ]
+    ebv_factor = p₀[pₑ+1]
 
-        # Set the parameters to the best parameters
-        p₀ = copy(cube_fitter.p_init_cont)
-
-        # scale all flux amplitudes by the difference in medians between the spaxel and the summed spaxels
-        I_init = sumdim(cube_fitter.cube.I, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
-        N0 = Float64(abs(maximum(I_init[isfinite.(I_init)])))
-        N0 = N0 ≠ 0. ? N0 : 1.
-        # Here we use the normalization from the initial combined intensity because the amplitudes we are rescaling
-        # are normalized with respect to N0, not N. This is different from the MIR case where the amplitudes are not
-        # normalized to any particular N (at least for the blackbody components).
-        scale = max(nanmedian(I), 1e-10) * N0 / nanmedian(I_init)
-
-        pₑ = 1 + 3cube_fitter.n_ssps + 2
-        ebv_orig = p₀[pₑ]
-        ebv_factor = p₀[pₑ+1]
-
-        if !isnothing(cube_fitter.extinction_map)
-            @debug "Using the provided E(B-V) values from the extinction_map"
-            if !isnothing(cube_fitter.cube.voronoi_bins)
-                data_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(spaxel)[1])
-                ebv_new = mean(cube_fitter.extinction_map[data_indices, 1])
-            else
-                data_index = spaxel
-                ebv_new = cube_fitter.extinction_map[data_index, 1]
-            end
-            ebv_factor_new = continuum.E_BV_factor.value
+    if !isnothing(cube_fitter.extinction_map)
+        @debug "Using the provided E(B-V) values from the extinction_map"
+        if !isnothing(cube_fitter.cube.voronoi_bins)
+            data_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(spaxel)[1])
+            ebv_new = mean(cube_fitter.extinction_map[data_indices, 1])
         else
-            # Otherwise always start at an E(B-V) of some small value
-            ebv_new = 0.01
-            ebv_factor_new = continuum.E_BV_factor.value
+            data_index = spaxel
+            ebv_new = cube_fitter.extinction_map[data_index, 1]
         end
+        ebv_factor_new = continuum.E_BV_factor.value
+    else
+        # Otherwise always start at an E(B-V) of some small value
+        ebv_new = 0.01
+        ebv_factor_new = continuum.E_BV_factor.value
+    end
 
-        # Rescale to keep the continuum at a good starting point
-        if cube_fitter.extinction_curve == "ccm"
-            scale /= median(attenuation_cardelli(λ, ebv_new*ebv_factor_new) ./ attenuation_cardelli(λ, ebv_orig*ebv_factor))
-        elseif cube_fitter.extinction_curve == "calzetti"
-            scale /= median(attenuation_calzetti(λ, ebv_new*ebv_factor_new) ./ attenuation_calzetti(λ, ebv_orig*ebv_factor))
-        else
-            error("Unrecognized extinction curve $(cube_fitter.extinction_curve)")
-        end
+    # Rescale to keep the continuum at a good starting point
+    if cube_fitter.extinction_curve == "ccm"
+        scale /= median(attenuation_cardelli(λ, ebv_new*ebv_factor_new) ./ attenuation_cardelli(λ, ebv_orig*ebv_factor))
+    elseif cube_fitter.extinction_curve == "calzetti"
+        scale /= median(attenuation_calzetti(λ, ebv_new*ebv_factor_new) ./ attenuation_calzetti(λ, ebv_orig*ebv_factor))
+    else
+        error("Unrecognized extinction curve $(cube_fitter.extinction_curve)")
+    end
 
-        # Set the new values
-        p₀[pₑ] = ebv_new
-        p₀[pₑ+1] = ebv_factor_new
+    # Set the new values
+    p₀[pₑ] = ebv_new
+    p₀[pₑ+1] = ebv_factor_new
 
-        # SSP amplitudes
-        pᵢ = 1
-        for _ ∈ 1:cube_fitter.n_ssps
-            p₀[pᵢ] *= scale
-            pᵢ += 3
-        end
+    # SSP amplitudes
+    pᵢ = 1
+    for _ ∈ 1:cube_fitter.n_ssps
+        p₀[pᵢ] *= scale
+        pᵢ += 3
+    end
 
-        # If stellar velocities hit any limits, reset them to sensible starting values
-        if (p₀[pᵢ] == continuum.stel_vel.limits[1]) || (p₀[pᵢ] == continuum.stel_vel.limits[2])
-            p₀[pᵢ] = 0.
-        end
-        if (p₀[pᵢ+1] == continuum.stel_vdisp.limits[1]) || (p₀[pᵢ+1] == continuum.stel_vdisp.limits[2])
-            p₀[pᵢ+1] = 100.
-        end
+    # If stellar velocities hit any limits, reset them to sensible starting values
+    if (p₀[pᵢ] == continuum.stel_vel.limits[1]) || (p₀[pᵢ] == continuum.stel_vel.limits[2])
+        p₀[pᵢ] = 0.
+    end
+    if (p₀[pᵢ+1] == continuum.stel_vdisp.limits[1]) || (p₀[pᵢ+1] == continuum.stel_vdisp.limits[2])
+        p₀[pᵢ+1] = 100.
+    end
+    pᵢ += 2
+
+    if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
+        pᵢ += 1
+    end
+    if cube_fitter.fit_covering_frac && cube_fitter.extinction_curve == "calzetti"
+        pᵢ += 1
+    end
+    pᵢ += 2
+
+    # Fe II amplitudes
+    if cube_fitter.fit_opt_na_feii
+        p₀[pᵢ] *= scale
+        pᵢ += 3
+    end
+    if cube_fitter.fit_opt_br_feii
+        p₀[pᵢ] *= scale
+        pᵢ += 3
+    end
+
+    # Power law amplitudes
+    for _ ∈ 1:cube_fitter.n_power_law
+        p₀[pᵢ] *= scale
         pᵢ += 2
+    end
 
-        if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
-            pᵢ += 1
-        end
-        if cube_fitter.fit_covering_frac && cube_fitter.extinction_curve == "calzetti"
-            pᵢ += 1
-        end
-        pᵢ += 2
-
-        # Fe II amplitudes
-        if cube_fitter.fit_opt_na_feii
-            p₀[pᵢ] *= scale
-            pᵢ += 3
-        end
-        if cube_fitter.fit_opt_br_feii
-            p₀[pᵢ] *= scale
-            pᵢ += 3
-        end
-
-        # Power law amplitudes
-        for _ ∈ 1:cube_fitter.n_power_law
-            p₀[pᵢ] *= scale
+    # Template amplitudes (not rescaled)
+    if cube_fitter.fit_temp_multexp
+        tamp = sum(p₀[[pᵢ,pᵢ+2,pᵢ+4,pᵢ+6]]) / 4
+        for _ ∈ 1:4
+            p₀[pᵢ] = tamp
             pᵢ += 2
         end
-
-        # Template amplitudes (not rescaled)
-        if cube_fitter.fit_temp_multexp
-            tamp = sum(p₀[[pᵢ,pᵢ+2,pᵢ+4,pᵢ+6]]) / 4
-            for _ ∈ 1:4
-                p₀[pᵢ] = tamp
-                pᵢ += 2
-            end
-        else
-            for _ ∈ 1:(cube_fitter.n_templates)
-                p₀[pᵢ] = 1/cube_fitter.n_templates
-                pᵢ += 1
-            end
-        end
-
     else
-
-        @debug "Calculating initial starting points..." 
-
-        if cube_fitter.extinction_curve == "ccm"
-            att = attenuation_cardelli([median(λ)], continuum.E_BV.value)[1]
-        elseif cube_fitter.extinction_curve == "calzetti"
-            att = attenuation_calzetti([median(λ)], continuum.E_BV.value)[1]
-        else
-            error("Uncrecognized extinction curve $(cube_fitter.extinction_curve)")
+        for _ ∈ 1:(cube_fitter.n_templates)
+            p₀[pᵢ] = 1/cube_fitter.n_templates
+            pᵢ += 1
         end
-
-        # SSP amplitudes
-        m_ssps = zeros(cube_fitter.n_ssps)
-        for i in 1:cube_fitter.n_ssps
-            m_ssps[i] = nanmedian(I) / att / cube_fitter.n_ssps
-        end
-
-        # SSP ages
-        a_ssps = copy([ai.value for ai in continuum.ssp_ages])
-        for i in eachindex(a_ssps)
-            if iszero(a_ssps[i])
-                # take 0 to mean that we should guess the age based on the redshift
-                a_ssps[i] = age(u"Gyr", cube_fitter.cosmology, cube_fitter.z).val - 0.1
-            end
-        end
-
-        ssp_pars = vcat([[mi, ai, zi.value] for (mi, ai, zi) in zip(m_ssps, a_ssps, continuum.ssp_metallicities)]...)
-
-        # Stellar kinematics
-        stel_kin_pars = [continuum.stel_vel.value, continuum.stel_vdisp.value]
-
-        # Fe II parameters
-        a_feii = 0.1 * nanmedian(I) / att
-        feii_pars = []
-        if cube_fitter.fit_opt_na_feii
-            append!(feii_pars, [a_feii, continuum.na_feii_vel.value, continuum.na_feii_vdisp.value])
-        end
-        if cube_fitter.fit_opt_br_feii
-            append!(feii_pars, [a_feii, continuum.br_feii_vel.value, continuum.br_feii_vdisp.value])
-        end
-        
-        # Power laws
-        a_pl = 0.5 * nanmedian(I) / att / cube_fitter.n_power_law
-        pl_pars = vcat([[a_pl, αi.value] for αi in continuum.α]...)
-
-        # Attenuation
-        atten_pars = [continuum.E_BV.value, continuum.E_BV_factor.value]
-        if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
-            push!(atten_pars, continuum.δ_uv.value)
-        end
-        if cube_fitter.fit_covering_frac && cube_fitter.extinction_curve == "calzetti"
-            push!(atten_pars, continuum.frac.value)
-        end
-
-        # Templates
-        if cube_fitter.fit_temp_multexp
-            temp_pars = [0.25, 0.0, 0.25, 0.0, 0.25, 0.0, 0.25, 0.0]
-        else
-            temp_pars = [ta.value for ta in continuum.temp_amp]
-        end
-        # apply the nuclear template amplitudes for the initial fit
-        if cube_fitter.nuc_fit_flag[1]
-            temp_pars ./= cube_fitter.nuc_temp_amps
-        end
-
-        # Initial parameter vector
-        p₀ = Vector{Float64}(vcat(ssp_pars, stel_kin_pars, atten_pars, feii_pars, pl_pars, temp_pars))
-
     end
+
+    p₀
+end
+
+
+# Helper function for getting optical continuum parameters based on estimates from the data
+function get_opt_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, continuum::OpticalContinuum,
+    λ::Vector{<:Real}, I::Vector{<:Real})
+
+    if cube_fitter.extinction_curve == "ccm"
+        att = attenuation_cardelli([median(λ)], continuum.E_BV.value)[1]
+    elseif cube_fitter.extinction_curve == "calzetti"
+        att = attenuation_calzetti([median(λ)], continuum.E_BV.value)[1]
+    else
+        error("Uncrecognized extinction curve $(cube_fitter.extinction_curve)")
+    end
+
+    # SSP amplitudes
+    m_ssps = zeros(cube_fitter.n_ssps)
+    for i in 1:cube_fitter.n_ssps
+        m_ssps[i] = nanmedian(I) / att / cube_fitter.n_ssps
+    end
+
+    # SSP ages
+    a_ssps = copy([ai.value for ai in continuum.ssp_ages])
+    for i in eachindex(a_ssps)
+        if iszero(a_ssps[i])
+            # take 0 to mean that we should guess the age based on the redshift
+            a_ssps[i] = age(u"Gyr", cube_fitter.cosmology, cube_fitter.z).val - 0.1
+        end
+    end
+
+    ssp_pars = vcat([[mi, ai, zi.value] for (mi, ai, zi) in zip(m_ssps, a_ssps, continuum.ssp_metallicities)]...)
+
+    # Stellar kinematics
+    stel_kin_pars = [continuum.stel_vel.value, continuum.stel_vdisp.value]
+
+    # Fe II parameters
+    a_feii = 0.1 * nanmedian(I) / att
+    feii_pars = []
+    if cube_fitter.fit_opt_na_feii
+        append!(feii_pars, [a_feii, continuum.na_feii_vel.value, continuum.na_feii_vdisp.value])
+    end
+    if cube_fitter.fit_opt_br_feii
+        append!(feii_pars, [a_feii, continuum.br_feii_vel.value, continuum.br_feii_vdisp.value])
+    end
+    
+    # Power laws
+    a_pl = 0.5 * nanmedian(I) / att / cube_fitter.n_power_law
+    pl_pars = vcat([[a_pl, αi.value] for αi in continuum.α]...)
+
+    # Attenuation
+    atten_pars = [continuum.E_BV.value, continuum.E_BV_factor.value]
+    if cube_fitter.fit_uv_bump && cube_fitter.extinction_curve == "calzetti"
+        push!(atten_pars, continuum.δ_uv.value)
+    end
+    if cube_fitter.fit_covering_frac && cube_fitter.extinction_curve == "calzetti"
+        push!(atten_pars, continuum.frac.value)
+    end
+
+    # Templates
+    if cube_fitter.fit_temp_multexp
+        temp_pars = [0.25, 0.0, 0.25, 0.0, 0.25, 0.0, 0.25, 0.0]
+    else
+        temp_pars = [ta.value for ta in continuum.temp_amp]
+    end
+    # apply the nuclear template amplitudes for the initial fit
+    if cube_fitter.nuc_fit_flag[1]
+        temp_pars ./= cube_fitter.nuc_temp_amps
+    end
+
+    # Initial parameter vector
+    p₀ = Vector{Float64}(vcat(ssp_pars, stel_kin_pars, atten_pars, feii_pars, pl_pars, temp_pars))
+
+    p₀
+end
+
+
+# Helper function for getting optical parameter step sizes 
+function get_opt_continuum_step_sizes(cube_fitter::CubeFitter, continuum::OpticalContinuum)
 
     # Calculate relative step sizes for finite difference derivatives
     deps = sqrt(eps())
@@ -574,6 +622,29 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
 
     dstep = Vector{Float64}(vcat(ssp_dstep, stel_kin_dstep, atten_dstep, feii_dstep, pl_dstep, temp_dstep))
 
+    dstep
+end
+
+
+# Optical implementation of the get_continuum_initial_values function
+function get_opt_continuum_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
+    N::Real, init::Bool, nuc_temp_fit::Bool)
+
+    continuum = cube_fitter.continuum
+
+    # Check if the cube fitter has initial fit parameters 
+    if !init
+        @debug "Using initial best fit continuum parameters..."
+        p₀ = get_opt_continuum_initial_values_from_previous(cube_fitter, spaxel, continuum, λ, I)
+    else
+        @debug "Calculating initial starting points..." 
+        p₀ = get_opt_continuum_initial_values_from_estimation(cube_fitter, continuum, λ, I)
+    end
+
+    if nuc_temp_fit
+        p₀[end-cube_fitter.n_templates+1:end] .= 1.0
+    end
+
     @debug "Continuum Parameter labels: \n [" *
         join(["SSP_$(i)_mass, SSP_$(i)_age, SSP_$(i)_metallicity" for i in 1:cube_fitter.n_ssps], ", ") * 
         "stel_vel, stel_vdisp, " * 
@@ -585,12 +656,13 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         (cube_fitter.fit_temp_multexp ? "temp_multexp_amp1, temp_multexp_ind1, temp_multexp_amp2, " * 
         "temp_multexp_ind2, temp_multexp_amp3, temp_multexp_ind3, temp_multexp_amp4, temp_multexp_ind4, " : 
         join(["$(tp)_amp_1" for tp ∈ cube_fitter.template_names], ", ")) "]"
-        
+
+    dstep = get_opt_continuum_step_sizes(cube_fitter, continuum) 
+
     @debug "Continuum Starting Values: \n $p₀"
     @debug "Continuum relative step sizes: \n $dstep"
 
     p₀, dstep
-
 end
 
 

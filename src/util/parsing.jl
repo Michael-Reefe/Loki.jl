@@ -87,20 +87,11 @@ end
 
 
 """
-    parse_options()
+    validate_options_file(options)
 
-Read in the options.toml configuration file, checking that it is formatted correctly,
-and convert it into a julia dictionary.  This deals with general/top-level code configurations.
+Checks that the parsed options file has all of the keys that it should have.
 """
-function parse_options()
-
-    @debug """\n
-    Parsing options file
-    #######################################################
-    """
-
-    # Read in the options file
-    options = TOML.parsefile(joinpath(@__DIR__, "..", "options", "options.toml"))
+function validate_options_file(options)
     keylist1 = ["n_bootstrap", "extinction_curve", "extinction_screen", "fit_sil_emission", "fit_opt_na_feii", "fit_opt_br_feii", 
                 "fit_all_global", "use_pah_templates", "fit_joint", "fit_uv_bump", "fit_covering_frac", "parallel", "plot_spaxels", 
                 "plot_maps", "save_fits", "overwrite", "track_memory", "track_convergence", "save_full_model", "line_test_lines", 
@@ -114,46 +105,21 @@ function parse_options()
     for key ∈ keylist2
         @assert key ∈ keys(options["cosmology"]) "Missing option $key in cosmology options!"
     end
-
-    # Convert keys to symbols
-    options = Dict(Symbol(k) => v for (k, v) ∈ options)
-
-    # Convert cosmology keys into a proper cosmology object
-    options[:cosmology] = cosmology(h=options[:cosmology]["h"], 
-                                    OmegaM=options[:cosmology]["omega_m"],
-                                    OmegaK=options[:cosmology]["omega_K"],
-                                    OmegaR=options[:cosmology]["omega_r"])
-    
-    # logging messages 
-    @debug "Options: $options"
-
-    options
 end
 
 
 """
-    parse_dust(n_channels)
+    validate_dust_file(dust)
 
-Read in the dust.toml configuration file, checking that it is formatted correctly,
-and convert it into a julia dictionary with Parameter objects for dust fitting parameters.
-This deals with continuum, PAH features, and extinction options.
+Checks that the parsed dust file has all of the keys that it should have.
 """
-function parse_dust(n_channels::Int=0)
+function validate_dust_file(dust::Dict)
 
-    @debug """\n
-    Parsing dust file
-    #######################################################
-    """
-
-    # Read in the dust file
-    dust = TOML.parsefile(joinpath(@__DIR__, "..", "options", "dust.toml"))
     keylist1 = ["stellar_continuum_temp", "dust_features", "extinction", "hot_dust"]
     keylist2 = ["wave", "fwhm"]
     keylist3 = ["tau_9_7", "tau_ice", "tau_ch", "beta"]
     keylist4 = ["temp", "frac", "tau_warm", "tau_cold", "peak"]
     keylist5 = ["val", "plim", "locked"]
-
-    # Loop through all of the required keys that should be in the file and confirm that they are there
     for key ∈ keylist1
         @assert haskey(dust, key) "Missing option $key in dust file!"
     end
@@ -182,6 +148,248 @@ function parse_dust(n_channels::Int=0)
             @assert haskey(dust["hot_dust"][hd_key], key) "Missing option $key in $hd_key options!"
         end
     end
+end
+
+
+"""
+    validate_optical_file(optical)
+
+Checks that the parsed optical file has all of the keys that it should have.
+"""
+function validate_optical_file(optical::Dict)
+
+    keylist1 = ["attenuation", "stellar_population_ages", "stellar_population_metallicities", "stellar_kinematics", 
+        "na_feii_kinematics", "br_feii_kinematics"]
+    keylist2 = ["E_BV", "E_BV_factor", "uv_slope", "frac"]
+    keylist3 = ["vel", "vdisp"]
+    keylist4 = ["val", "plim", "locked"]
+
+    for key ∈ keylist1
+        @assert haskey(optical, key) "Missing option $key in optical file!"
+    end
+    for key ∈ keylist2
+        @assert haskey(optical["attenuation"], key) "Missing option $key in attenuation options!"
+    end
+    for key ∈ keylist3
+        @assert haskey(optical["stellar_kinematics"], key) "Missing option $key in stellar_kinematics options!"
+        @assert haskey(optical["na_feii_kinematics"], key) "Missing option $key in na_feii_kinematics options!"
+        @assert haskey(optical["br_feii_kinematics"], key) "Missing option $key in br_feii_kinematics options!"
+    end
+    for key4 ∈ keylist4
+        for key1 ∈ keylist1
+            for i in eachindex(optical[key1])
+                @assert haskey(optical[key1][i], key4) "Missing option $key4 in $key1 options!"
+            end
+        end
+        for key2 ∈ keylist2
+            @assert haskey(optical["attenuation"][key2], key4) "Missing option $key4 in $key2 options!"
+        end
+        for key3 ∈ keylist3
+            @assert haskey(optical["stellar_kinematics"][key3], key4) "Missing option $key4 in $key3 options!"
+        end
+    end
+end
+
+
+"""
+    validate_lines_file(lines)
+
+Checks that the parsed lines file has all of the keys that it should have, and
+sorts the profiles and acomp_profiles keys into dictionaries.
+"""
+function validate_lines_file(lines)
+
+    keylist1 = ["default_sort_order", "tie_voigt_mixing", "voff_plim", "fwhm_plim", "h3_plim", "h4_plim", "acomp_voff_plim", 
+        "acomp_fwhm_plim", "flexible_wavesol", "wavesol_unc", "lines", "profiles", "acomps", "n_acomps"]
+    keylist2 = ["wave", "latex", "annotate"]
+
+    # Loop through all the required keys that should be in the file and confirm that they are there
+    for key ∈ keylist1
+        @assert haskey(lines, key) "$key not found in line options!"
+    end
+    for key ∈ keys(lines["lines"])
+        for key2 in keylist2
+            @assert haskey(lines["lines"][key], key2) "$key2 not found in $key line options!"
+        end
+    end
+    @assert haskey(lines["profiles"], "default") "default not found in line profile options!"
+    profiles = Dict(ln => lines["profiles"]["default"] for ln ∈ keys(lines["lines"]))
+    if haskey(lines, "profiles")
+        for line ∈ keys(lines["lines"])
+            if haskey(lines["profiles"], line)
+                profiles[line] = lines["profiles"][line]
+            end
+        end
+    end
+    # Keep in mind that a line can have multiple acomp profiles
+    acomp_profiles = Dict{String, Vector{Union{String,Nothing}}}()
+    for line ∈ keys(lines["lines"])
+        acomp_profiles[line] = Vector{Union{String,Nothing}}(nothing, lines["n_acomps"])
+        if haskey(lines, "acomps")
+            if haskey(lines["acomps"], line)
+                # Pad to match the length of n_acomps
+                acomp_profiles[line] = vcat(lines["acomps"][line], [nothing for _ in 1:(lines["n_acomps"]-length(lines["acomps"][line]))])
+            end
+        end
+    end
+    
+    profiles, acomp_profiles
+end
+
+
+"""
+    parse_options()
+
+Read in the options.toml configuration file, checking that it is formatted correctly,
+and convert it into a julia dictionary.  This deals with general/top-level code configurations.
+"""
+function parse_options()
+
+    @debug """\n
+    Parsing options file
+    #######################################################
+    """
+
+    # Read in the options file
+    options = TOML.parsefile(joinpath(@__DIR__, "..", "options", "options.toml"))
+    validate_options_file(options)
+
+    # Convert keys to symbols
+    options = Dict(Symbol(k) => v for (k, v) ∈ options)
+
+    # Convert cosmology keys into a proper cosmology object
+    options[:cosmology] = cosmology(h=options[:cosmology]["h"], 
+                                    OmegaM=options[:cosmology]["omega_m"],
+                                    OmegaK=options[:cosmology]["omega_K"],
+                                    OmegaR=options[:cosmology]["omega_r"])
+    
+    # logging messages 
+    @debug "Options: $options"
+
+    options
+end
+
+
+"""
+    create_dust_features(dust)
+
+Uses the dust options file to create a DustFeatures object for the
+PAH features.
+"""
+function create_dust_features(dust::Dict)
+
+    # Dust feature central wavelengths and FWHMs
+    cent_vals = zeros(length(dust["dust_features"]))
+    name = Vector{String}(undef, length(dust["dust_features"]))
+    mean = Vector{Parameter}(undef, length(dust["dust_features"]))
+    fwhm = Vector{Parameter}(undef, length(dust["dust_features"]))
+    index = Vector{Union{Parameter,Nothing}}(nothing, length(dust["dust_features"]))
+    cutoff = Vector{Union{Parameter,Nothing}}(nothing, length(dust["dust_features"]))
+    complexes = Vector{Union{String,Nothing}}(nothing, length(dust["dust_features"]))
+    _local = falses(length(dust["dust_features"]))
+    profiles = [:Drude for _ in 1:length(name)]
+
+    msg = "Dust features:"
+    for (i, df) ∈ enumerate(keys(dust["dust_features"]))
+        name[i] = df
+        mean[i] = from_dict_wave(dust["dust_features"][df]["wave"])
+        msg *= "\nWave $(mean[i])"
+        fwhm[i] = from_dict_fwhm(dust["dust_features"][df]["fwhm"])
+        msg *= "\nFWHM $(fwhm[i])"
+        if haskey(dust["dust_features"][df], "index")
+            index[i] = from_dict(dust["dust_features"][df]["index"])
+            profiles[i] = :PearsonIV
+            msg *= "\nIndex $(index[i])"
+        end
+        if haskey(dust["dust_features"][df], "cutoff")
+            cutoff[i] = from_dict(dust["dust_features"][df]["cutoff"])
+            profiles[i] = :PearsonIV
+            msg *= "\nCutoff $(cutoff[i])"
+        end
+        if haskey(dust["dust_features"][df], "complex")
+            complexes[i] = dust["dust_features"][df]["complex"]
+        end
+        cent_vals[i] = mean[i].value
+    end
+    @debug msg
+
+    # Sort by cent_vals
+    ss = sortperm(cent_vals)
+    DustFeatures(name[ss], profiles[ss], mean[ss], fwhm[ss], index[ss], cutoff[ss], complexes[ss], _local[ss])
+end
+
+
+"""
+    create_absorption_features(dust)
+
+Uses the dust options file to create a DustFeatures object for the
+absorption features.
+"""
+function create_absorption_features(dust)
+
+    # Repeat for absorption features
+    if haskey(dust, "absorption_features")
+        cent_vals = zeros(length(dust["absorption_features"]))
+        name = Vector{String}(undef, length(dust["absorption_features"]))
+        depth = Vector{Parameter}(undef, length(dust["absorption_features"]))
+        mean = Vector{Parameter}(undef, length(dust["absorption_features"]))
+        fwhm = Vector{Parameter}(undef, length(dust["absorption_features"]))
+        complexes = Vector{Union{String,Nothing}}(nothing, length(dust["absorption_features"]))
+        _local = falses(length(dust["absorption_features"]))
+
+        msg = "Absorption features:"
+        for (i, ab) ∈ enumerate(keys(dust["absorption_features"]))
+            name[i] = ab
+            depth[i] = from_dict(dust["absorption_features"][ab]["tau"])
+            msg *= "\nTau $(depth[i])"
+            mean[i] = from_dict_wave(dust["absorption_features"][ab]["wave"])
+            msg *= "\nWave $(mean[i])"
+            fwhm[i] = from_dict_fwhm(dust["absorption_features"][ab]["fwhm"])
+            msg *= "\nFWHM $(fwhm[i])"
+            cent_vals[i] = mean[i].value
+
+            if haskey(dust["absorption_features"][ab], "local")
+                _local[i] = dust["absorption_features"][ab]["local"]
+            end
+        end
+        @debug msg
+
+        # Sort by cent_vals
+        ss = sortperm(cent_vals)
+        abs_features = DustFeatures(name[ss], [:Drude for _ in 1:length(name)], mean[ss], fwhm[ss],
+            Union{Parameter,Nothing}[nothing for _ in 1:length(name)], 
+            Union{Parameter,Nothing}[nothing for _ in 1:length(name)],
+            complexes[ss], _local[ss])
+        abs_taus = depth[ss]
+    else
+        abs_features = DustFeatures(String[], Symbol[], Parameter[], Parameter[], Vector{Union{Parameter,Nothing}}(),
+            Vector{Union{Parameter,Nothing}}(), Vector{Union{String,Nothing}}(), BitVector[])
+        abs_taus = Vector{Parameter}()
+    end
+
+    abs_features, abs_taus
+end
+
+
+"""
+    parse_dust(n_channels)
+
+Read in the dust.toml configuration file, checking that it is formatted correctly,
+and convert it into a julia dictionary with Parameter objects for dust fitting parameters.
+This deals with continuum, PAH features, and extinction options.
+"""
+function parse_dust(n_channels::Int=0)
+
+    @debug """\n
+    Parsing dust file
+    #######################################################
+    """
+
+    # Read in the dust file
+    dust = TOML.parsefile(joinpath(@__DIR__, "..", "options", "dust.toml"))
+
+    # Loop through all of the required keys that should be in the file and confirm that they are there
+    validate_dust_file(dust)
 
     # Convert the options into Parameter objects, and set them to the output dictionary
 
@@ -230,84 +438,9 @@ function parse_dust(n_channels::Int=0)
         temp_A = []
     end
 
-    # Dust feature central wavelengths and FWHMs
-    cent_vals = zeros(length(dust["dust_features"]))
-    name = Vector{String}(undef, length(dust["dust_features"]))
-    mean = Vector{Parameter}(undef, length(dust["dust_features"]))
-    fwhm = Vector{Parameter}(undef, length(dust["dust_features"]))
-    index = Vector{Union{Parameter,Nothing}}(nothing, length(dust["dust_features"]))
-    cutoff = Vector{Union{Parameter,Nothing}}(nothing, length(dust["dust_features"]))
-    complexes = Vector{Union{String,Nothing}}(nothing, length(dust["dust_features"]))
-    _local = falses(length(dust["dust_features"]))
-    profiles = [:Drude for _ in 1:length(name)]
-
-    msg = "Dust features:"
-    for (i, df) ∈ enumerate(keys(dust["dust_features"]))
-        name[i] = df
-        mean[i] = from_dict_wave(dust["dust_features"][df]["wave"])
-        msg *= "\nWave $(mean[i])"
-        fwhm[i] = from_dict_fwhm(dust["dust_features"][df]["fwhm"])
-        msg *= "\nFWHM $(fwhm[i])"
-        if haskey(dust["dust_features"][df], "index")
-            index[i] = from_dict(dust["dust_features"][df]["index"])
-            profiles[i] = :PearsonIV
-            msg *= "\nIndex $(index[i])"
-        end
-        if haskey(dust["dust_features"][df], "cutoff")
-            cutoff[i] = from_dict(dust["dust_features"][df]["cutoff"])
-            profiles[i] = :PearsonIV
-            msg *= "\nCutoff $(cutoff[i])"
-        end
-        if haskey(dust["dust_features"][df], "complex")
-            complexes[i] = dust["dust_features"][df]["complex"]
-        end
-        cent_vals[i] = mean[i].value
-    end
-    @debug msg
-
-    # Sort by cent_vals
-    ss = sortperm(cent_vals)
-    dust_features = DustFeatures(name[ss], profiles[ss], mean[ss], fwhm[ss], index[ss], cutoff[ss], complexes[ss], _local[ss])
-
-    # Repeat for absorption features
-    if haskey(dust, "absorption_features")
-        cent_vals = zeros(length(dust["absorption_features"]))
-        name = Vector{String}(undef, length(dust["absorption_features"]))
-        depth = Vector{Parameter}(undef, length(dust["absorption_features"]))
-        mean = Vector{Parameter}(undef, length(dust["absorption_features"]))
-        fwhm = Vector{Parameter}(undef, length(dust["absorption_features"]))
-        complexes = Vector{Union{String,Nothing}}(nothing, length(dust["absorption_features"]))
-        _local = falses(length(dust["absorption_features"]))
-
-        msg = "Absorption features:"
-        for (i, ab) ∈ enumerate(keys(dust["absorption_features"]))
-            name[i] = ab
-            depth[i] = from_dict(dust["absorption_features"][ab]["tau"])
-            msg *= "\nTau $(depth[i])"
-            mean[i] = from_dict_wave(dust["absorption_features"][ab]["wave"])
-            msg *= "\nWave $(mean[i])"
-            fwhm[i] = from_dict_fwhm(dust["absorption_features"][ab]["fwhm"])
-            msg *= "\nFWHM $(fwhm[i])"
-            cent_vals[i] = mean[i].value
-
-            if haskey(dust["absorption_features"][ab], "local")
-                _local[i] = dust["absorption_features"][ab]["local"]
-            end
-        end
-        @debug msg
-
-        # Sort by cent_vals
-        ss = sortperm(cent_vals)
-        abs_features = DustFeatures(name[ss], [:Drude for _ in 1:length(name)], mean[ss], fwhm[ss],
-            Union{Parameter,Nothing}[nothing for _ in 1:length(name)], 
-            Union{Parameter,Nothing}[nothing for _ in 1:length(name)],
-            complexes[ss], _local[ss])
-        abs_taus = depth[ss]
-    else
-        abs_features = DustFeatures(String[], Symbol[], Parameter[], Parameter[], Vector{Union{Parameter,Nothing}}(),
-            Vector{Union{Parameter,Nothing}}(), Vector{Union{String,Nothing}}(), BitVector[])
-        abs_taus = Vector{Parameter}()
-    end
+    # Create the dust features and absorption features objects
+    dust_features = create_dust_features(dust)
+    abs_features, abs_taus = create_absorption_features(dust)
 
     # Extinction parameters, optical depth and mixing ratio
     msg = "Extinction:"
@@ -372,36 +505,8 @@ function parse_optical()
 
     # Read in the dust file
     optical = TOML.parsefile(joinpath(@__DIR__, "..", "options", "optical.toml"))
-    keylist1 = ["attenuation", "stellar_population_ages", "stellar_population_metallicities", "stellar_kinematics", 
-        "na_feii_kinematics", "br_feii_kinematics"]
-    keylist2 = ["E_BV", "E_BV_factor", "uv_slope", "frac"]
-    keylist3 = ["vel", "vdisp"]
-    keylist4 = ["val", "plim", "locked"]
 
-    for key ∈ keylist1
-        @assert haskey(optical, key) "Missing option $key in optical file!"
-    end
-    for key ∈ keylist2
-        @assert haskey(optical["attenuation"], key) "Missing option $key in attenuation options!"
-    end
-    for key ∈ keylist3
-        @assert haskey(optical["stellar_kinematics"], key) "Missing option $key in stellar_kinematics options!"
-        @assert haskey(optical["na_feii_kinematics"], key) "Missing option $key in na_feii_kinematics options!"
-        @assert haskey(optical["br_feii_kinematics"], key) "Missing option $key in br_feii_kinematics options!"
-    end
-    for key4 ∈ keylist4
-        for key1 ∈ keylist1
-            for i in eachindex(optical[key1])
-                @assert haskey(optical[key1][i], key4) "Missing option $key4 in $key1 options!"
-            end
-        end
-        for key2 ∈ keylist2
-            @assert haskey(optical["attenuation"][key2], key4) "Missing option $key4 in $key2 options!"
-        end
-        for key3 ∈ keylist3
-            @assert haskey(optical["stellar_kinematics"][key3], key4) "Missing option $key4 in $key3 options!"
-        end
-    end
+    validate_optical_file(optical)
 
     msg = "Stellar populations:"
     ssp_ages = Parameter[]
@@ -478,6 +583,244 @@ function parse_optical()
 end
 
 
+# Check if the kinematics should be tied to other lines based on the kinematic groups
+function check_tied_kinematics!(lines::Dict, kinematic_groups::Vector, tied_amp::Vector,
+    tied_voff::Vector, tied_fwhm::Vector, i::Integer, line::String)
+
+    tied_amp[i] = tied_voff[i] = tied_fwhm[i] = nothing
+    for group ∈ kinematic_groups
+        for groupmember ∈ lines["kinematic_group_" * group]
+            #= Loop through the items in the "kinematic_group_*" list and see if the line name matches any of them.
+            It needn't be a perfect match, the line name just has to contain the value in the kinematic group list.
+            i.e. if you want to automatically tie all FeII lines together, instead of manually listing out each one,
+            you can just include an item "FeII" and it will automatically catch all the FeII lines
+            =#
+            if occursin(groupmember, line)
+
+                # Check if amp should  be tied
+                tie_amp_group = false
+                if haskey(lines, "tie_amp_" * group)
+                    tie_amp_group = true
+                end
+                # Check if voff should be tied
+                tie_voff_group = true
+                if haskey(lines, "tie_voff_" * group)
+                    tie_voff_group = lines["tie_voff_" * group]
+                end
+                # Check if fwhm should be tied
+                tie_fwhm_group = true
+                if haskey(lines, "tie_fwhm_" * group)
+                    tie_fwhm_group = lines["tie_fwhm_" * group]
+                end
+
+                if tie_amp_group
+                    @assert isnothing(tied_amp[i]) "Line $(line[i]) is already part of the kinematic group $(tied_amp[i]), but it also passed filtering criteria" *
+                        "to be included in the group $group. Make sure your filters are not too lenient!"
+                    @debug "Tying amplitudes for $line to the group: $group"
+                    # Use the group label
+                    tied_amp[i] = Symbol(group)
+                end
+                if tie_voff_group
+                    # Make sure line is not already a member of another group
+                    @assert isnothing(tied_voff[i]) "Line $(line[i]) is already part of the kinematic group $(tied_voff[i]), but it also passed filtering criteria" * 
+                        "to be included in the group $group. Make sure your filters are not too lenient!"
+                    @debug "Tying kinematics for $line to the group: $group"
+                    # Use the group label (which can be anything you want) to categorize what lines are tied together
+                    tied_voff[i] = Symbol(group)
+                    # If the wavelength solution is bad, allow the kinematics to still be flexible based on its accuracy
+                    if lines["flexible_wavesol"]
+                        δv = lines["wavesol_unc"]
+                        voff_plim = (-δv, δv)
+                        @debug "Using flexible tied voff with lenience of +/-$δv km/s"
+                    end
+                end
+                if tie_fwhm_group
+                    # Make sure line is not already a member of another group
+                    @assert isnothing(tied_fwhm[i]) "Line $(line[i]) is already part of the kinematic group $(tied_fwhm[i]), but it also passed filtering criteria" * 
+                    "to be included in the group $group. Make sure your filters are not too lenient!"
+                    @debug "Tying kinematics for $line to the group: $group"
+                    # Use the group label (which can be anything you want) to categorize what lines are tied together
+                    tied_fwhm[i] = Symbol(group)
+                end
+
+                break
+            end
+        end
+    end
+
+    tied_amp[i], tied_voff[i], tied_fwhm[i]
+end
+
+
+# Same as above but for the additional components
+function check_acomp_tied_kinematics!(lines::Dict, acomp_kinematic_groups::Vector, 
+    acomp_tied_amp::Matrix, acomp_tied_voff::Matrix, acomp_tied_fwhm::Matrix,
+    acomp_profiles::Dict, i::Integer, line::String)
+
+    acomp_tied_amp[i, :] .= nothing
+    acomp_tied_voff[i, :] .= nothing
+    acomp_tied_fwhm[i, :] .= nothing
+    for j ∈ 1:lines["n_acomps"]
+        for group ∈ acomp_kinematic_groups[j]
+            for groupmember ∈ lines["acomp_$(j)_kinematic_group_" * group]
+                if occursin(groupmember, line)
+
+                    # Check if amp should be tied
+                    tie_acomp_amp_group = false
+                    if haskey(lines, "tie_acomp_$(j)_amp_" * group)
+                        tie_acomp_amp_group = true
+                    end
+
+                    # Check if voff should be tied
+                    tie_acomp_voff_group = true
+                    if haskey(lines, "tie_acomp_$(j)_voff_" * group)
+                        tie_acomp_voff_group = lines["tie_acomp_$(j)_voff_" * group]
+                    end
+                    # Check if fwhm should be tied
+                    tie_acomp_fwhm_group = true
+                    if haskey(lines, "tie_acomp_$(j)_fwhm_" * group)
+                        tie_acomp_fwhm_group = lines["tie_acomp_$(j)_fwhm_" * group]
+                    end
+
+                    if !isnothing(acomp_profiles[line][j]) && tie_acomp_amp_group
+                        # Make sure line is not already a member of another group
+                        @assert isnothing(acomp_tied_amp[i, j]) "Line $(line[i]) acomp $(j) is already part of the kinematic group $(acomp_tied_amp[i, j]), " *
+                            "but it also passed filtering criteria to be included in the group $group. Make sure your filters are not too lenient!"
+                        @debug "Tying amplitudes for $line acomp $(j) to the group: $group"
+
+                        # only set acomp_tied if the line actually *has* an acomp
+                        acomp_tied_amp[i,j] = Symbol(group)
+                    end
+
+                    if !isnothing(acomp_profiles[line][j]) && tie_acomp_voff_group
+                        # Make sure line is not already a member of another group
+                        @assert isnothing(acomp_tied_voff[i, j]) "Line $(line[i]) acomp $(j) is already part of the kinematic group $(acomp_tied_voff[i, j]), " *
+                            "but it also passed filtering criteria to be included in the group $group. Make sure your filters are not too lenient!"
+                        @debug "Tying kinematics for $line acomp $(j) to the group: $group"
+
+                        # Only set acomp_tied if the line actually *has* an acomp
+                        acomp_tied_voff[i,j] = Symbol(group)
+                    end
+
+                    if !isnothing(acomp_profiles[line][j]) && tie_acomp_fwhm_group
+                        # Make sure line is not already a member of another group
+                        @assert isnothing(acomp_tied_fwhm[i, j]) "Line $(line[i]) acomp $(j) is already part of the kinematic group $(acomp_tied_fwhm[i, j]), " *
+                            "but it also passed filtering criteria to be included in the group $group. Make sure your filters are not too lenient!"
+                        @debug "Tying kinematics for $line acomp $(j) to the group: $group"
+                    
+                        # Only set acomp_tied if the line actually *has* an acomp
+                        acomp_tied_fwhm[i,j] = Symbol(group)
+                    end
+
+                    break
+                end
+            end
+        end
+    end
+end
+
+
+# Helper function that takes a TransitionLines object parsed from the lines options file
+# and creates a TiedKinematics object summarizing the tied amp, voff, and fwhm parameters
+function create_tied_kinematics_object(lines_out::TransitionLines, lines::Dict)
+
+    # Create a dictionary containing all of the unique `tie` keys, and the tied parameters 
+    # corresponding to that tied key
+    kin_tied_key_amp = [unique(lines_out.tied_amp[:, j]) for j ∈ 1:size(lines_out.tied_amp, 2)]
+    kin_tied_key_amp = [kin_tied_key_amp[i][.!isnothing.(kin_tied_key_amp[i])] for i in eachindex(kin_tied_key_amp)]
+    kin_tied_key_voff = [unique(lines_out.tied_voff[:, j]) for j ∈ 1:size(lines_out.tied_voff, 2)]
+    kin_tied_key_voff = [kin_tied_key_voff[i][.!isnothing.(kin_tied_key_voff[i])] for i in eachindex(kin_tied_key_voff)]
+    kin_tied_key_fwhm = [unique(lines_out.tied_fwhm[:, j]) for j ∈ 1:size(lines_out.tied_fwhm, 2)]
+    kin_tied_key_fwhm = [kin_tied_key_fwhm[i][.!isnothing.(kin_tied_key_fwhm[i])] for i in eachindex(kin_tied_key_fwhm)]
+    @debug "kin_tied_key_amp: $kin_tied_key_amp"
+    @debug "kin_tied_key_voff: $kin_tied_key_voff"
+    @debug "kin_tied_key_fwhm: $kin_tied_key_fwhm"
+    
+    amp_tied = [Vector{Dict{Symbol, Float64}}(undef, length(kin_tied_key_amp[j])) for j ∈ 1:size(lines_out.tied_amp, 2)]
+    voff_tied = [Vector{Parameter}(undef, length(kin_tied_key_voff[j])) for j ∈ 1:size(lines_out.tied_voff, 2)]
+    fwhm_tied = [Vector{Parameter}(undef, length(kin_tied_key_fwhm[j])) for j ∈ 1:size(lines_out.tied_fwhm, 2)]
+    msg = ""
+    # Iterate and create the tied amplitude parameters
+    for j ∈ 1:size(lines_out.tied_amp, 2)
+        for (i, kin_tie) ∈ enumerate(kin_tied_key_amp[j])
+            a_ratio = isone(j) ? lines["tie_amp_$kin_tie"] : lines["tie_acomp_$(j-1)_amp_$kin_tie"]
+            lines_in_group = lines_out.names[lines_out.tied_amp[:, j] .== kin_tie]
+            amp_tied[j][i] = Dict(ln => ai for (ln, ai) in zip(lines_in_group, a_ratio))
+            msg *= "\namp_tied_$(kin_tie)_$(j) $(amp_tied[j][i])"
+        end
+    end
+    # Iterate and create the tied voff parameters
+    for j ∈ 1:size(lines_out.tied_voff, 2)
+        for (i, kin_tie) ∈ enumerate(kin_tied_key_voff[j])
+            v_plim = isone(j) ? (lines["voff_plim"]...,) : (lines["acomp_voff_plim"][j-1]...,)
+            v_locked = false
+            v_init = isone(j) && haskey(lines, "voff_init") ? lines["voff_init"] : 0.0
+            # Check if there is an overwrite option in the lines file
+            if haskey(lines, "parameters")
+                if haskey(lines["parameters"], string(kin_tie))
+                    param_str = isone(j) ? "voff" : "acomp_voff"
+                    if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_plim")
+                        v_plim = isone(j) ? (lines["parameters"][string(kin_tie)]["$(param_str)_plim"]...,) :
+                                            (lines["parameters"][string(kin_tie)]["$(param_str)_plim"][j-1]...,)
+                    end
+                    if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_locked")
+                        v_locked = isone(j) ? lines["parameters"][string(kin_tie)]["$(param_str)_locked"] :
+                                            lines["parameters"][string(kin_tie)]["$(param_str)_locked"][j-1]
+                    end
+                    if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_init")
+                        v_init = isone(j) ? lines["parameters"][string(kin_tie)]["$(param_str)_init"] :
+                                            lines["parameters"][string(kin_tie)]["$(param_str)_init"][j-1]
+                    end
+                end
+            end
+            if !(v_plim[1] ≤ v_init ≤ v_plim[2])
+                if abs(v_plim[1]) < abs(v_plim[2])
+                    v_init = v_plim[1]
+                else
+                    v_init = v_plim[2]
+                end
+            end
+            voff_tied[j][i] = Parameter(v_init, v_locked, v_plim)
+            msg *= "\nvoff_tied_$(kin_tie)_$(j) $(voff_tied[j][i])"
+        end
+    end
+    # Iterate and create the tied fwhm parameters
+    for j ∈ 1:size(lines_out.tied_fwhm, 2)
+        for (i, kin_tie) ∈ enumerate(kin_tied_key_fwhm[j])
+            f_plim = isone(j) ? (lines["fwhm_plim"]...,) : (lines["acomp_fwhm_plim"][j-1]...,)
+            f_locked = false
+            f_init = isone(j) && haskey(lines, "fwhm_init") ? lines["fwhm_init"] : 100.0
+            # Check if there is an overwrite option in the lines file
+            if haskey(lines, "parameters")
+                if haskey(lines["parameters"], string(kin_tie))
+                    param_str = isone(j) ? "fwhm" : "acomp_fwhm"
+                    if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_plim")
+                        f_plim = isone(j) ? (lines["parameters"][string(kin_tie)]["$(param_str)_plim"]...,) :
+                                            (lines["parameters"][string(kin_tie)]["$(param_str)_plim"][j-1]...,)
+                    end
+                    if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_locked")
+                        f_locked = isone(j) ? lines["parameters"][string(kin_tie)]["$(param_str)_locked"] :
+                                            lines["parameters"][string(kin_tie)]["$(param_str)_locked"][j-1]
+                    end
+                    if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_init")
+                        f_init = isone(j) ?   lines["parameters"][string(kin_tie)]["$(param_str)_init"] :
+                                            lines["parameters"][string(kin_tie)]["$(param_str)_init"][j-1]
+                    end
+                end
+            end
+            if !(f_plim[1] ≤ f_init ≤ f_plim[2])
+                f_init = f_plim[1]
+            end
+            fwhm_tied[j][i] = Parameter(f_init, f_locked, f_plim)
+            msg *= "\nfwhm_tied_$(kin_tie)_$(j) $(fwhm_tied[j][i])"
+        end
+    end
+
+    @debug msg
+    tied_kinematics = TiedKinematics(kin_tied_key_amp, amp_tied, kin_tied_key_voff, voff_tied, kin_tied_key_fwhm, fwhm_tied)
+end
+
+
 """
     parse_lines()
 
@@ -494,40 +837,7 @@ function parse_lines()
 
     # Read in the lines file
     lines = TOML.parsefile(joinpath(@__DIR__, "..", "options", "lines.toml"))
-
-    keylist1 = ["default_sort_order", "tie_voigt_mixing", "voff_plim", "fwhm_plim", "h3_plim", "h4_plim", "acomp_voff_plim", 
-        "acomp_fwhm_plim", "flexible_wavesol", "wavesol_unc", "lines", "profiles", "acomps", "n_acomps"]
-    keylist2 = ["wave", "latex", "annotate"]
-
-    # Loop through all the required keys that should be in the file and confirm that they are there
-    for key ∈ keylist1
-        @assert haskey(lines, key) "$key not found in line options!"
-    end
-    for key ∈ keys(lines["lines"])
-        for key2 in keylist2
-            @assert haskey(lines["lines"][key], key2) "$key2 not found in $key line options!"
-        end
-    end
-    @assert haskey(lines["profiles"], "default") "default not found in line profile options!"
-    profiles = Dict(ln => lines["profiles"]["default"] for ln ∈ keys(lines["lines"]))
-    if haskey(lines, "profiles")
-        for line ∈ keys(lines["lines"])
-            if haskey(lines["profiles"], line)
-                profiles[line] = lines["profiles"][line]
-            end
-        end
-    end
-    # Keep in mind that a line can have multiple acomp profiles
-    acomp_profiles = Dict{String, Vector{Union{String,Nothing}}}()
-    for line ∈ keys(lines["lines"])
-        acomp_profiles[line] = Vector{Union{String,Nothing}}(nothing, lines["n_acomps"])
-        if haskey(lines, "acomps")
-            if haskey(lines["acomps"], line)
-                # Pad to match the length of n_acomps
-                acomp_profiles[line] = vcat(lines["acomps"][line], [nothing for _ in 1:(lines["n_acomps"]-length(lines["acomps"][line]))])
-            end
-        end
-    end
+    profiles, acomp_profiles = validate_lines_file(lines)
 
     # Create the kinematic groups
     #   ---> kinematic groups apply to all additional components of lines as well as the main component
@@ -721,132 +1031,14 @@ function parse_lines()
             end
         end
 
-        # Check if the kinematics should be tied to other lines based on the kinematic groups
-        tied_amp[i] = tied_voff[i] = tied_fwhm[i] = nothing
-        for group ∈ kinematic_groups
-            for groupmember ∈ lines["kinematic_group_" * group]
-                #= Loop through the items in the "kinematic_group_*" list and see if the line name matches any of them.
-                 It needn't be a perfect match, the line name just has to contain the value in the kinematic group list.
-                 i.e. if you want to automatically tie all FeII lines together, instead of manually listing out each one,
-                 you can just include an item "FeII" and it will automatically catch all the FeII lines
-                =#
-                if occursin(groupmember, line)
-
-                    # Check if amp should  be tied
-                    tie_amp_group = false
-                    if haskey(lines, "tie_amp_" * group)
-                        tie_amp_group = true
-                    end
-                    # Check if voff should be tied
-                    tie_voff_group = true
-                    if haskey(lines, "tie_voff_" * group)
-                        tie_voff_group = lines["tie_voff_" * group]
-                    end
-                    # Check if fwhm should be tied
-                    tie_fwhm_group = true
-                    if haskey(lines, "tie_fwhm_" * group)
-                        tie_fwhm_group = lines["tie_fwhm_" * group]
-                    end
-
-                    if tie_amp_group
-                        @assert isnothing(tied_amp[i]) "Line $(line[i]) is already part of the kinematic group $(tied_amp[i]), but it also passed filtering criteria" *
-                            "to be included in the group $group. Make sure your filters are not too lenient!"
-                        @debug "Tying amplitudes for $line to the group: $group"
-                        # Use the group label
-                        tied_amp[i] = Symbol(group)
-                    end
-                    if tie_voff_group
-                        # Make sure line is not already a member of another group
-                        @assert isnothing(tied_voff[i]) "Line $(line[i]) is already part of the kinematic group $(tied_voff[i]), but it also passed filtering criteria" * 
-                            "to be included in the group $group. Make sure your filters are not too lenient!"
-                        @debug "Tying kinematics for $line to the group: $group"
-                        # Use the group label (which can be anything you want) to categorize what lines are tied together
-                        tied_voff[i] = Symbol(group)
-                        # If the wavelength solution is bad, allow the kinematics to still be flexible based on its accuracy
-                        if lines["flexible_wavesol"]
-                            δv = lines["wavesol_unc"]
-                            voff_plim = (-δv, δv)
-                            @debug "Using flexible tied voff with lenience of +/-$δv km/s"
-                        end
-                    end
-                    if tie_fwhm_group
-                        # Make sure line is not already a member of another group
-                        @assert isnothing(tied_fwhm[i]) "Line $(line[i]) is already part of the kinematic group $(tied_fwhm[i]), but it also passed filtering criteria" * 
-                        "to be included in the group $group. Make sure your filters are not too lenient!"
-                        @debug "Tying kinematics for $line to the group: $group"
-                        # Use the group label (which can be anything you want) to categorize what lines are tied together
-                        tied_fwhm[i] = Symbol(group)
-                    end
-
-                    break
-                end
-            end
-        end
-
-        # Repeat for the acomps
-        acomp_tied_amp[i, :] .= nothing
-        acomp_tied_voff[i, :] .= nothing
-        acomp_tied_fwhm[i, :] .= nothing
-        for j ∈ 1:lines["n_acomps"]
-            for group ∈ acomp_kinematic_groups[j]
-                for groupmember ∈ lines["acomp_$(j)_kinematic_group_" * group]
-                    if occursin(groupmember, line)
-
-                        # Check if amp should be tied
-                        tie_acomp_amp_group = false
-                        if haskey(lines, "tie_acomp_$(j)_amp_" * group)
-                            tie_acomp_amp_group = true
-                        end
-
-                        # Check if voff should be tied
-                        tie_acomp_voff_group = true
-                        if haskey(lines, "tie_acomp_$(j)_voff_" * group)
-                            tie_acomp_voff_group = lines["tie_acomp_$(j)_voff_" * group]
-                        end
-                        # Check if fwhm should be tied
-                        tie_acomp_fwhm_group = true
-                        if haskey(lines, "tie_acomp_$(j)_fwhm_" * group)
-                            tie_acomp_fwhm_group = lines["tie_acomp_$(j)_fwhm_" * group]
-                        end
-
-                        if !isnothing(acomp_profiles[line][j]) && tie_acomp_amp_group
-                            # Make sure line is not already a member of another group
-                            @assert isnothing(acomp_tied_amp[i, j]) "Line $(line[i]) acomp $(j) is already part of the kinematic group $(acomp_tied_amp[i, j]), " *
-                                "but it also passed filtering criteria to be included in the group $group. Make sure your filters are not too lenient!"
-                            @debug "Tying amplitudes for $line acomp $(j) to the group: $group"
-
-                            # only set acomp_tied if the line actually *has* an acomp
-                            acomp_tied_amp[i,j] = Symbol(group)
-                        end
-
-                        if !isnothing(acomp_profiles[line][j]) && tie_acomp_voff_group
-                            # Make sure line is not already a member of another group
-                            @assert isnothing(acomp_tied_voff[i, j]) "Line $(line[i]) acomp $(j) is already part of the kinematic group $(acomp_tied_voff[i, j]), " *
-                                "but it also passed filtering criteria to be included in the group $group. Make sure your filters are not too lenient!"
-                            @debug "Tying kinematics for $line acomp $(j) to the group: $group"
-
-                            # Only set acomp_tied if the line actually *has* an acomp
-                            acomp_tied_voff[i,j] = Symbol(group)
-                        end
-
-                        if !isnothing(acomp_profiles[line][j]) && tie_acomp_fwhm_group
-                            # Make sure line is not already a member of another group
-                            @assert isnothing(acomp_tied_fwhm[i, j]) "Line $(line[i]) acomp $(j) is already part of the kinematic group $(acomp_tied_fwhm[i, j]), " *
-                                "but it also passed filtering criteria to be included in the group $group. Make sure your filters are not too lenient!"
-                            @debug "Tying kinematics for $line acomp $(j) to the group: $group"
-                        
-                            # Only set acomp_tied if the line actually *has* an acomp
-                            acomp_tied_fwhm[i,j] = Symbol(group)
-                        end
-
-                        break
-                    end
-                end
-            end
-        end
-
         @debug "Profile: $(profiles[line])"
 
+        # Check if any of the amplitudes/voffs/fwhms should be tied to kinematic groups
+        check_tied_kinematics!(lines, kinematic_groups, tied_amp, tied_voff, tied_fwhm, i, line)
+        # Repeat for the acomps
+        check_acomp_tied_kinematics!(lines, acomp_kinematic_groups, acomp_tied_amp, acomp_tied_voff, acomp_tied_fwhm, 
+            acomp_profiles, i, line)
+        
         # Create parameter objects using the parameter limits
         voffs[i] = Parameter(voff_init, voff_locked, voff_plim)
         @debug "Voff $(voffs[i])"
@@ -924,100 +1116,8 @@ function parse_lines()
 
     @debug "#######################################################"
 
-    # Create a dictionary containing all of the unique `tie` keys, and the tied parameters 
-    # corresponding to that tied key
-    kin_tied_key_amp = [unique(lines_out.tied_amp[:, j]) for j ∈ 1:size(lines_out.tied_amp, 2)]
-    kin_tied_key_amp = [kin_tied_key_amp[i][.!isnothing.(kin_tied_key_amp[i])] for i in eachindex(kin_tied_key_amp)]
-    kin_tied_key_voff = [unique(lines_out.tied_voff[:, j]) for j ∈ 1:size(lines_out.tied_voff, 2)]
-    kin_tied_key_voff = [kin_tied_key_voff[i][.!isnothing.(kin_tied_key_voff[i])] for i in eachindex(kin_tied_key_voff)]
-    kin_tied_key_fwhm = [unique(lines_out.tied_fwhm[:, j]) for j ∈ 1:size(lines_out.tied_fwhm, 2)]
-    kin_tied_key_fwhm = [kin_tied_key_fwhm[i][.!isnothing.(kin_tied_key_fwhm[i])] for i in eachindex(kin_tied_key_fwhm)]
-    @debug "kin_tied_key_amp: $kin_tied_key_amp"
-    @debug "kin_tied_key_voff: $kin_tied_key_voff"
-    @debug "kin_tied_key_fwhm: $kin_tied_key_fwhm"
-    
-    amp_tied = [Vector{Dict{Symbol, Float64}}(undef, length(kin_tied_key_amp[j])) for j ∈ 1:size(lines_out.tied_amp, 2)]
-    voff_tied = [Vector{Parameter}(undef, length(kin_tied_key_voff[j])) for j ∈ 1:size(lines_out.tied_voff, 2)]
-    fwhm_tied = [Vector{Parameter}(undef, length(kin_tied_key_fwhm[j])) for j ∈ 1:size(lines_out.tied_fwhm, 2)]
-    msg = ""
-    # Iterate and create the tied amplitude parameters
-    for j ∈ 1:size(lines_out.tied_amp, 2)
-        for (i, kin_tie) ∈ enumerate(kin_tied_key_amp[j])
-            a_ratio = isone(j) ? lines["tie_amp_$kin_tie"] : lines["tie_acomp_$(j-1)_amp_$kin_tie"]
-            lines_in_group = lines_out.names[lines_out.tied_amp[:, j] .== kin_tie]
-            amp_tied[j][i] = Dict(ln => ai for (ln, ai) in zip(lines_in_group, a_ratio))
-            msg *= "\namp_tied_$(kin_tie)_$(j) $(amp_tied[j][i])"
-        end
-    end
-    # Iterate and create the tied voff parameters
-    for j ∈ 1:size(lines_out.tied_voff, 2)
-        for (i, kin_tie) ∈ enumerate(kin_tied_key_voff[j])
-            v_plim = isone(j) ? (lines["voff_plim"]...,) : (lines["acomp_voff_plim"][j-1]...,)
-            v_locked = false
-            v_init = isone(j) && haskey(lines, "voff_init") ? lines["voff_init"] : 0.0
-            # Check if there is an overwrite option in the lines file
-            if haskey(lines, "parameters")
-                if haskey(lines["parameters"], string(kin_tie))
-                    param_str = isone(j) ? "voff" : "acomp_voff"
-                    if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_plim")
-                        v_plim = isone(j) ? (lines["parameters"][string(kin_tie)]["$(param_str)_plim"]...,) :
-                                            (lines["parameters"][string(kin_tie)]["$(param_str)_plim"][j-1]...,)
-                    end
-                    if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_locked")
-                        v_locked = isone(j) ? lines["parameters"][string(kin_tie)]["$(param_str)_locked"] :
-                                              lines["parameters"][string(kin_tie)]["$(param_str)_locked"][j-1]
-                    end
-                    if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_init")
-                        v_init = isone(j) ? lines["parameters"][string(kin_tie)]["$(param_str)_init"] :
-                                            lines["parameters"][string(kin_tie)]["$(param_str)_init"][j-1]
-                    end
-                end
-            end
-            if !(v_plim[1] ≤ v_init ≤ v_plim[2])
-                if abs(v_plim[1]) < abs(v_plim[2])
-                    v_init = v_plim[1]
-                else
-                    v_init = v_plim[2]
-                end
-            end
-            voff_tied[j][i] = Parameter(v_init, v_locked, v_plim)
-            msg *= "\nvoff_tied_$(kin_tie)_$(j) $(voff_tied[j][i])"
-        end
-    end
-    # Iterate and create the tied fwhm parameters
-    for j ∈ 1:size(lines_out.tied_fwhm, 2)
-        for (i, kin_tie) ∈ enumerate(kin_tied_key_fwhm[j])
-            f_plim = isone(j) ? (lines["fwhm_plim"]...,) : (lines["acomp_fwhm_plim"][j-1]...,)
-            f_locked = false
-            f_init = isone(j) && haskey(lines, "fwhm_init") ? lines["fwhm_init"] : 100.0
-            # Check if there is an overwrite option in the lines file
-            if haskey(lines, "parameters")
-                if haskey(lines["parameters"], string(kin_tie))
-                    param_str = isone(j) ? "fwhm" : "acomp_fwhm"
-                    if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_plim")
-                        f_plim = isone(j) ? (lines["parameters"][string(kin_tie)]["$(param_str)_plim"]...,) :
-                                            (lines["parameters"][string(kin_tie)]["$(param_str)_plim"][j-1]...,)
-                    end
-                    if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_locked")
-                        f_locked = isone(j) ? lines["parameters"][string(kin_tie)]["$(param_str)_locked"] :
-                                              lines["parameters"][string(kin_tie)]["$(param_str)_locked"][j-1]
-                    end
-                    if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_init")
-                        f_init = isone(j) ?   lines["parameters"][string(kin_tie)]["$(param_str)_init"] :
-                                              lines["parameters"][string(kin_tie)]["$(param_str)_init"][j-1]
-                    end
-                end
-            end
-            if !(f_plim[1] ≤ f_init ≤ f_plim[2])
-                f_init = f_plim[1]
-            end
-            fwhm_tied[j][i] = Parameter(f_init, f_locked, f_plim)
-            msg *= "\nfwhm_tied_$(kin_tie)_$(j) $(fwhm_tied[j][i])"
-        end
-    end
-
-    @debug msg
-    tied_kinematics = TiedKinematics(kin_tied_key_amp, amp_tied, kin_tied_key_voff, voff_tied, kin_tied_key_fwhm, fwhm_tied)
+    # Make the tied kinematics object to summarizes the tied amplitudes, voffs, and fwhms
+    tied_kinematics = create_tied_kinematics_object(lines_out, lines)
 
     # If tie_voigt_mixing is set, all Voigt profiles have the same tied mixing parameter eta
     if lines["tie_voigt_mixing"]
@@ -1377,3 +1477,102 @@ function generate_feii_templates(λ::Vector{<:Real}, lsf::Vector{<:Real})
 
 end
 
+
+"""
+    update_global_convergence_log(cube_fitter, spaxel, res)
+
+Updates the convergence log file with results from a global simulated annealing fit with Optim.
+"""
+function update_global_convergence_log(cube_fitter::CubeFitter, spaxel::CartesianIndex, res)
+    global file_lock
+    # use the ReentrantLock to prevent multiple processes from trying to write to the same file at once
+    lock(file_lock) do 
+    open(joinpath("output_$(cube_fitter.name)", "loki.convergence.log"), "a") do conv
+    redirect_stdout(conv) do
+        label = isone(length(spaxel)) ? "Voronoi bin $(spaxel[1])" : "Spaxel ($(spaxel[1]),$(spaxel[2]))"
+        println("$label on worker $(myid()):")
+        println(res)
+        println("-------------------------------------------------------")
+    end
+    end
+    end
+end
+
+
+"""
+    write_memory_log(cube_fitter, fname)
+
+Writes the log file that contains information on memory usage for a particular spaxel fit.
+"""
+function write_memory_log(cube_fitter::CubeFitter, fname::String)
+    open(joinpath("output_$(cube_fitter.name)", "logs", "mem.$fname.log"), "w") do f
+
+        print(f, """
+        ### PROCESS ID: $(getpid()) ###
+        Memory usage stats:
+        CubeFitter - $(Base.summarysize(cube_fitter) ÷ 10^6) MB
+            Cube - $(Base.summarysize(cube_fitter.cube) ÷ 10^6) MB 
+        """)
+
+        print(f, """
+        $(InteractiveUtils.varinfo(all=true, imported=true, recursive=true))
+        """)
+    end
+end
+
+
+"""
+    write_fit_results_csv(cube_fitter, fname, p_out, p_err)
+
+Writes the CSV file that contains the fit results for a particular spaxel
+(best fit values and errors).
+"""
+function write_fit_results_csv(cube_fitter::CubeFitter, fname::String, 
+    p_out::Vector{<:Real}, p_err::Matrix{<:Real})
+
+    open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.csv"), "w") do f 
+        writedlm(f, [p_out p_err], ',')
+    end
+
+end
+
+
+"""
+    read_fit_results_csv(cube_fitter, fname)
+
+Reads the CSV file that contains the file results for a particular spaxel
+and returns the best fit values and errors as separate vectors (errors is a 
+2D matrix with the lower/upper errors)
+"""
+function read_fit_results_csv(cube_fitter::CubeFitter, fname::String)
+    results = readdlm(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.csv"), ',', Float64, '\n')
+    p_out = results[:, 1]
+    p_err = results[:, 2:3]
+    p_out, p_err
+end
+
+
+# Helper function for saving the outputs of the initial integrated fit to both the CubeFitter object
+# and to csv files
+function save_init_fit_outputs!(cube_fitter::CubeFitter, popt::Vector{<:Real}, pah_amp::Vector{<:Real})
+    # Save the results to a file and to the CubeFitter object
+    # save running best fit parameters in case the fitting is interrupted
+    cube_fitter.p_init_cont[:] .= popt
+    open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_cont.csv"), "w") do f
+        writedlm(f, cube_fitter.p_init_cont, ',')
+    end
+    cube_fitter.p_init_pahtemp[:] .= pah_amp
+    open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_pahtemp.csv"), "w") do f
+        writedlm(f, cube_fitter.p_init_pahtemp, ',')
+    end
+end
+
+
+# Alternative dispatch for the line fit (doesnt include the pah_amp argument)
+function save_init_fit_outputs!(cube_fitter::CubeFitter, popt::Vector{<:Real})
+    # Save results to file
+    cube_fitter.p_init_line[:] .= copy(popt)
+    open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_line.csv"), "w") do f
+        writedlm(f, cube_fitter.p_init_line, ',')
+    end
+end

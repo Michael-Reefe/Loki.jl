@@ -1,77 +1,6 @@
 
-"""
-    parammaps_empty(shape, n_dust_cont, n_power_law, cf_dustfeat, ab_names, n_lines, n_comps, cf_lines,
-        flexible_wavesol)
-
-A constructor function for making a default empty ParamMaps structure with all necessary fields for a given
-fit of a MIR DataCube.
-
-# Arguments {S<:Integer}
-- `shape::Tuple{S,S,S}`: Tuple specifying the 3D shape of the input data cube.
-- `n_channels::S`: The number of subchannels in the fit.
-- `n_dust_cont::S`: The number of dust continuum components in the fit.
-- `n_power_law::S`: The number of power law continuum components in the fit.
-- `cf_dustfeat::DustFeatures`: A DustFeatures object specifying all of the PAH emission in the fit.
-- `ab_names::Vector{String}`: The names of each absorption feature included in the fit.
-- `fit_sil_emission::Bool`: Whether or not one is fitting a hot silicate dust emission component.
-- `temp_names::Vector{String}`: The names of generic templates in the fit.
-- `n_lines::S`: The number of emission lines in the fit.
-- `n_comps::S`: The maximum number of profiles that are being fit to a line.
-- `cf_lines::TransitionLines`: A TransitionLines object specifying all of the line emission in the fit.
-- `flexible_wavesol::Bool`: See the CubeFitter's `flexible_wavesol` parameter.
-- `fit_temp_multexp::Bool`: See the CubeFitter's `fit_temp_multexp` parameter.
-"""
-function parammaps_empty(shape::Tuple{S,S,S}, n_channels::S, n_dust_cont::S, n_power_law::S, cf_dustfeat::DustFeatures,
-    ab_names::Vector{String}, fit_sil_emission::Bool, temp_names::Vector{String}, n_lines::S, n_comps::S, cf_lines::TransitionLines, 
-    extinction_curve::String, flexible_wavesol::Bool, fit_temp_multexp::Bool)::ParamMaps where {S<:Integer}
-
-    @debug """\n
-    Creating MIRParamMaps struct with shape $shape
-    ##############################################
-    """
-
-    # Add stellar continuum fitting parameters
-    stellar_names = ["continuum.stellar.amp", "continuum.stellar.temp"]
-    stellar_units = ["-", "K"]
-    stellar_labels = [L"$\log_{10}(A_{*})$",  L"$T$ (K)"]
-    stellar_restframe = [1, 0]
-    stellar_log = [1, 0]
-    stellar_normalize = [0, 0]
-    @debug "stellar continuum maps with keys $stellar_names"
-
-    # Add dust continuum fitting parameters
-    dust_names = String[]
-    dust_units = String[]
-    dust_labels = String[]
-    dust_restframe = Int[]
-    dust_log = Int[]
-    dust_normalize = Int[]
-    for i ∈ 1:n_dust_cont
-        append!(dust_names, ["continuum.dust.$(i).amp", "continuum.dust.$(i).temp"])
-        append!(dust_units, ["-", "K"])
-        append!(dust_labels, [L"$\log_{10}(A_{\rm dust})$", L"$T$ (K)"])
-        append!(dust_restframe, [1, 0])
-        append!(dust_log, [1, 0])
-        append!(dust_normalize, [0, 0])
-    end
-    @debug "dust continuum maps with keys $dust_names"
-
-    # Add power law fitting parameters
-    power_law_names = String[]
-    power_law_units = String[]
-    power_law_labels = String[]
-    power_law_restframe = Int[]
-    power_law_log = Int[]
-    power_law_normalize = Int[]
-    for p ∈ 1:n_power_law
-        append!(power_law_names, ["continuum.power_law.$(p).amp", "continuum.power_law.$(p).index"])
-        append!(power_law_units, ["log(erg.s-1.cm-2.Hz-1.sr-1)", "-"])
-        append!(power_law_labels, [L"$\log_{10}(A_{\rm pl} / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1}$)",  L"$\alpha$"])
-        append!(power_law_restframe, [1, 0])
-        append!(power_law_log, [1, 0])
-        append!(power_law_normalize, [1, 0])
-    end
-    @debug "power law maps with keys $power_law_names"
+# Helper function for getting dust feature names and transformation vector for making ParamMaps objects
+function _get_dust_feature_names_and_transforms(cf_dustfeat::DustFeatures)
 
     # Add dust features fitting parameters
     dust_feature_names = String[]
@@ -118,111 +47,143 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_channels::S, n_dust_cont::S, n_p
     @debug "dust feature maps with keys $dust_feature_names"
     @debug "extra dust feature maps with keys $dust_feature_names_extra"
 
-    abs_feature_names = String[]
-    abs_feature_units = String[]
-    abs_feature_labels = String[]
-    abf_restframe = Int[]
-    abf_log = Int[]
-    abf_normalize = Int[]
-    for n ∈ ab_names
-        append!(abs_feature_names, ["abs_features.$(n).tau", "abs_features.$(n).mean", "abs_features.$(n).fwhm"])
-        append!(abs_feature_units, ["-", "um", "um"])
-        append!(abs_feature_labels, [L"$\tau$", L"$\mu$ ($\mu$m)", L"FWHM ($\mu$m)"])
-        append!(abf_restframe, [0, 2, 2])
-        append!(abf_log, [0, 0, 0])
-        append!(abf_normalize, [0, 0, 0])
+    dust_feature_names, dust_feature_units, dust_feature_labels, df_restframe, df_log, df_normalize,
+        dust_feature_names_extra, dust_feature_units_extra, dust_feature_labels_extra, df_extra_restframe, 
+        df_extra_log, df_extra_normalize 
+end
+
+
+"""
+    parammaps_empty(shape, n_dust_cont, n_power_law, cf_dustfeat, ab_names, n_lines, n_comps, cf_lines,
+        flexible_wavesol)
+
+A constructor function for making a default empty ParamMaps structure with all necessary fields for a given
+fit of a MIR DataCube.
+
+# Arguments {S<:Integer}
+- `cube_fitter::CubeFitter`: The CubeFitter object
+- `shape::Tuple{S,S,S}`: Tuple specifying the 3D shape of the input data cube.
+"""
+function parammaps_mir_empty(cube_fitter::CubeFitter, shape::Tuple{S,S,S})::ParamMaps where {S<:Integer}
+
+    @debug """\n
+    Creating MIRParamMaps struct with shape $shape
+    ##############################################
+    """
+
+    # Add stellar continuum fitting parameters
+    parameter_names = ["continuum.stellar.amp", "continuum.stellar.temp"]
+    parameter_units = ["-", "K"]
+    parameter_labels = [L"$\log_{10}(A_{*})$",  L"$T$ (K)"]
+    restframe_tf = [1, 0]
+    log_tf = [1, 0]
+    norm_tf = [0, 0]
+
+    # Add dust continuum fitting parameters
+    for i ∈ 1:cube_fitter.n_dust_cont
+        append!(parameter_names, ["continuum.dust.$(i).amp", "continuum.dust.$(i).temp"])
+        append!(parameter_units, ["-", "K"])
+        append!(parameter_labels, [L"$\log_{10}(A_{\rm dust})$", L"$T$ (K)"])
+        append!(restframe_tf, [1, 0])
+        append!(log_tf, [1, 0])
+        append!(norm_tf, [0, 0])
     end
-    @debug "absorption feature maps with keys $abs_feature_names"
+
+    # Add power law fitting parameters
+    for p ∈ 1:cube_fitter.n_power_law
+        append!(parameter_names, ["continuum.power_law.$(p).amp", "continuum.power_law.$(p).index"])
+        append!(parameter_units, ["log(erg.s-1.cm-2.Hz-1.sr-1)", "-"])
+        append!(parameter_labels, [L"$\log_{10}(A_{\rm pl} / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1}$)",  L"$\alpha$"])
+        append!(restframe_tf, [1, 0])
+        append!(log_tf, [1, 0])
+        append!(norm_tf, [1, 0])
+    end
 
     # Add extinction fitting parameters
-    extinction_names = String[]
-    extinction_units = String[]
-    extinction_labels = String[]
-    ext_restframe = Int[]
-    ext_log = Int[]
-    ext_normalize = Int[]
-    if extinction_curve == "decompose"
-        append!(extinction_names, ["extinction.N_oli", "extinction.N_pyr", "extinction.N_for"])
-        append!(extinction_units, ["log(g.cm-2)", "log(N_oli)", "log(N_oli)"])
-        append!(extinction_labels, [L"$\log_{10}(N_{\rm oli} / $ g cm$^{-2}$)", L"$\log_{10}(N_{\rm pyr} / N_{\rm oli}$)",
+    if cube_fitter.extinction_curve == "decompose"
+        append!(parameter_names, ["extinction.N_oli", "extinction.N_pyr", "extinction.N_for"])
+        append!(parameter_units, ["log(g.cm-2)", "log(N_oli)", "log(N_oli)"])
+        append!(parameter_labels, [L"$\log_{10}(N_{\rm oli} / $ g cm$^{-2}$)", L"$\log_{10}(N_{\rm pyr} / N_{\rm oli}$)",
             L"$\log_{10}(N_{\rm for} / N_{\rm oli}$)"])
-        append!(ext_restframe, [0, 0, 0])
-        append!(ext_log, [1, 1, 1])
-        append!(ext_normalize, [0, 0, 0])
+        append!(restframe_tf, [0, 0, 0])
+        append!(log_tf, [1, 1, 1])
+        append!(norm_tf, [0, 0, 0])
     else
-        push!(extinction_names, "extinction.tau_9_7")
-        push!(extinction_units, "-")
-        push!(extinction_labels, L"$\tau_{9.7}$")
-        push!(ext_restframe, 0)
-        push!(ext_log, 0)
-        push!(ext_normalize, 0)
+        push!(parameter_names, "extinction.tau_9_7")
+        push!(parameter_units, "-")
+        push!(parameter_labels, L"$\tau_{9.7}$")
+        push!(restframe_tf, 0)
+        push!(log_tf, 0)
+        push!(norm_tf, 0)
     end
-    append!(extinction_names, ["extinction.tau_ice", "extinction.tau_ch", "extinction.beta", "extinction.frac"])
-    append!(extinction_units, ["-", "-", "-", "-"])
-    append!(extinction_labels, [L"$\tau_{\rm ice}$", L"$\tau_{\rm CH}$", L"$\beta$", L"$C_f$"])
-    append!(ext_restframe, [0, 0, 0, 0])
-    append!(ext_log, [0, 0, 0, 0])
-    append!(ext_normalize, [0, 0, 0, 0])
-    @debug "extinction maps with keys $extinction_names"
+    append!(parameter_names, ["extinction.tau_ice", "extinction.tau_ch", "extinction.beta", "extinction.frac"])
+    append!(parameter_units, ["-", "-", "-", "-"])
+    append!(parameter_labels, [L"$\tau_{\rm ice}$", L"$\tau_{\rm CH}$", L"$\beta$", L"$C_f$"])
+    append!(restframe_tf, [0, 0, 0, 0])
+    append!(log_tf, [0, 0, 0, 0])
+    append!(norm_tf, [0, 0, 0, 0])
+
+    # Add absorption feature fitting parameters
+    for n ∈ cube_fitter.abs_features.names
+        append!(parameter_names, ["abs_features.$(n).tau", "abs_features.$(n).mean", "abs_features.$(n).fwhm"])
+        append!(parameter_units, ["-", "um", "um"])
+        append!(parameter_labels, [L"$\tau$", L"$\mu$ ($\mu$m)", L"FWHM ($\mu$m)"])
+        append!(restframe_tf, [0, 2, 2])
+        append!(log_tf, [0, 0, 0])
+        append!(norm_tf, [0, 0, 0])
+    end
 
     # Add hot dust fitting parameters
-    hot_dust_names = String[]
-    hot_dust_units = String[]
-    hot_dust_labels = String[]
-    hd_restframe = Int[]
-    hd_log = Int[]
-    hd_normalize = Int[]
-    if fit_sil_emission
-        append!(hot_dust_names, ["continuum.hot_dust.amp", "continuum.hot_dust.temp", "continuum.hot_dust.frac", 
+    if cube_fitter.fit_sil_emission
+        append!(parameter_names, ["continuum.hot_dust.amp", "continuum.hot_dust.temp", "continuum.hot_dust.frac", 
             "continuum.hot_dust.tau_warm", "continuum.hot_dust.tau_cold", "continuum.hot_dust.sil_peak"])
-        append!(hot_dust_units, ["-", "K", "-", "-", "-", "um"])
-        append!(hot_dust_labels, [L"$\log_{10}(A_{\rm sil})$", L"$T$ (K)", L"$C_f$", L"$\tau_{\rm warm}$", 
+        append!(parameter_units, ["-", "K", "-", "-", "-", "um"])
+        append!(parameter_labels, [L"$\log_{10}(A_{\rm sil})$", L"$T$ (K)", L"$C_f$", L"$\tau_{\rm warm}$", 
             L"$\tau_{\rm cold}$", L"$\mu$ ($\mu$m)"])
-        append!(hd_restframe, [1, 0, 0, 0, 0, 0])
-        append!(hd_log, [1, 0, 0, 0, 0, 0])
-        append!(hd_normalize, [0, 0, 0, 0, 0, 0])
+        append!(restframe_tf, [1, 0, 0, 0, 0, 0])
+        append!(log_tf, [1, 0, 0, 0, 0, 0])
+        append!(norm_tf, [0, 0, 0, 0, 0, 0])
     end
-    @debug "hot dust maps with keys $hot_dust_names"
 
     # Add template fitting parameters
-    template_names = String[]
-    template_units = String[]
-    template_labels = String[]
-    template_restframe = Int[]
-    template_log = Int[]
-    template_normalize = Int[]
-    for (ni, n) ∈ enumerate(temp_names)
+    for (ni, n) ∈ enumerate(cube_fitter.template_names)
         # template amplitudes are not rest-frame transformed because they are interpreted as multiplying a 
         # spectrum which is already in the frame of interest
-        if !fit_temp_multexp
-            for i ∈ 1:n_channels
-                push!(template_names, "templates.$(n).amp_$i")
-                push!(template_units, "-")
-                push!(template_labels, L"$\log_{10}(A_{\rm template})$")
-                push!(template_restframe, 0)
-                push!(template_log, 1)
-                push!(template_normalize, 0)
+        if !cube_fitter.fit_temp_multexp
+            for i ∈ 1:cube_fitter.n_channels
+                push!(parameter_names, "templates.$(n).amp_$i")
+                push!(parameter_units, "-")
+                push!(parameter_labels, L"$\log_{10}(A_{\rm template})$")
+                push!(restframe_tf, 0)
+                push!(log_tf, 1)
+                push!(norm_tf, 0)
             end
         else
             if ni > 1
                 break
             end 
             for i ∈ 1:4
-                append!(template_names, ["templates.amp_$i", "templates.index_$i"])
-                append!(template_units, ["-", "-"])
-                append!(template_labels, [L"$\log_{10}(A_{\rm template})$", L"$b$"])
-                append!(template_restframe, [0, 0])
-                append!(template_log, [1, 0])
-                append!(template_normalize, [0, 0])
+                append!(parameter_names, ["templates.amp_$i", "templates.index_$i"])
+                append!(parameter_units, ["-", "-"])
+                append!(parameter_labels, [L"$\log_{10}(A_{\rm template})$", L"$b$"])
+                append!(restframe_tf, [0, 0])
+                append!(log_tf, [1, 0])
+                append!(norm_tf, [0, 0])
             end
         end
     end
-    @debug "template maps with keys $template_names"
 
+    # Add dust feature fitting parameters
+    dust_feature_names, dust_feature_units, dust_feature_labels, df_restframe, df_log, df_normalize, 
+        dust_feature_names_extra, dust_feature_units_extra, dust_feature_labels_extra, df_extra_restframe, 
+        df_extra_log, df_extra_normalize = _get_dust_feature_names_and_transforms(cube_fitter.dust_features)
+
+    # Add emission line fitting parameters
     line_names, line_names_extra, line_units, line_units_extra, line_labels, line_labels_extra, line_restframe, line_extra_restframe, 
         line_log, line_extra_log, line_normalize, line_extra_normalize, _, _ = _get_line_names_and_transforms(
-            cf_lines, n_lines, n_comps, flexible_wavesol, perfreq=0)
+            cube_fitter.lines, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.flexible_wavesol, perfreq=0)
 
+    # Add statistics parameters
     statistics_names = ["statistics.chi2", "statistics.dof"]
     statistics_units = ["-", "-"]
     statistics_labels = [L"$\chi^2$", "d.o.f."]
@@ -233,23 +194,13 @@ function parammaps_empty(shape::Tuple{S,S,S}, n_channels::S, n_dust_cont::S, n_p
     @debug "dof map"
 
     # Combine everything into big vectors
-    parameter_names = [stellar_names; dust_names; power_law_names; extinction_names; abs_feature_names; 
-        hot_dust_names; template_names; dust_feature_names; line_names; dust_feature_names_extra;
-        line_names_extra; statistics_names]
-    parameter_units = [stellar_units; dust_units; power_law_units; extinction_units; abs_feature_units;
-        hot_dust_units; template_units; dust_feature_units; line_units; dust_feature_units_extra;
-        line_units_extra; statistics_units]
-    parameter_labels = [stellar_labels; dust_labels; power_law_labels; extinction_labels; abs_feature_labels;
-        hot_dust_labels; template_labels; dust_feature_labels; line_labels; dust_feature_labels_extra;
-        line_labels_extra; statistics_labels]
-    restframe_tf = [stellar_restframe; dust_restframe; power_law_restframe; ext_restframe; abf_restframe;
-        hd_restframe; template_restframe; df_restframe; line_restframe; df_extra_restframe;
-        line_extra_restframe; statistics_restframe]
-    log_tf = BitVector([stellar_log; dust_log; power_law_log; ext_log; abf_log; hd_log; template_log; df_log;
-        line_log; df_extra_log; line_extra_log; statistics_log])
-    norm_tf = BitVector([stellar_normalize; dust_normalize; power_law_normalize; ext_normalize; abf_normalize;
-        hd_normalize; template_normalize; df_normalize; line_normalize; df_extra_normalize;
-        line_extra_normalize; statistics_normalize])
+    parameter_names = [parameter_names; dust_feature_names; line_names; dust_feature_names_extra; line_names_extra; statistics_names]
+    parameter_units = [parameter_units; dust_feature_units; line_units; dust_feature_units_extra; line_units_extra; statistics_units]
+    parameter_labels = [parameter_labels; dust_feature_labels; line_labels; dust_feature_labels_extra; line_labels_extra; 
+        statistics_labels]
+    restframe_tf = [restframe_tf; df_restframe; line_restframe; df_extra_restframe; line_extra_restframe; statistics_restframe]
+    log_tf = BitVector([log_tf; df_log; line_log; df_extra_log; line_extra_log; statistics_log])
+    norm_tf = BitVector([norm_tf; df_normalize; line_normalize; df_extra_normalize; line_extra_normalize; statistics_normalize])
     line_tf = BitVector([contains(pname, "lines") for pname in parameter_names])
 
     n_params = length(parameter_names)
@@ -380,9 +331,171 @@ function cubemodel_empty(shape::Tuple, n_dust_cont::Integer, n_power_law::Intege
 end
 
 
+# Helper function for moving absorption features marked as "local" into the proper frame 
+# for a redshifted spectrum
+function cubefitter_mir_adjust_local_absorption!(abs_features_0::DustFeatures, z::Real)
+    # Adjust wavelengths/FWHMs for any local absorption features
+    for i in 1:length(abs_features_0.names)
+        if abs_features_0._local[i]
+            abs_features_0.mean[i].value /= (1 + z)
+            abs_features_0.mean[i].limits = (abs_features_0.mean[i].limits[1] / (1 + z),
+                                        abs_features_0.mean[i].limits[2] / (1 + z))
+            abs_features_0.fwhm[i].value /= (1 + z)
+            abs_features_0.fwhm[i].limits = (abs_features_0.fwhm[i].limits[1] / (1 + z),
+                                        abs_features_0.fwhm[i].limits[2] / (1 + z))
+        end
+    end
+end
+
+
+# Helper function for calculating the number of subchannels covered by MIRI observations
+function cubefitter_mir_get_n_channels(λ::Vector{<:Real}, z::Real)
+    # NOTE: do not use n_channels to count the ACTUAL number of channels/bands in an observation,
+    #  as n_channels counts the overlapping regions between channels as separate channels altogether
+    #  to allow them to have different normalizations
+    n_channels = 0
+    channel_masks = []
+    ch_edge_sort = sort(channel_edges)
+    for i in 2:(length(ch_edge_sort))
+        left = ch_edge_sort[i-1]
+        right = ch_edge_sort[i]
+        ch_mask = left .< (λ .* (1 .+ z)) .< right
+        n_region = sum(ch_mask)
+
+        if n_region > 0
+            n_channels += 1
+            push!(channel_masks, ch_mask)
+        end
+    end
+    # filter out small beginning/end sections
+    if sum(channel_masks[1]) < 200
+        channel_masks[2] .|= channel_masks[1]
+        popfirst!(channel_masks)
+        n_channels -= 1
+    end
+    if sum(channel_masks[end]) < 200
+        channel_masks[end-1] .|= channel_masks[end]
+        pop!(channel_masks)
+        n_channels -= 1
+    end
+
+    n_channels, channel_masks
+end
+
+
+# Helper function for preparing continuum and dust feature parameters for 
+# a CubeFitter object
+function cubefitter_mir_prepare_continuum(λ::Vector{<:Real}, z::Real, out::Dict, n_channels::Integer)
+
+    # Get dust options from the configuration file
+    continuum, dust_features_0, abs_features_0, abs_taus_0 = parse_dust(n_channels)
+    # Moves absorption features marked as "local" into the rest frame of the observed spectrum
+    cubefitter_mir_adjust_local_absorption!(abs_features_0, z)
+
+    #### PREPARE OUTPUTS ####
+    @debug "### Model will include 1 stellar continuum component ###" *
+        "\n### at T = $(continuum.T_s.value) K ###"
+
+    n_dust_cont = length(continuum.T_dc)
+    msg = "### Model will include $n_dust_cont dust continuum components ###"
+    for T_dci ∈ continuum.T_dc
+        msg *= "\n### at T = $(T_dci.value) K ###"
+    end
+    @debug msg 
+
+    n_power_law = length(continuum.α)
+    msg = "### Model will include $n_power_law power law components ###"
+    for αi ∈ continuum.α
+        msg *= "\n### with alpha = $(αi.value) ###"
+    end
+    @debug msg
+
+    # Only use PAH features within +/-0.5 um of the region being fit (to include wide tails)
+    df_filt = [((minimum(λ)-0.5) < dust_features_0.mean[i].value < (maximum(λ)+0.5)) for i ∈ 1:length(dust_features_0.mean)]
+    if !isnothing(out[:user_mask])
+        for pair in out[:user_mask]
+            df_filt .&= [~(pair[1] < dust_features_0.mean[i].value < pair[2]) for i ∈ 1:length(dust_features_0.mean)]
+        end
+    end
+    dust_features = DustFeatures(dust_features_0.names[df_filt], 
+                                dust_features_0.profiles[df_filt],
+                                dust_features_0.mean[df_filt],
+                                dust_features_0.fwhm[df_filt],
+                                dust_features_0.index[df_filt],
+                                dust_features_0.cutoff[df_filt],
+                                dust_features_0.complexes[df_filt],
+                                dust_features_0._local[df_filt])
+    n_dust_features = length(dust_features.names)
+    msg = "### Model will include $n_dust_features dust feature (PAH) components ###"
+    for df_mn ∈ dust_features.mean
+        msg *= "\n### at lambda = $df_mn um ###"
+    end
+    @debug msg
+
+    # Only use absorption features within +/-0.5 um of the region being fit
+    ab_filt = [((minimum(λ)-0.5) < abs_features_0.mean[i].value < (maximum(λ)+0.5)) for i ∈ 1:length(abs_features_0.mean)]
+    if !isnothing(out[:user_mask])
+        for pair in out[:user_mask]
+            ab_filt .&= [~(pair[1] < abs_features_0.mean[i].value < pair[2]) for i ∈ 1:length(abs_features_0.mean)]
+        end
+    end
+    abs_features = DustFeatures(abs_features_0.names[ab_filt],
+                                abs_features_0.profiles[ab_filt],
+                                abs_features_0.mean[ab_filt],
+                                abs_features_0.fwhm[ab_filt],
+                                abs_features_0.index[ab_filt],
+                                abs_features_0.cutoff[ab_filt],
+                                abs_features_0.complexes[ab_filt],
+                                abs_features_0._local[ab_filt])
+    abs_taus = abs_taus_0[ab_filt]
+    n_abs_features = length(abs_features.names)
+    msg = "### Model will include $n_abs_features absorption feature components ###"
+    for ab_mn ∈ abs_features.mean
+        msg *= "\n### at lambda = $ab_mn um ###"
+    end
+    @debug msg
+
+    n_templates = size(out[:templates], 4)
+
+    if n_templates == 0
+        # Ignore any template amplitude entries in the dust.toml options if there are no templates
+        continuum = MIRContinuum(continuum.T_s, continuum.T_dc, continuum.α, continuum.τ_97, 
+                                    continuum.N_oli, continuum.N_pyr, continuum.N_for, continuum.τ_ice,
+                                    continuum.τ_ch, continuum.β, continuum.Cf, continuum.T_hot, continuum.Cf_hot, continuum.τ_warm, 
+                                    continuum.τ_cold, continuum.sil_peak, Parameter[])
+    end
+
+    # If we are using AGN templates, lock the hot dust component to 0
+    if !haskey(out, :lock_hot_dust)
+        lock_hot_dust = n_templates > 0
+    else
+        lock_hot_dust = out[:lock_hot_dust]
+    end
+
+    continuum, dust_features_0, dust_features, abs_features_0, abs_features, abs_taus, 
+        n_dust_cont, n_power_law, n_dust_features, n_abs_features, n_templates, lock_hot_dust
+end
+
+
+# Helper function for counting the total number of MIR continuum parameters
+function cubefitter_mir_count_cont_parameters(extinction_curve::String, fit_sil_emission::Bool, fit_temp_multexp::Bool, 
+    n_dust_cont::Integer, n_power_law::Integer, n_abs_features::Integer, n_templates::Integer, n_channels::Integer, 
+    dust_features::DustFeatures; split::Bool=false)
+
+    n_params_cont = (2+4) + (extinction_curve == "decompose" ? 3 : 1) + 2n_dust_cont + 2n_power_law + 
+                    3n_abs_features + (fit_sil_emission ? 6 : 0) + (fit_temp_multexp ? 8 : n_templates*n_channels)
+    if !split
+        # If split=true, return the index at which the parameters should be split (before the PAHs)
+        n_params_cont += 3 * sum(dust_features.profiles .== :Drude) + 5 * sum(dust_features.profiles .== :PearsonIV)
+    end
+
+    n_params_cont
+end
+
+
 # MIR implementation of the get_continuum_plimits function
 function get_mir_continuum_plimits(cube_fitter::CubeFitter, spaxel::CartesianIndex, I::Vector{<:Real}, σ::Vector{<:Real}, 
-    init::Bool, templates_spax::Matrix{<:Real}; split::Bool=false)
+    init::Bool, templates_spax::Matrix{<:Real}; split::Bool=false, force_noext::Bool=false)
 
     dust_features = cube_fitter.dust_features
     abs_features = cube_fitter.abs_features
@@ -434,6 +547,10 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, spaxel::CartesianInd
             ext_lock[1:3] .= true
         end
     end
+    # Also lock if force_noext
+    if force_noext
+        ext_lock[1] = true
+    end
     # Also lock if the continuum is within 1 std dev of 0
     if nanmedian(I) ≤ 2nanmedian(σ)
         ext_lock[:] .= true
@@ -480,287 +597,281 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, spaxel::CartesianInd
         lock_2 = BitVector(df_lock)
         plims_1, plims_2, lock_1, lock_2, tied_pairs, tied_indices
     end
-
 end
 
 
-# MIR implementation of the get_continuum_initial_values function
-function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
-    σ::Vector{<:Real}, N::Real, init::Bool, templates_spax::Matrix{<:Real}; split::Bool=false)
+# Helper function for calculating an estimate of optical depth based on continuum slopes
+function guess_optical_depth(cube_fitter::CubeFitter, λ::Vector{<:Real}, continuum::MIRContinuum, 
+    init::Bool)
 
-    continuum = cube_fitter.continuum
-
-    # guess optical depth from the dip in the continuum level
-    if !isnothing(cube_fitter.guess_tau) && (cube_fitter.extinction_curve != "decompose")
-        i1 = nanmedian(I[cube_fitter.guess_tau[1][1] .< λ .< cube_fitter.guess_tau[1][2]])
-        i2 = nanmedian(I[cube_fitter.guess_tau[2][1] .< λ .< cube_fitter.guess_tau[2][2]])
-        m = (i2 - i1) / (mean(cube_fitter.guess_tau[2]) - mean(cube_fitter.guess_tau[1]))
-        contin_unextinct = i1 + m * (10.0 - mean(cube_fitter.guess_tau[1]))  # linear extrapolation over the silicate feature
-        contin_extinct = clamp(nanmedian(I[9.9 .< λ .< 10.1]), 0., Inf)
-        # Optical depth at 10 microns
-        r = contin_extinct / contin_unextinct
-        tau_10 = r > 0 ? clamp(-log(r), continuum.τ_97.limits...) : 0.
-        if !cube_fitter.extinction_screen && r > 0
-            # solve nonlinear equation
-            f(τ) = r - (1 - exp(-τ[1]))/τ[1]
-            try
-                soln = nlsolve(f, [tau_10])
-                tau_10 = clamp(soln.zero[1], continuum.τ_97.limits...)
-            catch
-                tau_10 = 0.
-            end
+    i1 = nanmedian(I[cube_fitter.guess_tau[1][1] .< λ .< cube_fitter.guess_tau[1][2]])
+    i2 = nanmedian(I[cube_fitter.guess_tau[2][1] .< λ .< cube_fitter.guess_tau[2][2]])
+    m = (i2 - i1) / (mean(cube_fitter.guess_tau[2]) - mean(cube_fitter.guess_tau[1]))
+    contin_unextinct = i1 + m * (10.0 - mean(cube_fitter.guess_tau[1]))  # linear extrapolation over the silicate feature
+    contin_extinct = clamp(nanmedian(I[9.9 .< λ .< 10.1]), 0., Inf)
+    # Optical depth at 10 microns
+    r = contin_extinct / contin_unextinct
+    tau_10 = r > 0 ? clamp(-log(r), continuum.τ_97.limits...) : 0.
+    if !cube_fitter.extinction_screen && r > 0
+        # solve nonlinear equation
+        f(τ) = r - (1 - exp(-τ[1]))/τ[1]
+        try
+            soln = nlsolve(f, [tau_10])
+            tau_10 = clamp(soln.zero[1], continuum.τ_97.limits...)
+        catch
+            tau_10 = 0.
         end
-
-        pₑ = 3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law
-        # Get the extinction curve
-        β = init ? continuum.β.value : cube_fitter.p_init_cont[pₑ+3]
-        if cube_fitter.extinction_curve == "d+"
-            ext_10 = τ_dp([10.0], β)[1]
-        elseif cube_fitter.extinction_curve == "kvt"
-            ext_10 = τ_kvt([10.0], β)[1]
-        elseif cube_fitter.extinction_curve == "ct"
-            ext_10 = τ_ct([10.0])[1]
-        elseif cube_fitter.extinction_curve == "ohm"
-            ext_10 = τ_ohm([10.0])[1]
-        else
-            error("Unrecognized extinction curve: $(cube_fitter.extinction_curve)")
-        end
-        # Convert tau at 10 microns to tau at 9.7 microns
-        tau_guess = clamp(tau_10 / ext_10, continuum.τ_97.limits...)
     end
 
-    # Check if cube fitter has initial cube
-    if !isnothing(cube_fitter.p_init_cube_λ) && !init
-
-        pcube_cont = cube_fitter.p_init_cube_cont
-        # Get the coordinates of all spaxels that have fit results
-        coords0 = [float.(c.I) for c in CartesianIndices(size(pcube_cont)[1:2]) if !all(isnan.(pcube_cont[c,:]))]
-        coords = cube_fitter.p_init_cube_coords
-        # Calculate their distances from the current spaxel
-        dist = [hypot(spaxel[1]-c[1], spaxel[2]-c[2]) for c in coords]
-        closest = coords0[argmin(dist)]
-        @debug "Using initial best fit continuum parameters from coordinates $closest --> $(coords[argmin(dist)])"
-
-        p₀ = pcube_cont[Int.(closest)..., :]
-        pᵢ = 2 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law + 4 + (cube_fitter.extinction_curve == "decompose" ? 3 : 1) + 
-             3cube_fitter.n_abs_feat + (cube_fitter.fit_sil_emission ? 6 : 0) + 
-             (cube_fitter.fit_temp_multexp ? 8 : cube_fitter.n_templates*cube_fitter.n_channels)
-        pahtemp = model_pah_residuals(cube_fitter.cube.λ, p₀[pᵢ:end], cube_fitter.dust_features.profiles, ones(length(cube_fitter.cube.λ)))
-        pah_frac = repeat([maximum(pahtemp)/2], 2)
-
-    # Check if the cube fitter has initial fit parameters 
-    elseif !init
-
-        @debug "Using initial best fit continuum parameters..."
-
-        # Set the parameters to the best parameters
-        p₀ = copy(cube_fitter.p_init_cont)
-        pah_frac = copy(cube_fitter.p_init_pahtemp)
-
-        # τ_97_0 = cube_fitter.τ_guess[parse(Int, cube_fitter.cube.channel)][spaxel]
-        # max_τ = cube_fitter.continuum.τ_97.limits[2]
-
-        # scale all flux amplitudes by the difference in medians between the spaxel and the summed spaxels
-        # (should be close to 1 since the sum is already normalized by the number of spaxels included anyways)
-        I_init = sumdim(cube_fitter.cube.I, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
-        scale = max(nanmedian(I), 1e-10) * N / nanmedian(I_init)
-        # max_amp = 1 / exp(-max_τ)
-
-        # Stellar amplitude (rescaled)
-        p₀[1] = p₀[1] * scale 
-        pᵢ = 3
-
-        # Dust continuum amplitudes (rescaled)
-        for di ∈ 1:cube_fitter.n_dust_cont
-            p₀[pᵢ] = p₀[pᵢ] * scale 
-            if (cube_fitter.lock_hot_dust[1] || cube_fitter.nuc_fit_flag[1]) && isone(di)
-                p₀[pᵢ] = 0.
-            end
-            pᵢ += 2
-        end
-
-        # Power law amplitudes (NOT rescaled)
-        for _ ∈ 1:cube_fitter.n_power_law
-            # p₀[pᵢ] = p₀[pᵢ] 
-            pᵢ += 2
-        end
-
-        # Set optical depth based on the initial guess or the initial fit (whichever is larger)
-        if cube_fitter.extinction_curve != "decompose"
-            p₀[pᵢ] = max(cube_fitter.continuum.τ_97.value, p₀[pᵢ])
-        end
-
-        # Set τ_9.7 and τ_CH to 0 if the continuum is within 1 std dev of 0
-        lock_abs = false
-        if nanmedian(I) ≤ 2nanmedian(σ)
-            lock_abs = true
-            if cube_fitter.extinction_curve != "decompose"
-                p₀[pᵢ] = 0.
-                p₀[pᵢ+2] = 0.
-            else
-                p₀[pᵢ:pᵢ+2] .= 0.
-                p₀[pᵢ+4] = 0.
-            end
-        end
-
-        # Set τ_9.7 to the guess if the guess_tau flag is set
-        if !isnothing(cube_fitter.guess_tau) && (cube_fitter.extinction_curve != "decompose")
-            p₀[pᵢ] = tau_guess
-        end
-
-        # Override if an extinction_map was provided
-        if !isnothing(cube_fitter.extinction_map)
-            @debug "Using the provided τ_9.7 values from the extinction_map"
-            pₑ = [pᵢ]
-            if cube_fitter.extinction_curve == "decompose"
-                append!(pₑ, [pᵢ+1, pᵢ+2])
-            end
-            if !isnothing(cube_fitter.cube.voronoi_bins)
-                data_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(spaxel)[1])
-                for i in eachindex(pₑ)
-                    p₀[pₑ[i]] = mean(cube_fitter.extinction_map[data_indices, i])
-                end
-            else
-                data_index = spaxel
-                for i in eachindex(pₑ)
-                    p₀[pₑ[i]] = cube_fitter.extinction_map[data_index, i]
-                end
-            end
-        end
-
-        # Do not adjust absorption feature amplitudes since they are multiplicative
-        pᵢ += 4 + (cube_fitter.extinction_curve == "decompose" ? 3 : 1)
-        for _ ∈ 1:cube_fitter.n_abs_feat
-            if lock_abs
-                p₀[pᵢ] = 0.
-            end
-            pᵢ += 3
-        end
-
-        # Hot dust amplitude (rescaled)
-        if cube_fitter.fit_sil_emission
-            p₀[pᵢ] *= scale
-            pᵢ += 6
-        end
-
-        # Template amplitudes (not rescaled)
-        if cube_fitter.fit_temp_multexp
-            tamp = sum(p₀[[pᵢ,pᵢ+2,pᵢ+4,pᵢ+6]]) / 4
-            for _ ∈ 1:4
-                p₀[pᵢ] = tamp
-                pᵢ += 2
-            end
-        else
-            for _ ∈ 1:(cube_fitter.n_templates*cube_fitter.n_channels)
-                p₀[pᵢ] = 1/cube_fitter.n_templates
-                pᵢ += 1
-            end
-        end
-
-        # Dust feature amplitudes (not rescaled)
-        # for i ∈ 1:cube_fitter.n_dust_feat
-        #     pᵢ += 3
-        #     if cube_fitter.dust_features.profiles[i] == :PearsonIV
-        #         pᵢ += 2
-        #     end
-        # end
-
-    # Otherwise, we estimate the initial parameters based on the data
+    pₑ = 3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law
+    # Get the extinction curve
+    β = init ? continuum.β.value : cube_fitter.p_init_cont[pₑ+3]
+    if cube_fitter.extinction_curve == "d+"
+        ext_10 = τ_dp([10.0], β)[1]
+    elseif cube_fitter.extinction_curve == "kvt"
+        ext_10 = τ_kvt([10.0], β)[1]
+    elseif cube_fitter.extinction_curve == "ct"
+        ext_10 = τ_ct([10.0])[1]
+    elseif cube_fitter.extinction_curve == "ohm"
+        ext_10 = τ_ohm([10.0])[1]
     else
+        error("Unrecognized extinction curve: $(cube_fitter.extinction_curve)")
+    end
+    # Convert tau at 10 microns to tau at 9.7 microns
+    tau_guess = clamp(tau_10 / ext_10, continuum.τ_97.limits...)
 
-        @debug "Calculating initial starting points..."
-        cubic_spline = Spline1D(λ, I, k=3)
+    tau_guess
+end
 
-        # Stellar amplitude
-        λ_s = minimum(λ) < 5 ? minimum(λ)+0.1 : 5.1
-        A_s = clamp(cubic_spline(λ_s) * N / Blackbody_ν(λ_s, continuum.T_s.value), 0., Inf)
-        if !cube_fitter.fit_stellar_continuum
-            A_s = 0.
+
+# Helper function for getting initial MIR parameters based on an input previous parameter cube
+function get_mir_continuum_initial_values_from_pcube(cube_fitter::CubeFitter, spaxel::CartesianIndex, n_split::Integer)
+
+    pcube_cont = cube_fitter.p_init_cube_cont
+    # Get the coordinates of all spaxels that have fit results
+    coords0 = [float.(c.I) for c in CartesianIndices(size(pcube_cont)[1:2]) if !all(isnan.(pcube_cont[c,:]))]
+    coords = cube_fitter.p_init_cube_coords
+    # Calculate their distances from the current spaxel
+    dist = [hypot(spaxel[1]-c[1], spaxel[2]-c[2]) for c in coords]
+    closest = coords0[argmin(dist)]
+    @debug "Using initial best fit continuum parameters from coordinates $closest --> $(coords[argmin(dist)])"
+
+    p₀ = pcube_cont[Int.(closest)..., :]
+    pahtemp = model_pah_residuals(cube_fitter.cube.λ, p₀[(n_split+1):end], cube_fitter.dust_features.profiles, ones(length(cube_fitter.cube.λ)),
+        nothing, false)
+    pah_frac = repeat([maximum(pahtemp)/2], 2)
+
+    p₀, pah_frac
+end
+
+
+# Helper function for getting initial MIR parameters based on the initial fit
+function get_mir_continuum_initial_values_from_previous(cube_fitter::CubeFitter, spaxel::CartesianIndex,
+    λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vector{<:Real}, N::Real, tau_guess::Real)
+
+    # Set the parameters to the best parameters
+    p₀ = copy(cube_fitter.p_init_cont)
+    pah_frac = copy(cube_fitter.p_init_pahtemp)
+
+    # τ_97_0 = cube_fitter.τ_guess[parse(Int, cube_fitter.cube.channel)][spaxel]
+    # max_τ = cube_fitter.continuum.τ_97.limits[2]
+
+    # scale all flux amplitudes by the difference in medians between the spaxel and the summed spaxels
+    # (should be close to 1 since the sum is already normalized by the number of spaxels included anyways)
+    I_init = sumdim(cube_fitter.cube.I, (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+    scale = max(nanmedian(I), 1e-10) * N / nanmedian(I_init)
+    # max_amp = 1 / exp(-max_τ)
+
+    # Stellar amplitude (rescaled)
+    p₀[1] = p₀[1] * scale 
+    pᵢ = 3
+
+    # Dust continuum amplitudes (rescaled)
+    for di ∈ 1:cube_fitter.n_dust_cont
+        p₀[pᵢ] = p₀[pᵢ] * scale 
+        if (cube_fitter.lock_hot_dust[1] || cube_fitter.nuc_fit_flag[1]) && isone(di)
+            p₀[pᵢ] = 0.
         end
-
-        # Dust feature amplitudes
-        A_df = repeat([clamp(nanmedian(I)/2, 0., Inf)], cube_fitter.n_dust_feat)
-        # PAH templates
-        pah_frac = repeat([clamp(nanmedian(I)/2, 0., Inf)], 2)
-
-        # Absorption feature amplitudes
-        A_ab = [tau.value for tau ∈ cube_fitter.abs_taus]
-
-        # Dust continuum amplitudes
-        λ_dc = clamp.([Wein(Ti.value) for Ti ∈ continuum.T_dc], minimum(λ), maximum(λ))
-        A_dc = clamp.([cubic_spline(λ_dci) * N / Blackbody_ν(λ_dci, T_dci.value) for (λ_dci, T_dci) ∈ 
-            zip(λ_dc, continuum.T_dc)] .* (λ_dc ./ 9.7).^2 ./ (cube_fitter.n_dust_cont / 2), 0., Inf)
-        if cube_fitter.lock_hot_dust[1] || cube_fitter.nuc_fit_flag[1]
-            A_dc[1] = 0.
-        end
-        
-        # Power law amplitudes
-        A_pl = [clamp(nanmedian(I), 0., Inf)/exp(-continuum.τ_97.value)/cube_fitter.n_power_law for αi ∈ continuum.α]
-        
-        # Hot dust amplitude
-        hd = silicate_emission(λ, 1.0, continuum.T_hot.value, continuum.Cf_hot.value, continuum.τ_warm.value, 
-            continuum.τ_cold.value, continuum.sil_peak.value)
-        mhd = argmax(hd)
-        A_hd = clamp(cubic_spline(λ[mhd]) * N / hd[mhd] / 5, 0., Inf)
-
-        stellar_pars = [A_s, continuum.T_s.value]
-        dc_pars = vcat([[Ai, Ti.value] for (Ai, Ti) ∈ zip(A_dc, continuum.T_dc)]...)
-        pl_pars = vcat([[Ai, αi.value] for (Ai, αi) ∈ zip(A_pl, continuum.α)]...)
-        
-        df_pars = Float64[]
-        for n in 1:length(cube_fitter.dust_features.names)
-            append!(df_pars, [A_df[n], cube_fitter.dust_features.mean[n].value, cube_fitter.dust_features.fwhm[n].value])
-            if cube_fitter.dust_features.profiles[n] == :PearsonIV
-                append!(df_pars, [cube_fitter.dust_features.index[n].value, cube_fitter.dust_features.cutoff[n].value])
-            end
-        end
-        
-        ab_pars = vcat([[Ai, mi.value, fi.value] for (Ai, mi, fi) ∈ zip(A_ab, cube_fitter.abs_features.mean, cube_fitter.abs_features.fwhm)]...)
-        if cube_fitter.fit_sil_emission
-            hd_pars = [A_hd, continuum.T_hot.value, continuum.Cf_hot.value, continuum.τ_warm.value, continuum.τ_cold.value,
-                continuum.sil_peak.value]
-        else
-            hd_pars = []
-        end
-
-        if cube_fitter.extinction_curve != "decompose"
-            extinction_pars = [continuum.τ_97.value, continuum.τ_ice.value, continuum.τ_ch.value, continuum.β.value, continuum.Cf.value]
-        else
-            extinction_pars = [continuum.N_oli.value, continuum.N_pyr.value, continuum.N_for.value,
-                               continuum.τ_ice.value, continuum.τ_ch.value, continuum.β.value, continuum.Cf.value]
-        end
-        if !isnothing(cube_fitter.guess_tau) && (cube_fitter.extinction_curve != "decompose")
-            extinction_pars[1] = tau_guess
-        end
-
-        if cube_fitter.fit_temp_multexp
-            temp_pars = [0.25, 0.0, 0.25, 0.0, 0.25, 0.0, 0.25, 0.0]
-        else
-            temp_pars = [ta.value for ta in continuum.temp_amp]
-        end
-        # apply the nuclear template amplitudes for the initial fit
-        if cube_fitter.nuc_fit_flag[1]
-            temp_pars ./= cube_fitter.nuc_temp_amps
-        end
-
-        # Initial parameter vector
-        p₀ = Vector{Float64}(vcat(stellar_pars, dc_pars, pl_pars, extinction_pars, ab_pars, hd_pars, temp_pars, df_pars))
-
+        pᵢ += 2
     end
 
-    @debug "Continuum Parameter labels: \n [stellar_amp, stellar_temp, " * 
-        join(["dust_continuum_amp_$i, dust_continuum_temp_$i" for i ∈ 1:cube_fitter.n_dust_cont], ", ") * 
-        join(["power_law_amp_$i, power_law_index_$i" for i ∈ 1:cube_fitter.n_power_law], ", ") *
-        (cube_fitter.extinction_curve == "decompose" ? ", extinction_N_oli, extinction_N_pyr, extinction_N_for" : ", extinction_tau_97") *
-        ", extinction_tau_ice, extinction_tau_ch, extinction_beta, extinction_Cf, " *  
-        join(["$(ab)_tau, $(ab)_mean, $(ab)_fwhm" for ab ∈ cube_fitter.abs_features.names], ", ") *
-        (cube_fitter.fit_sil_emission ? ", hot_dust_amp, hot_dust_temp, hot_dust_covering_frac, hot_dust_tau_warm, hot_dust_tau_cold, hot_dust_sil_peak, " : ", ") *
-        (cube_fitter.fit_temp_multexp ? "temp_multexp_amp1, temp_multexp_ind1, temp_multexp_amp2, temp_multexp_ind2, temp_multexp_amp3, temp_multexp_ind3, " * 
-        "temp_multexp_amp4, temp_multexp_ind4, " : join(["$(tp)_amp_$i" for i in 1:cube_fitter.n_channels for tp ∈ cube_fitter.template_names], ", ")) *
-        join(["$(df)_amp, $(df)_mean, $(df)_fwhm" * (cube_fitter.dust_features.profiles[n] == :PearsonIV ? ", $(df)_index, $(df)_cutoff" : "") for 
-            (n, df) ∈ enumerate(cube_fitter.dust_features.names)], ", ") * "]"
-        
-    @debug "Continuum Starting Values: \n $p₀"
+    # Power law amplitudes (NOT rescaled)
+    for _ ∈ 1:cube_fitter.n_power_law
+        # p₀[pᵢ] = p₀[pᵢ] 
+        pᵢ += 2
+    end
+
+    # Set optical depth based on the initial guess or the initial fit (whichever is larger)
+    if cube_fitter.extinction_curve != "decompose"
+        p₀[pᵢ] = max(cube_fitter.continuum.τ_97.value, p₀[pᵢ])
+    end
+
+    # Set τ_9.7 and τ_CH to 0 if the continuum is within 1 std dev of 0
+    lock_abs = false
+    if nanmedian(I) ≤ 2nanmedian(σ)
+        lock_abs = true
+        if cube_fitter.extinction_curve != "decompose"
+            p₀[pᵢ] = 0.
+            p₀[pᵢ+2] = 0.
+        else
+            p₀[pᵢ:pᵢ+2] .= 0.
+            p₀[pᵢ+4] = 0.
+        end
+    end
+
+    # Set τ_9.7 to the guess if the guess_tau flag is set
+    if !isnothing(cube_fitter.guess_tau) && (cube_fitter.extinction_curve != "decompose")
+        p₀[pᵢ] = tau_guess
+    end
+
+    # Override if an extinction_map was provided
+    if !isnothing(cube_fitter.extinction_map)
+        @debug "Using the provided τ_9.7 values from the extinction_map"
+        pₑ = [pᵢ]
+        if cube_fitter.extinction_curve == "decompose"
+            append!(pₑ, [pᵢ+1, pᵢ+2])
+        end
+        if !isnothing(cube_fitter.cube.voronoi_bins)
+            data_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(spaxel)[1])
+            for i in eachindex(pₑ)
+                p₀[pₑ[i]] = mean(cube_fitter.extinction_map[data_indices, i])
+            end
+        else
+            data_index = spaxel
+            for i in eachindex(pₑ)
+                p₀[pₑ[i]] = cube_fitter.extinction_map[data_index, i]
+            end
+        end
+    end
+
+    # Do not adjust absorption feature amplitudes since they are multiplicative
+    pᵢ += 4 + (cube_fitter.extinction_curve == "decompose" ? 3 : 1)
+    for _ ∈ 1:cube_fitter.n_abs_feat
+        if lock_abs
+            p₀[pᵢ] = 0.
+        end
+        pᵢ += 3
+    end
+
+    # Hot dust amplitude (rescaled)
+    if cube_fitter.fit_sil_emission
+        p₀[pᵢ] *= scale
+        pᵢ += 6
+    end
+
+    # Template amplitudes (not rescaled)
+    if cube_fitter.fit_temp_multexp
+        tamp = sum(p₀[[pᵢ,pᵢ+2,pᵢ+4,pᵢ+6]]) / 4
+        for _ ∈ 1:4
+            p₀[pᵢ] = tamp
+            pᵢ += 2
+        end
+    else
+        for _ ∈ 1:(cube_fitter.n_templates*cube_fitter.n_channels)
+            p₀[pᵢ] = 1/cube_fitter.n_templates
+            pᵢ += 1
+        end
+    end
+
+    # Dust feature amplitudes (not rescaled)
+    # for i ∈ 1:cube_fitter.n_dust_feat
+    #     pᵢ += 3
+    #     if cube_fitter.dust_features.profiles[i] == :PearsonIV
+    #         pᵢ += 2
+    #     end
+    # end
+
+    p₀, pah_frac
+end
+
+
+# Helper function for getting initial MIR parameters based on estimates from the data
+function get_mir_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, continuum::MIRContinuum,
+    λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vector{<:Real}, N::Real, tau_guess::Real)
+
+    cubic_spline = Spline1D(λ, I, k=3)
+
+    # Stellar amplitude
+    λ_s = minimum(λ) < 5 ? minimum(λ)+0.1 : 5.1
+    A_s = clamp(cubic_spline(λ_s) * N / Blackbody_ν(λ_s, continuum.T_s.value), 0., Inf)
+    if !cube_fitter.fit_stellar_continuum
+        A_s = 0.
+    end
+
+    # Dust feature amplitudes
+    A_df = repeat([clamp(nanmedian(I)/2, 0., Inf)], cube_fitter.n_dust_feat)
+    # PAH templates
+    pah_frac = repeat([clamp(nanmedian(I)/2, 0., Inf)], 2)
+
+    # Absorption feature amplitudes
+    A_ab = [tau.value for tau ∈ cube_fitter.abs_taus]
+
+    # Dust continuum amplitudes
+    λ_dc = clamp.([Wein(Ti.value) for Ti ∈ continuum.T_dc], minimum(λ), maximum(λ))
+    A_dc = clamp.([cubic_spline(λ_dci) * N / Blackbody_ν(λ_dci, T_dci.value) for (λ_dci, T_dci) ∈ 
+        zip(λ_dc, continuum.T_dc)] .* (λ_dc ./ 9.7).^2 ./ (cube_fitter.n_dust_cont / 2), 0., Inf)
+    if cube_fitter.lock_hot_dust[1] || cube_fitter.nuc_fit_flag[1]
+        A_dc[1] = 0.
+    end
+    
+    # Power law amplitudes
+    A_pl = [clamp(nanmedian(I), 0., Inf)/exp(-continuum.τ_97.value)/cube_fitter.n_power_law for αi ∈ continuum.α]
+    
+    # Hot dust amplitude
+    hd = silicate_emission(λ, 1.0, continuum.T_hot.value, continuum.Cf_hot.value, continuum.τ_warm.value, 
+        continuum.τ_cold.value, continuum.sil_peak.value)
+    mhd = argmax(hd)
+    A_hd = clamp(cubic_spline(λ[mhd]) * N / hd[mhd] / 5, 0., Inf)
+
+    stellar_pars = [A_s, continuum.T_s.value]
+    dc_pars = vcat([[Ai, Ti.value] for (Ai, Ti) ∈ zip(A_dc, continuum.T_dc)]...)
+    pl_pars = vcat([[Ai, αi.value] for (Ai, αi) ∈ zip(A_pl, continuum.α)]...)
+    
+    df_pars = Float64[]
+    for n in 1:length(cube_fitter.dust_features.names)
+        append!(df_pars, [A_df[n], cube_fitter.dust_features.mean[n].value, cube_fitter.dust_features.fwhm[n].value])
+        if cube_fitter.dust_features.profiles[n] == :PearsonIV
+            append!(df_pars, [cube_fitter.dust_features.index[n].value, cube_fitter.dust_features.cutoff[n].value])
+        end
+    end
+    
+    ab_pars = vcat([[Ai, mi.value, fi.value] for (Ai, mi, fi) ∈ zip(A_ab, cube_fitter.abs_features.mean, cube_fitter.abs_features.fwhm)]...)
+    if cube_fitter.fit_sil_emission
+        hd_pars = [A_hd, continuum.T_hot.value, continuum.Cf_hot.value, continuum.τ_warm.value, continuum.τ_cold.value,
+            continuum.sil_peak.value]
+    else
+        hd_pars = []
+    end
+
+    if cube_fitter.extinction_curve != "decompose"
+        extinction_pars = [continuum.τ_97.value, continuum.τ_ice.value, continuum.τ_ch.value, continuum.β.value, continuum.Cf.value]
+    else
+        extinction_pars = [continuum.N_oli.value, continuum.N_pyr.value, continuum.N_for.value,
+                        continuum.τ_ice.value, continuum.τ_ch.value, continuum.β.value, continuum.Cf.value]
+    end
+    if !isnothing(cube_fitter.guess_tau) && (cube_fitter.extinction_curve != "decompose")
+        extinction_pars[1] = tau_guess
+    end
+
+    if cube_fitter.fit_temp_multexp
+        temp_pars = [0.25, 0.0, 0.25, 0.0, 0.25, 0.0, 0.25, 0.0]
+    else
+        temp_pars = [ta.value for ta in continuum.temp_amp]
+    end
+    # apply the nuclear template amplitudes for the initial fit
+    if cube_fitter.nuc_fit_flag[1]
+        temp_pars ./= cube_fitter.nuc_temp_amps
+    end
+
+    # Initial parameter vector
+    p₀ = Vector{Float64}(vcat(stellar_pars, dc_pars, pl_pars, extinction_pars, ab_pars, hd_pars, temp_pars, df_pars))
+
+    p₀, pah_frac
+end
+
+
+# Helper function for getting MIR parameter step sizes 
+function get_mir_continuum_step_sizes(cube_fitter::CubeFitter, continuum::MIRContinuum, λ::Vector{<:Real})
 
     # Calculate relative step sizes for finite difference derivatives
     dλ = (λ[end] - λ[1]) / length(λ)
@@ -786,21 +897,68 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
     temp_dstep = [deps for _ in 1:(cube_fitter.fit_temp_multexp ? 8 : cube_fitter.n_templates*cube_fitter.n_channels)]
     dstep = Vector{Float64}(vcat(stellar_dstep, dc_dstep, pl_dstep, extinction_dstep, ab_dstep, hd_dstep, temp_dstep, df_dstep))
 
+    deps, dstep
+end
+
+
+# MIR implementation of the get_continuum_initial_values function
+function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
+    σ::Vector{<:Real}, N::Real, init::Bool, templates_spax::Matrix{<:Real}; split::Bool=false, force_noext::Bool=false)
+
+    continuum = cube_fitter.continuum
+    n_split = cubefitter_mir_count_cont_parameters(cube_fitter.extinction_curve, cube_fitter.fit_sil_emission, 
+        cube_fitter.fit_temp_multexp, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_abs_feat, 
+        cube_fitter.n_templates, cube_fitter.n_channels, cube_fitter.dust_features; split=true)
+
+    # guess optical depth from the dip in the continuum level
+    tau_guess = 0.
+    if !isnothing(cube_fitter.guess_tau) && (cube_fitter.extinction_curve != "decompose")
+        tau_guess = guess_optical_depth(cube_fitter, λ, continuum, init)
+    end
+
+    # Check if cube fitter has initial cube
+    if !isnothing(cube_fitter.p_init_cube_λ) && !init
+        @debug "Using parameter cube best fit continuum parameters..."
+        p₀, pah_frac = get_mir_continuum_initial_values_from_pcube(cube_fitter, spaxel, n_split)
+    # Check if the cube fitter has initial fit parameters 
+    elseif !init
+        @debug "Using initial best fit continuum parameters..."
+        p₀, pah_frac = get_mir_continuum_initial_values_from_previous(cube_fitter, spaxel, λ, I, σ, N, tau_guess)
+    # Otherwise, we estimate the initial parameters based on the data
+    else
+        @debug "Calculating initial starting points..."
+        p₀, pah_frac = get_mir_continuum_initial_values_from_estimation(cube_fitter, continuum, λ, I, σ, N, tau_guess)
+    end
+    if force_noext
+        pₑ = [3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law]
+        p₀[pₑ] .= 0.
+    end
+
+    @debug "Continuum Parameter labels: \n [stellar_amp, stellar_temp, " * 
+        join(["dust_continuum_amp_$i, dust_continuum_temp_$i" for i ∈ 1:cube_fitter.n_dust_cont], ", ") * 
+        join(["power_law_amp_$i, power_law_index_$i" for i ∈ 1:cube_fitter.n_power_law], ", ") *
+        (cube_fitter.extinction_curve == "decompose" ? ", extinction_N_oli, extinction_N_pyr, extinction_N_for" : ", extinction_tau_97") *
+        ", extinction_tau_ice, extinction_tau_ch, extinction_beta, extinction_Cf, " *  
+        join(["$(ab)_tau, $(ab)_mean, $(ab)_fwhm" for ab ∈ cube_fitter.abs_features.names], ", ") *
+        (cube_fitter.fit_sil_emission ? ", hot_dust_amp, hot_dust_temp, hot_dust_covering_frac, hot_dust_tau_warm, hot_dust_tau_cold, hot_dust_sil_peak, " : ", ") *
+        (cube_fitter.fit_temp_multexp ? "temp_multexp_amp1, temp_multexp_ind1, temp_multexp_amp2, temp_multexp_ind2, temp_multexp_amp3, temp_multexp_ind3, " * 
+        "temp_multexp_amp4, temp_multexp_ind4, " : join(["$(tp)_amp_$i" for i in 1:cube_fitter.n_channels for tp ∈ cube_fitter.template_names], ", ")) *
+        join(["$(df)_amp, $(df)_mean, $(df)_fwhm" * (cube_fitter.dust_features.profiles[n] == :PearsonIV ? ", $(df)_index, $(df)_cutoff" : "") for 
+            (n, df) ∈ enumerate(cube_fitter.dust_features.names)], ", ") * "]"
+    @debug "Continuum Starting Values: \n $p₀"
+
+    deps, dstep = get_mir_continuum_step_sizes(cube_fitter, continuum, λ)
     @debug "Continuum relative step sizes: \n $dstep"
 
     if !split
         p₀, dstep
     else
         # Step 1: Stellar + Dust blackbodies, 2 new amplitudes for the PAH templates, and the extinction parameters
-        pars_1 = vcat(p₀[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.extinction_curve == "decompose" ? 3 : 1)+
-            3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0))+(cube_fitter.fit_temp_multexp ? 8 : cube_fitter.n_templates*cube_fitter.n_channels)], pah_frac)
-        dstep_1 = vcat(dstep[1:(2+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.extinction_curve == "decompose" ? 3 : 1)+
-            3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0))+(cube_fitter.fit_temp_multexp ? 8 : cube_fitter.n_templates*cube_fitter.n_channels)], [deps, deps])
+        pars_1 = vcat(p₀[1:n_split], pah_frac)
+        dstep_1 = vcat(dstep[1:n_split], [deps, deps])
         # Step 2: The PAH profile amplitudes, centers, and FWHMs
-        pars_2 = p₀[(3+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.extinction_curve == "decompose" ? 3 : 1)+
-            3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0)+(cube_fitter.fit_temp_multexp ? 8 : cube_fitter.n_templates*cube_fitter.n_channels)):end]
-        dstep_2 = dstep[(3+2*cube_fitter.n_dust_cont+2*cube_fitter.n_power_law+4+(cube_fitter.extinction_curve == "decompose" ? 3 : 1)+
-            3*cube_fitter.n_abs_feat+(cube_fitter.fit_sil_emission ? 6 : 0)+(cube_fitter.fit_temp_multexp ? 8 : cube_fitter.n_templates*cube_fitter.n_channels)):end]
+        pars_2 = p₀[(n_split+1):end]
+        dstep_2 = dstep[(n_split+1):end]
 
         pars_1, pars_2, dstep_1, dstep_2
     end

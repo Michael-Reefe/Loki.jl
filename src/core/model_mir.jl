@@ -1,6 +1,90 @@
 
 ############################################## FITTING FUNCTIONS #############################################
 
+# Helper function for getting the extinction profile for a given fit
+function get_extinction_profile(λ::Vector{<:Real}, params::Vector{<:Real}, 
+    extinction_curve::String, extinction_screen::Bool, κ_abs::Vector{Spline1D},
+    custom_ext::Union{Spline1D,Nothing}, n_dust_cont::Integer, n_power_law::Integer)
+
+    pₑ = 3 + 2n_dust_cont + 2n_power_law
+    τ_oli = τ_pyr = τ_for = nothing
+    if extinction_curve == "d+"
+        ext_curve = τ_dp(λ, params[pₑ+3])
+        ext = extinction.(ext_curve, params[pₑ], screen=extinction_screen)
+        dp = 1
+    elseif extinction_curve == "kvt"
+        ext_curve = τ_kvt(λ, params[pₑ+3])
+        ext = extinction.(ext_curve, params[pₑ], screen=extinction_screen)
+        dp = 1
+    elseif extinction_curve == "ct"
+        ext_curve = τ_ct(λ)
+        ext = extinction.(ext_curve, params[pₑ], screen=extinction_screen)
+        dp = 1
+    elseif extinction_curve == "ohm"
+        ext_curve = τ_ohm(λ)
+        ext = extinction.(ext_curve, params[pₑ], screen=extinction_screen)
+        dp = 1
+    elseif extinction_curve == "custom"
+        ext_curve = custom_ext(λ)
+        ext = extinction.(ext_curve, params[pₑ], screen=extinction_screen)
+        dp = 1
+    elseif extinction_curve == "decompose"
+        τ_oli = params[pₑ] .* κ_abs[1](λ)
+        τ_pyr = params[pₑ] .* params[pₑ+1] .* κ_abs[2](λ)
+        τ_for = params[pₑ] .* params[pₑ+2] .* κ_abs[3](λ)
+        τ_97 = params[pₑ] * κ_abs[1](9.7) + params[pₑ] * params[pₑ+1] * κ_abs[2](9.7) + params[pₑ] * params[pₑ+2] * κ_abs[3](9.7)
+        ext = extinction.((1 .- params[pₑ+5]) .* (τ_oli .+ τ_pyr .+ τ_for) .+ params[pₑ+5] .* τ_97 .* (9.7./λ).^1.7, 1., screen=extinction_screen)
+        dp = 3
+    else
+        error("Unrecognized extinction curve: $extinction_curve")
+    end
+
+    ext, dp, τ_oli, τ_pyr, τ_for
+end
+
+
+# Helper function for getting the normalized templates for a given fit
+function get_normalized_templates(λ::Vector{<:Real}, params::Vector{<:Real}, templates::Matrix{<:Real}, 
+    N::Real, channel_masks::Vector{BitVector}, fit_temp_multexp::Bool, pstart::Integer)
+
+    temp_norm = zeros(eltype(params), size(templates)...)
+    # Add generic templates with a normalization parameter
+    if fit_temp_multexp
+        ex = multiplicative_exponentials(λ, params[pstart:pstart+7])
+        for i in axes(templates, 2)
+            temp_norm[:,i] .+= sum([ex[:,j] .* templates[:,i] ./ N for j in axes(ex,2)])
+        end
+        dp = 8
+    else
+        dp = 0
+        for i in axes(templates, 2)
+            for ch_mask in channel_masks
+                temp_norm[ch_mask,i] .+= params[pstart+dp] .* templates[ch_mask, i] ./ N
+                dp += 1
+            end
+        end
+    end
+
+    temp_norm, dp
+end
+
+
+# Helper function to calculate the normalized nuclear template amplitudes for a given fit
+function get_nuctempfit_templates(params::Vector{<:Real}, templates::Matrix{<:Real}, 
+    channel_masks::Vector{BitVector}, pstart::Integer)
+
+    nuc_temp_norm = zeros(eltype(params), size(templates, 1))
+    dp = 0
+    for i in axes(templates, 2)
+        for ch_mask in channel_masks
+            nuc_temp_norm[ch_mask] .= params[pstart+dp] .* templates[ch_mask, i] 
+            dp += 1
+        end
+    end
+
+    nuc_temp_norm, dp
+end
+
 
 """
     model_continuum(λ, params, N, n_dust_cont, n_power_law, dust_prof, n_abs_feat, extinction_curve, extinction_screen, 
@@ -65,39 +149,15 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
     end
 
     # Extinction 
-    if extinction_curve == "d+"
-        ext_curve = τ_dp(λ, params[pᵢ+3])
-        comps["extinction"] = extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
-        pᵢ += 1
-    elseif extinction_curve == "kvt"
-        ext_curve = τ_kvt(λ, params[pᵢ+3])
-        comps["extinction"] = extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
-        pᵢ += 1
-    elseif extinction_curve == "ct"
-        ext_curve = τ_ct(λ)
-        comps["extinction"] = extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
-        pᵢ += 1
-    elseif extinction_curve == "ohm"
-        ext_curve = τ_ohm(λ)
-        comps["extinction"] = extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
-        pᵢ += 1
-    elseif extinction_curve == "custom"
-        ext_curve = custom_ext(λ)
-        comps["extinction"] = extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
-        pᵢ += 1
-    elseif extinction_curve == "decompose"
-        τ_oli = params[pᵢ] .* κ_abs[1](λ) 
+    ext, dp, τ_oli, τ_pyr, τ_for = get_extinction_profile(λ, params, extinction_curve, extinction_screen, 
+        κ_abs, custom_ext, n_dust_cont, n_power_law)
+    comps["extinction"] = ext
+    if extinction_curve == "decompose"
         comps["abs_oli"] = extinction.(τ_oli, 1., screen=extinction_screen)
-        τ_pyr = params[pᵢ] .* params[pᵢ+1] .* κ_abs[2](λ)
         comps["abs_pyr"] = extinction.(τ_pyr, 1., screen=extinction_screen)
-        τ_for = params[pᵢ] .* params[pᵢ+2] .* κ_abs[3](λ)
         comps["abs_for"] = extinction.(τ_for, 1., screen=extinction_screen)
-        τ_97 = params[pᵢ] * κ_abs[1](9.7) + params[pᵢ] * params[pᵢ+1] * κ_abs[2](9.7) + params[pᵢ] * params[pᵢ+2] * κ_abs[3](9.7)
-        comps["extinction"] = extinction.((1 .- params[pᵢ+5]) .* (τ_oli .+ τ_pyr .+ τ_for) .+ params[pᵢ+5] .* τ_97 .* (9.7./λ).^1.7, 1., screen=extinction_screen)
-        pᵢ += 3
-    else
-        error("Unrecognized extinction curve: $extinction_curve")
     end
+    pᵢ += dp
 
     # Ice+CH Absorption
     ext_ice = τ_ice(λ)
@@ -129,35 +189,21 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
         pᵢ += 6
     end
 
-    if !nuc_temp_fit
-        # Add generic templates with a normalization parameter
-        if fit_temp_multexp
-            ex = multiplicative_exponentials(λ, params[pᵢ:pᵢ+7])
-            for i in axes(templates, 2)
-                comps["templates_$i"] = sum([ex[:,j] .* templates[:,i] ./ N for j in axes(ex,2)])
-                contin .+= comps["templates_$i"]
+    nuc_temp_norm = nothing
+    if size(templates, 2) > 0
+        if !nuc_temp_fit
+            temp_norm, dp = get_normalized_templates(λ, params, templates, N, channel_masks, fit_temp_multexp, pᵢ)
+            for i in axes(temp_norm, 2)
+                comps["templates_$i"] = temp_norm[:,i]
             end
-            pᵢ += 8
+            contin .+= sumdim(temp_norm, 2)
+            pᵢ += dp
         else
-            for i in axes(templates, 2)
-                comps["templates_$i"] = zeros(out_type, length(λ))
-                # scale each subchannel with a separate amplitude to fit the channel jumps
-                for ch_mask in channel_masks
-                    comps["templates_$i"][ch_mask] .+= params[pᵢ] .* templates[ch_mask, i] ./ N
-                    pᵢ += 1
-                end
-                contin .+= comps["templates_$i"]
-            end
-        end
-    else
-        # Fitting the nuclear spectrum - here the templates are just the PSF model, which we normalize by to make the spectrum
-        # continuous.
-        for i in axes(templates, 2)
-            comps["templates_$i"] = zeros(out_type, length(λ))
-            for ch_mask in channel_masks
-                comps["templates_$i"][ch_mask] .= params[pᵢ] .* templates[ch_mask, i]
-                pᵢ += 1
-            end
+            # Fitting the nuclear spectrum - here the templates are just the PSF model, which we normalize by to make the spectrum
+            # continuous.
+            nuc_temp_norm, dp = get_nuctempfit_templates(params, templates, channel_masks, pᵢ)
+            comps["templates_1"] = nuc_temp_norm
+            pᵢ += dp
         end
     end
 
@@ -220,36 +266,9 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
     end
 
     # Extinction 
-    if extinction_curve == "d+"
-        ext_curve = τ_dp(λ, params[pᵢ+3])
-        ext = extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
-        pᵢ += 1
-    elseif extinction_curve == "kvt"
-        ext_curve = τ_kvt(λ, params[pᵢ+3])
-        ext = extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
-        pᵢ += 1
-    elseif extinction_curve == "ct"
-        ext_curve = τ_ct(λ)
-        ext = extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
-        pᵢ += 1
-    elseif extinction_curve == "ohm"
-        ext_curve = τ_ohm(λ)
-        ext = extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
-        pᵢ += 1
-    elseif extinction_curve == "custom"
-        ext_curve = custom_ext(λ)
-        ext = extinction.(ext_curve, params[pᵢ], screen=extinction_screen)
-        pᵢ += 1
-    elseif extinction_curve == "decompose"
-        τ_oli = params[pᵢ] .* κ_abs[1](λ)
-        τ_pyr = params[pᵢ] .* params[pᵢ+1] .* κ_abs[2](λ)
-        τ_for = params[pᵢ] .* params[pᵢ+2] .* κ_abs[3](λ)
-        τ_97 = params[pᵢ] * κ_abs[1](9.7) + params[pᵢ] * params[pᵢ+1] * κ_abs[2](9.7) + params[pᵢ] * params[pᵢ+2] * κ_abs[3](9.7)
-        ext = extinction.((1 .- params[pᵢ+5]) .* (τ_oli .+ τ_pyr .+ τ_for) .+ params[pᵢ+5] .* τ_97 .* (9.7./λ).^1.7, 1., screen=extinction_screen)
-        pᵢ += 3
-    else
-        error("Unrecognized extinction curve: $extinction_curve")
-    end
+    ext, dp, τ_oli, τ_pyr, τ_for = get_extinction_profile(λ, params, extinction_curve, extinction_screen, 
+        κ_abs, custom_ext, n_dust_cont, n_power_law)
+    pᵢ += dp
 
     # Ice+CH absorption
     ext_ice = τ_ice(λ)
@@ -277,31 +296,16 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
     end
 
     nuc_temp_norm = nothing
-    if !nuc_temp_fit
-        # Add generic templates with a normalization parameter
-        if fit_temp_multexp
-            ex = multiplicative_exponentials(λ, params[pᵢ:pᵢ+7])
-            for i in axes(templates, 2)
-                contin .+= sum([ex[:,j] .* templates[:,i] ./ N for j in axes(ex,2)])
-            end
-            pᵢ += 8
+    if size(templates, 2) > 0
+        if !nuc_temp_fit
+            temp_norm, dp = get_normalized_templates(λ, params, templates, N, channel_masks, fit_temp_multexp, pᵢ)
+            contin .+= sumdim(temp_norm, 2)
+            pᵢ += dp
         else
-            for i in axes(templates, 2)
-                for ch_mask in channel_masks
-                    contin[ch_mask] .+= params[pᵢ] .* templates[ch_mask, i] ./ N
-                    pᵢ += 1
-                end
-            end
-        end
-    else
-        # Fitting the nuclear spectrum - here the templates are just the PSF model, which we normalize by to make the spectrum
-        # continuous.
-        for i in axes(templates, 2)
-            nuc_temp_norm = zeros(out_type, length(λ))
-            for ch_mask in channel_masks
-                nuc_temp_norm[ch_mask] .= params[pᵢ] .* templates[ch_mask, i] 
-                pᵢ += 1
-            end
+            # Fitting the nuclear spectrum - here the templates are just the PSF model, which we normalize by to make the spectrum
+            # continuous.
+            nuc_temp_norm, dp = get_nuctempfit_templates(params, templates, channel_masks, pᵢ)
+            pᵢ += dp
         end
     end
 
@@ -441,12 +445,10 @@ end
 Calculate extra parameters that are not fit, but are nevertheless important to know, for a given spaxel.
 Currently this includes the integrated intensity, equivalent width, and signal to noise ratios of dust features and emission lines.
 """
-function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, comps::Dict, n_channels::Integer, n_dust_cont::Integer,
-    n_power_law::Integer, n_dust_feat::Integer, dust_profiles::Vector{Symbol}, n_abs_feat::Integer, fit_sil_emission::Bool, 
-    fit_temp_multexp::Bool, n_templates::Integer, nuc_temp_fit::Bool, n_lines::Integer, n_acomps::Integer, n_comps::Integer, lines::TransitionLines, 
-    flexible_wavesol::Bool, lsf::Function, relative_flags::BitVector, popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, 
-    perr_l::Vector{T}, extinction_pah::Vector{T}, extinction::Vector{T}, templates_psfnuc::Union{Nothing,Vector{<:Real}}, extinction_curve::String, 
-    mask_lines::BitVector, continuum::Vector{T}, area_sr::Vector{T}, n_fit_comps::Dict, spaxel::CartesianIndex, propagate_err::Bool=true) where {T<:Real}
+function calculate_extra_parameters(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, comps::Dict, 
+    nuc_temp_fit::Bool, lsf::Function, popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}, 
+    extinction_pah::Vector{T}, extinction::Vector{T}, templates_psfnuc::Union{Nothing,Vector{<:Real}}, 
+    mask_lines::BitVector, continuum::Vector{T}, area_sr::Vector{T}, spaxel::CartesianIndex, propagate_err::Bool=true) where {T<:Real}
 
     @debug "Calculating extra parameters"
 
@@ -454,16 +456,18 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     @debug "Normalization: $N"
 
     # Loop through dust features
-    p_dust = zeros(3n_dust_feat)
-    p_dust_err = zeros(3n_dust_feat)
+    p_dust = zeros(3cube_fitter.n_dust_feat)
+    p_dust_err = zeros(3cube_fitter.n_dust_feat)
     pₒ = 1
     # Initial parameter vector index where dust profiles start
-    pᵢ = 3 + 2n_dust_cont + 2n_power_law + 4 + (extinction_curve == "decompose" ? 3 : 1) + 3n_abs_feat + 
-        (fit_sil_emission ? 6 : 0) + (fit_temp_multexp ? 8 : n_templates*n_channels)
+    i_split = cubefitter_mir_count_cont_parameters(cube_fitter.extinction_curve, cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp,
+        cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_abs_feat, cube_fitter.n_templates, cube_fitter.n_channels,
+        cube_fitter.dust_features; split=true)
+    pᵢ = i_split + 1
     # Extinction normalization factor
     # max_ext = 1 / minimum(extinction)
 
-    for ii ∈ 1:n_dust_feat
+    for ii ∈ 1:cube_fitter.n_dust_feat
 
         # unpack the parameters
         A, μ, fwhm = popt_c[pᵢ:pᵢ+2]
@@ -490,7 +494,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
         tnorm = nuc_temp_fit ? templates_psfnuc : ones(length(λ))
         tn = tnorm[cent_ind]
 
-        prof = dust_profiles[ii]
+        prof = cube_fitter.dust_features.profiles[ii]
         if prof == :PearsonIV
             m, m_err = popt_c[pᵢ+3], perr_c[pᵢ+3]
             ν, ν_err = popt_c[pᵢ+4], perr_c[pᵢ+4]
@@ -527,8 +531,8 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
             m=m, m_err=m_err, ν=ν, ν_err=ν_err, propagate_err=propagate_err)
         
         # Calculate the equivalent width using the utility function
-        eqw, e_err = calculate_eqw(λ, feature, comps, false, n_dust_cont, n_power_law, n_abs_feat, n_dust_feat, fit_sil_emission,
-            n_templates, nuc_temp_fit, feature_err=feature_err, propagate_err=propagate_err)
+        eqw, e_err = calculate_eqw(cube_fitter, λ, feature, comps, false, nuc_temp_fit, 
+            feature_err=feature_err, propagate_err=propagate_err)
         
         snr = A*N*ext*tn / std(I[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)] .- continuum[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)])
 
@@ -557,14 +561,14 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
     end
 
     # Loop through lines
-    p_lines = zeros(3n_lines+3n_acomps+5n_lines)
-    p_lines_err = zeros(3n_lines+3n_acomps+5n_lines)
+    p_lines = zeros(3cube_fitter.n_lines+3cube_fitter.n_acomps+5cube_fitter.n_lines)
+    p_lines_err = zeros(3cube_fitter.n_lines+3cube_fitter.n_acomps+5cube_fitter.n_lines)
 
     # Unpack the relative flags
-    rel_amp, rel_voff, rel_fwhm = relative_flags
+    rel_amp, rel_voff, rel_fwhm = cube_fitter.relative_flags
 
     pₒ = pᵢ = 1
-    for (k, λ0) ∈ enumerate(lines.λ₀)
+    for (k, λ0) ∈ enumerate(cube_fitter.lines.λ₀)
         amp_1 = amp_1_err = voff_1 = voff_1_err = fwhm_1 = fwhm_1_err = nothing
         total_profile = zeros(eltype(λ), length(λ))
         profile_err_lo = profile_err_hi = nothing
@@ -573,8 +577,8 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
             profile_err_hi = copy(total_profile)
         end
 
-        for j ∈ 1:n_comps
-            if !isnothing(lines.profiles[k, j])
+        for j ∈ 1:cube_fitter.n_comps
+            if !isnothing(cube_fitter.lines.profiles[k, j])
 
                 # (\/ pretty much the same as the model_line_residuals function, but calculating the integrated intensities)
                 amp = popt_l[pᵢ]
@@ -585,7 +589,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                 # fill values with nothings for profiles that may / may not have them
                 h3 = h3_err = h4 = h4_err = η = η_err = nothing
 
-                if !isnothing(lines.tied_voff[k, j]) && flexible_wavesol && isone(j)
+                if !isnothing(cube_fitter.lines.tied_voff[k, j]) && cube_fitter.flexible_wavesol && isone(j)
                     voff += popt_l[pᵢ+2]
                     voff_err = propagate_err ? hypot(voff_err, perr_l[pᵢ+2]) : 0.
                     fwhm = popt_l[pᵢ+3]
@@ -597,14 +601,14 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                     pᵢ += 3
                 end
 
-                if lines.profiles[k, j] == :GaussHermite
+                if cube_fitter.lines.profiles[k, j] == :GaussHermite
                     # Get additional h3, h4 components
                     h3 = popt_l[pᵢ]
                     h3_err = propagate_err ? perr_l[pᵢ] : 0.
                     h4 = popt_l[pᵢ+1]
                     h4_err = propagate_err ? perr_l[pᵢ+1] : 0.
                     pᵢ += 2
-                elseif lines.profiles[k, j] == :Voigt
+                elseif cube_fitter.lines.profiles[k, j] == :Voigt
                     # Get additional mixing component, either from the tied position or the 
                     # individual position
                     η = popt_l[pᵢ]
@@ -679,32 +683,32 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                 
                 # Create the extincted line profile in units matching the continuum
                 feature_err = nothing
-                if lines.profiles[k, j] == :Gaussian
+                if cube_fitter.lines.profiles[k, j] == :Gaussian
                     feature = Gaussian.(λ, amp*N, mean_μm, fwhm_μm)
                     if propagate_err
                         feature_err = hcat(Gaussian.(λ, max(amp*N-amp_err*N, 0.), mean_μm, max(fwhm_μm-fwhm_μm_err, eps())),
                                        Gaussian.(λ, amp*N+amp_err*N, mean_μm, fwhm_μm+fwhm_μm_err))
                     end
-                elseif lines.profiles[k, j] == :Lorentzian
+                elseif cube_fitter.lines.profiles[k, j] == :Lorentzian
                     feature = Lorentzian.(λ, amp*N, mean_μm, fwhm_μm)
                     if propagate_err
                         feature_err = hcat(Lorentzian.(λ, max(amp*N-amp_err*N, 0.), mean_μm, max(fwhm_μm-fwhm_μm_err, eps())),
                                        Lorentzian.(λ, amp*N+amp_err*N, mean_μm, fwhm_μm+fwhm_μm_err))
                     end
-                elseif lines.profiles[k, j] == :GaussHermite
+                elseif cube_fitter.lines.profiles[k, j] == :GaussHermite
                     feature = GaussHermite.(λ, amp*N, mean_μm, fwhm_μm, h3, h4)
                     if propagate_err
                         feature_err = hcat(GaussHermite.(λ, max(amp*N-amp_err*N, 0.), mean_μm, max(fwhm_μm-fwhm_μm_err, eps()), h3-h3_err, h4-h4_err),
                                        GaussHermite.(λ, amp*N+amp_err*N, mean_μm, fwhm_μm+fwhm_μm_err, h3+h3_err, h4+h4_err))
                     end
-                elseif lines.profiles[k, j] == :Voigt
+                elseif cube_fitter.lines.profiles[k, j] == :Voigt
                     feature = Voigt.(λ, amp*N, mean_μm, fwhm_μm, η)
                     if propagate_err
                         feature_err = hcat(Voigt.(λ, max(amp*N-amp_err*N, 0.), mean_μm, max(fwhm_μm-fwhm_μm_err, eps()), max(η-η_err, 0.)),
                                        Voigt.(λ, amp*N+amp_err*N, mean_μm, fwhm_μm+fwhm_μm_err, min(η+η_err, 1.)))
                     end
                 else
-                    error("Unrecognized line profile $(lines.profiles[k, j])")
+                    error("Unrecognized line profile $(cube_fitter.lines.profiles[k, j])")
                 end
                 feature .*= extinction .* tnorm
                 if propagate_err
@@ -713,12 +717,13 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
                 end
 
                 # Calculate line flux using the helper function
-                p_lines[pₒ], p_lines_err[pₒ] = calculate_flux(lines.profiles[k, j], amp_cgs, amp_cgs_err, mean_μm, mean_μm_err,
-                    fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err, propagate_err=propagate_err)
+                p_lines[pₒ], p_lines_err[pₒ] = calculate_flux(cube_fitter.lines.profiles[k, j], amp_cgs, amp_cgs_err, 
+                    mean_μm, mean_μm_err, fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err, 
+                    propagate_err=propagate_err)
                 
                 # Calculate equivalent width using the helper function
-                p_lines[pₒ+1], p_lines_err[pₒ+1] = calculate_eqw(λ, feature, comps, true, n_dust_cont, n_power_law, n_abs_feat,
-                    n_dust_feat, fit_sil_emission, n_templates, nuc_temp_fit, feature_err=feature_err, propagate_err=propagate_err)
+                p_lines[pₒ+1], p_lines_err[pₒ+1] = calculate_eqw(cube_fitter, λ, feature, comps, true, nuc_temp_fit, 
+                    feature_err=feature_err, propagate_err=propagate_err)
 
                 # SNR
                 p_lines[pₒ+2] = amp*N*ext*tn / std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)])
@@ -739,7 +744,7 @@ function calculate_extra_parameters(λ::Vector{<:Real}, I::Vector{<:Real}, N::Re
         end
 
         # Number of velocity components
-        p_lines[pₒ] = n_fit_comps[lines.names[k]][spaxel]
+        p_lines[pₒ] = cube_fitter.n_fit_comps[cube_fitter.lines.names[k]][spaxel]
 
         # W80 and Δv parameters
         fwhm_inst = lsf(λ0)
@@ -777,24 +782,20 @@ end
 Calculate the equivalent width (in microns) of a spectral feature, i.e. a PAH or emission line. Calculates the
 integral of the ratio of the feature profile to the underlying continuum.
 """
-function calculate_eqw(λ::Vector{T}, feature::Vector{T}, comps::Dict, line::Bool,
-    n_dust_cont::Integer, n_power_law::Integer, n_abs_feat::Integer, n_dust_feat::Integer, 
-    fit_sil_emission::Bool, n_templates::Integer, nuc_temp_fit::Bool; 
-    feature_err::Union{Matrix{T},Nothing}=nothing, propagate_err::Bool=true) where {T<:Real}
+function calculate_eqw(cube_fitter::CubeFitter, λ::Vector{T}, feature::Vector{T}, comps::Dict, line::Bool,
+    nuc_temp_fit::Bool; feature_err::Union{Matrix{T},Nothing}=nothing, propagate_err::Bool=true) where {T<:Real}
 
     contin = zeros(length(λ))
     contin .+= comps["obscured_continuum"] .+ comps["unobscured_continuum"]
-    if fit_sil_emission
-        if fit_sil_emission
-            abs_tot = ones(length(λ))
-            for k ∈ 1:n_abs_feat
-                abs_tot .*= comps["abs_feat_$k"]
-            end
-            contin .+= comps["hot_dust"] .* comps["abs_ice"] .* comps["abs_ch"] .* abs_tot
+    if cube_fitter.fit_sil_emission
+        abs_tot = ones(length(λ))
+        for k ∈ 1:cube_fitter.n_abs_feat
+            abs_tot .*= comps["abs_feat_$k"]
         end
+        contin .+= comps["hot_dust"] .* comps["abs_ice"] .* comps["abs_ch"] .* abs_tot
     end
     templates_norm_nuc = nothing
-    for q ∈ 1:n_templates
+    for q ∈ 1:cube_fitter.n_templates
         if !nuc_temp_fit
             contin .+= comps["templates_$q"]
         else
@@ -803,7 +804,7 @@ function calculate_eqw(λ::Vector{T}, feature::Vector{T}, comps::Dict, line::Boo
     end
     # For line EQWs, we consider PAHs as part of the "continuum"
     if line
-        for l ∈ 1:n_dust_feat
+        for l ∈ 1:cube_fitter.n_dust_feat
             contin .+= comps["dust_feat_$l"] .* comps["extinction"]
         end
     end
