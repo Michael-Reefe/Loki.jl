@@ -629,7 +629,7 @@ end
 # of the final model
 function collect_fit_results(res::CMPFit.Result, pfix_tied::Vector{<:Real}, plock_tied::BitVector, 
     tied_pairs::Vector{Tuple}, tied_indices::Vector{<:Integer}, n_tied::Integer, 
-    stellar_templates::Union{Vector{Spline2D},Matrix{<:Real}}, cube_fitter::CubeFitter, 
+    stellar_templates::Union{Vector{Spline2D},Matrix{<:Real},Nothing}, cube_fitter::CubeFitter, 
     λ::Vector{<:Real}, templates::Matrix{<:Real}, N::Real; nuc_temp_fit::Bool=false, 
     bootstrap_iter::Bool=false)
 
@@ -775,7 +775,7 @@ function collect_fit_results(res::CMPFit.Result, pfix_cont_tied::Vector{<:Real},
     tied_pairs_cont::Vector{Tuple}, tied_indices_cont::Vector{<:Integer}, n_tied_cont::Integer, n_free_cont::Integer,
     pfix_lines_tied::Vector{<:Real}, lock_lines_tied::BitVector, tied_pairs_lines::Vector{Tuple}, 
     tied_indices_lines::Vector{<:Integer}, n_tied_lines::Integer, n_free_lines::Integer, 
-    stellar_templates::Union{Vector{Spline2D},Matrix{<:Real}}, cube_fitter::CubeFitter,
+    stellar_templates::Union{Vector{Spline2D},Matrix{<:Real},Nothing}, cube_fitter::CubeFitter,
     λ::Vector{<:Real}, N::Real, templates::Matrix{<:Real}, lsf_interp_func::Function, nuc_temp_fit::Bool;
     bootstrap_iter::Bool=bootstrap_iter)
 
@@ -919,8 +919,9 @@ function determine_fit_redo_with0extinction(cube_fitter::CubeFitter, λ::Vector{
         sil_abs_region = 9.0 .< λ .< 11.0
         ext_not_locked = any(.~plock[pₑ]) && !init && !force_noext && any(popt[pₑ] .≠ 0)
         region_is_valid = sum(sil_abs_region) > 100
+        # check if more than half of the pixels b/w 9-11 um, after subtracting the nuclear template, are within 3 sigma of 0.
         template_dominates = sum((abs.(I_model .- comps["templates_$s"])[sil_abs_region]) .< (σ[sil_abs_region]./N)) > (sum(sil_abs_region)/2)
-        if ext_not_locked && region_is_valid && template_dominates
+        if ext_not_locked && region_is_valid && (template_dominates || cube_fitter.F_test_ext[1])
             redo_fit = true
             break
         end

@@ -472,8 +472,16 @@ function cubefitter_mir_prepare_continuum(λ::Vector{<:Real}, z::Real, out::Dict
         lock_hot_dust = out[:lock_hot_dust]
     end
 
+    # check for F test for extinction
+    if !haskey(out, :F_test_ext)
+        F_test_ext = false
+    else
+        F_test_ext = out[:F_test_ext]
+    end
+
     continuum, dust_features_0, dust_features, abs_features_0, abs_features, abs_taus, 
-        n_dust_cont, n_power_law, n_dust_features, n_abs_features, n_templates, lock_hot_dust
+        n_dust_cont, n_power_law, n_dust_features, n_abs_features, n_templates, lock_hot_dust,
+        F_test_ext
 end
 
 

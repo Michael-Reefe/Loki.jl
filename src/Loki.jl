@@ -208,7 +208,8 @@ export DataCube,   # DataCube struct
        get_label,
 
        # initialization functions
-       parammaps_empty,
+       parammaps_mir_empty,
+       parammaps_opt_empty,
        cubemodel_empty,
 
        # CubeFitter struct

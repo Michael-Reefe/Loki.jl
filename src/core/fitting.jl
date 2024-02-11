@@ -121,6 +121,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
 
     # Pre-compute the stellar templates, if all the ages and metallicities are locked
     # (to speed up fitting)
+    stellar_templates = nothing
     if cube_fitter.spectral_region == :OPT
         stellar_templates = precompute_stellar_templates(cube_fitter, pars_0, plock)
     end
@@ -149,6 +150,9 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # position.
     res = repeat_fit_jitter(λ_spax, I_spax, σ_spax, fit_cont, pfree_tied, lbfree_tied, ubfree_tied, parinfo, config, res, "continuum",
         spaxel; check_cont_snr=true)
+    # chi2 = nansum((I_spax .- fit_cont(λ_spax, res.param)).^2 ./ σ_spax.^2)
+    chi2 = res.bestnorm
+    n_free = length(pfree_tied)
     @debug "Continuum CMPFit Status: $(res.status)"
 
     # Get the results of the fit as a parameter vector, error vector, model intensity vector, and comps dict
@@ -159,8 +163,22 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         if determine_fit_redo_with0extinction(cube_fitter, λ, I, σ, N, popt, plock, I_model, comps, init, force_noext)
             # set optical depth to 0 if the template fits all of the spectrum
             @debug "Redoing the fit with optical depth locked to 0 due to template amplitudes"
-            return continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, templates, mask_lines, mask_bad, N, false, init=init, 
+            results0 = continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, templates, mask_lines, mask_bad, N, false, init=init, 
                 use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots, force_noext=true)
+
+            # Does an F-test to determine whether or not the extinction is actually statistically significant
+            if cube_fitter.F_test_ext[1]
+                test_passed, F_data, F_crit = F_test(length(I_spax), results0[end], n_free, results0[end-1], chi2, 
+                    cube_fitter.line_test_threshold)
+                @debug "Extinction F-test results: $(test_passed ? "SUCCESS" : "FAILURE")"
+                @debug "Extinction F-test value = $F_data | Critical value = $F_crit | Threshold = $(cube_fitter.line_test_threshold)"
+                if !test_passed
+                    return results0
+                end
+            else
+                return results0
+            end
+
         end
     end
 
@@ -175,7 +193,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # Print the results (to the logger)
     pretty_print_continuum_results(cube_fitter, popt, perr, I_spax)
 
-    popt, I_model, comps, n_free, perr, pah_amp
+    popt, I_model, comps, n_free, perr, pah_amp, chi2, n_free
 end
 
 
@@ -286,6 +304,9 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     res_2 = cmpfit(λ_spax, I_spax.-I_cont, σ_spax, fit_step2, p2free, parinfo=parinfo_2, config=config)
     res_2 = repeat_fit_jitter(λ_spax, I_spax.-I_cont, σ_spax, fit_step2, p2free, lb_2, ub_2, parinfo_2, config, res_2, 
         "continuum (step 2)", spaxel; check_cont_snr=true)
+    
+    chi2 = res_2.bestnorm
+    n_free = length(p1free_tied) + length(p2free)
 
     @debug "Continuum CMPFit Step 2 status: $(res_2.status)"
 
@@ -300,8 +321,22 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # set optical depth to 0 if the template fits all of the spectrum
     if determine_fit_redo_with0extinction(cube_fitter, λ, I, σ, N, popt, lock_1, I_model, comps, init, force_noext)
         @debug "Redoing the fit with optical depth locked to 0 due to template amplitudes"
-        return continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, templates, mask_lines, mask_bad, N, split_flag, init=init,
+        results0 = continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, templates, mask_lines, mask_bad, N, split_flag, init=init,
             use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots, force_noext=true)
+
+        # Does an F-test to determine whether or not the extinction is actually statistically significant
+        if cube_fitter.F_test_ext[1]
+            test_passed, F_data, F_crit = F_test(length(I_spax), results0[end], n_free, results0[end-1], chi2, 
+                cube_fitter.line_test_threshold)
+            @debug "Extinction F-test results: $(test_passed ? "SUCCESS" : "FAILURE")"
+            @debug "Extinction F-test value = $F_data | Critical value = $F_crit | Threshold = $(cube_fitter.line_test_threshold)"
+            if !test_passed
+                return results0
+            end
+        else
+            return results0
+        end
+
     end
 
     if init || (use_ap && !bootstrap_iter && cube_fitter.n_bootstrap > 0)
@@ -311,7 +346,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # Print the results (to the logger)
     pretty_print_continuum_results(cube_fitter, popt, perr, I_spax)
 
-    popt, I_model, comps, n_free, perr, pahtemp
+    popt, I_model, comps, n_free, perr, pahtemp, chi2, n_free
 end
 
 
@@ -791,6 +826,7 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
     pfree_lines_tied = clamp.(pfree_lines_tied, lbfree_lines_tied, ubfree_lines_tied)
 
     # Pre-compute the stellar templates, if all the ages and metallicities are locked
+    stellar_templates = nothing
     if cube_fitter.spectral_region == :OPT
         stellar_templates = precompute_stellar_templates(cube_fitter, pars_0_cont, lock_cont)
     end
@@ -928,7 +964,7 @@ function _fit_spaxel_iterfunc(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
     # Fit the spaxel
     ext_key = cube_fitter.spectral_region == :MIR ? "extinction" : "attenuation_gas"
     if !cube_fitter.fit_joint
-        popt_c, I_cont, comps_cont, n_free_c, perr_c, pahtemp = continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, templates, mask_lines, mask_bad, norm, 
+        popt_c, I_cont, comps_cont, n_free_c, perr_c, pahtemp, _, _ = continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, templates, mask_lines, mask_bad, norm, 
             cube_fitter.use_pah_templates, use_ap=use_ap, init=init, nuc_temp_fit=nuc_temp_fit, bootstrap_iter=bootstrap_iter, 
             p1_boots=p1_boots_cont)
         # Use the real continuum fit or a cubic spline continuum fit based on the settings

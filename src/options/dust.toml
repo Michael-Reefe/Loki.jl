@@ -20,7 +20,7 @@ val = 400.0
 plim = [35.0, 1500.0]
 locked = false
 [[dust_continuum_temps]]
-val = 200.0
+val = 300.0
 plim = [35.0, 300.0]
 locked = false
 [[dust_continuum_temps]]
@@ -32,39 +32,39 @@ locked = false
 # [[dust_continuum_temps]]
 # val = 500.0
 # plim = [499.9, 500.1]
-# locked = false
+# locked = true
 # [[dust_continuum_temps]]
 # val = 300.0
 # plim = [299.9, 300.1]
-# locked = false
+# locked = true
 # [[dust_continuum_temps]]
 # val = 200.0
 # plim = [199.9, 200.1]
-# locked = false
+# locked = true
 # [[dust_continuum_temps]]
 # val = 135.0
 # plim = [134.9, 135.1]
-# locked = false
+# locked = true
 # [[dust_continuum_temps]]
 # val = 90.0
 # plim = [89.9, 90.1]
-# locked = false
+# locked = true
 # [[dust_continuum_temps]]
 # val = 65.0
 # plim = [64.9, 65.1]
-# locked = false
+# locked = true
 # [[dust_continuum_temps]]
 # val = 50.0
 # plim = [49.9, 50.1]
-# locked = false
+# locked = true
 # [[dust_continuum_temps]]
 # val = 40.0
 # plim = [39.9, 40.1]
-# locked = false
+# locked = true
 # [[dust_continuum_temps]]
 # val = 35.0
 # plim = [34.9, 35.1]
-# locked = false
+# locked = true
 
 # power laws: should not be used in conjunction with blackbodies 
 # (should be one or the other) since they are degenerate.

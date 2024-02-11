@@ -417,6 +417,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     fit_covering_frac::Bool
     tie_template_amps::Bool
     lock_hot_dust::BitVector
+    F_test_ext::BitVector
     decompose_lock_column_densities::Bool
 
     # Continuum parameters
@@ -542,7 +543,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
         npad_feii = vres = vsyst_ssp = vsyst_feii = 0.
         dust_features = dust_features_0 = abs_features = abs_features_0 = abs_taus = ssp_λ = 
             ssp_templates = feii_templates_fft = nothing
-        lock_hot_dust = false
+        lock_hot_dust = F_test_ext = false
         channel_masks = []
 
         if spectral_region == :MIR
@@ -551,8 +552,8 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             n_channels, channel_masks = cubefitter_mir_get_n_channels(λ, z)
             # Collect data structures for the continuum, dust features, & absorption features
             continuum, dust_features_0, dust_features, abs_features_0, abs_features, abs_taus, 
-                n_dust_cont, n_power_law, n_dust_features, n_abs_features, n_templates, lock_hot_dust = 
-                cubefitter_mir_prepare_continuum(λ, z, out, n_channels)
+                n_dust_cont, n_power_law, n_dust_features, n_abs_features, n_templates, lock_hot_dust,
+                F_test_ext = cubefitter_mir_prepare_continuum(λ, z, out, n_channels)
 
             n_params_cont = cubefitter_mir_count_cont_parameters(out[:extinction_curve], out[:fit_sil_emission], out[:fit_temp_multexp], 
                 n_dust_cont, n_power_law, n_abs_features, n_templates, n_channels, dust_features)
@@ -607,6 +608,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
         nuc_fit_flag = BitVector([0])
         nuc_temp_amps = ones(Float64, n_channels)
         lock_hot_dust = BitVector([lock_hot_dust])
+        F_test_ext = BitVector([F_test_ext])
 
         ctype = isnothing(feii_templates_fft) ? ComplexF64 : eltype(feii_templates_fft)
         new{typeof(z), typeof(n_lines), ctype}(
@@ -645,6 +647,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             out[:fit_covering_frac], 
             out[:tie_template_amps],
             lock_hot_dust,
+            F_test_ext,
             out[:decompose_lock_column_densities],
             continuum, 
             n_channels,
