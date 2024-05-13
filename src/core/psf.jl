@@ -318,8 +318,9 @@ function generate_nuclear_template(cube::DataCube, ap_r::Real=0.; spline_width::
             # Convert ap_r into pixels
             ap_size = ap_r * cube.psf[i] / pixel_scale
             ap = CircularAperture(mx.I..., ap_size)
-            nuc1d[i] = photometry(ap, cube.I[:, :, i]).aperture_sum
-            nuc1d[i] /= photometry(ap, cube.psf_model[:, :, i]).aperture_sum
+            nuc1d[i] = photometry(ap, cube.I[:, :, i]).aperture_sum / get_area(ap)
+            nuc1d[i] /= cube.psf_model[:, :, i][mx]
+            # nuc1d[i] /= photometry(ap, cube.psf_model[:, :, i]).aperture_sum
         end
     end
 

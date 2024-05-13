@@ -506,13 +506,13 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, λ::Vector{<:Real},
         # Create the profile
         feature_err = nothing
         if prof == :Drude
-            feature = Drude.(λ, A*N, μ, fwhm)
+            feature = Drude.(λ, 1., μ, fwhm)
             if propagate_err
                 feature_err = hcat(Drude.(λ, max(A*N-A_err*N, 0.), μ, max(fwhm-fwhm_err, eps())),
                                 Drude.(λ, A*N+A_err*N, μ, fwhm+fwhm_err))
             end
         elseif prof == :PearsonIV
-            feature = PearsonIV.(λ, A*N, μ, fwhm, m, ν)
+            feature = PearsonIV.(λ, 1., μ, fwhm, m, ν)
             if propagate_err
                 feature_err = hcat(PearsonIV.(λ, max(A*N-A_err*N, 0.), μ, max(fwhm-fwhm_err, eps()), m-m_err, ν-ν_err),
                                 PearsonIV.(λ, A*N+A_err*N, μ, fwhm+fwhm_err, m+m_err, ν+ν_err))
@@ -520,7 +520,8 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, λ::Vector{<:Real},
         else
             error("Unrecognized PAH profile: $prof")
         end
-        feature .*= extinction_pah .* tnorm
+        snr_filter = feature .> 1e-10
+        feature .*= A .* N .* extinction_pah .* tnorm
         if propagate_err
             feature_err[:,1] .*= extinction_pah .* tnorm
             feature_err[:,2] .*= extinction_pah .* tnorm
@@ -534,7 +535,9 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, λ::Vector{<:Real},
         eqw, e_err = calculate_eqw(cube_fitter, λ, feature, comps, false, nuc_temp_fit, 
             feature_err=feature_err, propagate_err=propagate_err)
         
-        snr = A*N*ext*tn / std(I[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)] .- continuum[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)])
+        # snr = A*N*ext*tn / std(I[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)] .- continuum[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)])
+        rms = std(I[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)] .- continuum[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)])
+        snr = sum(feature) / (sqrt(sum(snr_filter)) * rms)
 
         @debug "PAH feature ($prof) with ($A_cgs, $μ, $fwhm, $m, $ν) and errors ($A_cgs_err, $μ_err, $fwhm_err, $m_err, $ν_err)"
         @debug "Flux=$flux +/- $f_err, EQW=$eqw +/- $e_err, SNR=$snr"
@@ -684,25 +687,25 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, λ::Vector{<:Real},
                 # Create the extincted line profile in units matching the continuum
                 feature_err = nothing
                 if cube_fitter.lines.profiles[k, j] == :Gaussian
-                    feature = Gaussian.(λ, amp*N, mean_μm, fwhm_μm)
+                    feature = Gaussian.(λ, 1., mean_μm, fwhm_μm)
                     if propagate_err
                         feature_err = hcat(Gaussian.(λ, max(amp*N-amp_err*N, 0.), mean_μm, max(fwhm_μm-fwhm_μm_err, eps())),
                                        Gaussian.(λ, amp*N+amp_err*N, mean_μm, fwhm_μm+fwhm_μm_err))
                     end
                 elseif cube_fitter.lines.profiles[k, j] == :Lorentzian
-                    feature = Lorentzian.(λ, amp*N, mean_μm, fwhm_μm)
+                    feature = Lorentzian.(λ, 1., mean_μm, fwhm_μm)
                     if propagate_err
                         feature_err = hcat(Lorentzian.(λ, max(amp*N-amp_err*N, 0.), mean_μm, max(fwhm_μm-fwhm_μm_err, eps())),
                                        Lorentzian.(λ, amp*N+amp_err*N, mean_μm, fwhm_μm+fwhm_μm_err))
                     end
                 elseif cube_fitter.lines.profiles[k, j] == :GaussHermite
-                    feature = GaussHermite.(λ, amp*N, mean_μm, fwhm_μm, h3, h4)
+                    feature = GaussHermite.(λ, 1., mean_μm, fwhm_μm, h3, h4)
                     if propagate_err
                         feature_err = hcat(GaussHermite.(λ, max(amp*N-amp_err*N, 0.), mean_μm, max(fwhm_μm-fwhm_μm_err, eps()), h3-h3_err, h4-h4_err),
                                        GaussHermite.(λ, amp*N+amp_err*N, mean_μm, fwhm_μm+fwhm_μm_err, h3+h3_err, h4+h4_err))
                     end
                 elseif cube_fitter.lines.profiles[k, j] == :Voigt
-                    feature = Voigt.(λ, amp*N, mean_μm, fwhm_μm, η)
+                    feature = Voigt.(λ, 1., mean_μm, fwhm_μm, η)
                     if propagate_err
                         feature_err = hcat(Voigt.(λ, max(amp*N-amp_err*N, 0.), mean_μm, max(fwhm_μm-fwhm_μm_err, eps()), max(η-η_err, 0.)),
                                        Voigt.(λ, amp*N+amp_err*N, mean_μm, fwhm_μm+fwhm_μm_err, min(η+η_err, 1.)))
@@ -710,7 +713,8 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, λ::Vector{<:Real},
                 else
                     error("Unrecognized line profile $(cube_fitter.lines.profiles[k, j])")
                 end
-                feature .*= extinction .* tnorm
+                snr_filter = feature .> 1e-10
+                feature .*= amp .* N .* extinction .* tnorm
                 if propagate_err
                     feature_err[:,1] .*= extinction .* tnorm
                     feature_err[:,2] .*= extinction .* tnorm
@@ -726,7 +730,9 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, λ::Vector{<:Real},
                     feature_err=feature_err, propagate_err=propagate_err)
 
                 # SNR
-                p_lines[pₒ+2] = amp*N*ext*tn / std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)])
+                # p_lines[pₒ+2] = amp*N*ext*tn / std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)])
+                rms = std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)]) 
+                p_lines[pₒ+2] = sum(feature) / (sqrt(sum(snr_filter)) * rms)
 
                 # Add to the total line profile
                 total_profile .+= feature

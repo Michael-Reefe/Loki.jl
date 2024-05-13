@@ -515,7 +515,8 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
         # Get the components that make up the complex
         indiv_inds = findall(cube_fitter.dust_features.complexes .== dust_complex)
         indivs = [cube_fitter.dust_features.names[i] for i ∈ indiv_inds]
-        snr = dropdims(nanmaximum(get(param_maps, ["dust_features.$df.SNR" for df ∈ indivs]), dims=3), dims=3)
+        # combine SNRs for PAH complexes
+        snr = dropdims(nansum(get(param_maps, ["dust_features.$df.SNR" for df ∈ indivs]), dims=3), dims=3)
 
         # Sum up individual component fluxes and equivalent widths
         total_flux = log10.(sum([exp10.(get(param_maps, "dust_features.$df.flux")) for df ∈ indivs]))

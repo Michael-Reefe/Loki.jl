@@ -423,25 +423,25 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, λ::Vector{<:Real},
                 # Create the extincted line profile in units matching the continuum
                 feature_err = nothing
                 if cube_fitter.lines.profiles[k, j] == :Gaussian
-                    feature = Gaussian.(λ, amp*N, mean_μm, fwhm_μm)
+                    feature = Gaussian.(λ, 1., mean_μm, fwhm_μm)
                     if propagate_err
                         feature_err = hcat(Gaussian.(λ, max(amp*N-amp_err*N, 0.), mean_μm, max(fwhm_μm-fwhm_μm_err, eps())),
                                        Gaussian.(λ, amp*N+amp_err*N, mean_μm, fwhm_μm+fwhm_μm_err))
                     end
                 elseif cube_fitter.lines.profiles[k, j] == :Lorentzian
-                    feature = Lorentzian.(λ, amp*N, mean_μm, fwhm_μm)
+                    feature = Lorentzian.(λ, 1., mean_μm, fwhm_μm)
                     if propagate_err
                         feature_err = hcat(Lorentzian.(λ, max(amp*N-amp_err*N, 0.), mean_μm, max(fwhm_μm-fwhm_μm_err, eps())),
                                        Lorentzian.(λ, amp*N+amp_err*N, mean_μm, fwhm_μm+fwhm_μm_err))
                     end
                 elseif cube_fitter.lines.profiles[k, j] == :GaussHermite
-                    feature = GaussHermite.(λ, amp*N, mean_μm, fwhm_μm, h3, h4)
+                    feature = GaussHermite.(λ, 1., mean_μm, fwhm_μm, h3, h4)
                     if propagate_err
                         feature_err = hcat(GaussHermite.(λ, max(amp*N-amp_err*N, 0.), mean_μm, max(fwhm_μm-fwhm_μm_err, eps()), h3-h3_err, h4-h4_err),
                                        GaussHermite.(λ, amp*N+amp_err*N, mean_μm, fwhm_μm+fwhm_μm_err, h3+h3_err, h4+h4_err))
                     end
                 elseif cube_fitter.lines.profiles[k, j] == :Voigt
-                    feature = Voigt.(λ, amp*N, mean_μm, fwhm_μm, η)
+                    feature = Voigt.(λ, 1., mean_μm, fwhm_μm, η)
                     if propagate_err
                         feature_err = hcat(Voigt.(λ, max(amp*N-amp_err*N, 0.), mean_μm, max(fwhm_μm-fwhm_μm_err, eps()), max(η-η_err, 0.)),
                                        Voigt.(λ, amp*N+amp_err*N, mean_μm, fwhm_μm+fwhm_μm_err, min(η+η_err, 1.)))
@@ -449,7 +449,8 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, λ::Vector{<:Real},
                 else
                     error("Unrecognized line profile $(cube_fitter.lines.profiles[k, j])")
                 end
-                feature .*= extinction
+                snr_filter = feature .> 1e-10
+                feature .*= amp .* N .* extinction
                 if propagate_err
                     feature_err[:,1] .*= extinction
                     feature_err[:,2] .*= extinction
@@ -465,7 +466,9 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, λ::Vector{<:Real},
                     feature_err=feature_err, propagate_err=propagate_err)
 
                 # SNR
-                p_lines[pₒ+2] = amp*N*ext / std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)])
+                # p_lines[pₒ+2] = amp*N*ext / std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)])
+                rms = std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)]) 
+                p_lines[pₒ+2] = sum(feature) / (sqrt(sum(snr_filter)) * rms)
 
                 total_profile .+= feature
                 if propagate_err
