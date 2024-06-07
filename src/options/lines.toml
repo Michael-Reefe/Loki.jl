@@ -164,22 +164,22 @@ annotate = true
 # Helium lines
 [lines.HeI_03889]
 wave = 0.3889749
-latex = "He I"
+latex = "He $\\textsc{i}$"
 annotate = true
 
 [lines.HeII_04687]
 wave = 0.4687021
-latex = "He II"
+latex = "He $\\textsc{ii}$"
 annotate = true
 
 # [lines.HeI_05877]
 # wave = 0.5877253
-# latex = "He I"
+# latex = "He $\\textsc{i}$"
 # annotate = true
 
 # [lines.HeI_07067]
 # wave = 0.7067144
-# latex = "He I"
+# latex = "He $\\textsc{i}$"
 # annotate = true
 
 # Neon lines
@@ -187,161 +187,161 @@ annotate = true
 # [Ne V] doublet
 [lines.NeV_03346]
 wave = 0.3346783
-latex = "[Ne V]"
+latex = "[Ne $\\textsc{v}$]"
 annotate = true
 
 [lines.NeV_03426]
 wave = 0.3426863
-latex = "[Ne V]"
+latex = "[Ne $\\textsc{v}$]"
 annotate = true
 
 [lines.NeIII_03869]
 wave = 0.3869856
-latex = "[Ne III]"
+latex = "[Ne $\\textsc{iii}$]"
 annotate = true
 
 [lines.NeIII_03967]
 wave = 0.3968593
-latex = "[Ne III]"
+latex = "[Ne $\\textsc{iii}$]"
 annotate = true
 
 # Oxygen lines
 
 [lines.OIII_03445]
 wave = 0.3445039
-latex = "O III"
+latex = "O $\\textsc{iii}$"
 annotate = true
 
 # [O II] doublet
 [lines.OII_03727]
 wave = 0.3727092
-latex = "[O II]"
+latex = "[O $\\textsc{ii}$]"
 annotate = true
 
 [lines.OII_03729]
 wave = 0.3729875
-latex = "[O II]"
+latex = "[O $\\textsc{ii}$]"
 annotate = true
 
 [lines.OIII_04364]
 wave = 0.4364436
-latex = "[O III]"
+latex = "[O $\\textsc{iii}$]"
 annotate = true
 
 # [O III] doublet
 [lines.OIII_04960]
 wave = 0.4960295
-latex = "[O III]"
+latex = "[O $\\textsc{iii}$]"
 annotate = true
 
 [lines.OIII_05008]
 wave = 0.5008240
-latex = "[O III]"
+latex = "[O $\\textsc{iii}$]"
 annotate = true
 
 [lines.OI_06302]
 wave = 0.6302046
-latex = "[O I]"
+latex = "[O $\\textsc{i}$]"
 annotate = true
 
 [lines.OI_06366]
 wave = 0.6365535
-latex = "[O I]"
+latex = "[O $\\textsc{i}$]"
 annotate = true
 
 [lines.OII_07322]
 wave = 0.7322007
-latex = "[O II]"
+latex = "[O $\\textsc{ii}$]"
 annotate = true
 
 [lines.OII_07333]
 wave = 0.7332750
-latex = "[O II]"
+latex = "[O $\\textsc{ii}$]"
 annotate = true
 
 # Iron lines
 # [lines.FeXIV_05304]
 # wave = 0.5304335
-# latex = "[Fe XIV]"
+# latex = "[Fe $\\textsc{xiv}$]"
 # annotate = true
 
 # [lines.FeVI_05639]
 # wave = 0.5639165
-# latex = "[Fe VI]"
+# latex = "[Fe $\\textsc{vi}$]"
 # annotate = true
 
 # [lines.FeVI_05679]
 # wave = 0.5678575
-# latex = "[Fe VI]"
+# latex = "[Fe $\\textsc{vi}$]"
 # annotate = true
 
 # [lines.FeVII_05722]
 # wave = 0.5722287
-# latex = "[Fe VII]"
+# latex = "[Fe $\\textsc{vii}$]"
 # annotate = true
 
 # [lines.FeVII_06088]
 # wave = 0.6088685
-# latex = "[Fe VII]"
+# latex = "[Fe $\\textsc{vii}$]"
 # annotate = true
 
 [lines.FeX_06374]
 wave = 0.6376272
-latex = "[Fe X]"
+latex = "[Fe $\\textsc{x}$]"
 annotate = true
 
 [lines.FeXI_07894]
 wave = 0.7893971
-latex = "[Fe XI]"
+latex = "[Fe $\\textsc{xi}$]"
 annotate = true
 
 # Sulfur lines
 [lines.SII_04069]
 wave = 0.4069749
-latex = "[S II]"
+latex = "[S $\\textsc{ii}$]"
 annotate = true
 
 [lines.SII_04077]
 wave = 0.4077500
-latex = "[S II]"
+latex = "[S $\\textsc{ii}$]"
 annotate = true
 
 [lines.SIII_06314]
 wave = 0.6313806
-latex = "[S III]"
+latex = "[S $\\textsc{iii}$]"
 annotate = true
 
 [lines.SII_06718]
 wave = 0.6718294
-latex = "[S II]"
+latex = "[S $\\textsc{ii}$]"
 annotate = true
 
 [lines.SII_06733]
 wave = 0.6732668
-latex = "[S II]"
+latex = "[S $\\textsc{ii}$]"
 annotate = true
 
 # Nitrogen lines
 [lines.NII_06550]
 wave = 0.6549859
-latex = "[N II]"
+latex = "[N $\\textsc{ii}$]"
 annotate = true
 
 [lines.NII_06585]
 wave = 0.6585279
-latex = "[N II]"
+latex = "[N $\\textsc{ii}$]"
 annotate = true
 
 # Argon lines
 [lines.ArIII_07138]
 wave = 0.7137757
-latex = "[Ar III]"
+latex = "[Ar $\\textsc{iii}$]"
 annotate = true
 
 # Nickel lines
 [lines.NiIII_07892]
 wave = 0.7892071
-latex = "[Ni III]"
+latex = "[Ni $\\textsc{iii}$]"
 annotate = true
 
 ####################################### MIR LINES ##################################################
@@ -417,183 +417,183 @@ annotate = true
 # Argon Lines
 [lines.ArVI_4529]
 wave = 4.529520
-latex = "[Ar VI]"
+latex = "[Ar $\\textsc{vi}$]"
 annotate = true
 
 [lines.ArII_6985]
 wave = 6.985274
-latex = "[Ar II]"
+latex = "[Ar $\\textsc{ii}$]"
 annotate = true
 
 # [lines.ArV_7901]
 # wave = 7.901600
-# latex = "[Ar V]"
+# latex = "[Ar $\\textsc{v}$]"
 # annotate = true
 
 [lines.ArIII_8991]
 wave = 8.991380
-latex = "[Ar III]"
+latex = "[Ar $\\textsc{iii}$]"
 annotate = true
 
 # [lines.ArV_13102]
 # wave = 13.102200
-# latex = "[Ar V]"
+# latex = "[Ar $\\textsc{v}$]"
 # annotate = true
 
 # Chlorine Lines
 # [lines.ClII_14368]
 # wave = 14.367800
-# latex = "[Cl II]"
+# latex = "[Cl $\\textsc{ii}$]"
 # annotate = true
 
 # Iron Lines
 # [lines.FeII_4889]
 # wave = 4.889137
-# latex = "[Fe II]"
+# latex = "[Fe $\\textsc{ii}$]"
 # annotate = true
 
 # [lines.FeII_5062]
 # wave = 5.062350
-# latex = "[Fe II]"
+# latex = "[Fe $\\textsc{ii}$]"
 # annotate = true
 
 [lines.FeII_5340]
 wave = 5.340169
-latex = "[Fe II]"
+latex = "[Fe $\\textsc{ii}$]"
 annotate = true
 
 [lines.FeVIII_5447]
 wave = 5.4466
-latex = "[Fe VIII]"
+latex = "[Fe $\\textsc{viii}$]"
 annotate = true
 
 # [lines.FeII_6721]
 # wave = 6.721283
-# latex = "[Fe II]"
+# latex = "[Fe $\\textsc{ii}$]"
 # annotate = true
 
 # [lines.FeVII_7814]
 # wave = 7.814500
-# latex = "[Fe VII]"
+# latex = "[Fe $\\textsc{vii}$]"
 # annotate = true
 
 [lines.FeVII_9527]
 wave = 9.526700
-latex = "[Fe VII]"
+latex = "[Fe $\\textsc{vii}$]"
 annotate = true
 
 [lines.FeII_17936]
 wave = 17.935950
-latex = "[Fe II]"
+latex = "[Fe $\\textsc{ii}$]"
 annotate = true
 
 [lines.FeIII_22925]
 wave = 22.925000
-latex = "[Fe III]"
+latex = "[Fe $\\textsc{iii}$]"
 annotate = true
 
 [lines.FeII_25988]
 wave = 25.988290
-latex = "[Fe II]"
+latex = "[Fe $\\textsc{ii}$]"
 annotate = true
 
 # Helium Lines
 # [lines.HeII_5228]
 # wave = 5.2279972
-# latex = "He II"
+# latex = "He $\\textsc{ii}$"
 # annotate = true
 
 # Magnesium Lines
 [lines.MgIV_4867]
 wave = 4.486680
-latex = "[Mg IV]"
+latex = "[Mg $\\textsc{iv}$]"
 annotate = true
 
 [lines.MgVII_5503]
 wave = 5.503200
-latex = "[Mg VII]"
+latex = "[Mg $\\textsc{vii}$]"
 annotate = true
 
 [lines.MgV_5609]
 wave = 5.609850
-latex = "[Mg V]"
+latex = "[Mg $\\textsc{v}$]"
 annotate = true
 
 [lines.MgVII_9009]
 wave = 9.009000
-latex = "[Mg VII]"
+latex = "[Mg $\\textsc{vii}$]"
 annotate = true
 
 # [lines.MgV_13521]
 # wave = 13.521300
-# latex = "[Mg V]"
+# latex = "[Mg $\\textsc{v}$]"
 # annotate = true
 
 # Sodium Lines
 # [lines.NaIII_7318]
 # wave = 7.317700
-# latex = "[Na III]"
+# latex = "[Na $\\textsc{iii}$]"
 # annotate = true
 
 # Neon Lines
 [lines.NeVI_7652]
 wave = 7.652400
-latex = "[Ne VI]"
+latex = "[Ne $\\textsc{vi}$]"
 annotate = true
 
 [lines.NeII_12813]
 wave = 12.813550
-latex = "[Ne II]"
+latex = "[Ne $\\textsc{ii}$]"
 annotate = true
 
 [lines.NeV_14322]
 wave = 14.321700
-latex = "[Ne V]"
+latex = "[Ne $\\textsc{v}$]"
 annotate = true
 
 [lines.NeIII_15555]
 wave = 15.555100
-latex = "[Ne III]"
+latex = "[Ne $\\textsc{iii}$]"
 annotate = true
 
 [lines.NeV_24318]
 wave = 24.317500
-latex = "[Ne V]"
+latex = "[Ne $\\textsc{v}$]"
 annotate = true
 
 # Nickel Lines
 # [lines.NiII_6636]
 # wave = 6.636000
-# latex = "[Ni II]"
+# latex = "[Ni $\\textsc{ii}$]"
 # annotate = true
 
 # Oxygen Lines
 [lines.OIV_25890]
 wave = 25.890300
-latex = "[O IV]"
+latex = "[O $\\textsc{iv}$]"
 annotate = true
 
 # Phosphorus Lines
 [lines.PIII_17885]
 wave = 17.885000
-latex = "[P III]"
+latex = "[P $\\textsc{iii}$]"
 annotate = true
 
 # Silicon lines
 [lines.SiIX_3936]
 wave = 3.935700
-latex = "[Si IX]"
+latex = "[Si $\\textsc{ix}$]"
 annotate = true
 
 # Sulfur Lines
 [lines.SIV_10511]
 wave = 10.510500
-latex = "[S IV]"
+latex = "[S $\\textsc{iv}$]"
 annotate = true
 
 [lines.SIII_18713]
 wave = 18.713000
-latex = "[S III]"
+latex = "[S $\\textsc{iii}$]"
 annotate = true
 
 # Molecular Hydrogen Lines
