@@ -535,9 +535,9 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, λ::Vector{<:Real},
         eqw, e_err = calculate_eqw(cube_fitter, λ, feature, comps, false, nuc_temp_fit, 
             feature_err=feature_err, propagate_err=propagate_err)
         
-        # snr = A*N*ext*tn / std(I[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)] .- continuum[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)])
-        rms = std(I[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)] .- continuum[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)])
-        snr = sum(feature) / (sqrt(sum(snr_filter)) * rms)
+        snr = A*N*ext*tn / std(I[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)] .- continuum[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)])
+        # rms = std(I[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)] .- continuum[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)])
+        # snr = sum(feature) / (sqrt(sum(snr_filter)) * rms)
 
         @debug "PAH feature ($prof) with ($A_cgs, $μ, $fwhm, $m, $ν) and errors ($A_cgs_err, $μ_err, $fwhm_err, $m_err, $ν_err)"
         @debug "Flux=$flux +/- $f_err, EQW=$eqw +/- $e_err, SNR=$snr"
@@ -730,9 +730,9 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, λ::Vector{<:Real},
                     feature_err=feature_err, propagate_err=propagate_err)
 
                 # SNR
-                # p_lines[pₒ+2] = amp*N*ext*tn / std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)])
-                rms = std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)]) 
-                p_lines[pₒ+2] = sum(feature) / (sqrt(sum(snr_filter)) * rms)
+                p_lines[pₒ+2] = amp*N*ext*tn / std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)])
+                # rms = std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)]) 
+                # p_lines[pₒ+2] = sum(feature) / (sqrt(sum(snr_filter)) * rms)
 
                 # Add to the total line profile
                 total_profile .+= feature

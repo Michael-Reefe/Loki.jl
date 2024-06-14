@@ -5,7 +5,7 @@ parallel = true
 
 # parallel_strategy: "pmap" or "distributed". Generally pmap is superior as it balances the work load
 # between processes, whereas distributed simply allocates an equal amount of jobs to each CPU.
-parallel_strategy = "distributed"
+parallel_strategy = "pmap"
 
 # plot_spaxels: The plotting backend for 1D spaxel fits. Can be "pyplot", "plotly", or "both".
 plot_spaxels = "pyplot"

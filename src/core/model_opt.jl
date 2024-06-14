@@ -466,9 +466,9 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, λ::Vector{<:Real},
                     feature_err=feature_err, propagate_err=propagate_err)
 
                 # SNR
-                # p_lines[pₒ+2] = amp*N*ext / std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)])
-                rms = std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)]) 
-                p_lines[pₒ+2] = sum(feature) / (sqrt(sum(snr_filter)) * rms)
+                p_lines[pₒ+2] = amp*N*ext / std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)])
+                # rms = std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)]) 
+                # p_lines[pₒ+2] = sum(feature) / (sqrt(sum(snr_filter)) * rms)
 
                 total_profile .+= feature
                 if propagate_err

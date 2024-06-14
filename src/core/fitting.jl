@@ -1070,7 +1070,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
         p_out, p_err = read_fit_results_csv(cube_fitter, fname)
         return p_out, p_err
     end
-    
+
     # Create a local logger for this individual spaxel
     timestamp_logger(logger) = TransformerLogger(logger) do log
         merge(log, (; message = "$(Dates.format(now(), date_format)) $(log.message)"))
@@ -1171,7 +1171,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
         # serialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).LOKI"), (p_out=p_out, p_err=p_err))
         # save output as csv file
         write_fit_results_csv(cube_fitter, fname, p_out, p_err)
-
+        
         # save memory allocations & other logistic data to a separate log file
         if cube_fitter.track_memory
             write_memory_log(cube_fitter, fname)
@@ -1275,12 +1275,13 @@ end
 
 
 # Helper function that loops over spaxels using pmap to fit them in parallel
+# FIXED?????
 function spaxel_loop_pmap!(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxels::Vector{CartesianIndex{2}},
     vorbin::Bool, out_params::AbstractArray{<:Real,3}, out_errs::AbstractArray{<:Real,4})
 
     prog = Progress(length(spaxels))
-    progress_pmap(spaxels, progress=prog) do index
-        p_out, p_err = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
+    progress_pmap(spaxels, progress=prog, retry_delays=ones(1)) do index
+        p_out, p_err = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin) 
         if !isnothing(p_out)
             if vorbin
                 out_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(index)[1])

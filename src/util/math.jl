@@ -1375,10 +1375,17 @@ function calculate_composite_params(λ::Vector{<:Real}, flux::Vector{<:Real}, λ
     velocity = Doppler_shift_v.(λ[m], λ0)
 
     # Cut below a threshold, otherwise Spline1D produces NaNs for some reason
-    w = (line_cdf .> 0.01) .& (line_cdf .< 0.99)
+    w = (line_cdf .> 0.001) .& (line_cdf .< 0.999)
     line_cdf = line_cdf[w]
     velocity = velocity[w]
-    if length(line_cdf) < 10
+    if length(line_cdf) < 4
+        return 0., 0., 0., 0.
+    end
+    # Cut any pixels that are not increasing the CDF (otherwise may cause the spline fit to fail)
+    wd = BitVector([1; diff(line_cdf) .> 0.])
+    line_cdf = line_cdf[wd]
+    velocity = velocity[wd]
+    if length(line_cdf) < 4
         return 0., 0., 0., 0
     end
 
@@ -1397,8 +1404,8 @@ function calculate_composite_params(λ::Vector{<:Real}, flux::Vector{<:Real}, λ
     w80 = sqrt(clamp(w80^2 - w80_inst^2, 0., Inf))
 
     # Calculate peak velocity
-    finterp = Spline1D(velocity, flux[m][w], k=3, bc="extrapolate")
-    guess = velocity[nanargmax(flux[m][w])]
+    finterp = Spline1D(velocity, flux[m][w][wd], k=3, bc="extrapolate")
+    guess = velocity[nanargmax(flux[m][w][wd])]
     res = Optim.optimize(v -> -finterp(v), guess-50., guess+50.)
     vpeak = res.minimizer[1]
 
