@@ -128,7 +128,7 @@ function __init__()
         copy!(py_vorbin, pyimport("vorbin.voronoi_2d_binning"))
     catch
         Conda.pip_interop(true)
-        Conda.pip("intsall", "vorbin")
+        Conda.pip("install", "vorbin")
         copy!(py_vorbin, pyimport("vorbin.voronoi_2d_binning"))
     end
     # FSPS
