@@ -1771,3 +1771,224 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, full_cube_model::Cu
     post_fit_nuclear_template!(cube_fitter, agn_templates)
 end
 
+
+"""
+    evaluate_model(λ, spaxel, cube_fitter[, cube_fitter_nuc])
+
+A helper function that can be used AFTER fitting a cube, to evaluate the cube model at any arbitrary 
+wavelength for any spaxel. This can be used to interpolate models onto a higher or lower resolution, or
+to extrapolate models to wavelengths outside the fit region (use with caution).
+"""
+function evaluate_model(λ::Vector{<:Real}, spaxel::CartesianIndex, cube_fitter::CubeFitter, 
+    output_path::String, cube_fitter_nuc::Union{CubeFitter,Nothing}=nothing, output_path_nuc::Union{String,Nothing}=nothing)
+
+    # Get the optimized fitting parameters for the given spaxel
+    cube_data, use_vorbins, n_bins = create_cube_data(cube_fitter, size(cube_fitter.cube.I))
+    fname = use_vorbins ? "voronoi_bin_$(spaxel[1])" : "spaxel_$(spaxel[1])_$(spaxel[2])"
+    results = readdlm(joinpath(output_path, "spaxel_binaries", "$fname.csv"), ',', Float64, '\n')
+    p_out = results[:, 1]
+    p_err = results[:, 2:3]
+    
+    # Split up into continuum & line parameters
+    split1 = cube_fitter.n_params_cont
+    split2 = cube_fitter.n_params_cont + cube_fitter.n_params_lines
+    p_cont = p_out[1:split1]
+    p_lines = p_out[split1+1:split2]
+
+    # Get the normalization
+    N = Float64(nanmaximum(abs.(cube_data.I[spaxel, :])))
+
+    # The nuclear template must be able to be evaluated at any point
+    templates_spax = cube_fitter.templates[spaxel, :, :]
+    channel_masks = cube_fitter.channel_masks
+
+    if !isnothing(cube_fitter_nuc)
+        # First, get the nuclear template over the whole FOV
+        fname = joinpath(output_path, "$(cube_fitter.name)_full_model.fits")
+        hdu_model = FITS(fname)
+        agn_templates = read(hdu_model["TEMPLATES.NUCLEAR"])
+
+        I_nuc = evaluate_post_fit_nuclear_template_model(λ, cube_fitter_nuc, agn_templates, output_path_nuc)
+        I_nuc .*= nanmaximum(nansum(.~cube_fitter_nuc.cube.mask, dims=(1,2)))   # solid angle factor
+
+        # Read in the parameter maps
+        fname = joinpath(output_path, "$(cube_fitter.name)_parameter_maps.fits")
+        hdu_param = FITS(fname)
+
+        # Now we need to renormalize to get the value in an individual spaxel
+        psf_norm = copy(cube_fitter.cube.psf_model)                              # PSF model (integrates to 1)
+        for (i, ch_mask) ∈ enumerate(cube_fitter.channel_masks)
+            fit_norm = 10 .^ read(hdu_param["TEMPLATES.NUCLEAR.AMP_$i"])         # Fit amplitudes
+            fit_norm[.~isfinite.(fit_norm)] .= 1.
+            for k ∈ (1:size(psf_norm, 3))[ch_mask]
+                for ki ∈ k
+                    s = nansum(psf_norm[:, :, ki] .* fit_norm) 
+                    psf_norm[:, :, ki] ./= s                                     # Dividing by the sum of (PSF) x (fit amp)
+                end
+            end                                                                  
+        end
+
+        # In pseudo-math terminology, what we've done here is as follows:
+        # We started with a template I_nuc given by:
+        #        I_nuc = (brightest_spaxel) * Sum[(PSF) * (fit_amp)]
+        # where the sum is over (x,y).
+        # What we actually want is the individual (x,y) components, i.e.
+        #        T(x,y) = (brightest_spaxel) * PSF(x,y) * (fit_amp)(x,y)
+        # We can back out T(x,y) from I_nuc, PSF, and fit_amp as follows:
+        #        T(x,y) = I_nuc * PSF(x,y) * (fit_amp)(x,y) / Sum[(PSF) * (fit_amp)]
+        # During the model generation function, the templates are automatically multiplied by (fit_amp)(x,y),
+        # so the inputs must have this factor removed.  Thus the final value we are looking for is
+        #        T'(x,y) = I_nuc * PSF(x,y) / Sum[(PSF) * (fit_amp)]
+        # In the code, psf_norm represents the term that we multiply with I_nuc to obtain T'(x,y).
+        # This must be performed separately at every z index (wavelength).
+
+        # Now we must interpolate psf_norm onto the proper wavelength grid
+        # Assume that the PSF normalization stays consistent past the boundaries
+        psf_norm_spax = Spline1D(cube_fitter.cube.λ, psf_norm[spaxel, :]; s=0., bc="nearest")
+        I_nuc_spax = I_nuc .* psf_norm_spax(λ)
+
+        templates_spax = Matrix{Float64}(undef, length(λ), 1)
+        templates_spax[:, 1] .= I_nuc_spax
+
+        # Create new channel masks carefully -- dont add new channel masks if the extrapolation extends into other 
+        # wavebands that could've been covered, just add them into the existing channel masks
+        λ_overlap = λ[minimum(cube_fitter.cube.λ) .≤ λ .≤ maximum(cube_fitter.cube.λ)]
+        λ_left = λ[λ .< minimum(cube_fitter.cube.λ)]
+        L_left = length(λ_left)
+        pad_left = falses(L_left)
+        λ_right = λ[λ .> maximum(cube_fitter.cube.λ)]
+        L_right = length(λ_right)
+        pad_right = falses(L_right)
+        if length(λ_overlap) > 0
+            _, channel_masks = cubefitter_mir_get_n_channels(λ_overlap, cube_fitter.z)
+        else
+            channel_masks = [falses(0) for _ in 1:length(cube_fitter.channel_masks)]
+        end
+        # Pad the channel masks to the left and right to get them the right size and to include the left/right edges
+        # in the appropriate channel masks
+        for i ∈ eachindex(channel_masks)
+            if i == 1
+                channel_masks[i] = [trues(L_left); channel_masks[i]; pad_right]
+            elseif i == length(channel_masks)
+                channel_masks[i] = [pad_left; channel_masks[i]; trues(L_right)]
+            else
+                channel_masks[i] = [pad_left; channel_masks[i]; pad_right]
+            end
+        end
+        channel_masks = Vector{BitVector}(channel_masks)
+
+    end
+
+    # Evaluate the model at the given wavelength
+    if cube_fitter.spectral_region == :MIR
+        ext_key = "extinction"
+
+        I_cont, comps_cont = model_continuum(λ, p_cont, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, 
+            cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, 
+            cube_fitter.κ_abs, cube_fitter.custom_ext_template, cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, false, 
+            templates_spax, channel_masks, false, true)
+    else
+        ext_key = "attenuation_gas"
+
+        # The velocity scale and systemic velocity offsets depend on the wavelength vector and must be recalculated
+        @assert isapprox((λ[2]/λ[1]), (λ[end]/λ[end-1]), rtol=1e-6) "Input wavelength vector must be logarithmically binned to fit optical data!"
+        vres = log(λ[2]/λ[1]) * C_KMS
+        vsyst_ssp = log(cube_fitter.ssp_λ[1]/λ[1]) * C_KMS
+        _, feii_λ, _, _ = generate_feii_templates(cube_fitter.cube.λ, cube_fitter.cube.lsf)
+        vsyst_feii = log(feii_λ[1]/λ[1]) * C_KMS
+
+        # Get the stellar templates
+        stellar_templates = nothing
+        if cube_fitter.spectral_region == :OPT
+            stellar_templates = precompute_stellar_templates(cube_fitter, p_cont, trues(length(p_cont)))
+        end
+
+        I_cont, comps_cont = model_continuum(λ, p_cont, N, vres, vsyst_ssp, vsyst_feii, cube_fitter.npad_feii,
+            cube_fitter.n_ssps, cube_fitter.ssp_λ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, 
+            cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, 
+            cube_fitter.extinction_curve, templates_spax, cube_fitter.fit_temp_multexp, false, true)
+    end
+    ext_curve = comps_cont[ext_key]
+    lsf_interp = Spline1D(cube_fitter.cube.λ, cube_fitter.cube.lsf, k=1)
+    lsf_interp_func = x -> lsf_interp(x)    # Interpolate the LSF
+
+    I_lines, comps_lines = model_line_residuals(λ, p_lines, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
+        cube_fitter.flexible_wavesol, ext_curve, lsf_interp_func, cube_fitter.relative_flags, nothing, false, true) 
+    
+    I_model = (I_cont .+ I_lines) .* N
+    comps = merge(comps_cont, comps_lines)
+    for comp ∈ keys(comps)
+        if !((comp == "extinction") || contains(comp, "ext_") || contains(comp, "abs_") || contains(comp, "attenuation"))
+            comps[comp] .*= N
+        end
+    end
+    I_model, comps
+end
+
+
+function evaluate_post_fit_nuclear_template_model(λ::Vector{<:Real}, cube_fitter::CubeFitter,
+    agn_templates::Array{<:Real,3}, output_path::String)
+
+    # Repeat the process of reading in the fit results, this time for the nuclear fit
+    # This assumes you've used the post_fit_nuclear_template method
+    cube_data = create_cube_data_postnuctemp(cube_fitter, agn_templates)
+    use_vorbins = !isnothing(cube_fitter.cube.voronoi_bins)
+    fname = use_vorbins ? "voronoi_bin_1" : "spaxel_1_1"
+    results = readdlm(joinpath(output_path, "spaxel_binaries", "$fname.csv"), ',', Float64, '\n')
+    p_out = results[:, 1]
+    p_err = results[:, 2:3]
+
+    # Split into continuum and line parameters
+    split1 = cube_fitter.n_params_cont
+    split2 = cube_fitter.n_params_cont + cube_fitter.n_params_lines
+    p_cont = p_out[1:split1]
+    p_lines = p_out[split1+1:split2]
+
+    # Get normalization
+    N = Float64(nanmaximum(abs.(cube_data.I[1,1,:])))
+
+    # Should be empty
+    templates_spax = cube_data.templates[1,1,:,:]
+
+    # Evaluate the model at the given wavelength
+    if cube_fitter.spectral_region == :MIR
+        ext_key = "extinction"
+
+        I_cont, comps_cont = model_continuum(λ, p_cont, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, 
+            cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, 
+            cube_fitter.κ_abs, cube_fitter.custom_ext_template, cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, false, 
+            templates_spax, cube_fitter.channel_masks, false, true)
+    else
+        ext_key = "attenuation_gas"
+
+        # The velocity scale and systemic velocity offsets depend on the wavelength vector and must be recalculated
+        @assert isapprox((λ[2]/λ[1]), (λ[end]/λ[end-1]), rtol=1e-6) "Input wavelength vector must be logarithmically binned to fit optical data!"
+        vres = log(λ[2]/λ[1]) * C_KMS
+        vsyst_ssp = log(cube_fitter.ssp_λ[1]/λ[1]) * C_KMS
+        _, feii_λ, _, _ = generate_feii_templates(cube_fitter.cube.λ, cube_fitter.cube.lsf)
+        vsyst_feii = log(feii_λ[1]/λ[1]) * C_KMS
+
+        # Get the stellar templates
+        stellar_templates = nothing
+        if cube_fitter.spectral_region == :OPT
+            stellar_templates = precompute_stellar_templates(cube_fitter, p_cont, trues(length(p_cont)))
+        end
+
+        I_cont, comps_cont = model_continuum(λ, p_cont, N, vres, vsyst_ssp, vsyst_feii, cube_fitter.npad_feii,
+            cube_fitter.n_ssps, cube_fitter.ssp_λ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, 
+            cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, 
+            cube_fitter.extinction_curve, templates_spax, cube_fitter.fit_temp_multexp, false, true)
+    end
+
+    # Get the extinction curve and LSF interpolation function necessary for the line model function
+    ext_curve = comps_cont[ext_key]
+    lsf_interp = Spline1D(cube_fitter.cube.λ, cube_fitter.cube.lsf, k=1)
+    lsf_interp_func = x -> lsf_interp(x)    # Interpolate the LSF
+
+    I_lines, comps_lines = model_line_residuals(λ, p_lines, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
+        cube_fitter.flexible_wavesol, ext_curve, lsf_interp_func, cube_fitter.relative_flags, nothing, false, true) 
+    
+    # Combine continuum + lines and renormalize: This gives the nuclear template over the whole FOV, evaluated at a 
+    # novel wavelength vector
+    I_model = (I_cont .+ I_lines) .* N
+end

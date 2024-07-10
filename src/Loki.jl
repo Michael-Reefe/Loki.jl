@@ -245,7 +245,8 @@ export DataCube,   # DataCube struct
        Doppler_shift_v,
        Doppler_shift_λ,
        Doppler_width_v,
-       Doppler_width_λ
+       Doppler_width_λ,
+       evaluate_model
 
 # Include all of the files that we need to create the module
 
