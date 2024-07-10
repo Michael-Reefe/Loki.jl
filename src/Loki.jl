@@ -115,22 +115,30 @@ function __init__()
     copy!(py_colors, pyimport_conda("matplotlib.colors", "matplotlib"))
     # animation --> used for making mp4 movie files (optional)
     copy!(py_animation, pyimport_conda("matplotlib.animation", "matplotlib"))
-    # python package for adjusting matplotlib text so it doesn't overlap
+    # non-conda packages:
     try
-        copy!(py_lineidplot, pyimport_conda("lineid_plot", "lineid_plot"))
+        copy!(py_lineidplot, pyimport("lineid_plot"))
     catch
         Conda.pip_interop(true)
         Conda.pip("install", "lineid_plot")
-        copy!(py_lineidplot, pyimport_conda("lineid_plot", "lineid_plot"))
+        copy!(py_lineidplot, pyimport("lineid_plot"))
     end
-
     # Voronoi binning package
-    copy!(py_vorbin, pyimport_conda("vorbin.voronoi_2d_binning", "vorbin"))
-    
     try
-        copy!(py_fsps, pyimport_conda("fsps", "fsps"))
+        copy!(py_vorbin, pyimport("vorbin.voronoi_2d_binning"))
     catch
-        @warn "Could not find the Python FSPS Library! Optical spectra modeling will not be possible."
+        Conda.pip_interop(true)
+        Conda.pip("intsall", "vorbin")
+        copy!(py_vorbin, pyimport("vorbin.voronoi_2d_binning"))
+    end
+    # FSPS
+    try
+        copy!(py_fsps, pyimport("fsps"))
+    catch
+        # @warn "Could not find the Python FSPS Library! Optical spectra modeling will not be possible."
+        Conda.pip_interop(true)
+        Conda.pip("install", "fsps")
+        copy!(py_fsps, pyimport("fsps"))
     end
 
     # Matplotlib settings to make plots look pretty :)
