@@ -62,6 +62,7 @@ using LaTeXStrings
 
 # PyCall needed for some matplotlib modules
 using PyCall
+using Conda
 
 # Matplotlib modules
 const plt::PyObject = PyNULL()
@@ -115,7 +116,13 @@ function __init__()
     # animation --> used for making mp4 movie files (optional)
     copy!(py_animation, pyimport_conda("matplotlib.animation", "matplotlib"))
     # python package for adjusting matplotlib text so it doesn't overlap
-    copy!(py_lineidplot, pyimport_conda("lineid_plot", "lineid_plot"))
+    try
+        copy!(py_lineidplot, pyimport_conda("lineid_plot", "lineid_plot"))
+    catch
+        Conda.pip_interop(true)
+        Conda.pip("install", "lineid_plot")
+        copy!(py_lineidplot, pyimport_conda("lineid_plot", "lineid_plot"))
+    end
 
     # Voronoi binning package
     copy!(py_vorbin, pyimport_conda("vorbin.voronoi_2d_binning", "vorbin"))

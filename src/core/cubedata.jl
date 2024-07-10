@@ -963,6 +963,7 @@ This saves time upon re-running the code assuming one wishes to keep the same pr
 """
 save_fits(path::String, obs::Observation) = save_fits(path, obs, collect(keys(obs.channels)))
 save_fits(path::String, obs::Observation, channels::Integer) = save_fits(path, obs, [channels])
+save_fits(path::String, obs::Observation, channels::Symbol) = save_fits(path, obs, [channels])
 
 function save_fits(path::String, obs::Observation, channels::Vector)
     for channel in channels

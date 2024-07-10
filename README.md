@@ -64,7 +64,15 @@ For a more detailed description of the PAHFIT decomposition and fitting methods,
 
 ## II. Installation
 
-##### From the Julia REPL:
+### System Requirements
+
+This package has been developed and tested on macOS operating systems. The current development version has been tested on macOS Sonoma 14.5. It has been built such that it should be compatible on Windows and Linux systems as well, but this has not been tested. 
+
+Recommended system specs are 16 GB of RAM and at least 4 CPU cores for the best performance. For running the software without any multiprocessing, the minimum requirements are 4 GB of RAM and 1 CPU core.
+
+### Julia Requirements
+
+The current development version has been tested on Julia 1.10.4.
 
 ```julia
 julia> ]
@@ -78,7 +86,7 @@ julia> using Pkg
 julia> Pkg.add(url="https://github.com/Michael-Reefe/Loki.jl")
 ```
 
-Once installed, you can start using the package simply with `using Loki`. N.B. If you plan on utilizing the multiprocessing capabilities of LOKI, make sure you prepend your using statement by an `@everywhere` macro (from the `Distributed` module) to include it in all running processes! If using multiprocessing on hardware with limited RAM, you may also want to include the `--heap-size-hint` command line argument to limit the memory usage of each julia process. Limiting each process to 4 GB has little to no effect on the performance.
+The combined installation and precompilation of all dependencies can take a few minutes (roughly). The Julia package dependencies are listed in the `Project.toml` file and will be installed automatically. Once installed, you can start using the package simply with `using Loki`. If you plan on utilizing the multiprocessing capabilities of LOKI, make sure you prepend your using statement by an `@everywhere` macro (from the `Distributed` module) to include it in all running processes! If using multiprocessing on hardware with limited RAM, you may also want to include the `--heap-size-hint` command line argument to limit the memory usage of each julia process. Limiting each process to 4 GB has little to no effect on the performance.
 
 ### Python Requirements
 
@@ -93,10 +101,10 @@ julia> Pkg.build("PyCall")
 
 Alternatively, you can set `ENV["PYTHON"] = ""` which will link PyCall to a new, self-contained conda environment managed by PyCall. If you choose this option, the python dependencies for LOKI should be automatically installed to the PyCall environment upon your first time running the LOKI package. Otherwise, if you've linked it with a preexisting environment, make sure you manually install the following python dependencies with pip or conda:
 
-- [matplotlib](https://matplotlib.org/)
-- [lineid_plot](https://github.com/phn/lineid_plot)
-- [fsps](https://github.com/dfm/python-fsps) (only required for optical spectra fitting)
-- [vorbin](https://pypi.org/project/vorbin/)
+- [matplotlib](https://matplotlib.org/) (v3.7.2)
+- [lineid_plot](https://github.com/phn/lineid_plot) (v0.6)
+- [fsps](https://github.com/dfm/python-fsps) (v0.4.3, only required for optical spectra fitting)
+- [vorbin](https://pypi.org/project/vorbin/) (v3.1.5)
 
 ### LaTeX
 
