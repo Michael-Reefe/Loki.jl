@@ -135,10 +135,10 @@ function __init__()
     try
         copy!(py_fsps, pyimport("fsps"))
     catch
-        # @warn "Could not find the Python FSPS Library! Optical spectra modeling will not be possible."
-        Conda.pip_interop(true)
-        Conda.pip("install", "fsps")
-        copy!(py_fsps, pyimport("fsps"))
+        @warn "Could not find the Python FSPS Library! Optical spectra modeling will not be possible."
+        # Conda.pip_interop(true)
+        # Conda.pip("install", "fsps")
+        # copy!(py_fsps, pyimport("fsps"))
     end
 
     # Matplotlib settings to make plots look pretty :)
