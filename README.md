@@ -72,21 +72,44 @@ Recommended system specs are 16 GB of RAM and at least 4 CPU cores for the best 
 
 ### Julia Requirements
 
-The current development version has been tested on Julia 1.10.4.
+The current development version has been tested on Julia 1.10.4. To install within a unique project environment (recommended), first clone the repository:
 
-```julia
+```bash
+git clone https://github.com/Michael-Reefe/Loki.jl
+```
+
+Then execute the following commands within the julia terminal:
+
+```
 julia> ]
-(Environment)> add https://github.com/Michael-Reefe/Loki.jl
+(@v1.10) pkg> activate Loki.jl
+(Loki) pkg> instantiate
+(Loki) pkg> precompile
 ```
 
-or alternatively,
+The combined installation and precompilation of all dependencies can take a few minutes (roughly). The Julia package dependencies are listed in the `Project.toml` file and will be installed automatically. Once installed, back out of package mode with backspace, and then you can start using the package simply with:
+
+```
+julia> using Loki
+```
+
+Note: the first time you do this, it will also attempt to install the python dependencies. If you want to set up your own python environment for this, refer to the next section BEFORE running this command. Otherwise, run the above command to allow them to attempt to install automatically.
+
+In the future, when running julia, make sure you always activate the project before trying to import Loki. For example:
 
 ```julia
-julia> using Pkg
-julia> Pkg.add(url="https://github.com/Michael-Reefe/Loki.jl")
+using Pkg
+Pkg.activate("path/to/Loki.jl")
+using Loki
 ```
 
-The combined installation and precompilation of all dependencies can take a few minutes (roughly). The Julia package dependencies are listed in the `Project.toml` file and will be installed automatically. Once installed, you can start using the package simply with `using Loki`. If you plan on utilizing the multiprocessing capabilities of LOKI, make sure you prepend your using statement by an `@everywhere` macro (from the `Distributed` module) to include it in all running processes! If using multiprocessing on hardware with limited RAM, you may also want to include the `--heap-size-hint` command line argument to limit the memory usage of each julia process. Limiting each process to 4 GB has little to no effect on the performance.
+Or simply start julia with the `project` command-line argument, which activates the project automatically:
+
+```
+julia --project=path/to/Loki.jl example_file.jl
+```
+
+If you plan on utilizing the multiprocessing capabilities of LOKI, make sure you prepend your using statement by an `@everywhere` macro (from the `Distributed` module) to include it in all running processes! If using multiprocessing on hardware with limited RAM, you may also want to include the `--heap-size-hint` command line argument to limit the memory usage of each julia process. Limiting each process to 4 GB has little to no effect on the performance, in my experience.
 
 ### Python Requirements
 
@@ -99,7 +122,7 @@ julia> ENV["PYTHON"] = "path/to/python/binary"
 julia> Pkg.build("PyCall")
 ```
 
-Alternatively, you can set `ENV["PYTHON"] = ""` which will link PyCall to a new, self-contained conda environment managed by PyCall. If you choose this option, the python dependencies for LOKI should be automatically installed to the PyCall environment upon your first time running the LOKI package. Otherwise, if you've linked it with a preexisting environment, make sure you manually install the following python dependencies with pip or conda:
+Alternatively, you can set `ENV["PYTHON"] = ""` which will link PyCall to a new, self-contained conda environment managed by PyCall. If you choose this option, the python dependencies for LOKI should be automatically installed to the PyCall environment upon your first time running the LOKI package (as explained above). Otherwise, if you've linked it with a preexisting environment, make sure you manually install the following python dependencies with pip or conda:
 
 - [matplotlib](https://matplotlib.org/) (v3.7.2)
 - [lineid_plot](https://github.com/phn/lineid_plot) (v0.6)
