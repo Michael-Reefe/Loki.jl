@@ -103,18 +103,24 @@ const channel_edges = [4.90, 5.74, 5.66, 6.63, 6.53, 7.65, 7.51, 8.77, 8.67, 10.
 function __init__()
 
     # Import pyplot
-    copy!(plt, pyimport_conda("matplotlib.pyplot", "matplotlib"))
+    try
+        copy!(plt, pyimport("matplotlib.pyplot"))
+    catch
+        Conda.pip_interop(true)
+        Conda.pip("install", "matplotlib")
+        copy!(py_vorbin, pyimport("matplotlib.pyplot"))
+    end
 
     # Import matplotlib submodules for nice plots
     # anchored_artists --> used for scale bars
-    copy!(py_anchored_artists, pyimport_conda("mpl_toolkits.axes_grid1.anchored_artists", "matplotlib"))
+    copy!(py_anchored_artists, pyimport("mpl_toolkits.axes_grid1.anchored_artists"))
     # ticker --> used for formatting axis ticks and tick labels
-    copy!(py_ticker, pyimport_conda("matplotlib.ticker", "matplotlib"))
+    copy!(py_ticker, pyimport("matplotlib.ticker"))
     # cm --> used for formatting matplotlib colormaps
-    copy!(py_colormap, pyimport_conda("matplotlib.cm", "matplotlib"))
-    copy!(py_colors, pyimport_conda("matplotlib.colors", "matplotlib"))
+    copy!(py_colormap, pyimport("matplotlib.cm"))
+    copy!(py_colors, pyimport("matplotlib.colors"))
     # animation --> used for making mp4 movie files (optional)
-    copy!(py_animation, pyimport_conda("matplotlib.animation", "matplotlib"))
+    copy!(py_animation, pyimport("matplotlib.animation"))
     # non-conda packages:
     try
         copy!(py_lineidplot, pyimport("lineid_plot"))
