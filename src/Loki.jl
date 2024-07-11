@@ -108,7 +108,7 @@ function __init__()
     catch
         Conda.pip_interop(true)
         Conda.pip("install", "matplotlib")
-        copy!(py_vorbin, pyimport("matplotlib.pyplot"))
+        copy!(plt, pyimport("matplotlib.pyplot"))
     end
 
     # Import matplotlib submodules for nice plots
