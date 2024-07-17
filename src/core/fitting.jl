@@ -1817,6 +1817,7 @@ function evaluate_model(λ::Vector{<:Real}, spaxel::CartesianIndex, cube_fitter:
 
         # Now we need to renormalize to get the value in an individual spaxel
         psf_norm = copy(cube_fitter.cube.psf_model)                              # PSF model (integrates to 1)
+        psf_norm[.~isfinite.(psf_norm)] .= 0.
         for (i, ch_mask) ∈ enumerate(cube_fitter.channel_masks)
             fit_norm = 10 .^ read(hdu_param["TEMPLATES.NUCLEAR.AMP_$i"])         # Fit amplitudes
             fit_norm[.~isfinite.(fit_norm)] .= 1.
@@ -1928,12 +1929,13 @@ function evaluate_model(λ::Vector{<:Real}, aperture::Union{Vector{<:Aperture.Ab
             I_nuc_spax = I_nuc
         else
             psf_norm = copy(cube_fitter.cube.psf_model)
+            psf_norm[.~isfinite.(psf_norm)] .= 0.
             psf_norm_1d = zeros(size(psf_norm, 3))
             for (i, ch_mask) ∈ enumerate(cube_fitter.channel_masks)
                 fit_norm = 10 .^ read(hdu_param["TEMPLATES.NUCLEAR.AMP_$i"])[1,1]      # Fit amplitudes
                 for k ∈ findall(ch_mask)
-                    s = nansum(psf_norm[:, :, k] .* fit_norm) 
-                    psf_norm[:, :, k] ./= s                                     
+                    # s = nansum(psf_norm[:, :, k] .* fit_norm) 
+                    # psf_norm[:, :, k] ./= s                                     
                     psf_norm_1d[k] = photometry(aperture[k], psf_norm[:, :, k]).aperture_sum  # Fraction of the total PSF
 
                     # Need to convert I_nuc from an average over the whole FOV to an average over just the aperture
