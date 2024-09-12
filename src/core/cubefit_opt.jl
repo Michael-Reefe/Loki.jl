@@ -134,7 +134,7 @@ function parammaps_opt_empty(cube_fitter::CubeFitter, shape::Tuple{S,S,S})::Para
     line_names, line_names_extra, line_units, line_units_extra, line_labels, line_labels_extra, line_restframe, line_extra_restframe, 
         line_log, line_extra_log, line_normalize, line_extra_normalize, line_perfreq, line_extra_perfreq = 
             _get_line_names_and_transforms(cube_fitter.lines, cube_fitter.n_lines, cube_fitter.n_comps, 
-                cube_fitter.flexible_wavesol, perfreq=1)
+                cube_fitter.flexible_wavesol, cube_fitter.lines_allow_negative, perfreq=1)
 
     statistics_names = ["statistics.chi2", "statistics.dof"]
     statistics_units = ["-", "-"]

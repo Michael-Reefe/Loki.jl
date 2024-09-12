@@ -106,7 +106,7 @@ Helper function for getting a vector of line parameter names and boolean vectors
 to determine what transformations to apply on the final parameters.
 """
 function _get_line_names_and_transforms(cf_lines::TransitionLines, n_lines::Integer, n_comps::Integer,
-        flexible_wavesol::Bool; perfreq::Int=0)
+        flexible_wavesol::Bool, lines_allow_negative::Bool; perfreq::Int=0)
 
     line_names = String[]
     line_units = String[]
@@ -133,21 +133,21 @@ function _get_line_names_and_transforms(cf_lines::TransitionLines, n_lines::Inte
                 line_j = "lines." * string(cf_lines.names[i]) * ".$(j)"
 
                 pnames = ["amp", "voff", "fwhm"]
-                punits = ["log(erg.s-1.cm-2.Hz-1.sr-1)", "km/s", "km/s"]
-                plabels = [L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$", L"$v_{\rm off}$ (km s$^{-1}$)",
-                    L"FWHM (km s$^{-1}$)"]
+                punits = [lines_allow_negative ? "erg.s-1.cm-2.Hz-1" : "log(erg.s-1.cm-2.Hz-1.sr-1)", "km/s", "km/s"]
+                plabels = [lines_allow_negative ? L"$I$ (erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1}$)" : L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$", 
+                    L"$v_{\rm off}$ (km s$^{-1}$)", L"FWHM (km s$^{-1}$)"]
                 p_rf = [1, 0, 0]
-                p_log = [1, 0, 0]
+                p_log = [lines_allow_negative ? 0 : 1, 0, 0]
                 p_norm = [1, 0, 0]
                 p_pf = [perfreq, 0, 0]
                 # Need extra voff parameter if using the flexible_wavesol keyword
                 if !isnothing(cf_lines.tied_voff[i, j]) && flexible_wavesol && isone(j)
                     pnames = ["amp", "voff", "voff_indiv", "fwhm"]
-                    punits = ["log(erg.s-1.cm-2.Hz-1.sr-1)", "km/s", "km/s"]
-                    plabels = [L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$", L"$v_{\rm off}$ (km s$^{-1}$)",
-                        L"$v_{\rm off,indiv}$ (km s$^{-1}$)", L"FWHM (km s$^{-1}$)"]
+                    punits = [lines_allow_negative ? "erg.s-1.cm-2.Hz-1" : "log(erg.s-1.cm-2.Hz-1.sr-1)", "km/s", "km/s", "km/s"]
+                    plabels = [lines_allow_negative ? L"$I$ (erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1}$)" : L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$",
+                        L"$v_{\rm off}$ (km s$^{-1}$)", L"$v_{\rm off,indiv}$ (km s$^{-1}$)", L"FWHM (km s$^{-1}$)"]
                     p_rf = [1, 0, 0, 0]
-                    p_log = [1, 0, 0, 0]
+                    p_log = [lines_allow_negative ? 0 : 1, 0, 0, 0]
                     p_norm = [1, 0, 0, 0]
                     p_pf = [perfreq, 0, 0, 0]
                 end
@@ -171,10 +171,10 @@ function _get_line_names_and_transforms(cf_lines::TransitionLines, n_lines::Inte
                     p_pf = [p_pf; 0]
                 end
                 pnames_extra = ["flux"; "eqw"; "SNR"]
-                punits_extra = ["log(erg.s-1.cm-2)", "um", "-"]
-                plabels_extra = [L"$\log_{10}(F /$ erg s$^{-1}$ cm$^{-2}$)", L"$W_{\rm eq}$ ($\mu$m)", L"$S/N$"]
+                punits_extra = [lines_allow_negative ? "erg.s-1.cm-2" : "log(erg.s-1.cm-2)", "um", "-"]
+                plabels_extra = [lines_allow_negative ? L"$F$ (erg s$^{-1}$ cm$^{-2}$)" : L"$\log_{10}(F /$ erg s$^{-1}$ cm$^{-2}$)", L"$W_{\rm eq}$ ($\mu$m)", L"$S/N$"]
                 p_extra_rf = [0, 2, 0]
-                p_extra_log = [1, 0, 0]
+                p_extra_log = [lines_allow_negative ? 0 : 1, 0, 0]
                 p_extra_norm = [0, 0, 0]
                 p_extra_pf = [0, 0, 0]
                 # Append parameters for flux, equivalent width, and signal-to-noise ratio, which are NOT fitting parameters, but are of interest
@@ -477,6 +477,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     line_test_lines::Vector{Vector{Symbol}}
     line_test_threshold::T
     plot_line_test::Bool
+    lines_allow_negative::Bool
     subtract_cubic_spline::Bool
 
     # Line masking and sorting options
@@ -690,6 +691,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             out[:line_test_lines], 
             out[:line_test_threshold], 
             out[:plot_line_test], 
+            out[:lines_allow_negative],
             out[:subtract_cubic_spline], 
             out[:linemask_delta], 
             out[:linemask_n_inc_thresh],
@@ -1000,7 +1002,7 @@ function cubefitter_prepare_p_init_cube_parameters(λ::Vector{<:Real}, z::Real, 
     p_init_cube_lines = ones(size(cube.I)[1:2]..., n_params_lines) .* NaN
 
     # Filter out dust features
-    df_filt = [((minimum(p_init_cube_λ)-0.5) < dust_features_0.mean[i].value < (maximum(p_init_cube_λ)+0.5)) for i ∈ 1:length(dust_features_0.mean)]
+    df_filt = [((minimum(p_init_cube_λ)-0.1) < dust_features_0.mean[i].value < (maximum(p_init_cube_λ)+0.1)) for i ∈ 1:length(dust_features_0.mean)]
     if !isnothing(out[:user_mask])
         for pair in out[:user_mask]
             df_filt .&= [~(pair[1] < dust_features_0.mean[i].value < pair[2]) for i ∈ 1:length(dust_features_0.mean)]
@@ -1017,14 +1019,14 @@ function cubefitter_prepare_p_init_cube_parameters(λ::Vector{<:Real}, z::Real, 
     # Count how many dust features are in the cube template but not in the current fitting region
     n_dfparams_left = n_dfparams_right = 0
     for i in 1:length(initcube_dust_features.names)
-        if initcube_dust_features.mean[i].value < (minimum(λ)-0.5)
+        if initcube_dust_features.mean[i].value < (minimum(λ)-0.1)
             if initcube_dust_features.profiles[i] == :Drude
                 n_dfparams_left += 3
             elseif initcube_dust_features.profiles[i] == :PearsonIV
                 n_dfparams_left += 5
             end
         end
-        if initcube_dust_features.mean[i].value > (maximum(λ)+0.5)
+        if initcube_dust_features.mean[i].value > (maximum(λ)+0.1)
             if initcube_dust_features.profiles[i] == :Drude
                 n_dfparams_right += 3
             elseif initcube_dust_features.profiles[i] == :PearsonIV
@@ -1034,7 +1036,7 @@ function cubefitter_prepare_p_init_cube_parameters(λ::Vector{<:Real}, z::Real, 
     end
 
     # Repeat for absorption features
-    ab_filt = [((minimum(p_init_cube_λ)-0.5) < abs_features_0.mean[i].value < (maximum(p_init_cube_λ)+0.5)) for i ∈ 1:length(abs_features_0.mean)]
+    ab_filt = [((minimum(p_init_cube_λ)-0.1) < abs_features_0.mean[i].value < (maximum(p_init_cube_λ)+0.1)) for i ∈ 1:length(abs_features_0.mean)]
     if !isnothing(out[:user_mask])
         for pair in out[:user_mask]
             ab_filt .&= [~(pair[1] < abs_features_0.mean[i].value < pair[2]) for i ∈ 1:length(abs_features_0.mean)]
@@ -1050,10 +1052,10 @@ function cubefitter_prepare_p_init_cube_parameters(λ::Vector{<:Real}, z::Real, 
                                 abs_features_0._local[ab_filt])
     n_abparams_left = n_abparams_right = 0
     for i in 1:length(initcube_abs_features.names)
-        if initcube_abs_features.mean[i].value < (minimum(λ)-0.5)
+        if initcube_abs_features.mean[i].value < (minimum(λ)-0.1)
             n_abparams_left += 3
         end
-        if initcube_abs_features.mean[i].value > (maximum(λ)+0.5)
+        if initcube_abs_features.mean[i].value > (maximum(λ)+0.1)
             n_abparams_right += 3
         end
     end
@@ -1562,7 +1564,12 @@ function get_line_plimits(cube_fitter::CubeFitter, init::Bool, nuc_temp_fit::Boo
     ext_curve::Union{Vector{<:Real},Nothing}=nothing)
 
     if !isnothing(ext_curve)
-        amp_plim = (0., clamp(1 / minimum(ext_curve), 1., Inf) * (nuc_temp_fit ? 1000. : 1.))
+        max_amp = clamp(1 / minimum(ext_curve), 1., Inf) * (nuc_temp_fit ? 1000. : 1.)
+        if cube_fitter.lines_allow_negative
+            amp_plim = (-max_amp, max_amp)
+        else
+            amp_plim = (0., max_amp)
+        end
     else
         if cube_fitter.spectral_region == :MIR
             max_amp = 1 / exp(-cube_fitter.continuum.τ_97.limits[2])
@@ -1578,7 +1585,11 @@ function get_line_plimits(cube_fitter::CubeFitter, init::Bool, nuc_temp_fit::Boo
                     Cf=Cf_dust)[1]
             end
         end 
-        amp_plim = (0., clamp(max_amp, 1., Inf) * (nuc_temp_fit ? 1000. : 1.))
+        if cube_fitter.lines_allow_negative
+            amp_plim = (-max_amp, max_amp)
+        else
+            amp_plim = (0, max_amp)
+        end
     end
     ln_plims = Vector{Tuple}()
     ln_lock = BitVector()
@@ -1826,9 +1837,9 @@ function clean_line_parameters(cube_fitter::CubeFitter, popt::Vector{<:Real}, lo
                 end
                 # Velocity offsets for the integrated spectrum shouldnt be too large
                 # if abs(popt[pᵢ+1]) > 500.
-                if !cube_fitter.fit_all_global
-                    popt[pᵢ+1] = 0.
-                end
+                # if !cube_fitter.fit_all_global
+                #     popt[pᵢ+1] = 0.
+                # end
 
                 if replace_line && !isnothing(cube_fitter.lines.tied_voff[i, j]) && isone(j) && cube_fitter.flexible_wavesol
                     popt[pᵢ+2] = 0. # individual voff

@@ -88,7 +88,7 @@ combined_maps = [["OII_03727", "OII_03729"]]
 
 # Line voff and FWHM limits
 voff_plim = [-800.0, 800.0]              # -1000 to 1000 km/s from the rest wavelength
-fwhm_plim = [0.0, 1500.0]                # 0 to 1000 km/s FWHM velocity of the line -- this is the *intrinsic* FWHM,
+fwhm_plim = [0.0, 2000.0]                # 0 to 1000 km/s FWHM velocity of the line -- this is the *intrinsic* FWHM,
                                          #    i.e. the FWHM after the instrumental FWHM has been subtracted in quadrature
 h3_plim = [-0.5, 0.5]                    # skewness (3rd moment): limits (-0.5, 0.5), to remain mostly gaussian
 h4_plim = [-0.5, 0.5]                    # kurtosis (4th moment): limits (-0.5, 0.5), to remain mostly gaussian
@@ -104,7 +104,7 @@ rel_fwhm = false
 
 acomp_amp_plim = [[0.0, 1.0]]            # if rel_amp is true: multiplicative factor with the main line amp
 acomp_voff_plim = [[-800.0, 800.0]]      # if rel_voff is true: additive factor with the main line voff
-acomp_fwhm_plim = [[0.0, 1500.0]]      # if rel_fwhm is true: multiplicative factor with the main line FWHM
+acomp_fwhm_plim = [[0.0, 2000.0]]      # if rel_fwhm is true: multiplicative factor with the main line FWHM
 # acomp_fwhm_plim = [[0.0, 3.0]]
 
 # Uncertainty in the wavelength solution of the data
@@ -944,31 +944,31 @@ default = "Voigt"
 
 ### Optical lines ###
 
-NeV_03426 = ["Voigt"]
-OIII_03445 = ["Voigt"]
-OII_03727 = ["Voigt"]
-OII_03729 = ["Voigt"]
-NeIII_03869 = ["Voigt"]
-NeIII_03967 = ["Voigt"]
-HeI_03889 = ["Voigt"]
-SII_04069 = ["Voigt"]
-SII_04077 = ["Voigt"]
-OIII_04364 = ["Voigt"]
-HeII_04687 = ["Voigt"]
+# NeV_03426 = ["Voigt"]
+# OIII_03445 = ["Voigt"]
+# OII_03727 = ["Voigt"]
+# OII_03729 = ["Voigt"]
+# NeIII_03869 = ["Voigt"]
+# NeIII_03967 = ["Voigt"]
+# HeI_03889 = ["Voigt"]
+# SII_04069 = ["Voigt"]
+# SII_04077 = ["Voigt"]
+# OIII_04364 = ["Voigt"]
+# HeII_04687 = ["Voigt"]
 
-HI_H_beta = ["Voigt"]
-HI_H_gamma = ["Voigt"]
-HI_H_delta = ["Voigt"]
-HI_H_epsilon = ["Voigt"]
-HI_H_zeta = ["Voigt"]
+# HI_H_beta = ["Voigt"]
+# HI_H_gamma = ["Voigt"]
+# HI_H_delta = ["Voigt"]
+# HI_H_epsilon = ["Voigt"]
+# HI_H_zeta = ["Voigt"]
 
-OIII_04960 = ["Voigt"]
-OIII_05008 = ["Voigt"]
+# OIII_04960 = ["Voigt"]
+# OIII_05008 = ["Voigt"]
 
 ### MIR lines ###
 
-HI_Br_alpha = ["Voigt"]
-HI_Pf_alpha = ["Voigt"]
+# HI_Br_alpha = ["Voigt"]
+# HI_Pf_alpha = ["Voigt"]
 
 H200_S0 = ["Voigt"]
 H200_S1 = ["Voigt"]
@@ -980,26 +980,26 @@ H200_S6 = ["Voigt"]
 H200_S7 = ["Voigt"]
 H200_S8 = ["Voigt"]
 
-SiIX_3936 = ["Voigt"]
-MgIV_4867 = ["Voigt"]
-ArVI_4529 = ["Voigt"]
+# SiIX_3936 = ["Voigt"]
+# MgIV_4867 = ["Voigt"]
+# ArVI_4529 = ["Voigt"]
 
-FeII_5340 = ["Voigt"]
-FeVIII_5447 = ["Voigt"]
-MgVII_5503 = ["Voigt"]
-MgV_5609 = ["Voigt"]
+# FeII_5340 = ["Voigt"]
+# FeVIII_5447 = ["Voigt"]
+# MgVII_5503 = ["Voigt"]
+# MgV_5609 = ["Voigt"]
 ArII_6985 = ["Voigt"]
 
-NeVI_7652 = ["Voigt"]
-ArIII_8991 = ["Voigt"]
-MgVII_9009 = ["Voigt"]
-FeVII_9527 = ["Voigt"]
-SIV_10511 = ["Voigt"]
+# NeVI_7652 = ["Voigt"]
+# ArIII_8991 = ["Voigt"]
+# MgVII_9009 = ["Voigt"]
+# FeVII_9527 = ["Voigt"]
+# SIV_10511 = ["Voigt"]
 
-NeII_12813 = ["Voigt"]
-NeV_14322 = ["Voigt"]
+# NeII_12813 = ["Voigt"]
+# NeV_14322 = ["Voigt"]
 
-NeIII_15555 = ["Voigt"]
+# NeIII_15555 = ["Voigt"]
 
 # optional: add [parameters] key to specify individual line priors that 
 # are different from the defaults

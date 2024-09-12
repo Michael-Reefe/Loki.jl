@@ -181,7 +181,7 @@ function parammaps_mir_empty(cube_fitter::CubeFitter, shape::Tuple{S,S,S})::Para
     # Add emission line fitting parameters
     line_names, line_names_extra, line_units, line_units_extra, line_labels, line_labels_extra, line_restframe, line_extra_restframe, 
         line_log, line_extra_log, line_normalize, line_extra_normalize, _, _ = _get_line_names_and_transforms(
-            cube_fitter.lines, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.flexible_wavesol, perfreq=0)
+            cube_fitter.lines, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.flexible_wavesol, cube_fitter.lines_allow_negative, perfreq=0)
 
     # Add statistics parameters
     statistics_names = ["statistics.chi2", "statistics.dof"]
@@ -411,7 +411,7 @@ function cubefitter_mir_prepare_continuum(λ::Vector{<:Real}, z::Real, out::Dict
     @debug msg
 
     # Only use PAH features within +/-0.5 um of the region being fit (to include wide tails)
-    df_filt = [((minimum(λ)-0.5) < dust_features_0.mean[i].value < (maximum(λ)+0.5)) for i ∈ 1:length(dust_features_0.mean)]
+    df_filt = [((minimum(λ)-0.1) < dust_features_0.mean[i].value < (maximum(λ)+0.1)) for i ∈ 1:length(dust_features_0.mean)]
     if !isnothing(out[:user_mask])
         for pair in out[:user_mask]
             df_filt .&= [~(pair[1] < dust_features_0.mean[i].value < pair[2]) for i ∈ 1:length(dust_features_0.mean)]
@@ -433,7 +433,7 @@ function cubefitter_mir_prepare_continuum(λ::Vector{<:Real}, z::Real, out::Dict
     @debug msg
 
     # Only use absorption features within +/-0.5 um of the region being fit
-    ab_filt = [((minimum(λ)-0.5) < abs_features_0.mean[i].value < (maximum(λ)+0.5)) for i ∈ 1:length(abs_features_0.mean)]
+    ab_filt = [((minimum(λ)-0.1) < abs_features_0.mean[i].value < (maximum(λ)+0.1)) for i ∈ 1:length(abs_features_0.mean)]
     if !isnothing(out[:user_mask])
         for pair in out[:user_mask]
             ab_filt .&= [~(pair[1] < abs_features_0.mean[i].value < pair[2]) for i ∈ 1:length(abs_features_0.mean)]

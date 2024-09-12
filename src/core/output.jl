@@ -290,7 +290,11 @@ function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMap
         plot_total = false
         if n_line_comps > 1
             plot_total = true
-            total_flux = log10.(sum([exp10.(get(param_maps, "lines.$comp.flux")) for comp in component_keys])) 
+            if cube_fitter.lines_allow_negative
+                total_flux = sum([get(param_maps, "lines.$comp.flux") for comp in component_keys])
+            else
+                total_flux = log10.(sum([exp10.(get(param_maps, "lines.$comp.flux")) for comp in component_keys])) 
+            end
             total_eqw = sum([get(param_maps, "lines.$comp.eqw") for comp in component_keys])
         end
 
@@ -593,7 +597,11 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
         group_name_ltx = join(species_ltx, L"$+$")
 
         # Total Flux+EQW
-        total_flux = log10.(sum([exp10.(get(param_maps, "lines.$comp.flux")) for comp in component_keys]))
+        if cube_fitter.lines_allow_negative
+            total_flux = sum([get(param_maps, "lines.$comp.flux") for comp in component_keys])
+        else
+            total_flux = log10.(sum([exp10.(get(param_maps, "lines.$comp.flux")) for comp in component_keys]))
+        end
         total_eqw = sum([get(param_maps, "lines.$comp.eqw") for comp in component_keys])
         for (nm_i, bu_i, total_i) in zip(["total_flux", "total_eqw"], 
                 get_label(param_maps, ["lines.$(component_keys[1]).flux", "lines.$(component_keys[1]).eqw"]),

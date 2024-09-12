@@ -16,6 +16,10 @@ plot_maps = true
 # save_fits: Whether or not to save the model parameters and the model itself as FITS files at the end of fitting.
 save_fits = true
 
+# lines_allow_negative: Whether or not to allow the amplitudes of emission lines to go negative. Disabled by default.
+# This also changes the units of the output for line amplitudes and fluxes from log10(erg/s/cm2) to erg/s/cm2.
+lines_allow_negative = false
+
 # n_bootstrap: The number of bootstrapping iterations to perform during fitting, which
 # is used to estimate the uncertainties on parameters given the uncertainties in the data.
 n_bootstrap = 0
