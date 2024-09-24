@@ -1240,7 +1240,7 @@ end
 # Setup function for creating the extinction profile from Chiar+Tielens 2006
 function silicate_ct()
     data = CSV.read(joinpath(@__DIR__, "..", "templates", "chiar+tielens_2005.dat"), DataFrame, skipto=15, delim=' ', 
-        ignorerepeated=true, header=["wave", "a_galcen", "a_local"])
+        ignorerepeated=true, header=["wave", "a_galcen", "a_local"], select=[1, 2])
     data[!, "wave"], data[!, "a_galcen"]
 end
 

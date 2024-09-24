@@ -396,7 +396,7 @@ See also [`DataCube`](@ref)
 function interpolate_nans!(cube::DataCube)
 
     λ = cube.λ
-    @debug "Interpolating NaNs in cube with channel $(cube.channel), band $(cube.band):"
+    @info "Interpolating NaNs in cube with channel $(cube.channel), band $(cube.band):"
 
     for index ∈ CartesianIndices(selectdim(cube.I, 3, 1))
 
@@ -531,7 +531,7 @@ function calculate_statistical_errors!(cube::DataCube, Δ::Union{Integer,Nothing
         thresh = 3.0
     end
 
-    println("Calculating statistical errors for each spaxel...")
+    @info "Calculating statistical errors for each spaxel..."
     @showprogress for spaxel ∈ CartesianIndices(size(cube.I)[1:2])
         # Get the flux/error for this spaxel
         I = cube.I[spaxel, :]
@@ -962,8 +962,7 @@ Save a pre-processed Observation object as a FITS file in a format that can be r
 This saves time upon re-running the code assuming one wishes to keep the same pre-processing.
 """
 save_fits(path::String, obs::Observation) = save_fits(path, obs, collect(keys(obs.channels)))
-save_fits(path::String, obs::Observation, channels::Integer) = save_fits(path, obs, [channels])
-save_fits(path::String, obs::Observation, channels::Symbol) = save_fits(path, obs, [channels])
+save_fits(path::String, obs::Observation, channel) = save_fits(path, obs, [channel])
 
 function save_fits(path::String, obs::Observation, channels::Vector)
     for channel in channels

@@ -59,6 +59,7 @@ using Dates
 using InteractiveUtils
 using ColorSchemes
 using LaTeXStrings
+using ArgParse
 
 # PyCall needed for some matplotlib modules
 using PyCall

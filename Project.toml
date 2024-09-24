@@ -5,6 +5,7 @@ version = "2.0.0"
 
 [deps]
 AbstractFFTs = "621f4979-c628-5d54-868e-fcf4e3e8185c"
+ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
 AstroAngles = "5c4adb95-c1fc-4c53-b4ea-2a94080c53d2"
 AstroLib = "c7932e45-9af1-51e7-9da9-f004cd3a462b"
 CMPFit = "a5944310-3432-5d93-8bb2-e3b5eb62a58f"
