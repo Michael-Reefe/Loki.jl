@@ -50,18 +50,18 @@ function main(_args)
             arg_type = Float64
             default = 0.
             help = "The size of the aperture to extract spectra from at each spaxel, in units of the PSF FWHM"
-        "--min-wave"
+        "--min-wave", "-m"
             arg_type = Float64
             default = 0.
             help = "The minimum wavelength to allow in the output data cube"
-        "--max-wave"
+        "--max-wave", "-M"
             arg_type = Float64
             default = Inf
             help = "The maximum wavelength to allow in the output data cube"
-        "--rotate-sky"
+        "--rotate-sky", "-r"
             action = :store_true
             help = "Rotate the data cube to align with the RA/Dec axes on the sky"
-        "--replace-errors"
+        "--replace-errors", "-R"
             action = :store_true
             help = "Replace the errors in the data cube with statistical errors based on the variance in a cubic spline fit"
     end

@@ -1205,13 +1205,13 @@ correct! = apply_mask! ∘ to_rest_frame! ∘ to_vacuum_wavelength!
 
 
 """
-    adjust_wcs_alignment(obs, channels; box_size=9)
+    adjust_wcs_alignment(obs, channels; box_size_as=1.5)
 
 Adjust the WCS alignments of each channel such that they match.
 This is performed in order to remove discontinuous jumps in the flux level when crossing between
 sub-channels.
 """
-function adjust_wcs_alignment!(obs::Observation, channels; box_size::Integer=11)
+function adjust_wcs_alignment!(obs::Observation, channels; box_size_as::Float64=1.5)
 
     @assert obs.spectral_region == :MIR "The adjust_wcs_alignment! function is only supported for MIR cubes!"
 
@@ -1220,6 +1220,13 @@ function adjust_wcs_alignment!(obs::Observation, channels; box_size::Integer=11)
     # Prepare array of centroids for each channel
     c_coords = zeros(2*length(channels)-2, 2)
     offsets = zeros(length(channels), 2)
+
+    # box_size in arcseconds -- adjust so that it's the same *physical* size in all channels
+    box_sizes = zeros(Int, length(channels))
+    for i in eachindex(channels)
+        as_per_pix = sqrt(obs.channels[channels[i]].Ω) * 180/π * 3600
+        box_sizes[i] = fld(box_size_as, as_per_pix)
+    end
 
     k = 1
     for (i, channel) ∈ enumerate(channels)
@@ -1245,7 +1252,7 @@ function adjust_wcs_alignment!(obs::Observation, channels; box_size::Integer=11)
             wcs = ch_data.wcs
             # Find the peak brightness pixels and place boxes around them
             peak = argmax(data)
-            box_half = fld(box_size, 2)
+            box_half = fld(box_sizes[i], 2)
             mask = trues(size(data))
             mask[peak[1]-box_half:peak[1]+box_half, peak[2]-box_half:peak[2]+box_half] .= 0
             x_cent, y_cent = centroid_com(data, mask)
@@ -1283,7 +1290,8 @@ function adjust_wcs_alignment!(obs::Observation, channels; box_size::Integer=11)
         ch_data = obs.channels[channel]
         offset = sumdim(offsets[1:i, :], 1)
         ch_data.wcs.crval = [ch_data.wcs.crval[1:2] .- offset; ch_data.wcs.crval[3]]
-        @info "The centroid offset relative to channel $(channels[1]) for channel $channel is $(offset)"
+        offset_pix = offset ./ ch_data.wcs.cdelt[1:2]
+        @info "The centroid offset relative to channel $(channels[1]) for channel $channel is $(@sprintf "%.2g" offset_pix) spaxels"
     end
 
 end
@@ -1866,7 +1874,7 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
 
     # 0. First and foremost -- adjust the WCS alignment of each channel so that they are consistent with each other
     if adjust_wcs_headerinfo
-        adjust_wcs_alignment!(obs, channels; box_size=11)
+        adjust_wcs_alignment!(obs, channels; box_size_as=1.5)
     end
 
     # 1. Reproject the channels onto the same WCS grid
