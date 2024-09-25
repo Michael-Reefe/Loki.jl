@@ -267,6 +267,7 @@ as tau_9.7 values, whereas for optical spectra it is interpreted as E(B-V) value
 corresponding spaxel.
 - `fit_stellar_continuum::Bool`: Whether or not to fit MIR stellar continuum
 - `fit_sil_emission::Bool`: Whether or not to fit MIR hot silicate dust emission
+- `fit_ch_abs::Bool`: Whether or not to fit the MIR CH absorption feature
 - `fit_temp_multexp::Bool`: Whether or not to apply and fit multiplicative exponentials to any provided templates
 - `guess_tau::Union{Vector{<:Tuple},Nothing}`: Whether or not to guess the optical depth at 9.7 microns by interpolating between 
     PAH-free parts of the continuum at the given wavelength windows in microns (must have enough spectral coverage). 
@@ -406,6 +407,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     extinction_map::Union{Array{T,3},Nothing}
     fit_stellar_continuum::Bool
     fit_sil_emission::Bool
+    fit_ch_abs::Bool
     fit_temp_multexp::Bool
     guess_tau::Union{Vector{<:Tuple},Nothing}
     fit_opt_na_feii::Bool
@@ -637,6 +639,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             extinction_map, 
             out[:fit_stellar_continuum], 
             out[:fit_sil_emission], 
+            out[:fit_ch_abs],
             out[:fit_temp_multexp], 
             out[:guess_tau], 
             out[:fit_opt_na_feii], 

@@ -71,7 +71,7 @@ sys_err = 0.0
 # May also be "decompose" to fit as a combination of amorphous olivine, pyroxene, and crystalline forsterite absorption
 # optical options: may be either "calzetti" for the Calzetti et al. (2000) starburst galaxy curve,
 # or "ccm" for the Cardelli, Clayton, & Mathis (1989) Milky Way curve.
-extinction_curve = "kvt"
+extinction_curve = "d+"
 
 # The following 3 options are only used if extinction_screen = "decompose"
 # Magnesium content for olivine 
@@ -83,13 +83,16 @@ grain_size = 0.1
 
 # extinction_screen: Controls whether extinction is modeled as e^-tau (true) or
 # (1 - e^-tau) / tau (false), following PAHFIT.
-extinction_screen = false
+extinction_screen = true
 
 # whether or not to fit the stellar continuum (MIR)
 fit_stellar_continuum = true
 
 # whether or not to fit silicate emission
 fit_sil_emission = true
+
+# whether or not to fit the CH + water ice absorption features at ~7 um
+fit_ch_abs = false
 
 # whether or not to fit multiplicative exponential profiles to any provided templates
 fit_temp_multexp = false

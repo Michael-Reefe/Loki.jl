@@ -1030,7 +1030,7 @@ Create an Observation object from a series of fits files with IFU cubes in diffe
 - `filenames::Vector{String}`: A vector of filepaths to the FITS files
 - `z::Real`: The redshift of the object.
 """
-function from_fits(filenames::Vector{String}, z::Real)::Observation
+function from_fits(filenames::Vector{String}, z::Real=0.)::Observation
 
 
     # Grab object information from the FITS header of the first file
@@ -1042,9 +1042,16 @@ function from_fits(filenames::Vector{String}, z::Real)::Observation
     dec = hdr["TARG_DEC"]
     inst = hdr["INSTRUME"]
     detector = hdr["DETECTOR"]
+    redshift = z
+    if haskey(hdr, "REDSHIFT")
+        redshift = hdr["REDSHIFT"]
+    end
+    if redshift == 0.
+        error("Did not find a redshift for this object! Redshift information must be included!")
+    end
 
     @debug """\n
-    Initializing Observation struct for $name, with redshift z=$z
+    Initializing Observation struct for $name, with redshift z=$redshift
     #############################################################
     """
 
@@ -1082,7 +1089,7 @@ function from_fits(filenames::Vector{String}, z::Real)::Observation
     end
     sky_aligned = all([channels[ch].sky_aligned for ch in keys(channels)])
 
-    Observation(channels, name, z, ra, dec, inst, detector, spectral_region, rest_frame, masked, vacuum_wave, sky_aligned)
+    Observation(channels, name, redshift, ra, dec, inst, detector, spectral_region, rest_frame, masked, vacuum_wave, sky_aligned)
 end
 
 

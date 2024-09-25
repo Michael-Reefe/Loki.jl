@@ -471,6 +471,15 @@ function cubefitter_mir_prepare_continuum(λ::Vector{<:Real}, z::Real, out::Dict
     else
         lock_hot_dust = out[:lock_hot_dust]
     end
+    # Check for locked tau_CH parameter
+    if haskey(out, :fit_ch_abs)
+        if !out[:fit_ch_abs]
+            continuum.τ_ch.value = 0.
+            continuum.τ_ch.locked = true
+        else
+            continuum.τ_ch.locked = false
+        end
+    end
 
     # check for F test for extinction
     if !haskey(out, :F_test_ext)
