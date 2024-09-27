@@ -204,7 +204,7 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
 
     if (!split_flag) || (cube_fitter.spectral_region != :MIR)
         return continuum_fit_spaxel(cube_fitter, spaxel, λ, I, σ, templates, mask_lines, mask_bad, N; init=init, use_ap=use_ap,
-            bootstrap_iter=bootstrap_iter, p1_boots=p1_boots)
+            bootstrap_iter=bootstrap_iter, p1_boots=p1_boots, force_noext=force_noext)
     end
 
     # This version of the function should only ever be called for MIR fitting since "split_flag" doesn't apply for optical fitting
