@@ -321,15 +321,14 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
                 pᵢ += 3
             end
         else
-            for (j, prof) ∈ enumerate(dust_prof)
+            for prof ∈ dust_prof
                 if prof == :Drude
-                    df = Drude.(λ, params[pᵢ:pᵢ+2]...)
+                    contin .+= Drude.(λ, params[pᵢ:pᵢ+2]...) .* ext
                     pᵢ += 3
                 elseif prof == :PearsonIV
-                    df = PearsonIV.(λ, params[pᵢ:pᵢ+4]...)
+                    contin .+= PearsonIV.(λ, params[pᵢ:pᵢ+4]...) .* ext
                     pᵢ += 5
                 end
-                contin .+= df .* ext
             end
         end
     end
@@ -372,17 +371,15 @@ function model_pah_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, dust_pr
     pᵢ = 1
     for (j, prof) ∈ enumerate(dust_prof)
         if prof == :Drude
-            df = Drude.(λ, params[pᵢ:pᵢ+2]...)
+            comps["dust_feat_$j"] = Drude.(λ, params[pᵢ:pᵢ+2]...)
             pᵢ += 3
         elseif prof == :PearsonIV
-            df = PearsonIV.(λ, params[pᵢ:pᵢ+4]...)
+            comps["dust_feat_$j"] = PearsonIV.(λ, params[pᵢ:pᵢ+4]...)
             pᵢ += 5
         end
-        contin .+= df
+        contin .+= comps["dust_feat_$j"] .* ext_curve
     end
 
-    # Apply extinction
-    contin .*= ext_curve
     # Apply PSF normalization
     if nuc_temp_fit
         contin .*= template_norm
