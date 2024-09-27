@@ -495,9 +495,11 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, λ::Vector{<:Real},
         if prof == :PearsonIV
             m, m_err = popt_c[pᵢ+3], perr_c[pᵢ+3]
             ν, ν_err = popt_c[pᵢ+4], perr_c[pᵢ+4]
+            asym, asym_err = 0., 0.
         else
             m, m_err = 0., 0.
             ν, ν_err = 0., 0.
+            asym, asym_err = popt_c[pᵢ+3], perr_c[pᵢ+3]
         end
 
         # Create the profile
@@ -525,8 +527,8 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, λ::Vector{<:Real},
         end
 
         # Calculate the flux using the utility function
-        flux, f_err = calculate_flux(prof, A_cgs, A_cgs_err, μ, μ_err, fwhm, fwhm_err, 
-            m=m, m_err=m_err, ν=ν, ν_err=ν_err, propagate_err=propagate_err)
+        flux, f_err = calculate_flux(prof, cube_fitter.cube.λ, A_cgs, A_cgs_err, μ, μ_err, fwhm, fwhm_err, 
+            asym=asym, asym_err=asym_err, m=m, m_err=m_err, ν=ν, ν_err=ν_err, propagate_err=propagate_err)
         
         # Calculate the equivalent width using the utility function
         eqw, e_err = calculate_eqw(cube_fitter, λ, feature, comps, false, nuc_temp_fit, 
@@ -540,9 +542,9 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, λ::Vector{<:Real},
         @debug "Flux=$flux +/- $f_err, EQW=$eqw +/- $e_err, SNR=$snr"
 
         # increment the parameter index
-        pᵢ += 3
+        pᵢ += 4
         if prof == :PearsonIV
-            pᵢ += 2
+            pᵢ += 1
         end
 
         # flux units: erg s^-1 cm^-2 sr^-1 (integrated over μm)
@@ -718,7 +720,7 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, λ::Vector{<:Real},
                 end
 
                 # Calculate line flux using the helper function
-                p_lines[pₒ], p_lines_err[pₒ] = calculate_flux(cube_fitter.lines.profiles[k, j], amp_cgs, amp_cgs_err, 
+                p_lines[pₒ], p_lines_err[pₒ] = calculate_flux(cube_fitter.lines.profiles[k, j], cube_fitter.cube.λ, amp_cgs, amp_cgs_err, 
                     mean_μm, mean_μm_err, fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err, 
                     propagate_err=propagate_err)
                 

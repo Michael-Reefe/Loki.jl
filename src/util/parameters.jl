@@ -179,6 +179,7 @@ struct DustFeatures
     profiles::Vector{Symbol}
     mean::Vector{Parameter}
     fwhm::Vector{Parameter}
+    asym::Vector{Union{Parameter,Nothing}}
     index::Vector{Union{Parameter,Nothing}}
     cutoff::Vector{Union{Parameter,Nothing}}
     complexes::Vector{Union{String,Nothing}}

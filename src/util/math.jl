@@ -536,12 +536,14 @@ end
 
 
 """
-    Drude(x, A, μ, FWHM)
+    Drude(x, A, μ, FWHM, asym)
 
 Calculate a Drude profile at location `x`, with amplitude `A`, central value `μ`, and full-width at half-max `FWHM`
+Optional asymmetry parameter `asym`
 """
-@inline function Drude(x::Real, A::Real, μ::Real, FWHM::Real)
-    A * (FWHM/μ)^2 / ((x/μ - μ/x)^2 + (FWHM/μ)^2)
+@inline function Drude(x::Real, A::Real, μ::Real, FWHM::Real, asym::Real)
+    γ = 2FWHM / (1 + exp(asym*(x-μ)))
+    A * (γ/μ)^2 / ((x/μ - μ/x)^2 + (γ/μ)^2)
 end
 
 
@@ -1346,17 +1348,28 @@ end
 Calculate the integrated flux of a spectral feature, i.e. a PAH or emission line. Calculates the integral
 of the feature profile, using an analytic form if available, otherwise integrating numerically with QuadGK.
 """
-function calculate_flux(profile::Symbol, amp::T, amp_err::T, peak::T, peak_err::T, fwhm::T, fwhm_err::T;
-    m::Union{T,Nothing}=nothing, m_err::Union{T,Nothing}=nothing, ν::Union{T,Nothing}=nothing,
-    ν_err::Union{T,Nothing}=nothing, h3::Union{T,Nothing}=nothing, h3_err::Union{T,Nothing}=nothing, 
-    h4::Union{T,Nothing}=nothing, h4_err::Union{T,Nothing}=nothing, η::Union{T,Nothing}=nothing, 
-    η_err::Union{T,Nothing}=nothing, propagate_err::Bool=true) where {T<:Real}
+function calculate_flux(profile::Symbol, λ::Vector{<:Real}, amp::T, amp_err::T, peak::T, peak_err::T, fwhm::T, fwhm_err::T;
+    asym::Union{T,Nothing}=nothing, asym_err::Union{T,Nothing}=nothing, m::Union{T,Nothing}=nothing, m_err::Union{T,Nothing}=nothing, 
+    ν::Union{T,Nothing}=nothing, ν_err::Union{T,Nothing}=nothing, h3::Union{T,Nothing}=nothing, 
+    h3_err::Union{T,Nothing}=nothing, h4::Union{T,Nothing}=nothing, h4_err::Union{T,Nothing}=nothing, 
+    η::Union{T,Nothing}=nothing, η_err::Union{T,Nothing}=nothing, propagate_err::Bool=true) where {T<:Real}
 
     # Evaluate the line profiles according to whether there is a simple analytic form
     # otherwise, integrate numerically with quadgk
     if profile == :Drude
-        # (integral = π/2 * A * fwhm)
-        flux, f_err = propagate_err ? ∫Drude(amp, amp_err, fwhm, fwhm_err) : (∫Drude(amp, fwhm), 0.)
+        if isnothing(asym) || iszero(asym) 
+            # (integral = π/2 * A * fwhm)
+            flux, f_err = propagate_err ? ∫Drude(amp, amp_err, fwhm, fwhm_err) : (∫Drude(amp, fwhm), 0.)
+        else
+            flux = NumericalIntegration.integrate(λ, Drude.(λ, amp, peak, fwhm, asym), Trapezoidal())
+            if propagate_err
+                err_l = abs(NumericalIntegration.integrate(λ, Drude.(λ, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), asym-asym_err), Trapezoidal()))
+                err_u = abs(NumericalIntegration.integrate(λ, Drude.(λ, amp+amp_err, peak, fwhm+fwhm_err, asym+asym_err), Trapezoidal()))
+                f_err = (err_l + err_u)/2
+            else
+                f_err = 0.
+            end
+        end
     elseif profile == :PearsonIV
         flux = ∫PearsonIV(amp, fwhm, m, ν)
         if propagate_err
@@ -1376,15 +1389,16 @@ function calculate_flux(profile::Symbol, amp::T, amp_err::T, peak::T, peak_err::
         # (integral is an interpolation between Gaussian and Lorentzian)
         flux, f_err = propagate_err ? ∫Voigt(amp, amp_err, fwhm, fwhm_err, η, η_err) : (∫Voigt(amp, fwhm, η), 0.)
     elseif profile == :GaussHermite
-        # shift the profile to be centered at 0 since it doesnt matter for the integral, and it makes it
-        # easier for quadgk to find a solution; we also use a high order to ensure the peak is not missed if it is narrow
-        flux = amp * quadgk(x -> GaussHermite(x+peak, 1, peak, fwhm, h3, h4), -Inf, Inf, order=200)[1]
+        # there is no general analytical solution (that I know of) for integrated Gauss-Hermite functions
+        # (one probably exists but I'm too lazy to find it)
+        # so we just do numerical integration for this case (trapezoid rule)
+        flux = NumericalIntegration.integrate(λ, GaussHermite.(λ, amp, peak, fwhm, h3, h4), Trapezoidal())
         # estimate error by evaluating the integral at +/- 1 sigma
         if propagate_err
-            err_l = flux - quadgk(x -> GaussHermite(x+peak, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), h3-h3_err, h4-h4_err), -Inf, Inf, order=200)[1]
-            err_u = quadgk(x -> GaussHermite(x+peak, amp+amp_err, peak, fwhm+fwhm_err, h3+h3_err, h4+h4_err), -Inf, Inf, order=200)[1] - flux
-            err_l = err_l ≥ 0 ? err_l : 0.
-            err_u = abs(err_u)
+            err_l = abs(NumericalIntegration.integrate(λ, GaussHermite.(λ, max(amp-amp_err, 0.), peak, max(fwhm-fwhm_err, eps()), 
+                        h3-h3_err, h4-h4_err), Trapezoidal()))
+            err_u = abs(NumericalIntegration.integrate(λ, GaussHermite.(λ, amp+amp_err, peak, fwhm+fwhm_err, 
+                        h3+h3_err, h4+h4_err), Trapezoidal()))
             f_err = (err_l + err_u)/2
         else
             f_err = 0.

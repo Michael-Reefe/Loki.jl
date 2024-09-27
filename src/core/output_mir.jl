@@ -88,9 +88,9 @@ function assign_outputs_mir(out_params::AbstractArray{<:Real}, out_errs::Abstrac
             param_maps.err_low[index, pᵢ] = err_low
         end
 
-        pᵢ = 3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law + (cube_fitter.extinction_curve == "decompose" ? 3 : 1) + 4 +
-            3cube_fitter.n_abs_feat + (cube_fitter.fit_sil_emission ? 6 : 0) + (cube_fitter.fit_temp_multexp ? 8 : cube_fitter.n_channels*cube_fitter.n_templates) +
-            3*sum(cube_fitter.dust_features.profiles .== :Drude) + 5*sum(cube_fitter.dust_features.profiles .== :PearsonIV)
+        pᵢ = cubefitter_mir_count_cont_parameters(cube_fitter.extinction_curve, cube_fitter.fit_sil_emission, 
+            cube_fitter.fit_temp_multexp, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.n_abs_feat,
+            cube_fitter.n_templates, cube_fitter.n_channels, cube_fitter.dust_features) + 1
 
         if cube_fitter.save_full_model
             # End of continuum parameters: recreate the continuum model

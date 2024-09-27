@@ -29,6 +29,13 @@ function _get_dust_feature_names_and_transforms(cf_dustfeat::DustFeatures)
             append!(dfi_restframe, [0, 0])
             append!(dfi_log, [0, 0])
             append!(dfi_normalize, [0, 0])
+        else
+            push!(dfi, "dust_features.$(n).asym")
+            push!(dfu, ["-"])
+            push!(dfl, L"$a$")
+            push!(dfi_restframe, 0)
+            push!(dfi_log, 0)
+            push!(dfi_normalize, 0)
         end
         append!(dust_feature_names, dfi)
         append!(dust_feature_units, dfu)
@@ -125,12 +132,12 @@ function parammaps_mir_empty(cube_fitter::CubeFitter, shape::Tuple{S,S,S})::Para
 
     # Add absorption feature fitting parameters
     for n ∈ cube_fitter.abs_features.names
-        append!(parameter_names, ["abs_features.$(n).tau", "abs_features.$(n).mean", "abs_features.$(n).fwhm"])
-        append!(parameter_units, ["-", "um", "um"])
-        append!(parameter_labels, [L"$\tau$", L"$\mu$ ($\mu$m)", L"FWHM ($\mu$m)"])
-        append!(restframe_tf, [0, 2, 2])
-        append!(log_tf, [0, 0, 0])
-        append!(norm_tf, [0, 0, 0])
+        append!(parameter_names, ["abs_features.$(n).tau", "abs_features.$(n).mean", "abs_features.$(n).fwhm", "abs_features.$(n).asym"])
+        append!(parameter_units, ["-", "um", "um", "-"])
+        append!(parameter_labels, [L"$\tau$", L"$\mu$ ($\mu$m)", L"FWHM ($\mu$m)", L"$a$"])
+        append!(restframe_tf, [0, 2, 2, 0])
+        append!(log_tf, [0, 0, 0, 0])
+        append!(norm_tf, [0, 0, 0, 0])
     end
 
     # Add hot dust fitting parameters
@@ -421,6 +428,7 @@ function cubefitter_mir_prepare_continuum(λ::Vector{<:Real}, z::Real, out::Dict
                                 dust_features_0.profiles[df_filt],
                                 dust_features_0.mean[df_filt],
                                 dust_features_0.fwhm[df_filt],
+                                dust_features_0.asym[df_filt],
                                 dust_features_0.index[df_filt],
                                 dust_features_0.cutoff[df_filt],
                                 dust_features_0.complexes[df_filt],
@@ -443,6 +451,7 @@ function cubefitter_mir_prepare_continuum(λ::Vector{<:Real}, z::Real, out::Dict
                                 abs_features_0.profiles[ab_filt],
                                 abs_features_0.mean[ab_filt],
                                 abs_features_0.fwhm[ab_filt],
+                                abs_features_0.asym[ab_filt],
                                 abs_features_0.index[ab_filt],
                                 abs_features_0.cutoff[ab_filt],
                                 abs_features_0.complexes[ab_filt],
@@ -500,10 +509,10 @@ function cubefitter_mir_count_cont_parameters(extinction_curve::String, fit_sil_
     dust_features::DustFeatures; split::Bool=false)
 
     n_params_cont = (2+4) + (extinction_curve == "decompose" ? 3 : 1) + 2n_dust_cont + 2n_power_law + 
-                    3n_abs_features + (fit_sil_emission ? 6 : 0) + (fit_temp_multexp ? 8 : n_templates*n_channels)
+                    4n_abs_features + (fit_sil_emission ? 6 : 0) + (fit_temp_multexp ? 8 : n_templates*n_channels)
     if !split
         # If split=true, return the index at which the parameters should be split (before the PAHs)
-        n_params_cont += 3 * sum(dust_features.profiles .== :Drude) + 5 * sum(dust_features.profiles .== :PearsonIV)
+        n_params_cont += 4 * sum(dust_features.profiles .== :Drude) + 5 * sum(dust_features.profiles .== :PearsonIV)
     end
 
     n_params_cont
@@ -540,11 +549,16 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, spaxel::CartesianInd
         if dust_features.profiles[n] == :PearsonIV
             append!(df_plim, [dust_features.index[n].limits, dust_features.cutoff[n].limits])
             append!(df_lock, [dust_features.index[n].locked, dust_features.cutoff[n].locked])
+        else
+            push!(df_plim, dust_features.asym[n].limits)
+            push!(df_lock, dust_features.asym[n].locked)
         end
     end
 
-    ab_plim = vcat([[tau.limits, mi.limits, fi.limits] for (tau, mi, fi) ∈ zip(abs_taus, abs_features.mean, abs_features.fwhm)]...)
-    ab_lock = vcat([[tau.locked, mi.locked, fi.locked] for (tau, mi, fi) ∈ zip(abs_taus, abs_features.mean, abs_features.fwhm)]...)
+    ab_plim = vcat([[tau.limits, mi.limits, fi.limits, ai.locked] for (tau, mi, fi, ai) ∈ 
+        zip(abs_taus, abs_features.mean, abs_features.fwhm, abs_features.asym)]...)
+    ab_lock = vcat([[tau.locked, mi.locked, fi.locked, ai.locked] for (tau, mi, fi, ai) ∈ 
+        zip(abs_taus, abs_features.mean, abs_features.fwhm, abs_features.asym)]...)
 
     if cube_fitter.extinction_curve != "decompose"
         ext_plim = [continuum.τ_97.limits, continuum.τ_ice.limits, continuum.τ_ch.limits, continuum.β.limits, continuum.Cf.limits]
@@ -767,7 +781,7 @@ function get_mir_continuum_initial_values_from_previous(cube_fitter::CubeFitter,
         if lock_abs
             p₀[pᵢ] = 0.
         end
-        pᵢ += 3
+        pᵢ += 4
     end
 
     # Hot dust amplitude (rescaled)
@@ -849,10 +863,13 @@ function get_mir_continuum_initial_values_from_estimation(cube_fitter::CubeFitte
         append!(df_pars, [A_df[n], cube_fitter.dust_features.mean[n].value, cube_fitter.dust_features.fwhm[n].value])
         if cube_fitter.dust_features.profiles[n] == :PearsonIV
             append!(df_pars, [cube_fitter.dust_features.index[n].value, cube_fitter.dust_features.cutoff[n].value])
+        else
+            push!(df_pars, cube_fitter.dust_features.asym[n].value)
         end
     end
     
-    ab_pars = vcat([[Ai, mi.value, fi.value] for (Ai, mi, fi) ∈ zip(A_ab, cube_fitter.abs_features.mean, cube_fitter.abs_features.fwhm)]...)
+    ab_pars = vcat([[Ai, mi.value, fi.value, ai.value] for (Ai, mi, fi, ai) ∈ 
+        zip(A_ab, cube_fitter.abs_features.mean, cube_fitter.abs_features.fwhm, cube_fitter.abs_features.asym)]...)
     if cube_fitter.fit_sil_emission
         hd_pars = [A_hd, continuum.T_hot.value, continuum.Cf_hot.value, continuum.τ_warm.value, continuum.τ_cold.value,
             continuum.sil_peak.value]
@@ -902,9 +919,11 @@ function get_mir_continuum_step_sizes(cube_fitter::CubeFitter, continuum::MIRCon
         append!(df_dstep, [deps, dλ/10/cube_fitter.dust_features.mean[n].value, dλ/1000/cube_fitter.dust_features.fwhm[n].value])
         if cube_fitter.dust_features.profiles[n] == :PearsonIV
             append!(df_dstep, [deps, deps])
+        else
+            push!(df_dstep, deps)
         end
     end
-    ab_dstep = vcat([[deps, dλ/10/mi.value, dλ/1000/fi.value] for (mi, fi) in zip(cube_fitter.abs_features.mean, cube_fitter.abs_features.fwhm)]...)
+    ab_dstep = vcat([[deps, dλ/10/mi.value, dλ/1000/fi.value, deps] for (mi, fi) in zip(cube_fitter.abs_features.mean, cube_fitter.abs_features.fwhm)]...)
     if cube_fitter.fit_sil_emission
         hd_dstep = [deps, 1e-4, deps, deps, deps, dλ/10/continuum.sil_peak.value]
     else
@@ -960,8 +979,8 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         (cube_fitter.fit_sil_emission ? ", hot_dust_amp, hot_dust_temp, hot_dust_covering_frac, hot_dust_tau_warm, hot_dust_tau_cold, hot_dust_sil_peak, " : ", ") *
         (cube_fitter.fit_temp_multexp ? "temp_multexp_amp1, temp_multexp_ind1, temp_multexp_amp2, temp_multexp_ind2, temp_multexp_amp3, temp_multexp_ind3, " * 
         "temp_multexp_amp4, temp_multexp_ind4, " : join(["$(tp)_amp_$i" for i in 1:cube_fitter.n_channels for tp ∈ cube_fitter.template_names], ", ")) *
-        join(["$(df)_amp, $(df)_mean, $(df)_fwhm" * (cube_fitter.dust_features.profiles[n] == :PearsonIV ? ", $(df)_index, $(df)_cutoff" : "") for 
-            (n, df) ∈ enumerate(cube_fitter.dust_features.names)], ", ") * "]"
+        join(["$(df)_amp, $(df)_mean, $(df)_fwhm" * (cube_fitter.dust_features.profiles[n] == :PearsonIV ? ", $(df)_index, $(df)_cutoff" : 
+            "$(df)_asym") for (n, df) ∈ enumerate(cube_fitter.dust_features.names)], ", ") * "]"
     @debug "Continuum Starting Values: \n $p₀"
 
     deps, dstep = get_mir_continuum_step_sizes(cube_fitter, continuum, λ)
@@ -1099,8 +1118,11 @@ function pretty_print_mir_continuum_results(cube_fitter::CubeFitter, popt::Vecto
         msg *= "$(ab)_fwhm:  \t\t $(@sprintf "%.3f" popt[pᵢ+2]) +/- $(@sprintf "%.3f" perr[pᵢ+2]) μm \t Limits: " *
             "($(@sprintf "%.3f" cube_fitter.abs_features.fwhm[j].limits[1]), $(@sprintf "%.3f" cube_fitter.abs_features.fwhm[j].limits[2]))" * 
             (cube_fitter.abs_features.fwhm[j].locked ? " (fixed)" : "") * "\n"
+        msg *= "$(ab)_asym: \t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3]) [-] \t Limits: " *
+            "($(@sprintf "%.3f" cube_fitter.abs_features.asym[j].limits[1]), $(@sprintf "%.3f" cube_fitter.abs_features.asym[j].limits[2]))" *
+            (cube_fitter.abs_features.asym[j].locked ? " (fixed)" : "") * "\n"
         msg *= "\n"
-        pᵢ += 3
+        pᵢ += 4
     end 
     if cube_fitter.fit_sil_emission
         msg *= "\n#> HOT DUST <#\n"
@@ -1155,6 +1177,11 @@ function pretty_print_mir_continuum_results(cube_fitter::CubeFitter, popt::Vecto
                 "($(@sprintf "%.3f" cube_fitter.dust_features.cutoff[j].limits[1]), $(@sprintf "%.3f" cube_fitter.dust_features.cutoff[j].limits[2]))" * 
                 (cube_fitter.dust_features.cutoff[j].locked ? " (fixed)" : "") * "\n"
             pᵢ += 2
+        else
+            msg *= "$(df)_asym:  \t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3]) μm \t Limits: " *
+                "($(@sprintf "%.3f" cube_fitter.dust_features.asym[j].limits[1]), $(@sprintf "%.3f" cube_fitter.dust_features.asym[j].limits[2]))" * 
+                (cube_fitter.dust_features.asym[j].locked ? " (fixed)" : "") * "\n"
+            pᵢ += 1
         end
         msg *= "\n"
         pᵢ += 3

@@ -283,6 +283,7 @@ function create_dust_features(dust::Dict)
     name = Vector{String}(undef, length(dust["dust_features"]))
     mean = Vector{Parameter}(undef, length(dust["dust_features"]))
     fwhm = Vector{Parameter}(undef, length(dust["dust_features"]))
+    asym = Vector{Union{Parameter,Nothing}}(nothing, length(dust["dust_features"]))
     index = Vector{Union{Parameter,Nothing}}(nothing, length(dust["dust_features"]))
     cutoff = Vector{Union{Parameter,Nothing}}(nothing, length(dust["dust_features"]))
     complexes = Vector{Union{String,Nothing}}(nothing, length(dust["dust_features"]))
@@ -306,6 +307,13 @@ function create_dust_features(dust::Dict)
             profiles[i] = :PearsonIV
             msg *= "\nCutoff $(cutoff[i])"
         end
+        if haskey(dust["dust_features"][df], "asym")
+            asym[i] = from_dict_fwhm(dust["dust_features"][df]["asym"])  # (fwhm method so that uncertainties are fractional)
+            msg *= "\nAsym $(asym[i])"
+        elseif profiles[i] == :Drude  # only add a default asym parameter if its a Drude profile
+            asym[i] = Parameter(0., true, (-0.01, 0.01))
+            msg *= "\nAsym $(asym[i])"
+        end
         if haskey(dust["dust_features"][df], "complex")
             complexes[i] = dust["dust_features"][df]["complex"]
         end
@@ -315,7 +323,7 @@ function create_dust_features(dust::Dict)
 
     # Sort by cent_vals
     ss = sortperm(cent_vals)
-    DustFeatures(name[ss], profiles[ss], mean[ss], fwhm[ss], index[ss], cutoff[ss], complexes[ss], _local[ss])
+    DustFeatures(name[ss], profiles[ss], mean[ss], fwhm[ss], asym[ss], index[ss], cutoff[ss], complexes[ss], _local[ss])
 end
 
 
@@ -334,6 +342,7 @@ function create_absorption_features(dust)
         depth = Vector{Parameter}(undef, length(dust["absorption_features"]))
         mean = Vector{Parameter}(undef, length(dust["absorption_features"]))
         fwhm = Vector{Parameter}(undef, length(dust["absorption_features"]))
+        asym = Vector{Union{Parameter,Nothing}}(nothing, length(dust["absorption_features"]))
         complexes = Vector{Union{String,Nothing}}(nothing, length(dust["absorption_features"]))
         _local = falses(length(dust["absorption_features"]))
 
@@ -347,6 +356,13 @@ function create_absorption_features(dust)
             fwhm[i] = from_dict_fwhm(dust["absorption_features"][ab]["fwhm"])
             msg *= "\nFWHM $(fwhm[i])"
             cent_vals[i] = mean[i].value
+            if haskey(dust["absorption_features"][ab], "asym")
+                asym[i] = from_dict_fwhm(dust["absorption_features"][ab]["asym"])
+                msg *= "\nAsym $(asym[i])"
+            else
+                asym[i] = Parameter(0., true, (-0.01, 0.01))
+                msg *= "\nAsym $(asym[i])"
+            end
 
             if haskey(dust["absorption_features"][ab], "local")
                 _local[i] = dust["absorption_features"][ab]["local"]
@@ -356,14 +372,14 @@ function create_absorption_features(dust)
 
         # Sort by cent_vals
         ss = sortperm(cent_vals)
-        abs_features = DustFeatures(name[ss], [:Drude for _ in 1:length(name)], mean[ss], fwhm[ss],
+        abs_features = DustFeatures(name[ss], [:Drude for _ in 1:length(name)], mean[ss], fwhm[ss], asym[ss],
             Union{Parameter,Nothing}[nothing for _ in 1:length(name)], 
             Union{Parameter,Nothing}[nothing for _ in 1:length(name)],
             complexes[ss], _local[ss])
         abs_taus = depth[ss]
     else
         abs_features = DustFeatures(String[], Symbol[], Parameter[], Parameter[], Vector{Union{Parameter,Nothing}}(),
-            Vector{Union{Parameter,Nothing}}(), Vector{Union{String,Nothing}}(), BitVector[])
+            Vector{Union{Parameter,Nothing}}(), Vector{Union{Parameter,Nothing}}(), Vector{Union{String,Nothing}}(), BitVector[])
         abs_taus = Vector{Parameter}()
     end
 

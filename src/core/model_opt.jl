@@ -457,7 +457,7 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, λ::Vector{<:Real},
                 end
 
                 # Calculate line flux using the helper function
-                p_lines[pₒ], p_lines_err[pₒ] = calculate_flux(cube_fitter.lines.profiles[k, j], amp_cgs, amp_cgs_err, 
+                p_lines[pₒ], p_lines_err[pₒ] = calculate_flux(cube_fitter.lines.profiles[k, j], cube_fitter.cube.λ, amp_cgs, amp_cgs_err, 
                     mean_μm, mean_μm_err, fwhm_μm, fwhm_μm_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err, 
                     propagate_err=propagate_err)
                 

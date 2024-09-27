@@ -1025,6 +1025,7 @@ function cubefitter_prepare_p_init_cube_parameters(λ::Vector{<:Real}, z::Real, 
                                 dust_features_0.profiles[df_filt],
                                 dust_features_0.mean[df_filt],
                                 dust_features_0.fwhm[df_filt],
+                                dust_features_0.asym[df_filt],
                                 dust_features_0.index[df_filt],
                                 dust_features_0.cutoff[df_filt],
                                 dust_features_0.complexes[df_filt],
@@ -1034,14 +1035,14 @@ function cubefitter_prepare_p_init_cube_parameters(λ::Vector{<:Real}, z::Real, 
     for i in 1:length(initcube_dust_features.names)
         if initcube_dust_features.mean[i].value < (minimum(λ)-0.1)
             if initcube_dust_features.profiles[i] == :Drude
-                n_dfparams_left += 3
+                n_dfparams_left += 4
             elseif initcube_dust_features.profiles[i] == :PearsonIV
                 n_dfparams_left += 5
             end
         end
         if initcube_dust_features.mean[i].value > (maximum(λ)+0.1)
             if initcube_dust_features.profiles[i] == :Drude
-                n_dfparams_right += 3
+                n_dfparams_right += 4
             elseif initcube_dust_features.profiles[i] == :PearsonIV
                 n_dfparams_right += 5
             end
@@ -1059,6 +1060,7 @@ function cubefitter_prepare_p_init_cube_parameters(λ::Vector{<:Real}, z::Real, 
                                 abs_features_0.profiles[ab_filt],
                                 abs_features_0.mean[ab_filt],
                                 abs_features_0.fwhm[ab_filt],
+                                abs_features_0.asym[ab_filt],
                                 abs_features_0.index[ab_filt],
                                 abs_features_0.cutoff[ab_filt],
                                 abs_features_0.complexes[ab_filt],
@@ -1066,10 +1068,10 @@ function cubefitter_prepare_p_init_cube_parameters(λ::Vector{<:Real}, z::Real, 
     n_abparams_left = n_abparams_right = 0
     for i in 1:length(initcube_abs_features.names)
         if initcube_abs_features.mean[i].value < (minimum(λ)-0.1)
-            n_abparams_left += 3
+            n_abparams_left += 4
         end
         if initcube_abs_features.mean[i].value > (maximum(λ)+0.1)
-            n_abparams_right += 3
+            n_abparams_right += 4
         end
     end
 
@@ -1136,9 +1138,9 @@ function cubefitter_prepare_p_init_cube_parameters(λ::Vector{<:Real}, z::Real, 
     for sf in spaxfiles
         params = readdlm(joinpath(path, "spaxel_binaries", sf), ',', Float64, '\n')[:,1]
         c1 = (2+4) + (out[:extinction_curve] == "decompose" ? 3 : 1) + 2n_dust_cont + 2n_power_law
-        c2 = c1 + n_abparams_left + 3n_abs_features - n_abparams_right
+        c2 = c1 + n_abparams_left + 4n_abs_features - n_abparams_right
         c3 = c2 + n_abparams_right + (out[:fit_sil_emission] ? 6 : 0) + (out[:fit_temp_multexp] ? 8 : n_templates*n_channels)
-        c4 = c3 + n_dfparams_left + 3sum(dust_features.profiles .== :Drude) + 5sum(dust_features.profiles .== :PearsonIV)
+        c4 = c3 + n_dfparams_left + 4sum(dust_features.profiles .== :Drude) + 5sum(dust_features.profiles .== :PearsonIV)
         c5 = c4 + n_dfparams_right + n_lineparams_left + n_params_lines
         params_cont1 = params[1:c1]
         params_ab = params[(1+c1+n_abparams_left):c2]
