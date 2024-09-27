@@ -3,7 +3,6 @@ test_optical/**
 src/idl_data*
 *.swp
 *.vim
-*.fits
 Manifest.toml
 
 # vscode
