@@ -260,6 +260,20 @@ assign_outputs(out_params::AbstractArray{<:Real}, out_errs::AbstractArray{<:Real
         assign_outputs_opt(out_params, out_errs, cube_fitter, cube_data, z, aperture; kwargs...)
 
 
+"""
+    assign_qso3d_outputs(param_maps, cube_model, cube_fitter, psf_norm)
+
+Create a secondary set of ParamMaps and CubeModel objects when doing the "postfit" nuclear template
+fitting. This disperses the 1D parameters from the nuclear template onto the PSF model, creating maps
+that show the flux contribution of the different spectral features due to the PSF.
+"""
+assign_qso3d_outputs(param_maps::ParamMaps, cube_model::CubeModel, cube_fitter::CubeFitter,
+    psf_norm::Array{<:Real,3}) = 
+    cube_fitter.spectral_region == :MIR ?
+        assign_qso3d_outputs_mir(param_maps, cube_model, cube_fitter, psf_norm) : 
+        assign_qso3d_outputs_opt(param_maps, cube_model, cube_fitter, psf_norm)
+
+
 # Line parameters
 """
     plot_multiline_parameters(cube_fitter, param_maps, psf_interp[, snr_thresh, marker])
@@ -396,7 +410,7 @@ end
 
 
 """
-    plot_parameter_maps(cube_fitter, param_maps; [snr_thresh])
+    plot_parameter_maps(cube_fitter, param_maps; [snr_thresh, qso3d])
 
 Wrapper function for `plot_parameter_map`, iterating through all the parameters in a `CubeFitter`'s `ParamMaps` object
 and creating 2D maps of them.
@@ -405,8 +419,11 @@ and creating 2D maps of them.
 - `cube_fitter::CubeFitter`: The CubeFitter object containing the fitting options
 - `param_maps::ParamMaps`: The ParamMaps object containing the parameter values
 - `snr_thresh::Real`: The S/N threshold to be used when filtering the parameter maps by S/N, for those applicable
+- `qso3d::Bool`: If set to true, only flux maps will be created (as when mapping QSO template parameters, these are
+    the only parameters that it makes sense to map)
 """
-function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr_thresh::Real=3.)
+function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr_thresh::Real=3.,
+    qso3d::Bool=false)
 
     # Iterate over model parameters and make 2D maps
     @debug "Using solid angle $(cube_fitter.cube.Ω), redshift $(cube_fitter.z), cosmology $(cube_fitter.cosmology)"
@@ -503,6 +520,11 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
             latex_i = nothing
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", category, "$(name_i).pdf")
 
+        end
+
+        # Skip all non-flux/amp maps if doing qso3d plotting
+        if qso3d && !contains(parameter, "flux") && !contains(parameter, "amp")
+            continue
         end
 
         plot_parameter_map(data, name_i, bunit, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf,
@@ -733,7 +755,7 @@ individual model components, and one for 2D parameter maps of the best-fit param
 """
 function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel, param_maps::ParamMaps;
     aperture::Union{Vector{<:Aperture.AbstractAperture},String,Nothing}=nothing, nuc_temp_fit::Bool=false,
-    nuc_spax::Union{Nothing,CartesianIndex}=nothing)
+    nuc_spax::Union{Nothing,CartesianIndex}=nothing, qso3d::Bool=false)
 
     aperture_keys = []
     aperture_vals = []
@@ -830,9 +852,9 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
 
     if cube_fitter.save_full_model
         if cube_fitter.spectral_region == :MIR
-            write_fits_full_model_mir(cube_fitter, cube_data, cube_model, hdr, nuc_temp_fit)
+            write_fits_full_model_mir(cube_fitter, cube_data, cube_model, hdr, nuc_temp_fit; qso3d=qso3d)
         else
-            write_fits_full_model_opt(cube_fitter, cube_data, cube_model, hdr, nuc_temp_fit)
+            write_fits_full_model_opt(cube_fitter, cube_data, cube_model, hdr, nuc_temp_fit; qso3d=qso3d)
         end
     end
 
@@ -840,7 +862,7 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
     for (index, param_data) ∈ enumerate([param_maps.data, param_maps.err_upp, param_maps.err_low])
 
         FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_$(nuc_temp_fit ? "nuc_" : "")parameter_" * 
-            ("maps", "errs_low", "errs_upp")[index] * ".fits"), "w") do f
+            ("maps", "errs_low", "errs_upp")[index] * "$(qso3d ? "_3d" : "").fits"), "w") do f
 
             @debug "Writing 2D parameter map FITS HDUs"
 

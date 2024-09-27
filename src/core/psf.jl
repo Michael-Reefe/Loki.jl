@@ -37,15 +37,50 @@ function generate_psf_model!(cube::DataCube, psf_model_dir::String=""; interpola
         objname = read_header(hdu[1])["TARGNAME"]
         @debug "Reading in the PSF model for $objname"
 
+        # Mask to match the size of the observation data
+        size_psf = size(data)[1:2]
+        size_obs = size(cube.I)[1:2]
+        if size_psf != size_obs
+            @debug "Sizes of PSF and Observation data do not match: $size_psf and $size_obs. Masking the edges of the PSF data."
+            while size_obs[1] > size_psf[1]
+                data_slice = ones(1, size(data)[2:3]...) .* NaN
+                data = cat(data_slice, data, data_slice, dims=1)
+                size_psf = size(data)[1:2]
+            end
+            while size_obs[2] > size_psf[2]
+                data_slice = ones(size(data, 1), 1, size(data, 3)) .* NaN
+                data = cat(data_slice, data, data_slice, dims=2)
+                size_psf = size(data)[1:2]
+            end
+            while size_obs[1] < size_psf[1]
+                if size_psf[1] - size_obs[1] >= 2
+                    data = data[2:end-1, :, :]
+                else
+                    data = data[1:end-1, :, :]
+                end
+                size_psf = size(data)[1:2]
+            end
+            while size_obs[2] < size_psf[2]
+                if size_psf[2] - size_obs[2] >= 2
+                    data = data[:, 2:end-1, :]
+                else
+                    data = data[:, 1:end-1, :]
+                end
+                size_psf = size(data)[1:2]
+            end
+            @assert size(data)[1:2] == size(cube.I)[1:2]
+        end
+
         # Shift the centroid to match the observation data
         @debug "Shifting the centroids for $objname to match the observations"
         data_ref2d = dropdims(nansum(cube.I, dims=3), dims=3)
         _, mx = findmax(data_ref2d)
         c1 = centroid_com(data_ref2d[mx[1]-5:mx[1]+5, mx[2]-5:mx[2]+5]) .+ (mx.I .- 5) .- 1
+
         data2d = dropdims(nansum(data, dims=3), dims=3)
+        data2d[data2d .< 0] .= 0.
         _, mx2 = findmax(data2d)
         c2 = centroid_com(data2d[mx2[1]-5:mx2[1]+5, mx2[2]-5:mx2[2]+5]) .+ (mx2.I .- 5) .- 1
-        dx = c1 .- c2
 
         dsmooth = copy(data)
         for c in CartesianIndices(size(data)[1:2])
@@ -78,28 +113,17 @@ function generate_psf_model!(cube::DataCube, psf_model_dir::String=""; interpola
             end
             data[:, :, i] .-= pedestal
         end
+
+        # Recalculate shift now that pedestal has been subtracted
+        data2d = dropdims(nansum(data, dims=3), dims=3)
+        data2d[data2d .< 0] .= 0.
+        _, mx2 = findmax(data2d)
+        c2 = centroid_com(data2d[mx2[1]-5:mx2[1]+5, mx2[2]-5:mx2[2]+5]) .+ (mx2.I .- 5) .- 1
+        dx = c1 .- c2
         
         data_shift = zeros(eltype(data), size(data))
         for i in axes(data_shift, 3)
             data_shift[:, :, i] = fshift(data[:, :, i], dx...)
-        end
-
-        # Mask to match the size of the observation data
-        size_psf = size(data_shift)[1:2]
-        size_obs = size(cube.I)[1:2]
-        if size_psf != size_obs
-            @debug "Sizes of PSF and Observation data do not match: $size_psf and $size_obs. Masking the edges of the PSF data."
-            while size_obs[1] > size_psf[1]
-                data_slice = ones(1, size(data_shift)[2:3]...) .* NaN
-                data_shift = cat(data_shift, data_slice, data_slice, dims=1)
-                size_psf = size(data_shift)[1:2]
-            end
-            while size_obs[2] > size_psf[2]
-                data_slice = ones(size(data_shift, 1), 1, size(data_shift, 3)) .* NaN
-                data_shift = cat(data_shift, data_slice, data_slice, dims=2)
-                size_psf = size(data_shift)[1:2]
-            end
-            data_shift = data_shift[1:size_obs[1], 1:size_obs[2], :]
         end
 
         push!(psfs, data_shift)
@@ -157,13 +181,15 @@ end
 
 
 # A method that applies the `generate_psf_model!` function to each channel in an Observation object
-function generate_psf_model!(obs::Observation, psf_model_dir::String=""; interpolate_leak_artifact::Bool=true)
+function generate_psf_model!(obs::Observation, psf_model_dir::String=""; interpolate_leak_artifact::Bool=true,
+    centroid_4c_4b::Bool=false)
+
     for ch in keys(obs.channels)
         generate_psf_model!(obs.channels[ch], psf_model_dir; interpolate_leak_artifact=interpolate_leak_artifact, z=obs.z)
     end
 
-    # do not trust the channel 4C centroiding
-    if :C4 in keys(obs.channels) && :B4 in keys(obs.channels)
+    # if centroid_4c_4b is true: do not trust the channel 4C centroiding
+    if :C4 in keys(obs.channels) && :B4 in keys(obs.channels) && centroid_4c_4b
 
         data2d = dropdims(nansum(obs.channels[:B4].I, dims=3), dims=3)
         _, mx = findmax(data2d)
@@ -180,6 +206,7 @@ function generate_psf_model!(obs::Observation, psf_model_dir::String=""; interpo
         end
 
     end
+
 end
 
 
@@ -303,11 +330,7 @@ function generate_nuclear_template(cube::DataCube, ap_r::Real=0.; spline_width::
 
     if iszero(ap_r)
         # Just take the brightest spaxel
-        nuc1d = zeros(eltype(cube.I), length(cube.λ))
-        for i ∈ eachindex(nuc1d)
-            nuc1d[i] = cube.I[:, :, i][mx] / cube.psf_model[:, :, i][mx]
-        end
-
+        nuc1d = cube.I[mx, :] ./ cube.psf_model[mx, :]
     else
         # Arcseconds per pixel
         pixel_scale = sqrt(cube.Ω) * 180/π * 3600
@@ -324,11 +347,12 @@ function generate_nuclear_template(cube::DataCube, ap_r::Real=0.; spline_width::
         end
     end
 
-    # Do a cubic spline fit to get a good S/N
+    # Do a cubic spline fit to get a good S/N and fill in holes
     if spline_width > 0
-        λknots = cube.λ[1+spline_width:spline_width:end-spline_width]
-        nuc1d = Spline1D(cube.λ, nuc1d, λknots, k=3, bc="extrapolate")(cube.λ)
+        good = isfinite.(nuc1d) .& (abs.(nuc1d) .< 1e10)
+        λknots = cube.λ[good][1+spline_width:spline_width:end-spline_width]
+        nuc1d = Spline1D(cube.λ[good], nuc1d[good], λknots, k=3, bc="extrapolate")(cube.λ)
     end
 
-    nuc = [nuc1d[k] * cube.psf_model[i,j,k] for i ∈ axes(cube.psf_model, 1), j ∈ axes(cube.psf_model, 2), k ∈ axes(cube.psf_model, 3)]
+    [nuc1d[k] * cube.psf_model[i,j,k] for i ∈ axes(cube.psf_model, 1), j ∈ axes(cube.psf_model, 2), k ∈ axes(cube.psf_model, 3)]
 end

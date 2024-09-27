@@ -575,6 +575,18 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
         lines_0, lines, tied_kinematics, flexible_wavesol, tie_voigt_mixing, voigt_mix_tied, 
             n_lines, n_comps, n_acomps, n_fit_comps, relative_flags = cubefitter_prepare_lines(λ, cube, out)
 
+        # the automatic line masking routine is meh;
+        # so for now it's essentially softly disabled by automatically including
+        # overrides for all lines in the line list with a width of +/-1000 km/s;
+        # this can still be overridden with a manual line mask input
+        if !haskey(out, :linemask_overrides)
+            overrides = Tuple[]
+            for λi in lines.λ₀
+                push!(overrides, λi .* (1-1000/C_KMS, 1+1000/C_KMS))
+            end
+            out[:linemask_overrides] = overrides
+        end
+    
         n_params_lines = cubefitter_count_line_parameters(lines, flexible_wavesol, n_lines, n_comps)
         n_params_extra = cubefitter_count_extra_parameters(n_dust_features, n_lines, n_acomps)
 
@@ -790,17 +802,15 @@ function cubefitter_add_default_options!(cube::DataCube, spectral_region::Symbol
     if !haskey(out, :template_names)
         out[:template_names] = String["template_$i" for i in axes(out[:templates], 4)]
     end
+
     if !haskey(out, :linemask_delta)
-        out[:linemask_delta] = spectral_region == :MIR ? 3 : 20
+        out[:linemask_delta] = 20
     end
     if !haskey(out, :linemask_n_inc_thresh)
-        out[:linemask_n_inc_thresh] = spectral_region == :MIR ? 3 : 7
+        out[:linemask_n_inc_thresh] = 7
     end
     if !haskey(out, :linemask_thresh)
         out[:linemask_thresh] = 3.
-    end
-    if !haskey(out, :linemask_overrides)
-        out[:linemask_overrides] = Tuple[]
     end
     if !haskey(out, :map_snr_thresh)
         out[:map_snr_thresh] = 3.

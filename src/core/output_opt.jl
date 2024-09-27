@@ -204,7 +204,7 @@ function assign_outputs_opt(out_params::AbstractArray{<:Real}, out_errs::Abstrac
                 cube_model.br_feii[:, index] .= comps["br_feii"]
             end
             for l ∈ 1:cube_fitter.n_power_law
-                cube_model.power_law[:, index] .= comps["power_law_$l"]
+                cube_model.power_law[:, index, l] .= comps["power_law_$l"]
             end
             for q ∈ 1:cube_fitter.n_templates
                 cube_model.templates[:, index, q] .= comps["templates_$q"] 
@@ -230,12 +230,86 @@ function assign_outputs_opt(out_params::AbstractArray{<:Real}, out_errs::Abstrac
 end
 
 
+# Optical implementation of the assign_qso3d_outputs function
+function assign_qso3d_outputs_opt(param_maps::ParamMaps, cube_model::CubeModel, cube_fitter::CubeFitter,
+    psf_norm::Array{<:Real,3})
+
+    param_maps_3d = generate_parammaps(cube_fitter, false)
+    cube_model_3d = generate_cubemodel(cube_fitter, false)
+    n_pix = nansum(.~cube_fitter.cube.mask, dims=(1,2))
+    for k in axes(param_maps_3d.data, 3)
+        name = param_maps_3d.names[k]
+        if !contains(name, "flux") && !contains(name, "amp")
+            param_maps_3d.data[:,:,k] .= param_maps.data[1,1,k]
+            continue
+        end
+        # get the central wavelength of the feature in question
+        namelist = split(name, ".")
+        if namelist[1] == "lines"
+            ln_ind = findfirst(cube_fitter.lines.names .== namelist[2])
+            λi = cube_fitter.lines.λ₀[ln_ind]
+        else
+            # continuum amplitudes
+            λi = 10^nanmean(log10.(cube_fitter.cube.λ))
+        end
+        # convert to an index
+        w = argmin(abs.(cube_fitter.cube.λ .- λi))
+        dont_log = (namelist[1] == "lines") && cube_fitter.lines_allow_negative
+        amp_factor = contains(name, "amp") ? n_pix[k] : 1.
+        # intensities need an extra conversion factor
+        # (because the intensities recorded in param_maps are over the whole FOV
+        #  whereas these intensities are over single spaxels: area_FOV / area_spaxel)
+        if dont_log
+            param_maps_3d.data[:,:,k] .= param_maps.data[1,1,k] .* psf_norm[:,:,w] .* amp_factor
+        else
+            new = 10 .^ param_maps.data[1,1,k] .* psf_norm[:,:,w] .* amp_factor
+            new[new .< 0] .= 0.
+            param_maps_3d.data[:,:,k] .= log10.(new)
+        end
+    end
+
+    psf_norm_p = permutedims(psf_norm .* n_pix, (3,1,2))
+    _shape = size(psf_norm[1:2])
+
+    # Remember the wavelength axis is the first axis here to increase efficiency
+    cube_model_3d.model .= extendp(cube_model.model[:,1,1], _shape) .* psf_norm_p
+    for i ∈ 1:cube_fitter.n_ssps
+        cube_model_3d.stellar[:,:,:,i] .= extendp(cube_model.stellar[:,1,1,i], _shape) .* psf_norm_p
+    end
+    cube_model_3d.attenuation_stars .= cube_model.attenuation_stars[:,1,1]
+    cube_model_3d.attenuation_gas .= cube_model.attenuation_gas[:,1,1]
+    if cube_fitter.fit_opt_na_feii
+        cube_model_3d.na_feii .= extendp(cube_model.na_feii[:,1,1], _shape) .* psf_norm_p
+    end
+    if cube_fitter.fit_opt_br_feii
+        cube_model_3d.br_feii .= extendp(cube_model.br_feii[:,1,1], _shape) .* psf_norm_p
+    end
+    for l ∈ 1:cube_fitter.n_power_law
+        cube_model_3d.power_law[:,:,:,l] .= extendp(cube_model.power_law[:,1,1,l], _shape) .* psf_norm_p
+    end
+    for q ∈ 1:cube_fitter.n_templates
+        cube_model_3d.templates[:,:,:,q] .= extendp(cube_model.templates[:,1,1,q], _shape) .* psf_norm_p
+    end
+    for j ∈ 1:cube_fitter.n_comps
+        for k ∈ 1:cube_fitter.n_lines
+            if !isnothing(cube_fitter.lines.profiles[k, j])
+                cube_model_3d.lines[:,:,:,k] .= extendp(cube_model.lines[:,1,1,k], _shape) .* psf_norm_p
+            end
+        end
+    end
+
+    param_maps_3d, cube_model_3d
+end
+
+
 # Helper function for writing the output for an optical cube model
 function write_fits_full_model_opt(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel,
-    hdr::FITSHeader, nuc_temp_fit::Bool)
+    hdr::FITSHeader, nuc_temp_fit::Bool; qso3d::Bool=false)
 
     # Create the 3D intensity model FITS file
-    FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_full_model.fits"), "w") do f
+    FITS(joinpath("output_$(cube_fitter.name)", 
+                  "$(cube_fitter.name)_$(nuc_temp_fit ? "nuc_model" : "full_model")$(qso3d ? "_3d" : "").fits"), 
+                  "w") do f
 
         @debug "Writing 3D model FITS HDUs"
         # Permute the wavelength axis here back to the third axis to be consistent with conventions

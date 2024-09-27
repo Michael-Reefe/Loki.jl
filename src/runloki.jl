@@ -22,10 +22,10 @@ function main(_args)
 
     # Options for the 'prepare' command
     @add_arg_table! s["prepare"] begin
-        "label"
+        "channel"
             required = true
-            arg_type = String
-            help = "A channel name for the corrected, combined data cube (can be anything, but note the target name is already included!)"
+            arg_type = Int
+            help = "A channel number for the corrected, combined data cube (for multi-channel cubes, the channel number can be anything)"
         "redshift"
             required = true
             arg_type = Float64
@@ -56,12 +56,12 @@ function main(_args)
             help = "The minimum wavelength to allow in the output data cube"
         "--max-wave", "-M"
             arg_type = Float64
-            default = Inf
+            default = 27.
             help = "The maximum wavelength to allow in the output data cube"
         "--rotate-sky", "-r"
             action = :store_true
             help = "Rotate the data cube to align with the RA/Dec axes on the sky"
-        "--replace-errors", "-R"
+        "--replace-errors", "-e"
             action = :store_true
             help = "Replace the errors in the data cube with statistical errors based on the variance in a cubic spline fit"
     end
@@ -93,6 +93,18 @@ function main(_args)
                 " elliptical apertures, [P1] and [P2] are the semimajor and semiminor axes in arcseconds and [P3] is the " *
                 " position angle in degrees, and for rectangular apertures, [P1] and [P2] are the width and height in arcseconds" *
                 " and [P3] is the position angle in degrees; if [AP_SHAPE] is 'all', the aperture is taken to be the whole FOV"
+        "--psf", "-f"
+            action = :store_true
+            help = "Enable the usage of a PSF template component in the fit - the data cube MUST have had a PSF model already generated" * 
+                " (see the '--make-psf' option in the 'prepare' command)"
+        "--post-psf", "-F"
+            nargs = '?'
+            arg_type = String
+            default = ""         # this is used if the option is not passed
+            constant = "do"      # this is used if --post-psf is passed with no argument
+            help = "Use this option AFTER fitting the cube with a PSF component (see the '--psf' option); input the path to a completed fit " *
+                "directory with param_maps and full_model FITS files; does a fit to the normalized PSF component itself and obtains the " *
+                "spectral feature fluxes attributed to the point source"
         "--extinction", "-e"
             arg_type = String
             default = "auto"
@@ -122,10 +134,6 @@ function main(_args)
         "--global", "-g"
             action = :store_true
             help = "Force all fits to be globally optimized with simulated annealing"
-        "--qso-template", "-q"
-            action = :store_true
-            help = "Enable the usage of a QSO template component in the fit - the data cube MUST have had a PSF model already generated" * 
-                " (see the '--make-psf' option in the 'prepare' command)"
         "--sub-cubic", "-C"
             action = :store_true
             help = "When fitting line residuals, subtract a cubic spline fit to the continuum instead of the actual fit to the continuum"
@@ -145,13 +153,13 @@ function main(_args)
 
     # Run the appropriate function
     if cmd == "prepare"
-        prepare(cmd_args["label"], cmd_args["cubes"], cmd_args["redshift"], cmd_args["make-psf"], cmd_args["psf-spline-length"],
+        prepare(cmd_args["channel"], cmd_args["cubes"], cmd_args["redshift"], cmd_args["make-psf"], cmd_args["psf-spline-length"],
             cmd_args["adjust-wcs"], cmd_args["extract-ap"], cmd_args["min-wave"], cmd_args["max-wave"], cmd_args["rotate-sky"],
             cmd_args["replace-errors"])
     elseif cmd == "fit"
         fit(cmd_args["label"], cmd_args["cube"], cmd_args["parallel"], cmd_args["plot"], cmd_args["aperture"], cmd_args["extinction"], 
             cmd_args["mixed-dust"], cmd_args["no-pah-templates"], cmd_args["sil-emission"], cmd_args["ch-abs"], cmd_args["joint"], 
-            cmd_args["ir-no-stellar"], cmd_args["i-like-my-storage-space-actually"], cmd_args["global"], cmd_args["qso-template"], 
+            cmd_args["ir-no-stellar"], cmd_args["i-like-my-storage-space-actually"], cmd_args["global"], cmd_args["psf"], cmd_args["post-psf"], 
             cmd_args["sub-cubic"], cmd_args["bootstrap"])
     end
 
@@ -169,10 +177,8 @@ vacuum wavelengths, combining data from multiple cubes into a single cube (throu
 errors through a statistical analysis, etc.
 
 """
-function prepare(label::String, cubes::Vector{String}, redshift::Float64, makepsf::Bool, spline_length::Int,
+function prepare(channel::Int, cubes::Vector{String}, redshift::Float64, makepsf::Bool, spline_length::Int,
     adjust_wcs::Bool, extract_ap::Float64, min_wave::Float64, max_wave::Float64, rotate_sky::Bool, replace_errors::Bool)
-
-    label = Symbol(label)
 
     files = String[]
     for cube in cubes
@@ -205,9 +211,7 @@ function prepare(label::String, cubes::Vector{String}, redshift::Float64, makeps
         generate_psf_model!(obs)
         # Spline fit the PSF models
         if spline_length > 0
-            for channel in channels
-                splinefit_psf_model!(obs.channels[channel], spline_length)
-            end
+            splinefit_psf_model!(obs, spline_length)
         end
     end
 
@@ -220,25 +224,25 @@ function prepare(label::String, cubes::Vector{String}, redshift::Float64, makeps
 
     if length(channels) > 1
         # Combine multiple channels into one composite data cube
-        combine_channels!(obs, channels, out_id=label, order=1, rescale_channels=nothing, adjust_wcs_headerinfo=adjust_wcs,
+        combine_channels!(obs, channels, out_id=channel, order=1, rescale_channels=nothing, adjust_wcs_headerinfo=adjust_wcs,
             extract_from_ap=extract_ap, min_λ=min_wave, max_λ=max_wave, rescale_all_psf=false, scale_psf_only=false)
     end
 
     # Rotate the data cube to align with the sky axes
     if rotate_sky
-        rotate_to_sky_axes!(obs.channels[label])
+        rotate_to_sky_axes!(obs.channels[channel])
     end
 
     # Interpolate NaNs in otherwise good spaxels
-    interpolate_nans!(obs.channels[label])
+    interpolate_nans!(obs.channels[channel])
 
     # Replace errors with statistical errors
     if replace_errors
-        calculate_statistical_errors!(obs.channels[label], 20, 5, 3.0)
+        calculate_statistical_errors!(obs.channels[channel], 20, 5, 3.0)
     end
 
     # Save results
-    save_fits(".", obs, label)
+    save_fits(".", obs, channel)
 
     obs
 
@@ -247,7 +251,7 @@ end
 
 """
     fit(label, cube, parallel, plot, aperture, extinction, mixed_dust, no_pah_templates, sil_emission, 
-        ch_abs, joint, ir_no_stellar, i_like_storage_space, all_global, qso_template, sub_cubic, bootstrap)
+        ch_abs, joint, ir_no_stellar, i_like_storage_space, all_global, psf, post_psf, sub_cubic, bootstrap)
 
 A CLI function to fit a data cube.
 Note:   The CLI is meant for simple/quick use cases and does not allow for the customization of all options.
@@ -262,9 +266,10 @@ Note:   The CLI is meant for simple/quick use cases and does not allow for the c
 """
 function fit(label::String, cube::String, parallel::Int, plot::String, aperture::Vector, extinction::String, mixed_dust::Bool,
     no_pah_templates::Bool, sil_emission::Bool, ch_abs::Bool, joint::Bool, ir_no_stellar::Bool, i_like_storage_space::Bool, 
-    all_global::Bool, qso_template::Bool, sub_cubic::Bool, bootstrap::Int)
+    all_global::Bool, psf::Bool, post_psf::String, sub_cubic::Bool, bootstrap::Int)
 
-    if parallel > 0
+    # Only allow parallel fitting if NOT doing an aperture fit or a post PSF fit
+    if (parallel > 0) && (length(aperture) == 0) && (post_psf in ("", "do"))
         # Get the current project being used so that the other processes can be 
         # activated in the same project
         project = dirname(Base.active_project())
@@ -282,13 +287,19 @@ function fit(label::String, cube::String, parallel::Int, plot::String, aperture:
     templates = Array{Float64, 4}(undef, size(obs.channels[ch].I)..., 0)
     template_names = String[]
 
-    if qso_template
+    if psf
         nuc_temp = generate_nuclear_template(obs.channels[ch], 0.)
         templates = cat(templates, nuc_temp, dims=4)
         push!(template_names, "nuclear")
     end
 
     # Sanity checking
+    if psf && !(post_psf in ["", "do"])
+        error("Do not pass an argument to --post-psf if doing it simultaneously with --psf")
+    end
+    if post_psf != ""
+        @assert !i_like_storage_space "You must save the full model if doing post-psf fitting!"
+    end
     @assert plot in ("pyplot", "plotly", "both") "plot must be one of 'pyplot', 'plotly', or 'both'"
     if extinction == "auto"
         if obs.spectral_region == :MIR
@@ -300,6 +311,14 @@ function fit(label::String, cube::String, parallel::Int, plot::String, aperture:
     @assert extinction in ("kvt", "ct", "ohm", "d+", "decompose", "calzetti", "ccm") "extinction must be one of " * 
         "'kvt', 'ct', 'ohm', 'd+', 'decompose', 'calzetti', or 'ccm'"
     
+    do_sil_emission = sil_emission
+    do_ir_stellar = !ir_no_stellar
+    if psf 
+        println("NOTE: PSF templates detected; hot dust emission components will be disabled")
+        do_sil_emission = false
+        do_ir_stellar = false
+    end
+    
     # Create the cubefitter object
     cube_fitter = CubeFitter(
         obs.channels[ch],
@@ -310,10 +329,10 @@ function fit(label::String, cube::String, parallel::Int, plot::String, aperture:
         extinction_curve=extinction,
         extinction_screen=!mixed_dust,
         use_pah_templates=!no_pah_templates,
-        fit_sil_emission=sil_emission,
+        fit_sil_emission=do_sil_emission,
         fit_ch_abs=ch_abs,
         fit_joint=joint,
-        fit_stellar_continuum=!ir_no_stellar,
+        fit_stellar_continuum=do_ir_stellar,
         save_full_model=!i_like_storage_space,
         fit_all_global=all_global,
         templates=templates,
@@ -340,10 +359,17 @@ function fit(label::String, cube::String, parallel::Int, plot::String, aperture:
         end
     end        
 
-    # Decide whether to do an aperture fit or a full cube fit
+    # Decide whether to do an aperture fit, a full cube fit, or a psf postfit
+
+    # Aperture fits get first priority and return after running
     if !isnothing(ap)
         fit_cube!(cube_fitter, ap)
-    else
+        return
+    end
+
+    # Now we do a full cube fit as long as we're not explicitly doing a post-psf fit only
+    # If we are doing a combined full cube fit + post-psf fit (marked by post_psf = "do"), we still do this
+    if post_psf in ("", "do")
         try
             fit_cube!(cube_fitter)
         finally
@@ -351,6 +377,40 @@ function fit(label::String, cube::String, parallel::Int, plot::String, aperture:
                 rmprocs(procs)
             end
         end
+    end
+
+    # Now we decide if we also need to do a post-psf fit
+    if post_psf != ""
+        if post_psf == "do"
+            output_dir = "output_$(cube_fitter.name)_$(obs.spectral_region == :MIR ? "mir" : "opt")/"
+            # Make a new cube fitter for the post-psf fit
+            cube_fitter_2 = CubeFitter(
+                obs.channels[ch],
+                obs.z,
+                label * "_postpsf";
+                parallel=false,
+                plot_spaxels=:both,
+                extinction_curve=extinction,
+                extinction_screen=!mixed_dust,
+                use_pah_templates=!no_pah_templates,
+                fit_sil_emission=sil_emission,
+                fit_ch_abs=ch_abs,
+                fit_joint=joint,
+                fit_stellar_continuum=!ir_no_stellar,
+                save_full_model=!i_like_storage_space,
+                fit_all_global=all_global,
+                templates=templates,
+                template_names=template_names,
+                subtract_cubic_spline=sub_cubic,
+                n_bootstrap=bootstrap
+            )
+        else
+            output_dir = post_psf
+            cube_fitter_2 = cube_fitter
+        end
+        full_model = glob("*_full_model.fits", output_dir)[1]
+        param_maps = glob("*_parameter_maps.fits", output_dir)[1]
+        post_fit_nuclear_template!(cube_fitter_2, param_maps, full_model, "NUCLEAR")
     end
 
 end

@@ -111,6 +111,7 @@ julia> sumdim([1 2; 3 NaN], 1)
     extend(array1d, shape)
 
 Extend `array1d` into other dimensions specified by `shape`
+The other dimensions are assumed to be the first N dimensions
 
 # Example
 ```jldoctest
@@ -136,6 +137,45 @@ julia> extend([1,2,3], (4,5))
 ```
 """
 @inline extend(array1d, shape) = repeat(reshape(array1d, (1,1,length(array1d))), outer=[shape...,1])
+
+
+"""
+    extendp(array1d, shape)
+
+Extend `array1d` into other dimensions specified by `shape`
+The other dimensions are assumed to be the last N dimensions
+
+# Example
+```jldoctest
+julia> extendp([1,2,3], (4,5))
+3×4×5 Array{Int64, 3}:
+[:, :, 1] =
+ 1  1  1  1
+ 2  2  2  2
+ 3  3  3  3
+
+[:, :, 2] =
+ 1  1  1  1
+ 2  2  2  2
+ 3  3  3  3
+
+[:, :, 3] =
+ 1  1  1  1
+ 2  2  2  2
+ 3  3  3  3
+
+[:, :, 4] =
+ 1  1  1  1
+ 2  2  2  2
+ 3  3  3  3
+
+[:, :, 5] =
+ 1  1  1  1
+ 2  2  2  2
+ 3  3  3  3
+```
+"""
+@inline extendp(array1d, shape) = repeat(reshape(array1d, (length(array1d),1,1)), outer=[1,shape...])
 
 
 """

@@ -155,7 +155,8 @@ function plot_full_models_pyplot(λ::Vector{<:Real}, I::Vector{<:Real}, I_model:
     mask_lines::BitVector, mask_bad::BitVector, user_mask::Vector{<:Tuple}, range::Union{Tuple,Nothing}, 
     factor::Vector{<:Real}, extscale_limits::Tuple, ext_label::AbstractString, I_label::Function, 
     χ2red::Real; min_inten::Union{Real,Nothing}=nothing, spline::Union{Vector{<:Real},Nothing}=nothing, 
-    I_boot_min::Union{Vector{<:Real},Nothing}=nothing, I_boot_max::Union{Vector{<:Real},Nothing}=nothing)
+    I_boot_min::Union{Vector{<:Real},Nothing}=nothing, I_boot_max::Union{Vector{<:Real},Nothing}=nothing,
+    major_tick_space::Real=2.5, minor_tick_space::Real=0.5, logy::Bool=false)
 
     # If max is above 10^4, normalize so the y axis labels aren't super wide
     power = floor(Int, log10(maximum(I .* factor)))
@@ -166,11 +167,21 @@ function plot_full_models_pyplot(λ::Vector{<:Real}, I::Vector{<:Real}, I_model:
     end
 
     if isnothing(min_inten)
-        min_inten = (sum((I ./ norm .* factor) .< -0.01) > (length(λ)/10)) ? -2nanstd(I ./ norm .* factor) : -0.01
+        if !logy
+            min_inten = (sum((I ./ norm .* factor) .< -0.01) > (length(λ)/10)) ? -2nanstd(I ./ norm .* factor) : -0.01
+        else
+            min_inten = 0.1nanminimum(I[I .> 0.] ./ norm .* factor)
+        end
     end
-    max_inten = isnothing(range) ? 
-                1.3nanmaximum(I[.~mask_lines .& .~mask_bad] ./ norm .* factor[.~mask_lines .& .~mask_bad]) : 
-                1.1nanmaximum((I ./ norm .* factor)[range[1] .< λ .< range[2]])
+    if !logy
+        max_inten = isnothing(range) ? 
+                    1.3nanmaximum(I[.~mask_lines .& .~mask_bad] ./ norm .* factor[.~mask_lines .& .~mask_bad]) : 
+                    1.1nanmaximum((I ./ norm .* factor)[range[1] .< λ .< range[2]])
+    else
+        max_inten = isnothing(range) ? 
+                    1.1nanmaximum(I[.~mask_bad] ./ norm .* factor[.~mask_bad]) : 
+                    1.1nanmaximum((I ./ norm .* factor)[range[1] .< λ .< range[2]])
+    end
     max_resid = 1.1maximum(((I.-I_model) ./ norm .* factor)[.~mask_lines .& .~mask_bad])
     min_resid = -max_resid
     
@@ -254,7 +265,6 @@ function plot_full_models_pyplot(λ::Vector{<:Real}, I::Vector{<:Real}, I_model:
         ax1.set_ylim(min_inten, max_inten)
     end
     ax2.set_ylim(min_resid, max_resid)
-    ax3.set_yscale("log") # logarithmic extinction axis
     ax3.set_ylim(extscale_limits...)
     ax3.set_ylabel(ext_label)
     if (power ≥ 4) || (power ≤ -4)
@@ -268,12 +278,29 @@ function plot_full_models_pyplot(λ::Vector{<:Real}, I::Vector{<:Real}, I_model:
     # ax4.set_xlabel(L"$\lambda_{\rm obs}$ ($\mu$m)")
     ax2.legend(loc="upper left")
 
+    # axis scaling
+    ax1.set_xscale("log") # logarithmic wavelength axis
+    ax2.set_xscale("log") # logarithmic wavelength axis
+    ax3.set_yscale("log") # logarithmic extinction axis
+
     # Set minor ticks as multiples of 0.1 μm for x axis and automatic for y axis
-    ax1.xaxis.set_minor_locator(py_ticker.AutoMinorLocator())
+    ax1.xaxis.set_minor_locator(py_ticker.MultipleLocator(minor_tick_space))
+    ax1.xaxis.set_major_locator(py_ticker.MultipleLocator(major_tick_space))
     ax1.yaxis.set_minor_locator(py_ticker.AutoMinorLocator())
-    ax2.xaxis.set_minor_locator(py_ticker.AutoMinorLocator())
+    ax2.xaxis.set_minor_locator(py_ticker.MultipleLocator(minor_tick_space))
+    ax2.xaxis.set_major_locator(py_ticker.MultipleLocator(major_tick_space))
     ax2.yaxis.set_minor_locator(py_ticker.AutoMinorLocator())
     # ax4.xaxis.set_minor_locator(py_ticker.AutoMinorLocator())
+
+    # Set tick formats so that we dont use scientific notation where it isnt needed
+    ax1.xaxis.set_major_formatter(py_ticker.ScalarFormatter())
+    ax1.xaxis.set_minor_formatter(py_ticker.NullFormatter())
+    ax2.xaxis.set_major_formatter(py_ticker.ScalarFormatter())
+    ax2.xaxis.set_minor_formatter(py_ticker.NullFormatter())
+
+    if logy
+        ax1.set_yscale("log")   # logarithmic intensity axis
+    end
 
     # Set major ticks and formats
     ax1.set_xticklabels([]) # ---> will be covered up by the residuals plot
@@ -331,18 +358,19 @@ end
 function plot_mir_spaxel_fit_pyplot(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, I_model::Vector{<:Real}, 
     mask_lines::BitVector, mask_bad::BitVector, range::Union{Tuple,Nothing}, comps::Dict, nuc_temp_norm::Vector{<:Real}, 
     nuc_temp_fit::Bool, Cf::Real, χ2red::Real, label::String; spline::Union{Vector{<:Real},Nothing}=nothing, 
-    I_boot_min::Union{Vector{<:Real},Nothing}=nothing, I_boot_max::Union{Vector{<:Real},Nothing}=nothing)
+    I_boot_min::Union{Vector{<:Real},Nothing}=nothing, I_boot_max::Union{Vector{<:Real},Nothing}=nothing, logy::Bool=false)
 
     # MIR-specific normalizations and axis labels/limits
     factor = 1 ./ λ 
-    min_inten = -0.01
+    min_inten = logy ? nothing : -0.01
     extscale_limits = (1e-3, 1.)
     ext_label = cube_fitter.extinction_screen ? L"$e^{-\tau_{\lambda}}$" : L"$(1-e^{-\tau_{\lambda}}) / \tau_{\lambda}$"
     I_label = prefix -> L"$I_{\nu}/\lambda$ (%$(prefix)MJy sr$^{-1}$ $\mu$m$^{-1}$)"
 
     norm, max_inten, fig, ax1, ax2, ax3 = plot_full_models_pyplot(λ, I, I_model,
         mask_lines, mask_bad, cube_fitter.user_mask, range, factor, extscale_limits, ext_label, I_label, χ2red; 
-        min_inten=min_inten, spline=spline, I_boot_min=I_boot_min, I_boot_max=I_boot_max)
+        min_inten=min_inten, spline=spline, I_boot_min=I_boot_min, I_boot_max=I_boot_max, minor_tick_space=0.5,
+        major_tick_space=2.5, logy=logy)
 
     # MIR-specific quantities to plot
     abs_feat = cube_fitter.n_abs_feat ≥ 1 ? reduce(.*, [comps["abs_feat_$i"] for i ∈ 1:cube_fitter.n_abs_feat]) : ones(length(λ))
@@ -415,7 +443,7 @@ function plot_opt_spaxel_fit_pyplot(cube_fitter::CubeFitter, λ::Vector{<:Real},
     mask_lines::BitVector, mask_bad::BitVector, range::Union{Tuple,Nothing},
     comps::Dict, nuc_temp_norm::Vector{<:Real}, nuc_temp_fit::Bool, χ2red::Real, label::String; 
     spline::Union{Vector{<:Real},Nothing}=nothing, I_boot_min::Union{Vector{<:Real},Nothing}=nothing, 
-    I_boot_max::Union{Vector{<:Real},Nothing}=nothing)
+    I_boot_max::Union{Vector{<:Real},Nothing}=nothing, logy::Bool=false)
 
     # Optical-specific normalizations and axis labels/limits
     factor = ones(length(λ))
@@ -425,7 +453,8 @@ function plot_opt_spaxel_fit_pyplot(cube_fitter::CubeFitter, λ::Vector{<:Real},
 
     norm, max_inten, fig, ax1, ax2, ax3 = plot_full_models_pyplot(λ, I, I_model,
         mask_lines, mask_bad, cube_fitter.user_mask, range, factor, extscale_limits, ext_label, I_label, χ2red; 
-        spline=spline, I_boot_min=I_boot_min, I_boot_max=I_boot_max)
+        spline=spline, I_boot_min=I_boot_min, I_boot_max=I_boot_max, minor_tick_space=100, major_tick_space=500,
+        logy=logy)
 
     # Optical-specific quantities to plot
     att_stars = comps["attenuation_stars"]
@@ -498,11 +527,12 @@ Plot the best fit for an individual spaxel using the given backend (`:pyplot` or
 - `I_boot_max::Union{Vector{<:Real},Nothing}=nothing`: Optional vector giving the maximum model out of all bootstrap iterations
 - `range_um::Union{Tuple,Nothing}=nothing`: Optional tuple specifying min/max wavelength values to truncate the x-axis of the plot to
 - `spline::Union{Vector{<:Real},Nothing}=nothing`: Optional vector giving the cubic spline interpolation of the continuum to plot
+- `logy::Bool=false`: If true, make the y-axis logarithmic (only for pyplot backend)
 """
 function plot_spaxel_fit(cube_fitter::CubeFitter, λ_um::Vector{<:Real}, I::Vector{<:Real}, I_model::Vector{<:Real}, mask_bad::BitVector, 
     mask_lines::BitVector, comps::Dict{String, Vector{T}}, nuc_temp_fit::Bool, Cf::Real, χ2red::Real, label::String; 
     backend::Symbol=:pyplot, I_boot_min::Union{Vector{<:Real},Nothing}=nothing, I_boot_max::Union{Vector{<:Real},Nothing}=nothing, 
-    range_um::Union{Tuple,Nothing}=nothing, spline::Union{Vector{<:Real},Nothing}=nothing) where {T<:Real}
+    range_um::Union{Tuple,Nothing}=nothing, spline::Union{Vector{<:Real},Nothing}=nothing, logy::Bool=false) where {T<:Real}
 
     # Set up variables
     range = nothing
@@ -549,11 +579,11 @@ function plot_spaxel_fit(cube_fitter::CubeFitter, λ_um::Vector{<:Real}, I::Vect
         #     I_boot_max=I_boot_max)
         if cube_fitter.spectral_region == :MIR
             plot_mir_spaxel_fit_pyplot(cube_fitter, λ, I, I_model, mask_lines, mask_bad, range, comps, nuc_temp_norm, 
-                nuc_temp_fit, Cf, χ2red, label; spline=spline, I_boot_min=I_boot_min, I_boot_max=I_boot_max)
+                nuc_temp_fit, Cf, χ2red, label; spline=spline, I_boot_min=I_boot_min, I_boot_max=I_boot_max, logy=logy)
         else
             plot_opt_spaxel_fit_pyplot(cube_fitter, λ, I, I_model, mask_lines, mask_bad, range, 
                 comps, nuc_temp_norm, nuc_temp_fit, χ2red, label; spline=spline, I_boot_min=I_boot_min, 
-                I_boot_max=I_boot_max)
+                I_boot_max=I_boot_max, logy=logy)
         end
     end
 

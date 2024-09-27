@@ -27,6 +27,10 @@ locked = false
 val = 100.0
 plim = [35.0, 300.0]
 locked = false
+[[dust_continuum_temps]]
+val = 40.0
+plim = [35.0, 300.0]
+locked = false
 
 # PAHFIT Model: A series of profiles at fixed temperatures b/w 35-500 K
 # [[dust_continuum_temps]]

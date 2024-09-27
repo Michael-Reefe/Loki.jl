@@ -246,7 +246,6 @@ export DataCube,   # DataCube struct
        fit_stack!,
        fit_cube!,
        post_fit_nuclear_template!,
-       fit_nuclear_template!,
        plot_parameter_map,
        plot_parameter_maps,
        make_movie,

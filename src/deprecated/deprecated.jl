@@ -1,5 +1,94 @@
 ### DEPRECATED FUNCTIONS THAT ARE NO LONGER USED ###
 
+"""
+    fit_nuclear_template!(cube_fitter)
+
+A helper function to fit a model to the nuclear template spectrum when decomposing a bright QSO into the QSO portion
+dispersed by the PSF and the host galaxy portion. This routine produces a model for the nuclear spectrum normalized by the
+nuclear PSF model, which should be continuous after the fitting procedure. 
+
+The templates across the full field of view can then be produced by doing (nuclear model) x (PSF model) for the PSF model
+in each spaxel. These should be fed into the full cube fitting routine after running this function to fully decompose the
+host and the QSO.
+"""
+function fit_nuclear_template!(cube_fitter::CubeFitter)
+
+    @info """\n
+    BEGINNING NUCELAR TEMPLATE FITTING ROUTINE FOR $(cube_fitter.name)
+    """
+    # copy the main log file
+    cp(joinpath(@__DIR__, "..", "loki.main.log"), joinpath("output_$(cube_fitter.name)", "loki.main.log"), force=true)
+
+    shape = (1,1,size(cube_fitter.cube.I, 3))
+    # Unlock the hot dust component for the nuclear template fits
+    cube_fitter.lock_hot_dust[1] = false
+
+    # Prepare output array
+    @info "===> Preparing output data structures... <==="
+    out_params = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
+        cube_fitter.n_params_extra + 2) .* NaN
+    out_errs = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
+        cube_fitter.n_params_extra + 2, 2) .* NaN
+
+    cube_data, mx = create_cube_data_nuctemp(cube_fitter, shape)
+
+    @debug """
+    $(InteractiveUtils.varinfo(all=true, imported=true, recursive=true))
+    """
+    # copy the main log file
+    cp(joinpath(@__DIR__, "..", "loki.main.log"), joinpath("output_$(cube_fitter.name)", "loki.main.log"), force=true)
+
+    @info "===> Beginning nuclear spectrum fitting... <==="
+    p_out, p_err = fit_spaxel(cube_fitter, cube_data, CartesianIndex(1,1); use_ap=true, nuc_temp_fit=true)
+    if !isnothing(p_out)
+        out_params[1, 1, :] .= p_out
+        out_errs[1, 1, :, :] .= p_err
+    end
+
+    @info "===> Generating parameter maps and model cubes... <==="
+
+    # Create the ParamMaps and CubeModel structs containing the outputs
+    param_maps, cube_model = assign_outputs(out_params, out_errs, cube_fitter, cube_data, cube_fitter.z, true,
+        nuc_temp_fit=true)
+
+    if cube_fitter.save_fits
+        @info "===> Writing FITS outputs... <==="
+        write_fits(cube_fitter, cube_data, cube_model, param_maps, nuc_temp_fit=true, nuc_spax=mx)
+    end
+
+    # copy the main log file again
+    cp(joinpath(@__DIR__, "..", "loki.main.log"), joinpath("output_$(cube_fitter.name)", "loki.main.log"), force=true)
+
+    # Update the templates in perparation for the full fitting procedure
+    for s in 1:cube_fitter.n_templates
+        cube_fitter.templates[:, :, :, s] .= [
+            cube_model.model[k,1,1] / cube_fitter.templates[mx,k,s] * cube_fitter.templates[i,j,k,s] for
+                i in axes(cube_fitter.templates, 1),
+                j in axes(cube_fitter.templates, 2),
+                k in axes(cube_fitter.templates, 3)
+            ]
+        if cube_fitter.spectral_region == :MIR
+            cube_fitter.templates ./= (1 .+ cube_fitter.z)
+        else
+            cube_fitter.templates .*= (1 .+ cube_fitter.z)
+        end
+    end
+    cube_fitter.nuc_fit_flag[1] = true
+    # Save the template amplitudes 
+    for nch in 1:cube_fitter.n_channels
+        tp = cube_fitter.template_names[1]
+        cube_fitter.nuc_temp_amps[nch] = exp10(get(param_maps, CartesianIndex(1,1), "templates.$tp.amp_$nch"))
+    end
+    # lock the hot dust component for the rest of the fits
+    cube_fitter.lock_hot_dust[1] = true
+
+    @info "Done!!"
+
+    # Return the final cube_fitter object, along with the param maps/errs and cube model
+    cube_fitter, param_maps, cube_model
+
+end
+
 
 """
     fit_optical_depth(obs)

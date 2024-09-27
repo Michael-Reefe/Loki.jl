@@ -1291,7 +1291,8 @@ function adjust_wcs_alignment!(obs::Observation, channels; box_size_as::Float64=
         offset = sumdim(offsets[1:i, :], 1)
         ch_data.wcs.crval = [ch_data.wcs.crval[1:2] .- offset; ch_data.wcs.crval[3]]
         offset_pix = offset ./ ch_data.wcs.cdelt[1:2]
-        @info "The centroid offset relative to channel $(channels[1]) for channel $channel is $(@sprintf "%.2g" offset_pix) spaxels"
+        @info "The centroid offset relative to channel $(channels[1]) for channel $channel is " *
+            "($(@sprintf "%.2g" offset_pix[1]), $(@sprintf "%.2g" offset_pix[2])) spaxels"
     end
 
 end
@@ -1837,8 +1838,8 @@ Perform a number of transformations on data from different channels/subchannels 
     are rescaled to match.
 - `adjust_wcs_headerinfo::Bool=true`: Whether or not to try to automatically adjust the WCS header info of the channels by 
     calculating centroids at the boundaries between the channels and forcing them to match.  On by default.
-- `min_λ::Real=-Inf`: Minimum wavelength cutoff for the output cube.
-- `max_λ::Real=Inf`: Maximum wavelength cutoff for the output cube.
+- `min_λ::Real=0.`: Minimum wavelength cutoff for the output cube.
+- `max_λ::Real=27.`: Maximum wavelength cutoff for the output cube. Default of 27 um due to degradation above this in MIRI.
 - `rescale_limits::Tuple{<:Real,<:Real}=(0., Inf)`: Lower/upper limits on the rescaling factor between channels.
 - `rescale_snr::Real=0.0`: SNR threshold that a spaxel must pass before being rescaled.
 - `output_wcs_frame::Integer=1`: Which WCS frame to project the inputs onto. Defaults to 1 (the first channel in channels).
@@ -1855,7 +1856,7 @@ Perform a number of transformations on data from different channels/subchannels 
 """
 function combine_channels!(obs::Observation, channels=nothing, concat_type=:full; out_id=0,
     order::Union{Integer,String}=1, rescale_channels::Union{Real,Nothing}=nothing, adjust_wcs_headerinfo::Bool=false, 
-    min_λ::Real=-Inf, max_λ::Real=Inf, rescale_limits::Tuple{<:Real,<:Real}=(0., Inf), rescale_snr::Real=0.0, 
+    min_λ::Real=0., max_λ::Real=27., rescale_limits::Tuple{<:Real,<:Real}=(0., Inf), rescale_snr::Real=0.0, 
     output_wcs_frame::Integer=1, extract_from_ap::Real=0., match_psf::Bool=false, force_match_psf_scalefactors::Bool=false,
     rescale_all_psf::Bool=false, scale_psf_only::Bool=false, fix_4c::Bool=false)
 

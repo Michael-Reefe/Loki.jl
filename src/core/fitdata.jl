@@ -611,7 +611,7 @@ function create_cube_data_postnuctemp(cube_fitter::CubeFitter, agn_templates::Ar
     I_agn = nansum(agn_templates, dims=(1,2)) ./ nansum(.~cube.mask, dims=(1,2))
     σ_agn = nanmedian(I_agn) .* ones(Float64, size(I_agn))  # errors will be overwritten by statistical errors
     templates = Array{Float64,4}(undef, size(I_agn)..., 0)
-    area_sr = cube_fitter.cube.Ω .* nansum(cube.mask, dims=(1,2))
+    area_sr = cube_fitter.cube.Ω .* nansum(.~cube.mask, dims=(1,2))
     I, σ, temps = fill_bad_pixels(cube_fitter, I_agn[1,1,:], σ_agn[1,1,:], templates[1,1,:,:])
 
     I_agn[1,1,:] .= I

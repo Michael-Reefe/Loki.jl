@@ -1157,12 +1157,13 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
             @debug "Plotting spaxel $spaxel best fit" 
             p_cf = p_out[3+2cube_fitter.n_dust_cont+2cube_fitter.n_power_law+(cube_fitter.extinction_curve=="decompose" ? 3 : 1)+3]
             plot_spaxel_fit(cube_fitter, λ, I, I_model, mask_bad, mask_lines, comps, nuc_temp_fit, p_cf, χ2/dof, fname, 
-                backend=cube_fitter.plot_spaxels, I_boot_min=I_boot_min, I_boot_max=I_boot_max)
+                backend=cube_fitter.plot_spaxels, I_boot_min=I_boot_min, I_boot_max=I_boot_max, logy=use_ap)
             if !isnothing(cube_fitter.plot_range)
                 for (i, plot_range) ∈ enumerate(cube_fitter.plot_range)
                     fname2 = use_vorbins ? "lines_bin_$(spaxel[1])_$i" : "lines_$(spaxel[1])_$(spaxel[2])_$i"
                     plot_spaxel_fit(cube_fitter, λ, I, I_model, mask_bad, mask_lines, comps, nuc_temp_fit, p_cf, χ2/dof, fname2, 
-                        backend=cube_fitter.plot_spaxels, I_boot_min=I_boot_min, I_boot_max=I_boot_max, range_um=plot_range)
+                        backend=cube_fitter.plot_spaxels, I_boot_min=I_boot_min, I_boot_max=I_boot_max, range_um=plot_range,
+                        logy=use_ap)
                 end
             end
         end
@@ -1227,11 +1228,11 @@ function fit_stack!(cube_fitter::CubeFitter)
         @debug "Plotting spaxel sum initial fit"
         p_cf = p_out[3+2cube_fitter.n_dust_cont+2cube_fitter.n_power_law+(cube_fitter.extinction_curve=="decompose" ? 3 : 1)+3]
         plot_spaxel_fit(cube_fitter, λ_init, I_sum_init, I_model_init, mask_bad_init, mask_lines_init, comps_init,
-            false, p_cf, χ2red_init, "initial_sum_fit"; backend=:both)
+            false, p_cf, χ2red_init, "initial_sum_fit"; backend=:both, logy=true)
         if !isnothing(cube_fitter.plot_range)
             for (i, plot_range) ∈ enumerate(cube_fitter.plot_range)
                 plot_spaxel_fit(cube_fitter, λ_init, I_sum_init, I_model_init, mask_bad_init, mask_lines_init, comps_init,
-                    false, p_cf, χ2red_init, "initial_sum_line_$i"; backend=:both, range_um=plot_range)
+                    false, p_cf, χ2red_init, "initial_sum_line_$i"; backend=:both, range_um=plot_range, logy=true)
             end
         end
 
@@ -1589,104 +1590,14 @@ end
 
 
 """
-    fit_nuclear_template!(cube_fitter)
-
-A helper function to fit a model to the nuclear template spectrum when decomposing a bright QSO into the QSO portion
-dispersed by the PSF and the host galaxy portion. This routine produces a model for the nuclear spectrum normalized by the
-nuclear PSF model, which should be continuous after the fitting procedure. 
-
-The templates across the full field of view can then be produced by doing (nuclear model) x (PSF model) for the PSF model
-in each spaxel. These should be fed into the full cube fitting routine after running this function to fully decompose the
-host and the QSO.
-"""
-function fit_nuclear_template!(cube_fitter::CubeFitter)
-
-    @info """\n
-    BEGINNING NUCELAR TEMPLATE FITTING ROUTINE FOR $(cube_fitter.name)
-    """
-    # copy the main log file
-    cp(joinpath(@__DIR__, "..", "loki.main.log"), joinpath("output_$(cube_fitter.name)", "loki.main.log"), force=true)
-
-    shape = (1,1,size(cube_fitter.cube.I, 3))
-    # Unlock the hot dust component for the nuclear template fits
-    cube_fitter.lock_hot_dust[1] = false
-
-    # Prepare output array
-    @info "===> Preparing output data structures... <==="
-    out_params = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
-        cube_fitter.n_params_extra + 2) .* NaN
-    out_errs = ones(shape[1:2]..., cube_fitter.n_params_cont + cube_fitter.n_params_lines + 
-        cube_fitter.n_params_extra + 2, 2) .* NaN
-
-    cube_data, mx = create_cube_data_nuctemp(cube_fitter, shape)
-
-    @debug """
-    $(InteractiveUtils.varinfo(all=true, imported=true, recursive=true))
-    """
-    # copy the main log file
-    cp(joinpath(@__DIR__, "..", "loki.main.log"), joinpath("output_$(cube_fitter.name)", "loki.main.log"), force=true)
-
-    @info "===> Beginning nuclear spectrum fitting... <==="
-    p_out, p_err = fit_spaxel(cube_fitter, cube_data, CartesianIndex(1,1); use_ap=true, nuc_temp_fit=true)
-    if !isnothing(p_out)
-        out_params[1, 1, :] .= p_out
-        out_errs[1, 1, :, :] .= p_err
-    end
-
-    @info "===> Generating parameter maps and model cubes... <==="
-
-    # Create the ParamMaps and CubeModel structs containing the outputs
-    param_maps, cube_model = assign_outputs(out_params, out_errs, cube_fitter, cube_data, cube_fitter.z, true,
-        nuc_temp_fit=true)
-
-    if cube_fitter.save_fits
-        @info "===> Writing FITS outputs... <==="
-        write_fits(cube_fitter, cube_data, cube_model, param_maps, nuc_temp_fit=true, nuc_spax=mx)
-    end
-
-    # copy the main log file again
-    cp(joinpath(@__DIR__, "..", "loki.main.log"), joinpath("output_$(cube_fitter.name)", "loki.main.log"), force=true)
-
-    # Update the templates in perparation for the full fitting procedure
-    for s in 1:cube_fitter.n_templates
-        cube_fitter.templates[:, :, :, s] .= [
-            cube_model.model[k,1,1] / cube_fitter.templates[mx,k,s] * cube_fitter.templates[i,j,k,s] for
-                i in axes(cube_fitter.templates, 1),
-                j in axes(cube_fitter.templates, 2),
-                k in axes(cube_fitter.templates, 3)
-            ]
-        if cube_fitter.spectral_region == :MIR
-            cube_fitter.templates ./= (1 .+ cube_fitter.z)
-        else
-            cube_fitter.templates .*= (1 .+ cube_fitter.z)
-        end
-    end
-    cube_fitter.nuc_fit_flag[1] = true
-    # Save the template amplitudes 
-    for nch in 1:cube_fitter.n_channels
-        tp = cube_fitter.template_names[1]
-        cube_fitter.nuc_temp_amps[nch] = exp10(get(param_maps, CartesianIndex(1,1), "templates.$tp.amp_$nch"))
-    end
-    # lock the hot dust component for the rest of the fits
-    cube_fitter.lock_hot_dust[1] = true
-
-    @info "Done!!"
-
-    # Return the final cube_fitter object, along with the param maps/errs and cube model
-    cube_fitter, param_maps, cube_model
-
-end
-
-
-"""
-    post_fit_nuclear_template!(cube_fitter, agn_templates)
+    post_fit_nuclear_template!(cube_fitter, agn_templates, psf_norm)
 
 A helper function to fit a model to the nuclear template spectrum when decomposing a bright QSO into the QSO portion
 dispersed by the PSF and the host galaxy portion. This function is to be used AFTER fitting on the full cube has been
 performed and will fit a model to the integrated QSO spectrum over the full FOV of the cube. This has the advantage of
 including the normalizations of the QSO spectrum in each individual spaxel so that the overall model is consistent.
 """
-function post_fit_nuclear_template!(cube_fitter::CubeFitter, agn_templates::Array{<:Real,3})
+function post_fit_nuclear_template!(cube_fitter::CubeFitter, agn_templates::Array{<:Real,3}, psf_norm::Array{<:Real,3})
 
     @info """\n
     BEGINNING NUCELAR TEMPLATE FITTING ROUTINE FOR $(cube_fitter.name)
@@ -1727,10 +1638,21 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, agn_templates::Arra
     param_maps, cube_model = assign_outputs(out_params, out_errs, cube_fitter, cube_data, cube_fitter.z, true,
         nuc_temp_fit=false)
 
-    if cube_fitter.save_fits
-        @info "===> Writing FITS outputs... <==="
-        write_fits(cube_fitter, cube_data, cube_model, param_maps, nuc_temp_fit=false, aperture="all")
+    # Create another set of ParamMaps and CubeModels--this time 3D--containing the features fluxes dispersed by the PSF model
+    param_maps_3d, cube_model_3d = assign_qso3d_outputs(param_maps, cube_model, cube_fitter, psf_norm)
+    if cube_fitter.plot_maps
+        @info "===> Plotting QSO parameter maps... <==="
+        plot_parameter_maps(cube_fitter, param_maps_3d, snr_thresh=cube_fitter.map_snr_thresh, qso3d=true)
     end
+
+    if cube_fitter.save_fits
+        @info "===> Writing 1D FITS outputs... <==="
+        write_fits(cube_fitter, cube_data, cube_model, param_maps, nuc_temp_fit=false, aperture="all")
+
+        @info "===> Writing 3D FITS outputs... <==="
+        write_fits(cube_fitter, cube_data, cube_model_3d, param_maps_3d, nuc_temp_fit=false, qso3d=true)
+    end
+
     # lock the hot dust component for the rest of the fits
     cube_fitter.lock_hot_dust[1] = true
 
@@ -1744,23 +1666,41 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, agn_templates::Arra
 end
 
 # Different methods for reading from FITS file or cube_model directly:
-function post_fit_nuclear_template!(cube_fitter::CubeFitter, full_cube_model::String, template_name::String)
-    hdu = FITS(full_cube_model)
-    post_fit_nuclear_template!(cube_fitter, hdu, template_name)
+function post_fit_nuclear_template!(cube_fitter::CubeFitter, params::String, full_cube_model::String, template_name::String)
+    hdu_param = FITS(params)
+    hdu_model = FITS(full_cube_model)
+    post_fit_nuclear_template!(cube_fitter, hdu_param, hdu_model, template_name)
 end
 
-function post_fit_nuclear_template!(cube_fitter::CubeFitter, full_cube_model::FITS, template_name::String)
-    agn_templates = read(full_cube_model["TEMPLATES.$(uppercase(template_name))"])
+function post_fit_nuclear_template!(cube_fitter::CubeFitter, hdu_param::FITS, hdu_model::FITS, template_name::String)
+
+    # get the AGN templates
+    agn_templates = read(hdu_model["TEMPLATES.$(uppercase(template_name))"])
     # shift back into the rest frame
     if cube_fitter.spectral_region == :MIR
         agn_templates ./= (1 .+ cube_fitter.z)
     elseif cube_fitter.spectral_region == :OPT
         agn_templates .*= (1 .+ cube_fitter.z)
     end
-    post_fit_nuclear_template!(cube_fitter, agn_templates)
+
+    # get the PSF normalization
+    psf_norm = copy(cube_fitter.cube.psf_model)                              # PSF model (integrates to 1)
+    psf_norm[.~isfinite.(psf_norm)] .= 0.
+    for (i, ch_mask) ∈ enumerate(cube_fitter.channel_masks)
+        fit_norm = 10 .^ read(hdu_param["TEMPLATES.NUCLEAR.AMP_$i"])         # Fit amplitudes
+        fit_norm[.~isfinite.(fit_norm)] .= 1.
+        for k ∈ findall(ch_mask)
+            s = nansum(psf_norm[:, :, k] .* fit_norm) 
+            psf_norm[:, :, k] ./= s                                     # Dividing by the sum of (PSF) x (fit amp)
+        end                                                                  
+    end 
+
+    post_fit_nuclear_template!(cube_fitter, agn_templates, psf_norm)
 end
 
-function post_fit_nuclear_template!(cube_fitter::CubeFitter, full_cube_model::CubeModel, template_index::Int=1)
+function post_fit_nuclear_template!(cube_fitter::CubeFitter, param_maps::ParamMaps, full_cube_model::CubeModel, template_index::Int=1)
+
+    # get the AGN templates
     agn_templates = full_cube_model.templates[:,:,:,template_index]
     # shift back into the rest frame
     if cube_fitter.spectral_region == :MIR
@@ -1768,7 +1708,20 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, full_cube_model::Cu
     elseif cube_fitter.spectral_region == :OPT
         agn_templates .*= (1 .+ cube_fitter.z)
     end
-    post_fit_nuclear_template!(cube_fitter, agn_templates)
+
+    # get the PSF normalization
+    psf_norm = copy(cube_fitter.cube.psf_model)                              # PSF model (integrates to 1)
+    psf_norm[.~isfinite.(psf_norm)] .= 0.
+    for (i, ch_mask) ∈ enumerate(cube_fitter.channel_masks)
+        fit_norm = 10 .^ get(param_maps, "templates.nuclear.amp_$i")         # Fit amplitudes
+        fit_norm[.~isfinite.(fit_norm)] .= 1.
+        for k ∈ findall(ch_mask)
+            s = nansum(psf_norm[:, :, k] .* fit_norm) 
+            psf_norm[:, :, k] ./= s                                     # Dividing by the sum of (PSF) x (fit amp)
+        end                                                                  
+    end 
+
+    post_fit_nuclear_template!(cube_fitter, agn_templates, psf_norm)
 end
 
 
