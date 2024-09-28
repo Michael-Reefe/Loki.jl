@@ -1039,7 +1039,7 @@ function nuc_temp_fit_minimize_psftemp_amp!(cube_fitter::CubeFitter, popt_0::Vec
     for prof in enumerate(cube_fitter.dust_features.profiles)
         popt_0[pᵢ] *= resid_amp
         if prof == :Drude
-            pᵢ += 3
+            pᵢ += 4
         elseif prof == :PearsonIV
             pᵢ += 5
         end

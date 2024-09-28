@@ -215,8 +215,8 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
     else
         for (j, prof) ∈ enumerate(dust_prof)
             if prof == :Drude
-                comps["dust_feat_$j"] = Drude.(λ, params[pᵢ:pᵢ+2]...)
-                pᵢ += 3
+                comps["dust_feat_$j"] = Drude.(λ, params[pᵢ:pᵢ+3]...)
+                pᵢ += 4
             elseif prof == :PearsonIV
                 comps["dust_feat_$j"] = PearsonIV.(λ, params[pᵢ:pᵢ+4]...)
                 pᵢ += 5
@@ -317,14 +317,14 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
     else
         if all(dust_prof .== :Drude)
             for j ∈ 1:length(dust_prof) 
-                contin .+= Drude.(λ, params[pᵢ:pᵢ+2]...) .* ext
-                pᵢ += 3
+                contin .+= Drude.(λ, params[pᵢ:pᵢ+3]...) .* ext
+                pᵢ += 4
             end
         else
             for prof ∈ dust_prof
                 if prof == :Drude
-                    contin .+= Drude.(λ, params[pᵢ:pᵢ+2]...) .* ext
-                    pᵢ += 3
+                    contin .+= Drude.(λ, params[pᵢ:pᵢ+3]...) .* ext
+                    pᵢ += 4
                 elseif prof == :PearsonIV
                     contin .+= PearsonIV.(λ, params[pᵢ:pᵢ+4]...) .* ext
                     pᵢ += 5
@@ -371,8 +371,8 @@ function model_pah_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, dust_pr
     pᵢ = 1
     for (j, prof) ∈ enumerate(dust_prof)
         if prof == :Drude
-            comps["dust_feat_$j"] = Drude.(λ, params[pᵢ:pᵢ+2]...)
-            pᵢ += 3
+            comps["dust_feat_$j"] = Drude.(λ, params[pᵢ:pᵢ+3]...)
+            pᵢ += 4
         elseif prof == :PearsonIV
             comps["dust_feat_$j"] = PearsonIV.(λ, params[pᵢ:pᵢ+4]...)
             pᵢ += 5
@@ -406,14 +406,14 @@ function model_pah_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, dust_pr
     pᵢ = 1
     if all(dust_prof .== :Drude)
         for j ∈ 1:length(dust_prof) 
-            contin .+= Drude.(λ, params[pᵢ:pᵢ+2]...)
-            pᵢ += 3
+            contin .+= Drude.(λ, params[pᵢ:pᵢ+3]...)
+            pᵢ += 4
         end
     else
         for (j, prof) ∈ enumerate(dust_prof)
             if prof == :Drude
-                df = Drude.(λ, params[pᵢ:pᵢ+2]...)
-                pᵢ += 3
+                df = Drude.(λ, params[pᵢ:pᵢ+3]...)
+                pᵢ += 4
             elseif prof == :PearsonIV
                 df = PearsonIV.(λ, params[pᵢ:pᵢ+4]...)
                 pᵢ += 5
@@ -505,10 +505,10 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, λ::Vector{<:Real},
         # Create the profile
         feature_err = nothing
         if prof == :Drude
-            feature = Drude.(λ, 1., μ, fwhm)
+            feature = Drude.(λ, 1., μ, fwhm, asym)
             if propagate_err
-                feature_err = hcat(Drude.(λ, max(A*N-A_err*N, 0.), μ, max(fwhm-fwhm_err, eps())),
-                                Drude.(λ, A*N+A_err*N, μ, fwhm+fwhm_err))
+                feature_err = hcat(Drude.(λ, max(A*N-A_err*N, 0.), μ, max(fwhm-fwhm_err, eps()), asym-asym_err),
+                                Drude.(λ, A*N+A_err*N, μ, fwhm+fwhm_err, asym+asym_err))
             end
         elseif prof == :PearsonIV
             feature = PearsonIV.(λ, 1., μ, fwhm, m, ν)

@@ -681,7 +681,7 @@ function attenuation_calzetti(λ::Vector{<:Real}, E_BV::Real, δ_uv::Real; Cf::R
     # Kriek & Conroy (2013) eq. (3): relation between UV bump amplitude Eb and slope δ_uv
     Eb = 0.85 - 1.9*δ_uv
     # Drude profile parametrizes the UV bump (Kriek & Conroy 2013, eq. (2))
-    Dλ = Drude.(λ, Eb, 0.2175, 0.035)
+    Dλ = Drude.(λ, Eb, 0.2175, 0.035, 0.)
 
     # Kriek & Conroy (2013) eq. (1) 
     atten = @. 10^(-0.4 * E_BV * (kprime + Dλ) * (λ / 0.55)^δ_uv)
@@ -903,7 +903,7 @@ function τ_kvt(λ::Vector{<:Real}, β::Real)
     ext[ext .< 0] .= 0.
 
     # Add a drude profile around 18 microns
-    ext .+= Drude.(λ, 0.4, 18., 4.446)
+    ext .+= Drude.(λ, 0.4, 18., 4.446, 0.)
 
     @. (1 - β) * ext + β * (9.7/λ)^1.7
 end
