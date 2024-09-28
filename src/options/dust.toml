@@ -325,7 +325,7 @@ locked = false
 
 [dust_features."PAH_761".fwhm]
 val = 0.10
-plim = [0.9, 1.1]
+plim = [0.4, 1.1]
 locked = false
 
 [dust_features."PAH_782"]
@@ -462,7 +462,7 @@ plim = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_1260".fwhm]
-val = 0.10
+val = 0.50
 plim = [0.4, 1.1]
 locked = false
 
@@ -470,18 +470,13 @@ locked = false
 complex = "12.7"
 
 [dust_features."PAH_1277".wave]
-val = 12.75
+val = 12.77
 plim = [-0.05, 0.05]
 locked = false
 
 [dust_features."PAH_1277".fwhm]
-val = 0.40
+val = 0.15
 plim = [0.4, 1.1]
-locked = false
-
-[dust_features."PAH_1277".asym]
-val = 8.60
-plim = [0.5, 1.5]
 locked = false
 
 [dust_features."PAH_1315".wave]

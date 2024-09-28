@@ -143,6 +143,9 @@ line_test_lines = []
 # Smaller threshold -> lines must be more significant to be added
 line_test_threshold = 0.003
 
+# the default width (in km/s) to mask out to the left/right of each line in the line list
+linemask_width = 1000.0
+
 # whether or not to plot the results of line testing
 plot_line_test = true
 

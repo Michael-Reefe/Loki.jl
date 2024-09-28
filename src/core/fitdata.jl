@@ -279,6 +279,8 @@ function mask_vectors!(mask_bad::BitVector, user_mask::Union{Nothing,Vector{<:Tu
             end
         end
     end
+
+    λ, I, σ, templates, channel_masks, I_spline
     
 end
 

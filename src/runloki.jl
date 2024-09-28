@@ -137,6 +137,10 @@ function main(_args)
         "--sub-cubic", "-C"
             action = :store_true
             help = "When fitting line residuals, subtract a cubic spline fit to the continuum instead of the actual fit to the continuum"
+        "--linemask-width", "-l"
+            arg_type = Float64
+            default = 1000.0
+            help = "The width (in km/s) to mask out to the left and right of each line in the line list"
         "--bootstrap", "-b"
             arg_type = Int
             default = 0
@@ -160,7 +164,7 @@ function main(_args)
         fit(cmd_args["label"], cmd_args["cube"], cmd_args["parallel"], cmd_args["plot"], cmd_args["aperture"], cmd_args["extinction"], 
             cmd_args["mixed-dust"], cmd_args["no-pah-templates"], cmd_args["sil-emission"], cmd_args["ch-abs"], cmd_args["joint"], 
             cmd_args["ir-no-stellar"], cmd_args["i-like-my-storage-space-actually"], cmd_args["global"], cmd_args["psf"], cmd_args["post-psf"], 
-            cmd_args["sub-cubic"], cmd_args["bootstrap"])
+            cmd_args["sub-cubic"], cmd_args["linemask-width"], cmd_args["bootstrap"])
     end
 
 end
@@ -251,7 +255,8 @@ end
 
 """
     fit(label, cube, parallel, plot, aperture, extinction, mixed_dust, no_pah_templates, sil_emission, 
-        ch_abs, joint, ir_no_stellar, i_like_storage_space, all_global, psf, post_psf, sub_cubic, bootstrap)
+        ch_abs, joint, ir_no_stellar, i_like_storage_space, all_global, psf, post_psf, sub_cubic, 
+        linemask_width, bootstrap)
 
 A CLI function to fit a data cube.
 Note:   The CLI is meant for simple/quick use cases and does not allow for the customization of all options.
@@ -266,7 +271,7 @@ Note:   The CLI is meant for simple/quick use cases and does not allow for the c
 """
 function fit(label::String, cube::String, parallel::Int, plot::String, aperture::Vector, extinction::String, mixed_dust::Bool,
     no_pah_templates::Bool, sil_emission::Bool, ch_abs::Bool, joint::Bool, ir_no_stellar::Bool, i_like_storage_space::Bool, 
-    all_global::Bool, psf::Bool, post_psf::String, sub_cubic::Bool, bootstrap::Int)
+    all_global::Bool, psf::Bool, post_psf::String, sub_cubic::Bool, linemask_width::Real, bootstrap::Int)
 
     # Only allow parallel fitting if NOT doing an aperture fit or a post PSF fit
     if (parallel > 0) && (length(aperture) == 0) && (post_psf in ("", "do"))
@@ -338,6 +343,7 @@ function fit(label::String, cube::String, parallel::Int, plot::String, aperture:
         templates=templates,
         template_names=template_names,
         subtract_cubic_spline=sub_cubic,
+        linemask_width=linemask_width,
         n_bootstrap=bootstrap
     )
 
@@ -402,6 +408,7 @@ function fit(label::String, cube::String, parallel::Int, plot::String, aperture:
                 templates=templates,
                 template_names=template_names,
                 subtract_cubic_spline=sub_cubic,
+                linemask_width=linemask_width,
                 n_bootstrap=bootstrap
             )
         else

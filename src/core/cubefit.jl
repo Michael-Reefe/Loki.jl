@@ -487,6 +487,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     linemask_n_inc_thresh::S
     linemask_thresh::T
     linemask_overrides::Vector{Tuple{T,T}}
+    linemask_width::T
     map_snr_thresh::T
     sort_line_components::Union{Symbol,Nothing}
 
@@ -582,7 +583,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
         if !haskey(out, :linemask_overrides)
             overrides = Tuple[]
             for λi in lines.λ₀
-                push!(overrides, λi .* (1-1000/C_KMS, 1+1000/C_KMS))
+                push!(overrides, λi .* (1-out[:linemask_width]/C_KMS, 1+out[:linemask_width]/C_KMS))
             end
             out[:linemask_overrides] = overrides
         end
@@ -712,6 +713,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             out[:linemask_n_inc_thresh],
             out[:linemask_thresh], 
             out[:linemask_overrides], 
+            out[:linemask_width],
             out[:map_snr_thresh], 
             out[:sort_line_components], 
             p_init_cont, 

@@ -93,7 +93,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         cube_fitter.channel_masks, N)
     scale = 7
     interpolate_over_lines!(λ_spax, I_spax, σ_spax, templates_spax, mask_lines, scale)
-    mask_vectors!(mask_bad, cube_fitter.user_mask, λ_spax, I_spax, σ_spax, templates_spax, channel_masks)
+    λ_spax, I_spax, σ_spax, templates_spax, channel_masks, _ = mask_vectors!(mask_bad, cube_fitter.user_mask, λ_spax, 
+        I_spax, σ_spax, templates_spax, channel_masks)
 
     # Get the priors and "locked" booleans for each parameter, split up by the 2 steps for the continuum fit
     plims, plock, tied_pairs, tied_indices = get_continuum_plimits(cube_fitter, spaxel, λ_spax, I_spax, σ_spax, init || use_ap, 
@@ -220,7 +221,8 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         cube_fitter.channel_masks, N)
     scale = 7
     interpolate_over_lines!(λ_spax, I_spax, σ_spax, templates_spax, mask_lines, scale)
-    mask_vectors!(mask_bad, cube_fitter.user_mask, λ_spax, I_spax, σ_spax, templates_spax, channel_masks)
+    λ_spax, I_spax, σ_spax, templates_spax, channel_masks, _ = mask_vectors!(mask_bad, cube_fitter.user_mask, λ_spax, I_spax, 
+        σ_spax, templates_spax, channel_masks)
 
     # Get the priors and "locked" booleans for each parameter, split up by the 2 steps for the continuum fit
     plims_1, plims_2, lock_1, lock_2, tied_pairs, tied_indices = get_continuum_plimits(cube_fitter, spaxel, λ_spax, I_spax, σ_spax, init || use_ap,
@@ -783,7 +785,8 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         λ, I, I_spline, σ, templates, cube_fitter.channel_masks, N)
     scale = 7
     interpolate_over_lines!(λ_spax, I_spax, σ_spax, templates_spax, falses(length(λ_spax)), scale; only_templates=true)
-    mask_vectors!(mask_bad, cube_fitter.user_mask, λ_spax, I_spax, σ_spax, templates_spax, channel_masks, I_spline_spax)
+    λ_spax, I_spax, σ_spax, templates_spax, channel_masks, I_spline_spax = mask_vectors!(mask_bad, cube_fitter.user_mask, λ_spax, I_spax, 
+        σ_spax, templates_spax, channel_masks, I_spline_spax)
 
     @debug """\n
     ##################################################################################################################
