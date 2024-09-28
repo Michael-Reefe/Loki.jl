@@ -571,7 +571,7 @@ annotate = true
 [lines.NiII_6636]
 wave = 6.636000
 latex = "[Ni $\\textsc{ii}$]"
-annotate = true
+annotate = false
 
 # Oxygen Lines
 [lines.OIV_25890]

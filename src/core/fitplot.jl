@@ -167,13 +167,13 @@ function plot_full_models_pyplot(λ::Vector{<:Real}, I::Vector{<:Real}, I_model:
     end
 
     if isnothing(min_inten)
-        if !logy
+        if !logy || !isnothing(range)
             min_inten = (sum((I ./ norm .* factor) .< -0.01) > (length(λ)/10)) ? -2nanstd(I ./ norm .* factor) : -0.01
         else
             min_inten = 0.1nanminimum(I[I .> 0.] ./ norm .* factor)
         end
     end
-    if !logy
+    if !logy || !isnothing(range)
         max_inten = isnothing(range) ? 
                     1.3nanmaximum(I[.~mask_lines .& .~mask_bad] ./ norm .* factor[.~mask_lines .& .~mask_bad]) : 
                     1.1nanmaximum((I ./ norm .* factor)[range[1] .< λ .< range[2]])
@@ -279,26 +279,32 @@ function plot_full_models_pyplot(λ::Vector{<:Real}, I::Vector{<:Real}, I_model:
     ax2.legend(loc="upper left")
 
     # axis scaling
-    ax1.set_xscale("log") # logarithmic wavelength axis
-    ax2.set_xscale("log") # logarithmic wavelength axis
+    if isnothing(range)
+        ax1.set_xscale("log") # logarithmic wavelength axis
+        ax2.set_xscale("log") # logarithmic wavelength axis
+    end
     ax3.set_yscale("log") # logarithmic extinction axis
 
     # Set minor ticks as multiples of 0.1 μm for x axis and automatic for y axis
-    ax1.xaxis.set_minor_locator(py_ticker.MultipleLocator(minor_tick_space))
-    ax1.xaxis.set_major_locator(py_ticker.MultipleLocator(major_tick_space))
+    if isnothing(range)
+        ax1.xaxis.set_minor_locator(py_ticker.MultipleLocator(minor_tick_space))
+        ax1.xaxis.set_major_locator(py_ticker.MultipleLocator(major_tick_space))
+        ax2.xaxis.set_minor_locator(py_ticker.MultipleLocator(minor_tick_space))
+        ax2.xaxis.set_major_locator(py_ticker.MultipleLocator(major_tick_space))
+    end
     ax1.yaxis.set_minor_locator(py_ticker.AutoMinorLocator())
-    ax2.xaxis.set_minor_locator(py_ticker.MultipleLocator(minor_tick_space))
-    ax2.xaxis.set_major_locator(py_ticker.MultipleLocator(major_tick_space))
     ax2.yaxis.set_minor_locator(py_ticker.AutoMinorLocator())
     # ax4.xaxis.set_minor_locator(py_ticker.AutoMinorLocator())
 
     # Set tick formats so that we dont use scientific notation where it isnt needed
-    ax1.xaxis.set_major_formatter(py_ticker.ScalarFormatter())
-    ax1.xaxis.set_minor_formatter(py_ticker.NullFormatter())
-    ax2.xaxis.set_major_formatter(py_ticker.ScalarFormatter())
-    ax2.xaxis.set_minor_formatter(py_ticker.NullFormatter())
+    if isnothing(range)
+        ax1.xaxis.set_major_formatter(py_ticker.ScalarFormatter())
+        ax1.xaxis.set_minor_formatter(py_ticker.NullFormatter())
+        ax2.xaxis.set_major_formatter(py_ticker.ScalarFormatter())
+        ax2.xaxis.set_minor_formatter(py_ticker.NullFormatter())
+    end
 
-    if logy
+    if logy && isnothing(range)
         ax1.set_yscale("log")   # logarithmic intensity axis
     end
 
