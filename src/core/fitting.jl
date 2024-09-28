@@ -1243,7 +1243,7 @@ end
 
 # Helper function that loops over previously fit spaxels and adds their results into
 # the out_params and out_errs
-function spaxel_loop_previous!(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxels::Vector{CartesianIndex{2}}, 
+function spaxel_loop_previous(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxels::Vector{CartesianIndex{2}}, 
     vorbin::Bool, out_params::AbstractArray{<:Real,3}, out_errs::AbstractArray{<:Real,4})
 
     _m2 = falses(length(spaxels))
@@ -1270,8 +1270,8 @@ function spaxel_loop_previous!(cube_fitter::CubeFitter, cube_data::NamedTuple, s
             end
         end
     end
-    spaxels = spaxels[.~_m2]
 
+    _m2
 end
 
 
@@ -1419,7 +1419,8 @@ function fit_cube!(cube_fitter::CubeFitter)
     spaxels = spaxels[.~_m]
 
     # First (non-parallel) loop over already-completed spaxels
-    spaxel_loop_previous!(cube_fitter, cube_data, spaxels, vorbin, out_params, out_errs)
+    _m2 = spaxel_loop_previous(cube_fitter, cube_data, spaxels, vorbin, out_params, out_errs)
+    spaxels = spaxels[.~_m2]
 
     # Use multiprocessing (not threading) to iterate over multiple spaxels at once using multiple CPUs
     if cube_fitter.parallel

@@ -33,7 +33,9 @@ kinematic_group_lo = [
     "NeII_",
     "FeII_",
     "OII_",
-    "SII_"
+    "SII_",
+    "ClII_",
+    "NiII_"
 ]
 acomp_1_kinematic_group_lo = [
     "HI_",
@@ -42,7 +44,9 @@ acomp_1_kinematic_group_lo = [
     "NeII_",
     "FeII_",
     "OII_",
-    "SII_"
+    "SII_",
+    "ClII_",
+    "NiII_"
 ]
 
 kinematic_group_med = [
@@ -52,7 +56,8 @@ kinematic_group_med = [
     "ArVI_",
     "OIII_",
     "NeIII_",
-    "HeII_"
+    "HeII_",
+    "NaIII_"
 ]
 acomp_1_kinematic_group_med = [
     "ArIII_",
@@ -61,7 +66,8 @@ acomp_1_kinematic_group_med = [
     "ArVI_",
     "OIII_",
     "NeIII_",
-    "HeII_"
+    "HeII_",
+    "NaIII_"
 ]
 
 kinematic_group_hi = [
@@ -352,15 +358,15 @@ wave = 4.05225
 latex = "Br$\\alpha$"
 annotate = true
 
-# [lines.HI_Br_beta]
-# wave = 2.6259
-# latex = "Br$\\beta$"
-# annotate = true
+[lines.HI_Br_beta]
+wave = 2.6259
+latex = "Br$\\beta$"
+annotate = true
 
-# [lines.HI_Br_gamma]
-# wave = 2.1661
-# latex = "Br$\\gamma$"
-# annotate = true
+[lines.HI_Br_gamma]
+wave = 2.1661
+latex = "Br$\\gamma$"
+annotate = true
 
 # Pfund Series (Hydrogen, n -> 5) Lines
 [lines.HI_Pf_alpha]
@@ -368,51 +374,51 @@ wave = 7.4599
 latex = "Pf$\\alpha$"
 annotate = true
 
-# [lines.HI_Pf_beta]
-# wave = 4.6538
-# latex = "Pf$\\beta$"
-# annotate = true
+[lines.HI_Pf_beta]
+wave = 4.6538
+latex = "Pf$\\beta$"
+annotate = true
 
-# [lines.HI_Pf_gamma]
-# wave = 3.7405
-# latex = "Pf$\\gamma$"
-# annotate = true
+[lines.HI_Pf_gamma]
+wave = 3.7405
+latex = "Pf$\\gamma$"
+annotate = true
 
-# [lines.HI_Pf_delta]
-# wave = 3.2970
-# latex = "Pf$\\delta$"
-# annotate = true
+[lines.HI_Pf_delta]
+wave = 3.2970
+latex = "Pf$\\delta$"
+annotate = true
 
-# [lines.HI_Pf_epsilon]
-# wave = 3.0392
-# latex = "Pf$\\varepsilon$"
-# annotate = true
+[lines.HI_Pf_epsilon]
+wave = 3.0392
+latex = "Pf$\\varepsilon$"
+annotate = true
 
 # Humphreys Series (Hydrogen, n -> 6) Lines
-# [lines.HI_Hu_alpha]
-# wave = 12.372
-# latex = "Hu$\\alpha$"
-# annotate = true
+[lines.HI_Hu_alpha]
+wave = 12.372
+latex = "Hu$\\alpha$"
+annotate = true
 
-# [lines.HI_Hu_beta]
-# wave = 7.503
-# latex = "Hu$\\beta$"
-# annotate = true
+[lines.HI_Hu_beta]
+wave = 7.503
+latex = "Hu$\\beta$"
+annotate = true
 
-# [lines.HI_Hu_gamma]
-# wave = 5.908
-# latex = "Hu$\\gamma$"
-# annotate = true
+[lines.HI_Hu_gamma]
+wave = 5.908
+latex = "Hu$\\gamma$"
+annotate = true
 
-# [lines.HI_Hu_delta]
-# wave = 5.129
-# latex = "Hu$\\delta$"
-# annotate = true
+[lines.HI_Hu_delta]
+wave = 5.129
+latex = "Hu$\\delta$"
+annotate = true
 
-# [lines.HI_Hu_epsilon]
-# wave = 4.673
-# latex = "Hu$\\varepsilon$"
-# annotate = true
+[lines.HI_Hu_epsilon]
+wave = 4.673
+latex = "Hu$\\varepsilon$"
+annotate = true
 
 # Argon Lines
 [lines.ArVI_4529]
@@ -441,10 +447,10 @@ annotate = true
 # annotate = true
 
 # Chlorine Lines
-# [lines.ClII_14368]
-# wave = 14.367800
-# latex = "[Cl $\\textsc{ii}$]"
-# annotate = true
+[lines.ClII_14368]
+wave = 14.367800
+latex = "[Cl $\\textsc{ii}$]"
+annotate = true
 
 # Iron Lines
 # [lines.FeII_4889]
@@ -467,15 +473,15 @@ wave = 5.4466
 latex = "[Fe $\\textsc{viii}$]"
 annotate = true
 
-# [lines.FeII_6721]
-# wave = 6.721283
-# latex = "[Fe $\\textsc{ii}$]"
-# annotate = true
+[lines.FeII_6721]
+wave = 6.721283
+latex = "[Fe $\\textsc{ii}$]"
+annotate = true
 
-# [lines.FeVII_7814]
-# wave = 7.814500
-# latex = "[Fe $\\textsc{vii}$]"
-# annotate = true
+[lines.FeVII_7814]
+wave = 7.814500
+latex = "[Fe $\\textsc{vii}$]"
+annotate = true
 
 [lines.FeVII_9527]
 wave = 9.526700
@@ -530,10 +536,10 @@ annotate = true
 # annotate = true
 
 # Sodium Lines
-# [lines.NaIII_7318]
-# wave = 7.317700
-# latex = "[Na $\\textsc{iii}$]"
-# annotate = true
+[lines.NaIII_7318]
+wave = 7.317700
+latex = "[Na $\\textsc{iii}$]"
+annotate = true
 
 # Neon Lines
 [lines.NeVI_7652]
@@ -562,10 +568,10 @@ latex = "[Ne $\\textsc{v}$]"
 annotate = true
 
 # Nickel Lines
-# [lines.NiII_6636]
-# wave = 6.636000
-# latex = "[Ni $\\textsc{ii}$]"
-# annotate = true
+[lines.NiII_6636]
+wave = 6.636000
+latex = "[Ni $\\textsc{ii}$]"
+annotate = true
 
 # Oxygen Lines
 [lines.OIV_25890]

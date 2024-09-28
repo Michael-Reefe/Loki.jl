@@ -382,7 +382,7 @@ function fit(label::String, cube::String, parallel::Int, plot::String, aperture:
     # Now we decide if we also need to do a post-psf fit
     if post_psf != ""
         if post_psf == "do"
-            output_dir = "output_$(cube_fitter.name)_$(obs.spectral_region == :MIR ? "mir" : "opt")/"
+            output_dir = "output_$(cube_fitter.name)/"
             # Make a new cube fitter for the post-psf fit
             cube_fitter_2 = CubeFitter(
                 obs.channels[ch],
