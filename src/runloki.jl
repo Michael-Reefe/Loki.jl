@@ -110,7 +110,7 @@ function main(_args)
             default = "auto"
             help = "Which dust extinction template to use; for IR fits, may be 'kvt', 'ct', 'ohm', 'd+', or 'decompose'; " *
                 "for optical fits, may be 'calzetti' or 'ccm'"
-        "--mixed-dust", "-m"
+        "--mixed-dust", "-M"
             action = :store_true
             help = "Change the dust geometry from a screen (default) to mixed"
         "--no-pah-templates", "-t"
@@ -141,6 +141,9 @@ function main(_args)
             arg_type = Float64
             default = 1000.0
             help = "The width (in km/s) to mask out to the left and right of each line in the line list"
+        "--mask", "-m"
+            nargs = '+'
+            help = "Input a wavelength region to mask out as a pair of (min, max) in microns; can input as many pairs as necessary"
         "--bootstrap", "-b"
             arg_type = Int
             default = 0
@@ -164,7 +167,7 @@ function main(_args)
         fit(cmd_args["label"], cmd_args["cube"], cmd_args["parallel"], cmd_args["plot"], cmd_args["aperture"], cmd_args["extinction"], 
             cmd_args["mixed-dust"], cmd_args["no-pah-templates"], cmd_args["sil-emission"], cmd_args["ch-abs"], cmd_args["joint"], 
             cmd_args["ir-no-stellar"], cmd_args["i-like-my-storage-space-actually"], cmd_args["global"], cmd_args["psf"], cmd_args["post-psf"], 
-            cmd_args["sub-cubic"], cmd_args["linemask-width"], cmd_args["bootstrap"])
+            cmd_args["sub-cubic"], cmd_args["linemask-width"], cmd_args["mask"], cmd_args["bootstrap"])
     end
 
 end
@@ -271,7 +274,7 @@ Note:   The CLI is meant for simple/quick use cases and does not allow for the c
 """
 function fit(label::String, cube::String, parallel::Int, plot::String, aperture::Vector, extinction::String, mixed_dust::Bool,
     no_pah_templates::Bool, sil_emission::Bool, ch_abs::Bool, joint::Bool, ir_no_stellar::Bool, i_like_storage_space::Bool, 
-    all_global::Bool, psf::Bool, post_psf::String, sub_cubic::Bool, linemask_width::Real, bootstrap::Int)
+    all_global::Bool, psf::Bool, post_psf::String, sub_cubic::Bool, linemask_width::Real, mask::Vector, bootstrap::Int)
 
     # Only allow parallel fitting if NOT doing an aperture fit or a post PSF fit
     if (parallel > 0) && (length(aperture) == 0) && (post_psf in ("", "do"))
@@ -315,7 +318,8 @@ function fit(label::String, cube::String, parallel::Int, plot::String, aperture:
     end
     @assert extinction in ("kvt", "ct", "ohm", "d+", "decompose", "calzetti", "ccm") "extinction must be one of " * 
         "'kvt', 'ct', 'ohm', 'd+', 'decompose', 'calzetti', or 'ccm'"
-    
+    @assert length(mask) % 2 == 0 "mask must contain pairs of (min, max) wavelengths!"
+
     do_sil_emission = sil_emission
     do_ir_stellar = !ir_no_stellar
     if psf 
@@ -323,6 +327,7 @@ function fit(label::String, cube::String, parallel::Int, plot::String, aperture:
         do_sil_emission = false
         do_ir_stellar = false
     end
+    user_mask = [(mask[i], mask[i+1]) for i in 1:(length(mask)-1)]
     
     # Create the cubefitter object
     cube_fitter = CubeFitter(
@@ -344,6 +349,7 @@ function fit(label::String, cube::String, parallel::Int, plot::String, aperture:
         template_names=template_names,
         subtract_cubic_spline=sub_cubic,
         linemask_width=linemask_width,
+        user_mask=user_mask,
         n_bootstrap=bootstrap
     )
 
@@ -409,6 +415,7 @@ function fit(label::String, cube::String, parallel::Int, plot::String, aperture:
                 template_names=template_names,
                 subtract_cubic_spline=sub_cubic,
                 linemask_width=linemask_width,
+                user_mask=user_mask,
                 n_bootstrap=bootstrap
             )
         else

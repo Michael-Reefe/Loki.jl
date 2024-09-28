@@ -377,22 +377,22 @@ annotate = true
 [lines.HI_Pf_beta]
 wave = 4.6538
 latex = "Pf$\\beta$"
-annotate = true
+annotate = false
 
 [lines.HI_Pf_gamma]
 wave = 3.7405
 latex = "Pf$\\gamma$"
-annotate = true
+annotate = false
 
 [lines.HI_Pf_delta]
 wave = 3.2970
 latex = "Pf$\\delta$"
-annotate = true
+annotate = false
 
 [lines.HI_Pf_epsilon]
 wave = 3.0392
 latex = "Pf$\\varepsilon$"
-annotate = true
+annotate = false
 
 # Humphreys Series (Hydrogen, n -> 6) Lines
 [lines.HI_Hu_alpha]
@@ -403,22 +403,22 @@ annotate = true
 [lines.HI_Hu_beta]
 wave = 7.503
 latex = "Hu$\\beta$"
-annotate = true
+annotate = false
 
 [lines.HI_Hu_gamma]
 wave = 5.908
 latex = "Hu$\\gamma$"
-annotate = true
+annotate = false
 
 [lines.HI_Hu_delta]
 wave = 5.129
 latex = "Hu$\\delta$"
-annotate = true
+annotate = false
 
 [lines.HI_Hu_epsilon]
 wave = 4.673
 latex = "Hu$\\varepsilon$"
-annotate = true
+annotate = false
 
 # Argon Lines
 [lines.ArVI_4529]
