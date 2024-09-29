@@ -64,6 +64,11 @@ function main(_args)
         "--replace-errors", "-e"
             action = :store_true
             help = "Replace the errors in the data cube with statistical errors based on the variance in a cubic spline fit"
+        "--linemask-width", "-l"
+            arg_type = Float64
+            default = 1000.0
+            help = "The width (in km/s) to mask out to the left and right of each line in the line list; only relevant if " *
+                "--replace-errors is set"
     end
 
     # Options for the 'fit' command
@@ -168,7 +173,7 @@ function main(_args)
     if cmd == "prepare"
         prepare(cmd_args["channel"], cmd_args["cubes"], cmd_args["redshift"], cmd_args["make-psf"], cmd_args["psf-spline-length"],
             cmd_args["adjust-wcs"], cmd_args["extract-ap"], cmd_args["min-wave"], cmd_args["max-wave"], cmd_args["rotate-sky"],
-            cmd_args["replace-errors"])
+            cmd_args["replace-errors"], cmd_args["linemask-width"])
     elseif cmd == "fit"
         fit(cmd_args["label"], cmd_args["cube"], cmd_args["parallel"], cmd_args["plot"], cmd_args["aperture"], cmd_args["extinction"], 
             cmd_args["mixed-dust"], cmd_args["no-pah-templates"], cmd_args["sil-emission"], cmd_args["ch-abs"], cmd_args["joint"], 
@@ -181,7 +186,7 @@ end
 
 """
     prepare(label, cubes, redshift, makepsf, spline_length, adjust_wcs, extract_ap, min_wave, max_wave,
-        rotate_sky, replace_errors)
+        rotate_sky, replace_errors, mask_width)
 
 A CLI function to prepare data cubes for fitting.  This function is NOT for formatting - the input data cubes must 
 already have the right format to be read.  What this function does is apply various corrections and adjustments to 
@@ -191,7 +196,8 @@ errors through a statistical analysis, etc.
 
 """
 function prepare(channel::Int, cubes::Vector{String}, redshift::Float64, makepsf::Bool, spline_length::Int,
-    adjust_wcs::Bool, extract_ap::Float64, min_wave::Float64, max_wave::Float64, rotate_sky::Bool, replace_errors::Bool)
+    adjust_wcs::Bool, extract_ap::Float64, min_wave::Float64, max_wave::Float64, rotate_sky::Bool, replace_errors::Bool,
+    mask_width::Real)
 
     files = String[]
     for cube in cubes
@@ -251,7 +257,7 @@ function prepare(channel::Int, cubes::Vector{String}, redshift::Float64, makepsf
 
     # Replace errors with statistical errors
     if replace_errors
-        calculate_statistical_errors!(obs.channels[channel], 20, 5, 3.0)
+        calculate_statistical_errors!(obs.channels[channel], 20, 5, 3.0, mask_width=mask_width)
     end
 
     # Save results
@@ -421,8 +427,8 @@ function fit(label::String, cube::String, parallel::Int, plot::String, aperture:
                 fit_stellar_continuum=!ir_no_stellar,
                 save_full_model=!i_like_storage_space,
                 fit_all_global=all_global,
-                templates=templates,
-                template_names=template_names,
+                # templates=templates,
+                # template_names=template_names,
                 subtract_cubic_spline=sub_cubic,
                 linemask_width=linemask_width,
                 user_mask=user_mask,

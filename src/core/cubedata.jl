@@ -518,17 +518,25 @@ fit to the flux, within a small window (60 pixels). Emission lines are masked ou
 """
 function calculate_statistical_errors!(cube::DataCube, Δ::Union{Integer,Nothing}=nothing, 
     n_inc_thresh::Union{Integer,Nothing}=nothing, thresh::Union{Real,Nothing}=nothing,
-    overrides::Vector{Tuple{T,T}}=Vector{Tuple{Real,Real}}(); median::Bool=false) where {T<:Real}
+    overrides::Vector{Tuple{T,T}}=Vector{Tuple{Real,Real}}(); mask_width::Real=1000.,
+    median::Bool=false) where {T<:Real}
 
     λ = cube.λ
     if isnothing(Δ)
-        Δ = cube.spectral_region == :MIR ? 3 : 20
+        Δ = 20
     end
     if isnothing(n_inc_thresh)
-        n_inc_thresh = cube.spectral_region == :MIR ? 3 : 7
+        n_inc_thresh = 7
     end
     if isnothing(thresh)
         thresh = 3.0
+    end
+
+    if length(overrides) == 0
+        lines, _, _, _, _ = parse_lines()
+        for λi in lines.λ₀
+            push!(overrides, λi .* (1-mask_width/C_KMS, 1+mask_width/C_KMS))
+        end
     end
 
     @info "Calculating statistical errors for each spaxel..."

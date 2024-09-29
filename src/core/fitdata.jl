@@ -211,7 +211,7 @@ function fill_bad_pixels(cube_fitter::CubeFitter, I::Vector{<:Real}, σ::Vector{
     if !isfinite(σ[end])
         σ[end] = nanmedian(σ)
     end
-    for s in 1:cube_fitter.n_templates
+    for s in axes(templates, 2)
         if !isfinite(templates[1,s])
             templates[1,s] = nanmedian(templates[:,s])
         end
@@ -230,7 +230,7 @@ function fill_bad_pixels(cube_fitter::CubeFitter, I::Vector{<:Real}, σ::Vector{
         σ[badi] = (σ[max(badi-1,1):-1:1][lind] + σ[min(badi+1,l):end][rind]) / 2
     end
     @assert all(isfinite.(I) .& isfinite.(σ)) "Error: Non-finite values found in the summed intensity/error arrays!"
-    for s in 1:cube_fitter.n_templates
+    for s in axes(templates, 2)
         bad = findall(.~isfinite.(templates[:, s]))
         l = length(templates[:, s])
         for badi in bad

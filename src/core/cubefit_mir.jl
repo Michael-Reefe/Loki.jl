@@ -31,7 +31,7 @@ function _get_dust_feature_names_and_transforms(cf_dustfeat::DustFeatures)
             append!(dfi_normalize, [0, 0])
         else
             push!(dfi, "dust_features.$(n).asym")
-            push!(dfu, ["-"])
+            push!(dfu, "-")
             push!(dfl, L"$a$")
             push!(dfi_restframe, 0)
             push!(dfi_log, 0)
@@ -1178,7 +1178,7 @@ function pretty_print_mir_continuum_results(cube_fitter::CubeFitter, popt::Vecto
                 (cube_fitter.dust_features.cutoff[j].locked ? " (fixed)" : "") * "\n"
             pᵢ += 2
         else
-            msg *= "$(df)_asym:  \t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3]) μm \t Limits: " *
+            msg *= "$(df)_asym:  \t\t $(@sprintf "%.3f" popt[pᵢ+3]) +/- $(@sprintf "%.3f" perr[pᵢ+3]) [-] \t Limits: " *
                 "($(@sprintf "%.3f" cube_fitter.dust_features.asym[j].limits[1]), $(@sprintf "%.3f" cube_fitter.dust_features.asym[j].limits[2]))" * 
                 (cube_fitter.dust_features.asym[j].locked ? " (fixed)" : "") * "\n"
             pᵢ += 1
