@@ -11,10 +11,11 @@
     - [Python Requirements](#python-requirements)
     - [LaTeX](#latex)
 * [Usage](#iii-usage)
-    - [General Code Options](#i-general-code-options)
-    - [MIR Continuum and PAH Options](#ii-mir-continuum-and-pah-options)
-    - [Optical Continuum Options](#iii-optical-continuum-options)
-    - [Line Options](#iv-line-options)
+    - [The Command-Line Interface](#i-the-command-line-interface)
+    - [General Code Options](#ii-general-code-options)
+    - [MIR Continuum and PAH Options](#iii-mir-continuum-and-pah-options)
+    - [Optical Continuum Options](#iv-optical-continuum-options)
+    - [Line Options](#v-line-options)
 * [Outputs](#iv-outputs)
     - [The Output Directory Structure](#i-the-output-directory-structure)
     - [Logs](#ii-logs)
@@ -31,15 +32,15 @@
 ---
 ## I. Introduction
 
-This Julia package provides routines for reading, fitting, and plotting IFU data for spectra in the mid-infrared (MIR) or the optical. The MIR fitting models are based on the widely used IDL tool [PAHFIT](http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php) from the Spitzer era, but many areas have been updated to account for the increased spectral resolution of the MIRI instrument, and special attention has been given to fitting emission lines, allowing for much more flexibile and robust fits. The optical fitting models use stellar populations generated using the Flexible Stellar Population Synthesis ([FSPS](https://dfm.io/python-fsps/current/)) tool, allowing quantities like stellar age/metallicity to be interpolated and included as free paramters in the fit, and also fitting stellar velocities and velocity dispersions using a convolution with the line-of-sight velocity distribution (LOSVD), following the FFT-based methods utilized by [pPXF](https://www-astro.physics.ox.ac.uk/~cappellari/software/#ppxf) and [BADASS](https://github.com/remingtonsexton/BADASS3). 
+This Julia package provides routines for reading, fitting, and plotting IFU data for spectra in the mid-infrared (MIR) or the UV/optical. The MIR fitting models are based on the widely used IDL tool [PAHFIT](http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php) from the Spitzer era, but many areas have been updated to account for the increased spectral resolution of the MIRI instrument, and special attention has been given to fitting emission lines, allowing for much more flexibile and robust fits. The optical fitting models use stellar populations generated using the Flexible Stellar Population Synthesis ([FSPS](https://dfm.io/python-fsps/current/)) tool, allowing quantities like stellar age/metallicity to be interpolated and included as free paramters in the fit, and also fitting stellar velocities and velocity dispersions using a convolution with the line-of-sight velocity distribution (LOSVD), following the FFT-based methods utilized by [pPXF](https://www-astro.physics.ox.ac.uk/~cappellari/software/#ppxf) and [BADASS](https://github.com/remingtonsexton/BADASS3). 
 
 As a brief overview, by default mid-infrared spectrum is decomposed into
 - A stellar continuum modeled by a blackbody at a fixed temperature of $T = 5000$ K
-- A dust continuum modeled by a series of modified blackbody functions with emissivities $\propto 1/\lambda^2$ at fixed temperatures of $T \in \{35,40,50,65,90,135,200,300,500\}$ K
+- A dust continuum modeled by a few modified blackbody functions (3-4) with emissivities $\propto 1/\lambda^2$ at variable temperatures in the range $T \in$ 35-400 K
 - Emission from Polycyclic Aromatic Hydrocarbon (PAH) molecules reperesented by Drude (or Pearson type-IV) profiles with constrained central wavelengths and widths
 - Silicate dust extinction using templates from [Kemper, Vriend, & Tielens (2004)](https://ui.adsabs.harvard.edu/abs/2004ApJ...609..826K), [Chiar & Tielens (2006)](https://ui.adsabs.harvard.edu/abs/2006ApJ...637..774C/abstract), [Ossenkopt, Henning, & Mathis (1992)](https://ui.adsabs.harvard.edu/abs/1992A&A...261..567O), or [Donnan et al. (2023)](https://ui.adsabs.harvard.edu/abs/2023MNRAS.519.3691D)
 - Absorption features from water-ice, CH, and other molecules
-- Warm silicate dust emission from an AGN torus using the simplified radiative transfer model of [Gallimore et al. (2010)](https://ui.adsabs.harvard.edu/abs/2010ApJS..187..172G)
+- Warm silicate dust emission at $T \in$ 800-1600 K from an AGN torus using the simplified radiative transfer model of [Gallimore et al. (2010)](https://ui.adsabs.harvard.edu/abs/2010ApJS..187..172G)
 - Emission lines from warm molecular H<sub>2</sub>, hydrogen recombination, and ionized species, modeled using Gaussian, Lorentzian, Gauss-Hermite, or pseudo-Voigt profiles.
 
 Whereas the optical spectrum is decomposed into
@@ -49,15 +50,16 @@ Whereas the optical spectrum is decomposed into
 - An arbitrary number of power laws to potentially model an AGN continuum.
 - Emission lines from hydrogen recombination and ionized species, modeled using Gaussian, Lorentzian, Gauss-Hermite, or pseudo-Voigt profiles.
 
-In the MIR regime, arbitrary templates may be included in the model with fitted normalizations. These may be used, for example, to model out and subtract the contamination from a nuclear quasar spectrum dispersed by the point-spread function (PSF). The code contains routines for creating templates in such a scenario, but the model for the PSF must be provided by the user.
+In the MIR regime, templates for the point-spread function (PSF) may be included in the model with fitted normalizations. These may be used, for example, to model out and subtract the contamination from a nuclear quasar spectrum dispersed by the PSF. The code contains routines for creating templates in such a scenario. PSF templates are provided in the `src/templates/psfs_stars` directory, which have been created using observations of the bright calibration star 16 Cyg B. There are also templates generated from models using `webbpsf` in the `src/templates/webbpsf` directory.
 
-Note that the code is very flexible and many of these continuum options can be changed, adjusted, or added/removed to fit one's individual needs. The code uses the [MPFIT](https://pages.physics.wisc.edu/~craigm/idl/cmpfit.html) ([Markwardt 2009](https://ui.adsabs.harvard.edu/abs/2009ASPC..411..251M)) implementation of the Levenberg-Marquardt (LM) least-squares minimization routine, as well as the simulated annealing (SA) global minimization method as implemented by [Optim.jl](https://github.com/JuliaNLSolvers/Optim.jl), and optionally may estimate uncertainties using bootstrapping. Depending on how the code is configured, the fitting procedure may be performed in multiple steps (up to 3). By default, the configuration contains two steps:
-1. The emission lines are masked and the continuum + PAH features are fit with LM
-2. The continuum + PAH features are subtracted and the emission lines are fit to the residual spectrum with DE, followed by LM
+Note that the code is very flexible and many of these continuum options can be changed, adjusted, or added/removed to fit one's individual needs. The code uses the [MPFIT](https://pages.physics.wisc.edu/~craigm/idl/cmpfit.html) ([Markwardt 2009](https://ui.adsabs.harvard.edu/abs/2009ASPC..411..251M)) implementation of the Levenberg-Marquardt (LM) least-squares minimization routine, as well as the simulated annealing (SA) global minimization method as implemented by [Optim.jl](https://github.com/JuliaNLSolvers/Optim.jl), and optionally may estimate uncertainties using bootstrapping. Depending on how the code is configured, the fitting procedure may be performed in multiple steps (up to 3). By default, the configuration contains three steps:
+1. The emission lines are masked and the continuum + PAH features are fit; the PAHs use templates
+2. The continuum is subtracted and the PAHs are with with a series of Drude profiles
+3. The continuum + PAH features are subtracted and the emission lines are fit to the residual spectrum 
 
-However, if one wishes, the code can be configured to fit the continuum and emission lines simultaneously in one step (using SA and/or LM), or it may be further broken down into 3 steps by splitting the continuum and PAH features up into 2 individual steps and fitting the PAHs with templates.
+However, if one wishes, the code can be configured to fit the continuum and PAHs simultaneously in one step (removing the usage of the templates).  You can even fit the emission lines simultaneously with everything else, but this is not recommended due to the large number of free parameters that it induces.
 
-For a more detailed description of the PAHFIT decomposition and fitting methods, see [Smith et al. (2007)](https://ui.adsabs.harvard.edu/abs/2007ApJ...656..770S), and for a detailed overview of the changes and updates made by LOKI, see Reefe et al. (2023, in prep.).
+For a more detailed description of the PAHFIT decomposition and fitting methods, see [Smith et al. (2007)](https://ui.adsabs.harvard.edu/abs/2007ApJ...656..770S), and for a detailed overview of the changes and updates made by LOKI, see Reefe et al. (2024, in prep.).
 
 ---
 
@@ -137,13 +139,211 @@ Finally, LOKI assumes you have an installation of LaTeX that can be used with ma
 
 ## III. Usage
 
-### i. General Code Options
+### i. The Command Line Interface
 
-These options are found in `src/options/options.toml`:
+Simple and quick fits can be run using the command-line interface (CLI).  This is defined in the `runloki.jl` file. The canonical way to invoke this would be to navigate to the main LOKI project directory and run `julia --project=. runloki.jl [command] [options]`. The CLI provides a number of commands and options for preparing and fitting your data, but note that it is not comprehensive and is intended to cover a wide range of use cases, but not all of them.  For more in-depth fitting, you'll want to write your own driver for the code, in which case you can use the jupyter notebook in the examples/ directory as a guide.
+
+For a list of available commands, run `julia --project=. runloki.jl --help`, which displays the following help message:
+
+```bash
+usage: runloki.jl [-h] {prepare|fit}
+
+LOKI: Likelihood Optimization of gas Kinematics in IFUs | Note: CLI
+options are limited and intended for simple / quick fits
+
+commands:
+  prepare     Prepare multiple data cubes for fitting and combine them
+              into one cube (aliases: prep)
+  fit         Fit a prepared data cube
+
+optional arguments:
+  -h, --help  show this help message and exit
+```
+
+As you can see, there are two commands: `prepare` (`prep` for short) and `fit`.  For help with these commands, you can run `julia --project=. runloki.jl [command] --help`.  
+
+Now I'll show a quick example that shows a fairly canonical use case of the CLI. Let's say I want to fit MIRI/MRS data of NGC 7469. I have the raw data formatted as individual channel/band cubes aligned to the IFU axes (by running the STSci JWST pipeline with the options spec3.cube_build.output_type = 'band' and spec3.cube_build.coord_system = 'ifualign'), and I've stored them in a folder called `NGC7469_data/`.  The first step now is to reformat these into something LOKI will understand, which is done with the `prepare` command.  The required arguments here are the channel number (can be anything for multi-channel or non-MIRI data), redshift, and paths to the data files.  I want to do a full spectral model of the data across channels 1--4, so the channel number is arbitrary, and I first need to combine all of these data cubes, which have different pixel sizes and FOVs, into one composite data cube. This is done automatically by inputting multiple FITS files at once (or a whole directory).  I also want to model out the quasar point-spread function, so I need to create PSF models.  This is done by adding the `--make-psf` or `-p` option.  Then, I want to rotate the cubes to be aligned with the RA/Dec axes, so I'll also add the `--rotate-sky` or `-r` option. It's also important to replace the errors in the data cube, since the ones generated by the JWST pipeline are underestimated: this is done with the `--replace-errors` or `-e` option. Finally, the emission lines seen in NGC 7469 are mostly narrow, so I'll adjust the width of the line masking from the default 1000 km/s to 500 km/s with the `--linemask-width` or `-l` option.  The final command in all of its glory looks like:
+
+`julia --project=. runloki.jl prepare 1234 0.016317 NGC7469_data/ --make-psf --rotate-sky --replace-errors --linemask-width 500`
+
+(1234 is the channel number, 0.016317 is the redshift, and NGC7469_data/ in the folder where the FITS files are stored)
+
+And the shortened version:
+
+`julia --project=. runloki.jl prep 1234 0.016317 NGC7469_data/ -prel 500`
+
+This will create a file called `NGC7469.channel1234.rest_frame.fits`, which is the input file for the next step (the actual fitting). Now we want to run a fit, which we do with the `fit` command.  The required arguments to this command are some label for the output folder (can be anything) and the name of the input data file.  We want to do a full fit of the cube, fitting every individual spaxel, which is the default behavior.  To make this a little faster, we can enable multiprocessing with the `--parallel` or `-p` option followed by the number of cores.  We also want to use those nifty PSF models that we generated in the last step, which we do with the `--psf` or `-f` option.  Now, what this does is effectively "model out" the quasar spectrum so you get at the host galaxy spectrum in your fits.  If you want to ALSO do a fit to the quasar spectrum itself, that's done in a second step after the main cube fitting, which can be enabled with the `--post-psf` or `-F` option.  NGC 7469 is a type 1 AGN, so to properly fit this quasar spectrum, we'll need a silicate emission component in our model, which we can add with the `--sil-emission` or `-s` option (note: this does not affect the model during the host galaxy fitting).  NGC 7469 also has some very bright PAH features, so the default behavior of fitting them in two steps, with templates used in the first step, is not necessary here--we can get a slightly better fit by marginalizing over the continuum and PAH profiles at the same time, which we can do with the `--no-pah-templates` or `-t` option.  Like above, we want to again modify the line masking width to 500 km/s--the option here is the same in both commands.  We also want to ensure that we get a good estimate of the line fluxes and kinematics, even if the continuum fit locally is not good.  We can do this with the `--sub-cubic` or `-C` option, which subtracts a local cubic spline fit to the continuum instead of the actual continuum fit when estimating line parameters. Finally, we want to create some zoomed in plots around specific wavelengths while fitting, so we add the `--zoomed-plots` or `-z` option followed by pairs of wavelengths.  The final command looks like:
+
+`julia --project=. runloki.jl fit NGC7469_allchannel_psf_decomposition NGC7469.channel1234.rest_frame.fits --parallel 4 --psf --post-psf --sil-emission --no-pah-templates --linemask-width 500 --sub-cubic --zoomed-plots 5.3 5.65 7.45 8.05 12.77 12.86`
+
+(NGC7469_allchannel_psf_decomposition is the label)
+
+And the shortened version:
+
+`julia --project=. runloki.jl fit NGC7469_allchannel_psf_decomposition NGC7469.channel1234.rest_frame.fits -p 4 -fFstC -l 500 -z 5.3 5.65 7.45 8.05 12.77 12.86`
+
+
+The help message for the `prepare` command is:
+
+```bash
+usage: runloki.jl prepare [-p] [-s PSF-SPLINE-LENGTH] [-w]
+                        [-a EXTRACT-AP] [-m MIN-WAVE] [-M MAX-WAVE]
+                        [-r] [-e] [-l LINEMASK-WIDTH] [-h] channel
+                        redshift cubes...
+
+positional arguments:
+  channel               A channel number for the corrected, combined
+                        data cube (for multi-channel cubes, the
+                        channel number can be anything) (type: Int64)
+  redshift              The (systemic) redshift of the target (type:
+                        Float64)
+  cubes                 The data cube(s) to be combined - input
+                        individual files or a folder
+
+optional arguments:
+  -p, --make-psf        Create a 3D PSF model for the data cube(s)
+  -s, --psf-spline-length PSF-SPLINE-LENGTH
+                        The length (in pixels) of the cubic splines
+                        used to smooth the PSF model -- set to 0 to
+                        disable spline fitting (type: Int64, default:
+                        100)
+  -w, --adjust-wcs      Adjust the WCS values of each data cube based
+                        on the peak brightness in overlapping regions
+  -a, --extract-ap EXTRACT-AP
+                        The size of the aperture to extract spectra
+                        from at each spaxel, in units of the PSF FWHM
+                        (type: Float64, default: 0.0)
+  -m, --min-wave MIN-WAVE
+                        The minimum wavelength to allow in the output
+                        data cube (type: Float64, default: 0.0)
+  -M, --max-wave MAX-WAVE
+                        The maximum wavelength to allow in the output
+                        data cube (type: Float64, default: 27.0)
+  -r, --rotate-sky      Rotate the data cube to align with the RA/Dec
+                        axes on the sky
+  -e, --replace-errors  Replace the errors in the data cube with
+                        statistical errors based on the variance in a
+                        cubic spline fit
+  -l, --linemask-width LINEMASK-WIDTH
+                        The width (in km/s) to mask out to the left
+                        and right of each line in the line list; only
+                        relevant if --replace-errors is set (type:
+                        Float64, default: 1000.0)
+  -h, --help            show this help message and exit
+```
+
+And for the `fit` command:
+
+```bash
+usage: runloki.jl fit [-p PARALLEL] [-P PLOT] [-a [APERTURE...]] [-f]
+                      [-F [POST-PSF]] [-e EXTINCTION] [-M] [-t] [-s]
+                      [-c] [-j] [-S] [-A] [-g] [-C]
+                      [-l LINEMASK-WIDTH] [-m MASK [MASK...]]
+                      [-z ZOOMED-PLOTS [ZOOMED-PLOTS...]]
+                      [-b BOOTSTRAP] [-h] label cube
+
+positional arguments:
+  label                 A label for this fitting run (can be anything)
+  cube                  The data cube to be fit - input a single FITS
+                        file
+
+optional arguments:
+  -p, --parallel PARALLEL
+                        The number of cores to use for parallel
+                        processing (type: Int64, default: 0)
+  -P, --plot PLOT       Which backend to use for plotting; may be
+                        'pyplot', 'plotly', or 'both' (default:
+                        "pyplot")
+  -a, --aperture [APERTURE...]
+                        Extract and fit a spectrum from an aperture:
+                        must be followed by the parameters of the
+                        aperture  [AP_SHAPE] [RA] [DEC] [P1] [P2] [P3]
+                        where [AP_SHAPE] is one of 'circular',
+                        'elliptical', 'rectangular', or 'all'; [RA] is
+                        in sexagesimal hour angles OR decimal degrees;
+                        [DEC] is in sexagesimal degrees OR decimal
+                        degrees; [P1]...[P3] are dependent on
+                        [AP_SHAPE] - for circular apertures, [P1] is
+                        the radius in arcseconds, for elliptical
+                        apertures, [P1] and [P2] are the semimajor and
+                        semiminor axes in arcseconds and [P3] is the
+                        position angle in degrees, and for rectangular
+                        apertures, [P1] and [P2] are the width and
+                        height in arcseconds and [P3] is the position
+                        angle in degrees; if [AP_SHAPE] is 'all', the
+                        aperture is taken to be the whole FOV
+  -f, --psf             Enable the usage of a PSF template component
+                        in the fit - the data cube MUST have had a PSF
+                        model already generated (see the '--make-psf'
+                        option in the 'prepare' command)
+  -F, --post-psf [POST-PSF]
+                        Use this option AFTER fitting the cube with a
+                        PSF component (see the '--psf' option); input
+                        the path to a completed fit directory with
+                        param_maps and full_model FITS files; does a
+                        fit to the normalized PSF component itself and
+                        obtains the spectral feature fluxes attributed
+                        to the point source (default: "", without arg:
+                        "do")
+  -e, --extinction EXTINCTION
+                        Which dust extinction template to use; for IR
+                        fits, may be 'kvt', 'ct', 'ohm', 'd+', or
+                        'decompose'; for optical fits, may be
+                        'calzetti' or 'ccm' (default: "auto")
+  -M, --mixed-dust      Change the dust geometry from a screen
+                        (default) to mixed
+  -t, --no-pah-templates
+                        Disable the usage of PAH template spectra in
+                        the fitting - the PAHs and continuum are fit
+                        together
+  -s, --sil-emission    Enable the fitting of a silicate emission
+                        component (common in type 1 AGN)
+  -c, --ch-abs          Enable the fitting of the CH + water ice
+                        absorption features at ~7 um
+  -j, --joint           Enable joint fitting of the continuum and
+                        lines simultaneously; must also pass
+                        --no-pah-templates
+  -S, --ir-no-stellar   Disable the fitting of a stellar continuum
+                        component in the IR
+  -A, --i-like-my-storage-space-actually, --akhil
+                        Disable saving the full model as a FITS file
+                        (which can be a few GB)
+  -g, --global          Force all fits to be globally optimized with
+                        simulated annealing
+  -C, --sub-cubic       When fitting line residuals, subtract a cubic
+                        spline fit to the continuum instead of the
+                        actual fit to the continuum
+  -l, --linemask-width LINEMASK-WIDTH
+                        The width (in km/s) to mask out to the left
+                        and right of each line in the line list (type:
+                        Float64, default: 1000.0)
+  -m, --mask MASK [MASK...]
+                        Input a wavelength region to mask out as a
+                        pair of (min, max) in microns; can input as
+                        many pairs as necessary (type: Float64)
+  -z, --zoomed-plots ZOOMED-PLOTS [ZOOMED-PLOTS...]
+                        Input a wavelength region to create additional
+                        zoomed-in plots around as a pair of (min, max)
+                        in microns; can input as many pairs as
+                        necessary (type: Float64)
+  -b, --bootstrap BOOTSTRAP
+                        Set the number of bootstrapping iterations to
+                        estimate uncertainties (type: Int64, default:
+                        0)
+  -h, --help            show this help message and exit
+```
+
+### ii. General Code Options
+
+These options are found in `src/options/options.toml` and affect the defaults for all runs of the code:
 
 `parallel = true`
 
 This boolean option enables or disables multiprocessing (not to be confused with multithreading). If this option is true, when fitting individual spaxels, multiple spaxel fits may be performed in parallel across different CPUs.
+
+`parallel_strategy = "pmap"`
+
+Changes how multirpocessing code is done. May be either "pmap" to use the `pmap` function or "distributed" to use a distributed for loop.  In general, sticking with "pmap" is recommended since this dynamically allocates jobs to different cores as they become available, so if one core's jobs happen to run faster than other, there is no wasted computation time. Distributed for loops preallocate jobs to each core, so if one finishes significantly faster than the others, that core becomes unused while the others finish.
 
 `plot_spaxels = "pyplot"`
 
@@ -156,6 +356,10 @@ This boolean option enables or disables plotting 2D maps of each model parameter
 `save_fits = true`
 
 This boolean option enables or disables saving the final model parameters and uncertainties as FITS files at the end of fitting.
+
+`lines_allow_negative = false`
+
+This option determines whether emisison line amplitudes are allowed to go negative. Turning this on may be useful for really low SNR lines to map their spatial distribution and see if there is any significant emission. Note: this option also affects the units of the output line amplitudes and fluxes. If it's false, the log of the line amplitude/flux is saved, whereas if it's true, the linear value itself is saved.
 
 `n_bootstrap = 0`
 
@@ -195,7 +399,7 @@ This boolean option determines whether or not to save the full 3D model, evaluat
 
 This option allows one to add a systematic error in quadrature with the input errors as a fraction of the flux. For example, `sys_err = 0.1` will add a 10% systematic error. The default is to not add any systematic errors.
 
-`extinction_curve = "kvt"`
+`extinction_curve = "d+"`
 
 This option determines what dust extinction template to use, and has different options for the MIR and optical. 
 
@@ -229,6 +433,10 @@ This boolean option determines whether or not to include the stellar continuum c
 
 This boolean option determines whether or not to include the warm silicate dust emission component of [Gallimore et al. (2010)](https://ui.adsabs.harvard.edu/abs/2010ApJS..187..172G) in the MIR model.
 
+`fit_ch_abs = false`
+
+This boolean option determines whether or not to include absorption from CH and water features at ~7 microns.
+
 `fit_temp_multexp = false`
 
 This option, if enabled, will apply 4 multiplicative exponential profiles onto all of the input templates. This option can be utilized if one does not know the spatial or spectral shape of the PSF model ahead of time, with the hope that the flexibility afforded by these profiles will allow any generic PSF shape to be modeled. The exponential profiles obtained from [Rupke et al. (2017)](https://arxiv.org/pdf/1708.05139.pdf) equation 2:
@@ -242,7 +450,7 @@ This boolean option determines whether or not to include narrow Fe II line emiss
 
 Same as `fit_opt_na_feii` but pertaining to broad Fe II line emission.
 
-`use_pah_templates = false`
+`use_pah_templates = true`
 
 This boolean option determines how the PAH features are fit. If `false`, they will be fit using Drude profiles simultaneously with the rest of the continuum, the exact same way that PAHFIT does.  However, if `true`, the continuum fitting is split up into two steps.  In the first step, the continuum is fit while the PAH features are included using two templates from [Smith et al. (2007)](https://ui.adsabs.harvard.edu/abs/2007ApJ...656..770S).  Then in the second step, the continuum from the previous step is subtracted, and PAH features are fit to the residual spectrum using Drude profiles, using the same Drude model as PAHFIT.  In general, it is best to leave this option `false` unless you are dealing with spectra with extremely weak PAH emission and a heavily extincted underlying continuum. In these cases, the Drude model tends to get confused and unphysically attributes a large fraction of the underlying continuum to the left and right of the 9.7 micron silicate absorption feature to the PAH profiles.
 
@@ -317,21 +525,13 @@ This allows one to include arbitrary templates in the fitting of MIR data, where
 
 A 1D vector giving labels to each of the templates in `templates`. The length must match the length of the 4th axis of `templates`.
 
-`linemask_delta`
-
-This specifies the half-width, in pixels, to use in the calculation of the numerical second derivative when creating the emission line mask. Defaults to 3 for MIR data or 20 for optical data.
-
-`linemask_n_inc_thresh`
-
-This specifies the number of times the flux must increase to the left/right of a given emission line candidate before the line masking procedure halts. Increasing this number will tend to mask more to the left and right of each line.  Defaults to 3 for MIR and 7 for optical data.
-
-`linemask_thresh`
-
-This specifies the threshold, in number of standard deviations away from 0, that the second derivative must achieve to consider it an emission line detection in the line masking procedure. Defaults to 3.
-
 `linemask_overrides`
 
-One may use this to provide a vector of tuples, in the same format as `user_mask`, giving wavelength regions that should always be masked out during the line masking procedure. Masking regions with this option leads to slightly different behavior than simply masking them with `user_mask`: `user_mask` will force these regions to always be masked out during all steps of the fitting process, whereas masking them with `linemask_overrides` will *only* mask them out during the continuum fit, but will then unmask them during the line fit.
+One may use this to manually provide a vector of tuples, in the same format as `user_mask`, giving wavelength regions that should always be masked out during the line masking procedure. Masking regions with this option leads to slightly different behavior than simply masking them with `user_mask`: `user_mask` will force these regions to always be masked out during all steps of the fitting process, whereas masking them with `linemask_overrides` will *only* mask them out during the continuum fit, but will then unmask them during the line fit.
+
+`linemask_width`
+
+By default, if `linemask_overrides` is not provided, lines will be masked out by taking the line list from the `lines.toml` option file and masking out everything within $\pm 1000$ km/s.  This option allows you to change this width from $1000$ km/s to whatever you want.
 
 `map_snr_thresh`
 
@@ -363,7 +563,7 @@ Oftentimes one may desire to sort the components of lines fit with more than 1 p
 A boolean option that, if enabled, locks the hottest dust continuum component to 0 in the MIR. By default, this option is enabled if there are any templates in the fit, and disabled if there are no templates, but it can be overriden to whatever the user wants. The idea
 is that an AGN template should be used to fit the hotter dust components and the other dust components should be from the host galaxy.
 
-### ii. MIR Continuum and PAH Options
+### iii. MIR Continuum and PAH Options
 These options are found in `src/options/dust.toml`
 
 **Stellar Continuum:**
@@ -375,7 +575,10 @@ val = 5000.0
 plim = [4999.9, 5000.1]
 locked = true
 ```
-This option allows the user to modify the temperature of the stellar blackbody component of the continuum. `val` gives the starting value (default = 5000 K), `plim` gives the lower and upper limits on the parameter (which are only relevant if the parameter is allowed to vary, which in this case it is not), and `locked` is a boolean that determines whether the parameter is allowed to vary (`false`) or is fixed (`true`) during the fitting. The same format of `val`, `plim`, `locked` is used throughout these options and the line options (see the next section) for any parameter which the user may want to change.
+This option allows the user to modify the temperature of the stellar blackbody component of the continuum:
+$$B_{\nu,*}(\lambda,T) = \frac{3.973 \times 10^{13}\,{\rm MJy}\,{\rm sr}^{-1}\,{\rm \mu m}^{3}}{\lambda^3}\frac{1}{\exp{(14387.8\,{\rm \mu m}\,{\rm K} / \lambda T)}-1}$$
+
+`val` gives the starting value (default = 5000 K), `plim` gives the lower and upper limits on the parameter (which are only relevant if the parameter is allowed to vary, which in this case it is not), and `locked` is a boolean that determines whether the parameter is allowed to vary (`false`) or is fixed (`true`) during the fitting. The same format of `val`, `plim`, `locked` is used throughout these options and the line options (see the next section) for any parameter which the user may want to change.
 
 **Dust Continuum:**
 
@@ -387,7 +590,8 @@ val = 500.0
 plim = [499.9, 500.1]
 locked = true
 ```
-Following the stellar blackbody temperature, the dust blackbody temperatures are given in the same way, and may be modified in the same way. Temperatures may be added or removed, allowed to vary or fixed, if one so desires.
+Following the stellar blackbody temperature, the dust blackbody temperatures are given in the same way, and may be modified in the same way. Temperatures may be added or removed, allowed to vary or fixed, if one so desires:
+$$B_{\nu,\rm{dust}}(\lambda,T) = \frac{3.973 \times 10^{13}\,{\rm MJy}\,{\rm sr}^{-1}\,{\rm \mu m}^{3}}{\lambda^3}\bigg(\frac{9.7\,{\rm \mu m}}{\lambda}\bigg)^2\frac{1}{\exp{(14387.8\,{\rm \mu m}\,{\rm K} / \lambda T)}-1}$$
 
 **Power laws:**
 
@@ -417,6 +621,10 @@ If there are no templates, these options are ignored. Note: template amplitudes 
 
 **PAH Features:**
 
+By default, PAH features are modeled with Drude profiles:
+$$D(\lambda) = A\frac{(\gamma/\lambda_0)^2}{(\lambda/\lambda_0-\lambda_0/\lambda)^2+(\gamma/\lambda_0)^2}$$
+where $A$ is the amplitude, $\gamma$ is the FWHM, and $\lambda_0$ is the peak wavelength.
+
 Each PAH feature is labeled by its name, taking the format "PAH_XXX" where XXX is the central wavelength of the PAH to a precision of 2 decimal places. The decimal place is always assumed to come before the last 2 digits. This is only important for record-keeping purposes though, and it should have no affect on the code if this convention is broken. The only thing that may look weird is the PAH
 labels in some parameter maps which assume the decimal is located before the last 2 digits.
 
@@ -430,11 +638,26 @@ The first option for each PAH feature is the central wavelength. `val` and `lock
 
 ```toml
 [dust_features."PAH_329".fwhm]
-val = 0.050
+val = 0.04
 plim = [0.9, 1.1]
 locked = false
 ```
 The second option for each PAH feature is the FWHM. `val` and `locked` again work the same as always, but here `plim` is *multiplicative* with `val`. In other words, a `plim` of `[0.9, 1.1]` means that this value is allowed to vary from `0.050*0.9 = 0.045` to `0.050*1.1 = 0.055`.
+
+There is an optional third option for each PAH feature specifying an asymmetry parameter $a$. This is defined by modifying the FWHM of the PAH feature to be wavelength-dependent in the form
+$$\gamma_a(\lambda) = \frac{2\gamma}{1+e^{a(\lambda-\lambda_0)}}$$
+(see [Donnan et al. 2024](https://doi.org/10.1093/mnras/stae612))
+
+Most PAHs do not have this, but by default there are a few that include one. The limits here work the same way as the FWHM and are multiplicative. For example:
+
+```toml
+[dust_features."PAH_329".asym]
+val = 0.52
+plim = [0.5, 1.5]
+locked = false
+```
+
+Sets the asymmetry parameter to 0.52 with limits `0.52*0.5 = 0.26` and `0.52*1.5 = 0.78`.
 
 Note: If one wishes to model a PAH feature with a Pearson type-IV profile (currently we model all PAHs with Drude profiles), then additional entries for the power index $m$ (`dust_features."PAH_3.29".index`) and exponential cutoff $\nu$ (`dust_features."PAH_3.29".cutoff`) are required. The `plim` entires for these two values are normal, i.e. they work the same way as the temperatures.
 
@@ -503,6 +726,8 @@ locked = false
 $\tau_{\rm CH}$ is the peak optical depth of the CH absorption feature. $\tau_{\rm ice}$ is *not* an optical depth, but rather it is a multiplicative factor with $\tau_{\rm CH}$ that determines the optical depth of the ice absorption. That is, if the optical depth of the ice absorption is $\tilde{\tau}$, then $\tilde{\tau} = \tau_{\rm ice} \times \tau_{\rm CH}.$ Here, $\tau_{\rm ice}$ is tightly constrained since this factor is typically close to $\sim 0.5$.
 
 **Dust Extinction:**
+
+For screens, the effect is $e^{-\tau(\lambda)}$, while for mixed dust it is $(1-e^{-\tau(\lambda)})/\tau(\lambda)$. The main concern here is the shape of the function $\tau(\lambda)$, which has two large absorption features at 9.7 and 18 microns caused by silicate dust.
 
 Dust extinction has two primary parameters, $\tau_{9.7}$ and $\beta$:
 ```toml
@@ -577,7 +802,7 @@ locked = true
 ```
 Here, `val`, `plim`, and `locked` all work the same as before. For details on what each parameter means, see equation 1 of [Gallimore et al. (2010)](https://ui.adsabs.harvard.edu/abs/2010ApJS..187..172G).
 
-### iii. Optical Continuum Options
+### iv. Optical Continuum Options
 These options are found in `src/options/optical.toml`
 
 **Simple Stellar Populations:**
@@ -696,8 +921,11 @@ plim = [0.0, 1.0]
 locked = false
 ```
 
-### iv. Line Options
-These options are found in `src/options/lines.toml`.
+### v. Line Options
+These options are found in `src/options/lines.toml`. In general, lines are a mix of Gaussian $G(\lambda)$ and Lorentzian $L(\lambda)$ profiles. This can be modeled as a pseudo-Voigt profile $V(\lambda)$:
+$$V(\lambda) = \eta G(\lambda) + (1-\eta)L(\lambda)$$
+$$G(\lambda) = Ae^{-(\lambda-\lambda_0)^2/2\sigma^2}$$
+$$L(\lambda) = A\frac{(\gamma/2)^2}{(\lambda-\lambda_0)^2 + (\gamma/2)^2}$$
 
 **Main Component Options:**
 
@@ -1156,6 +1384,7 @@ The units of outputs for different quantities are listed here. When relevant, ou
 - Covering fractions are unitless
 - Line & PAH amplitudes: $\log_{10}(I/{\rm erg}\ {\rm s}^{-1}\ {\rm cm}^{-2}\ {\rm Hz}^{-1}\ {\rm sr}^{-1})$
 - Line & PAH fluxes: $\log_{10}(F/{\rm erg}\ {\rm s}^{-1}\ {\rm cm}^{-2})$
+    - Note: Line amplitudes and fluxes will NOT BE LOGS if the `lines_allow_negative` option is true, they will be in the linear CGS units (${\rm erg}\,{\rm s}^{-1}\,{\rm cm}^{-2}$ for fluxes and ${\rm erg}\,{\rm s}^{-1}\,{\rm cm}^{-2}\,{\rm Hz}^{-1}\,{\rm sr}^{-1}$ for amplitudes)
 - PAH peak wavelengths: μm
 - PAH FWHMs: μm
 - Line velocity offsets: ${\rm km}\ {\rm s}^{-1}$
@@ -1187,7 +1416,7 @@ addprocs(Sys.CPU_THREADS)
 ```
 2. Load in the data you want to fit from a FITS file using LOKI's "from_fits" function, which takes a list of strings that give the file paths to each FITS file that should be read, along with a float value giving the redshift of the object. This converts the data into an `Observation` object.
 ```julia
-obs = from_fits(["file_1.fits", "file_2.fits", ...], 0.0)
+obs = from_fits(["file_1.fits", "file_2.fits", ...], redshift)
 ```
 3. Convert the data to the rest-frame and mask out bad pixels using the "correct!" function on the `Observation` object.
 ```julia
@@ -1195,7 +1424,7 @@ correct!(obs)
 ```
 4. To combine data from multiple channels/bands, use the `combine_channels!` function, which takes a number of smaller subroutines and combines them into one procedure for combining data for multiple channels. This procedure handles: 1. (optional) adjusting the WCS parameters in the header of each channel such that the centroids match on the overlapping parts of the spectrum, which may aid in refining the WCS parameters provided by the JWST pipeline. This may be enabled with the `adjust_wcs_headerinfo` keyword argument. 2. Reprojecting all of the channels onto the same 2D spaxel grid, which is done with interpolation, the order of which can be adjusted with the `order` keyword argument (default is linear). 3. (optional) extract the data from each spaxel using an aperture (i.e. a tophat kernel) to suppress resampling artifacts produced by the 3D drizzle algorithm. The size of the aperture may be adjusted using the `extract_from_ap` keyword argument, in units of the PSF FWHM. 4. (optional) rescale the data so that the continuum is continuous between channels. Sometimes there are discontinuous jumps in flux between the channels caused by differences in the PSF shape and size between the channels. NOTE: DO NOT rescale the data without knowing what you are doing -- if the jumps are purely caused by differences in the PSF, then it is not correct to simply rescale the data, the PSF should be included in the model (which LOKI has the capability to do). ONLY apply rescaling if the jumps are minor and the PSF is not believed to be a major contributor, otherwise it's best to model the PSF. This is controlled with the `rescale_channels` argument, which can be set to a specific ``reference'' wavelength which is used to select a channel/band which is used as the reference point that all other channels are rescaled to match. 5. The data is resampled in the wavelength direction in the regions where the channels overlap to a median resolution, while conserving flux. There are additional keyword arguments that can be used to adjust how the data is combined with even finer detail, which can be looked up using the code documentation itself. I.e., in the julia terminal, type `?combine_channels!`.
 ```julia 
-combine_channels!(obs, [1,2,3], out_id=0, order=1, adjust_wcs_headerinfo=true, rescale_channels=nothing, rescale_limits=(0.0, Inf), rescale_snr=3., extract_from_ap=0.)
+combine_channels!(obs, [1,2,3], out_id=0, order=1, adjust_wcs_headerinfo=true, rescale_channels=nothing, extract_from_ap=0.)
 ```
 5. (Optional) It is often desirable to rotate the cubes to be aligned with the sky axes rather than the IFU axes, which can be achieved using the `rotate_to_sky_axes!` function:
 ```julia
@@ -1225,7 +1454,7 @@ fit_cube!(cube_fitter, ap)
 
 If one wishes to model the PSF from a bright point source and include it in the model to separate it from the host galaxy emission, there are some additional utility functions that one can utilize:
 
-`generate_psf_model!(obs)`: This function acts on an observation object and generates a PSF model cube that has been resized to match the size of the observation, shifted such that the centroids are aligned, background annulus subtracted, and interpolated over the spectral leak artifact at 12.2 microns. For this function to work, the input observation data MUST be aligned to the IFU axes, not the sky axes. One must have also prepared a data cube to be used as the PSF model for each channel/band and placed them in the `src/templates/psfs_stars/` directory (these files are too large to provide by default on github). The recommendation is to use a bright star that was observed during the calibration programs - i.e. proposal IDs 1536 and 1538 - to construct these PSF models. Applying this function should be done BEFORE step 3 in the above roadmap, as steps after this automatically apply themselves to both the data itself and the PSF model to ensure that they are transformed in the same way.
+`generate_psf_model!(obs)`: This function acts on an observation object and generates a PSF model cube that has been resized to match the size of the observation, shifted such that the centroids are aligned, background annulus subtracted, and interpolated over the spectral leak artifact at 12.2 microns. For this function to work, the input observation data MUST be aligned to the IFU axes, not the sky axes.
 
 `splinefit_psf_model!(obs.channels[0], 100)`: To be used strictly after the `generate_psf_model` function, this function takes the PSF model generated by the previous function and fits a cubic spline to it, with a knot spacing given by the second argument (in pixels), since the PSF is expected to vary gradually in the wavelength dimension. This function should be applied between steps 4 and 5 in the above roadmap. This function is not required if one wishes to keep the more noisy PSF model generated in the previous step.
 

@@ -103,7 +103,7 @@ fit_opt_na_feii = false
 fit_opt_br_feii = false
 
 # whether or not to constrain the PAH emission using templates from Smith et al. (2007)
-use_pah_templates = false
+use_pah_templates = true
 
 # fit_joint: this option decides whether or not lines should be fit jointly with the continuum. If false,
 # the lines will first be masked out during the continuum fitting, and then the continuum model will be 
