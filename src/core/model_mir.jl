@@ -3,8 +3,8 @@
 
 # Helper function for getting the extinction profile for a given fit
 function get_extinction_profile(λ::Vector{<:Real}, params::Vector{<:Real}, 
-    extinction_curve::String, extinction_screen::Bool, κ_abs::Vector{Spline1D},
-    custom_ext::Union{Spline1D,Nothing}, n_dust_cont::Integer, n_power_law::Integer)
+    extinction_curve::String, extinction_screen::Bool, κ_abs::Vector{<:Base.Callable},
+    custom_ext::Union{<:Base.Callable,Nothing}, n_dust_cont::Integer, n_power_law::Integer)
 
     pₑ = 3 + 2n_dust_cont + 2n_power_law
     τ_oli = τ_pyr = τ_for = nothing
@@ -120,9 +120,9 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
     addition to the overall fit
 """
 function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, 
-    dust_prof::Vector{Symbol}, n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, κ_abs::Vector{Spline1D}, custom_ext::Union{Spline1D,Nothing},
-    fit_sil_emission::Bool, fit_temp_multexp::Bool, use_pah_templates::Bool, templates::Matrix{<:Real}, channel_masks::Vector{BitVector}, 
-    nuc_temp_fit::Bool, return_components::Bool)
+    dust_prof::Vector{Symbol}, n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, κ_abs::Vector{<:Base.Callable}, 
+    custom_ext::Union{<:Base.Callable,Nothing}, fit_sil_emission::Bool, fit_temp_multexp::Bool, use_pah_templates::Bool, 
+    templates::Matrix{<:Real}, channel_masks::Vector{BitVector}, nuc_temp_fit::Bool, return_components::Bool)
 
     # Prepare outputs
     out_type = eltype(params)
@@ -241,7 +241,7 @@ end
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
 
 function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
-    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, κ_abs::Vector{Spline1D}, custom_ext::Union{Spline1D,Nothing}, 
+    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, κ_abs::Vector{<:Base.Callable}, custom_ext::Union{<:Base.Callable,Nothing}, 
     fit_sil_emission::Bool, fit_temp_multexp::Bool, use_pah_templates::Bool, templates::Matrix{<:Real}, channel_masks::Vector{BitVector},
     nuc_temp_fit::Bool)
 

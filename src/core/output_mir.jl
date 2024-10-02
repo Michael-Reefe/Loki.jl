@@ -122,8 +122,7 @@ function assign_outputs_mir(out_params::AbstractArray{<:Real}, out_errs::Abstrac
         if cube_fitter.save_full_model
 
             # Interpolate the LSF
-            lsf_interp = Spline1D(cube_fitter.cube.λ, cube_fitter.cube.lsf, k=1)
-            lsf_interp_func = x -> lsf_interp(x)
+            lsf_interp_func = linear_interp(cube_fitter.cube.λ, cube_fitter.cube.lsf)
             templates_psfnuc = nuc_temp_fit ? comps_c["templates_1"] : nothing
 
             # End of line parameters: recreate the un-extincted (intrinsic) line model

@@ -176,16 +176,16 @@ function interpolate_over_lines!(λ_spax::Vector{<:Real}, I_spax::Vector{<:Real}
     templates_spax::Matrix{<:Real}, mask_lines::BitVector, scale::Integer; only_templates::Bool=false)
 
     # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
-    λknots = λ_spax[.~mask_lines][(1+scale):scale:(length(λ_spax[.~mask_lines])-scale)]
+    n_knots = cld(length(λ_spax[.~mask_lines]), scale)
     # Replace the masked lines with a linear interpolation
     if !only_templates
-        I_spax[mask_lines] .= Spline1D(λ_spax[.~mask_lines], I_spax[.~mask_lines], λknots, k=1, bc="extrapolate").(λ_spax[mask_lines]) 
-        σ_spax[mask_lines] .= Spline1D(λ_spax[.~mask_lines], σ_spax[.~mask_lines], λknots, k=1, bc="extrapolate").(λ_spax[mask_lines])
+        I_spax[mask_lines] .= linear_spline_smooth(λ_spax[.~mask_lines], I_spax[.~mask_lines], n_knots)(λ_spax[mask_lines])
+        σ_spax[mask_lines] .= linear_spline_smooth(λ_spax[.~mask_lines], σ_spax[.~mask_lines], n_knots)(λ_spax[mask_lines])
     end
     for s in axes(templates_spax, 2)
         m = .~isfinite.(templates_spax[:, s])
-        templates_spax[mask_lines .| m, s] .= Spline1D(λ_spax[.~mask_lines .& .~m], templates_spax[.~mask_lines .& .~m, s], λknots, 
-            k=1, bc="extrapolate")(λ_spax[mask_lines .| m])
+        templates_spax[mask_lines .| m , s] .= linear_spline_smooth(λ_spax[.~mask_lines .& .~m], templates_spax[.~mask_lines .& .~m, s],
+            n_knots)(λ_spax[mask_lines .| m])
     end
 
 end
@@ -312,26 +312,14 @@ function continuum_cubic_spline(λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vecto
     scale = 7
 
     # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
-    λknots = λ[1+scale:scale:end-scale]
-    # Remove any knots that happen to fall within a masked pixel
-    good = []
-    for i ∈ eachindex(λknots)
-        _, ind = findmin(abs.(λ .- λknots[i]))
-        if ~mask_lines[ind]
-            append!(good, [i])
-        end
-    end
-    λknots = λknots[good]
-    @debug "Performing cubic spline continuum fit with $(length(λknots)) knots"
+    n_knots = cld(length(λ[.~mask_lines]), scale)
+    @debug "Performing cubic spline continuum fit with $n_knots knots"
 
     # Do a full cubic spline interpolation of the data
-    I_spline = Spline1D(λ[.~mask_lines], I[.~mask_lines], λknots, k=3, bc="extrapolate").(λ)
-    σ_spline = Spline1D(λ[.~mask_lines], σ[.~mask_lines], λknots, k=3, bc="extrapolate").(λ)
-    # Linear interpolation over the lines
-    I_spline[mask_lines] .= Spline1D(λ[.~mask_lines], I[.~mask_lines], λknots, k=1, bc="extrapolate").(λ[mask_lines])
-    σ_spline[mask_lines] .= Spline1D(λ[.~mask_lines], σ[.~mask_lines], λknots, k=1, bc="extrapolate").(λ[mask_lines])
+    I_spline = cubic_spline_smooth(λ[.~mask_lines], I[.~mask_lines], n_knots)(λ)
+    I_spline[mask_lines] .= linear_spline_smooth(λ[.~mask_lines], I[.~mask_lines], n_knots)(λ[mask_lines])
 
-    mask_lines, I_spline, σ_spline
+    mask_lines, I_spline
 end
 
 
@@ -423,7 +411,7 @@ function get_continuum_for_line_fit(cube_fitter::CubeFitter, λ::Vector{<:Real},
             end
         end
         # do cubic spline fit
-        _, notemp_cont, _ = continuum_cubic_spline(λ, full_cont .- temp_cont, zeros(eltype(line_cont), length(line_cont)), 
+        _, notemp_cont = continuum_cubic_spline(λ, full_cont .- temp_cont, zeros(eltype(line_cont), length(line_cont)), 
             cube_fitter.linemask_Δ, cube_fitter.linemask_n_inc_thresh, cube_fitter.linemask_thresh, cube_fitter.linemask_overrides)
         line_cont = temp_cont .+ notemp_cont
     end
@@ -631,7 +619,7 @@ end
 # of the final model
 function collect_fit_results(res::CMPFit.Result, pfix_tied::Vector{<:Real}, plock_tied::BitVector, 
     tied_pairs::Vector{Tuple}, tied_indices::Vector{<:Integer}, n_tied::Integer, 
-    stellar_templates::Union{Vector{Spline2D},Matrix{<:Real},Nothing}, cube_fitter::CubeFitter, 
+    stellar_templates::Union{Vector{Interpolations.Extrapolation},Matrix{<:Real},Nothing}, cube_fitter::CubeFitter, 
     λ::Vector{<:Real}, templates::Matrix{<:Real}, N::Real; nuc_temp_fit::Bool=false, 
     bootstrap_iter::Bool=false)
 
@@ -777,7 +765,7 @@ function collect_fit_results(res::CMPFit.Result, pfix_cont_tied::Vector{<:Real},
     tied_pairs_cont::Vector{Tuple}, tied_indices_cont::Vector{<:Integer}, n_tied_cont::Integer, n_free_cont::Integer,
     pfix_lines_tied::Vector{<:Real}, lock_lines_tied::BitVector, tied_pairs_lines::Vector{Tuple}, 
     tied_indices_lines::Vector{<:Integer}, n_tied_lines::Integer, n_free_lines::Integer, 
-    stellar_templates::Union{Vector{Spline2D},Matrix{<:Real},Nothing}, cube_fitter::CubeFitter,
+    stellar_templates::Union{Vector{Interpolations.Extrapolation},Matrix{<:Real},Nothing}, cube_fitter::CubeFitter,
     λ::Vector{<:Real}, N::Real, templates::Matrix{<:Real}, lsf_interp_func::Function, nuc_temp_fit::Bool;
     bootstrap_iter::Bool=bootstrap_iter)
 

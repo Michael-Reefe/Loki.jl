@@ -1046,7 +1046,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
     end
 
     # Perform a cubic spline fit, also obtaining the line mask
-    mask_lines, I_spline, σ_spline = continuum_cubic_spline(λ, I, σ, cube_fitter.linemask_Δ, cube_fitter.linemask_n_inc_thresh,
+    mask_lines, I_spline = continuum_cubic_spline(λ, I, σ, cube_fitter.linemask_Δ, cube_fitter.linemask_n_inc_thresh,
         cube_fitter.linemask_thresh, cube_fitter.linemask_overrides)
     mask_bad = (use_ap || use_vorbins) ? iszero.(I) .| iszero.(σ) : cube_fitter.cube.mask[spaxel, :]
     mask = mask_lines .| mask_bad
@@ -1089,8 +1089,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
     norm = norm ≠ 0. ? norm : 1.
 
     # Interpolate the LSF
-    lsf_interp = Spline1D(λ, cube_fitter.cube.lsf, k=1)
-    lsf_interp_func = x -> lsf_interp(x)    # Interpolate the LSF
+    lsf_interp_func = linear_interp(λ, cube_fitter.cube.lsf)
 
     p_out, p_err = with_logger(spaxel_logger) do
 
@@ -1125,7 +1124,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxel::Cart
                 #  even after setting the seed
                 I_boot = I_boots[nboot]
                 # Redo the cubic spline fit
-                mask_lines_boot, I_spline_boot, σ_spline_boot = with_logger(NullLogger()) do 
+                mask_lines_boot, I_spline_boot = with_logger(NullLogger()) do 
                     continuum_cubic_spline(λ, I, σ, cube_fitter.linemask_Δ, cube_fitter.linemask_n_inc_thresh, 
                         cube_fitter.linemask_thresh, cube_fitter.linemask_overrides)
                 end
@@ -1203,7 +1202,7 @@ function fit_stack!(cube_fitter::CubeFitter)
     I_sum_init, σ_sum_init, templates_init, area_sr_init = get_total_integrated_intensities(cube_fitter)
 
     # Perform a cubic spline fit, also obtaining the line mask
-    mask_lines_init, I_spline_init, σ_spline_init = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init, cube_fitter.linemask_Δ,
+    mask_lines_init, I_spline_init = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init, cube_fitter.linemask_Δ,
         cube_fitter.linemask_n_inc_thresh, cube_fitter.linemask_thresh, cube_fitter.linemask_overrides)
     mask_bad_init = iszero.(I_sum_init) .| iszero.(σ_sum_init)
     mask_init = mask_lines_init .| mask_bad_init
@@ -1216,8 +1215,7 @@ function fit_stack!(cube_fitter::CubeFitter)
     norm = norm ≠ 0. ? norm : 1.
 
     # Interpolate the LSF
-    lsf_interp = Spline1D(λ_init, cube_fitter.cube.lsf, k=1)
-    lsf_interp_func = x -> lsf_interp(x)    # Interpolate the LSF
+    lsf_interp_func = linear_interp(λ_init, cube_fitter.cube.lsf)
 
     # No bootstrapping on the first integrated fit
     p_out, p_err, I_model_init, comps_init, χ2_init, dof_init = _fit_spaxel_iterfunc(
@@ -1800,7 +1798,7 @@ function evaluate_model(λ::Vector{<:Real}, spaxel::CartesianIndex, cube_fitter:
 
         # Now we must interpolate psf_norm onto the proper wavelength grid
         # Assume that the PSF normalization stays consistent past the boundaries
-        psf_norm_spax = Spline1D(cube_fitter.cube.λ, psf_norm[spaxel, :]; s=0., bc="nearest")
+        psf_norm_spax = linear_interp(cube_fitter.cube.λ, psf_norm[spaxel, :])
         I_nuc_spax = I_nuc .* psf_norm_spax(λ)
 
         templates_spax = Matrix{Float64}(undef, length(λ), 1)
@@ -1901,7 +1899,7 @@ function evaluate_model(λ::Vector{<:Real}, aperture::Union{Vector{<:Aperture.Ab
                     psf_norm_1d[k] /= get_area(aperture[k])
                 end                                                                  
             end
-            psf_norm_spax = Spline1D(cube_fitter.cube.λ, psf_norm_1d; s=0., bc="nearest")
+            psf_norm_spax = linear_interp(cube_fitter.cube.λ, psf_norm_1d)
             I_nuc_spax = I_nuc .* psf_norm_spax(λ)
         end
 
@@ -1966,8 +1964,7 @@ function _evaluate_model(λ::Vector{<:Real}, p_cont::Vector{<:Real}, p_lines::Ve
             cube_fitter.extinction_curve, templates_spax, cube_fitter.fit_temp_multexp, false, true)
     end
     ext_curve = comps_cont[ext_key]
-    lsf_interp = Spline1D(cube_fitter.cube.λ, cube_fitter.cube.lsf, k=1)
-    lsf_interp_func = x -> lsf_interp(x)    # Interpolate the LSF
+    lsf_interp_func = linear_interp(cube_fitter.cube.λ, cube_fitter.cube.lsf)
 
     I_lines, comps_lines = model_line_residuals(λ, p_lines, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
         cube_fitter.flexible_wavesol, ext_curve, lsf_interp_func, cube_fitter.relative_flags, nothing, false, true) 

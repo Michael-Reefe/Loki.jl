@@ -265,8 +265,10 @@ function cubefitter_opt_prepare_continuum(λ::Vector{<:Real}, z::Real, out::Dict
 
     # Create the simple stellar population templates with FSPS
     ssp_λ, ages, metals, ssp_templates = generate_stellar_populations(λ, cube.lsf, z, out[:cosmology], name)
+    ages, metals = collect(ages), collect(metals)
     # Create a 2D linear interpolation over the ages/metallicities
-    ssp_templates = [Spline2D(ages, metals, ssp_templates[:, :, i], kx=1, ky=1) for i in eachindex(ssp_λ)]
+    ssp_templates = [extrapolate(interpolate((ages, metals), ssp_templates[:, :, i], Gridded(Linear())), Interpolations.Flat())
+        for i in eachindex(ssp_λ)]
 
     # Load in the Fe II templates from Veron-Cetty et al. (2004)
     npad_feii, feii_λ, na_feii_fft, br_feii_fft = generate_feii_templates(λ, cube.lsf)

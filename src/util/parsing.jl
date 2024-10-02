@@ -77,10 +77,10 @@ function parse_resolving(channel::String)
 
     # Create a linear interpolation function so we can evaluate it at the points of interest for our data,
     # taking an input wi in the OBSERVED frame
-    interp_R = Spline1D(wave, R, k=1)
+    interp_R = DataInterpolations.LinearInterpolation(R, wave)
 
     # The line-spread function in km/s - reduce by 25% from the pre-flight data
-    lsf = wi -> C_KMS / interp_R(wi)
+    lsf = wi -> C_KMS ./ interp_R(clamp.(wi, extrema(wave)...))
     
     lsf
 end
@@ -1224,6 +1224,7 @@ function silicate_dp()
 
     # Read in IRS 08572+3915 data from 00000003_0.ideos.mrt
     λ_irs, F_irs, σ_irs = read_irs_data(joinpath(@__DIR__, "..", "templates", "00000003_0.ideos.mrt"))
+    λ_irs, F_irs, σ_irs = λ_irs[2:end], F_irs[2:end], σ_irs[2:end]
     # Get flux values at anchor points + endpoints
     anchors = [4.9, 5.5, 7.8, 13.0, 14.5, 26.5, λ_irs[end]]
     values = zeros(length(anchors))
@@ -1233,10 +1234,10 @@ function silicate_dp()
     end
 
     # Cubic spline fit with specific anchor points
-    cubic_spline_irs = Spline1D(anchors, values; k=3)
+    cubic_spline_irs = cubic_spline_interp(anchors, values)
 
     # Get optical depth
-    τ_DS = log10.(cubic_spline_irs.(λ_irs) ./ F_irs)
+    τ_DS = log10.(cubic_spline_irs(λ_irs) ./ F_irs)
     # Smooth data and remove features < ~7.5 um
     τ_smooth = movmean(τ_DS, 5)
     v1, p1 = findmin(τ_DS[λ_irs .< 6])
@@ -1289,8 +1290,8 @@ function read_dust_κ(x::Real, y::Real, a::Real)
     κ_abs_pyr = @. 3 * q_abs_pyr / (4 * a_cm * ρ_pyr)
 
     # Create interpolating functions over wavelength
-    κ_abs_pyr = Spline1D(λ, κ_abs_pyr, k=3)
-    κ_abs_oli = Spline1D(λ, κ_abs_oli, k=3)
+    κ_abs_pyr = cubic_spline_interp(λ, κ_abs_pyr)
+    κ_abs_oli = cubic_spline_interp(λ, κ_abs_oli)
 
     # Read in the mass absorption coefficiencts for crystalline forsterite
     for_data = readdlm(joinpath(@__DIR__, "..", "templates", "tamani_crystalline_forsterite_k.txt"), ' ', Float64, '\n', comments=true)
@@ -1299,7 +1300,7 @@ function read_dust_κ(x::Real, y::Real, a::Real)
     # extend edges to 0
     λ_for = [for_data[1,1]-0.2; for_data[1,1]-0.1; for_data[:, 1]; for_data[end, 1]+0.1; for_data[end, 1]+0.2]
     κ_abs_for = [0.; 0.; for_data[:, 2]; 0.; 0.]
-    κ_abs_for = Spline1D(λ_for, κ_abs_for, k=3)
+    κ_abs_for = cubic_spline_interp(λ_for, κ_abs_for)
 
     κ_abs_oli, κ_abs_pyr, κ_abs_for
 end
@@ -1343,7 +1344,7 @@ function generate_stellar_populations(λ::Vector{<:Real}, lsf::Vector{<:Real}, z
     # Convert from angstroms to microns
     ssp_λ ./= 1e4
     @assert (λleft ≥ minimum(ssp_λ)) && (λright ≤ maximum(ssp_λ)) "The extended input spectrum range of ($λleft, $λright) um " * 
-        "is outside the FSPS template range of ($(minimum(ssp_λ)), $(maximum(ssp_λ))) um. Please adjust the input spectrum accordingly."
+        "is outside the FSPS template range of ($(extrema(ssp_λ)...)) um. Please adjust the input spectrum accordingly."
 
     # Mask to a range around the input spectrum
     mask = λleft .< ssp_λ .< λright
@@ -1353,9 +1354,9 @@ function generate_stellar_populations(λ::Vector{<:Real}, lsf::Vector{<:Real}, z
     ssp_λlin = collect(λleft:Δλ:λright)
     
     # LSF FWHM of the input spectrum in microns, interpolated at the locations of the SSP templates
-    inp_fwhm = Spline1D(λ, lsf ./ C_KMS .* λ, k=1, bc="nearest")(ssp_λlin)
+    inp_fwhm = linear_interp(λ, lsf ./ C_KMS .* λ)(ssp_λlin)
     # FWHM resolution of the FSPS templates in um
-    ssp_lsf = Spline1D(ssp_λ, abs.(ssp0.resolutions[mask]), k=1, bc="nearest")(ssp_λlin)
+    ssp_lsf = linear_interp(ssp_λ, abs.(ssp0.resolutions[mask]))(ssp_λlin)
     ssp_fwhm = ssp_lsf ./ C_KMS .* ssp_λlin .* 2√(2log(2))
     # Difference in resolutions between the input spectrum and SSP templates, in pixels
     dfwhm = sqrt.(clamp.(inp_fwhm.^2 .- ssp_fwhm.^2, 0., Inf)) ./ Δλ 
@@ -1368,13 +1369,13 @@ function generate_stellar_populations(λ::Vector{<:Real}, lsf::Vector{<:Real}, z
     dL = luminosity_dist(u"cm", cosmo, z).val
 
     # Generate templates over a range of ages and metallicities
-    ages = exp.(range(log(0.001), log(13.7), 50))        # logarithmically spaced from 1 Myr to 15 Gyr
+    ages = exp.(range(log(0.001), log(13.7), 20))        # logarithmically spaced from 1 Myr to 15 Gyr
     logzs = range(-2.3, 0.4, 10)                         # linearly spaced from log(Z/Zsun) = [M/H] = -2.3 to 0.4
     ssp_templates = zeros(length(ages), length(logzs), length(ssp_lnλ))
     n_temp = size(ssp_templates, 1) * size(ssp_templates, 2)
 
     @info "Generating $n_temp simple stellar population templates with FSPS with " * 
-        "ages ∈ ($(minimum(ages)), $(maximum(ages))) Gyr, [M/H] ∈ ($(minimum(logzs)), $(maximum(logzs)))"
+        "ages ∈ ($(extrema(ages)...)) Gyr, [M/H] ∈ ($(extrema(logzs)...))"
 
     prog = Progress(n_temp; showspeed=true)
     for (z_ind, logz) in enumerate(logzs)
@@ -1386,11 +1387,11 @@ function generate_stellar_populations(λ::Vector{<:Real}, lsf::Vector{<:Real}, z
             # Convert Lsun/Msun/Ang to erg/s/cm^2/Ang/Msun
             ssp_flux = ssp_LperA[mask] .* 3.846e33 ./ (4π .* dL.^2)
             # Resample onto the linear wavelength grid
-            ssp_flux = Spline1D(ssp_λ, ssp_flux, k=1, bc="nearest")(ssp_λlin)
+            ssp_flux = linear_interp(ssp_λ, ssp_flux)(ssp_λlin)
             # Convolve with gaussian kernels to degrade the spectrum to match the input spectrum's resolution
             ssp_flux = convolveGaussian1D(ssp_flux, dfwhm)
             # Resample again, this time onto the logarithmic wavelength grid
-            ssp_flux = Spline1D(ssp_λlin, ssp_flux, k=1, bc="nearest")(ssp_lnλ)
+            ssp_flux = linear_interp(ssp_λlin, ssp_flux)(ssp_lnλ)
             # Add to the templates array
             ssp_templates[age_ind, z_ind, :] .= ssp_flux
             next!(prog)
@@ -1458,11 +1459,11 @@ function generate_feii_templates(λ::Vector{<:Real}, lsf::Vector{<:Real})
 
     # Resample to a linear wavelength grid
     feii_λlin = collect(λleft:Δλ:λright)
-    na_feii_temp = Spline1D(feii_λ, na_feii_temp, k=1, bc="nearest")(feii_λlin)
-    br_feii_temp = Spline1D(feii_λ, br_feii_temp, k=1, bc="nearest")(feii_λlin)
+    na_feii_temp = linear_interp(feii_λ, na_feii_temp)(feii_λlin)
+    br_feii_temp = linear_interp(feii_λ, br_feii_temp)(feii_λlin)
 
     # LSF FWHM of the input spectrum in microns, interpolated at the locations of the SSP templates
-    inp_fwhm = Spline1D(λ, lsf ./ C_KMS .* λ, k=1, bc="nearest")(feii_λlin)
+    inp_fwhm = linear_interp(λ, lsf ./ C_KMS .* λ)(feii_λlin)
     # FWHM resolution of the Fe II templates in um
     feii_fwhm = 1.0/1e4
     # Difference in resolutions between the input spectrum and SSP templates, in pixels
@@ -1475,8 +1476,8 @@ function generate_feii_templates(λ::Vector{<:Real}, lsf::Vector{<:Real})
     # Logarithmically rebinned wavelengths
     logscale = log(λ[2]/λ[1])
     feii_lnλ = get_logarithmic_λ(feii_λlin, logscale)
-    na_feii_temp = Spline1D(feii_λlin, na_feii_temp, k=1, bc="nearest")(feii_lnλ)
-    br_feii_temp = Spline1D(feii_λlin, br_feii_temp, k=1, bc="nearest")(feii_lnλ)
+    na_feii_temp = linear_interp(feii_λlin, na_feii_temp)(feii_lnλ)
+    br_feii_temp = linear_interp(feii_λlin, br_feii_temp)(feii_lnλ)
 
     # Pad with 0s up to the next product of small prime factors -> to make the FFT more efficient
     npad = nextprod([2,3,5], length(feii_lnλ))

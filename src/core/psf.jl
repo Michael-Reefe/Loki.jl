@@ -152,15 +152,13 @@ function generate_psf_model!(cube::DataCube, psf_model_dir::String=""; interpola
             # Get indices to the left/right of the 12.22 μm leak
             lind = argmin(abs.(λ .- 11.93))
             rind = argmin(abs.(λ .- 12.39))
-            # Create widely spaced knots for the interpolation
-            Δλ = 0.1
-            knots1 = λ[2]:Δλ:λ[lind]
-            knots2 = λ[rind]:Δλ:λ[end-1]
-            knots = [knots1; knots2]
             # Only use the data to the left/right of the leak
             λinterp = [λ[1:lind]; λ[rind:length(λ)]]
             psfinterp = [psf[c, 1:lind]; psf[c, rind:length(λ)]]
-            interp = Spline1D(λinterp, psfinterp, knots, k=3, bc="extrapolate")
+            scale = 100
+            n_knots = fld(length(λinterp), scale)
+            # BSplineApprox is a smoothing spline interpolation with a limited number of anchor points
+            interp = cubic_spline_smooth(λinterp, psfinterp, n_knots)
 
             # Fill in the data in the leak region with the interpolation
             psf[c, lind:rind] .= interp(λ[lind:rind])
@@ -224,8 +222,8 @@ function splinefit_psf_model!(cube::DataCube, spline_width::Integer)
         if sum(filt) < 2spline_width+3
             continue
         end
-        λknots = cube.λ[filt][1+spline_width:spline_width:end-spline_width]
-        cube.psf_model[c, :] .= Spline1D(cube.λ[filt], cube.psf_model[c, filt], λknots, k=3, bc="extrapolate")(cube.λ)
+        n_knots = cld(length(cube.λ[filt]), spline_width)
+        cube.psf_model[c, :] .= cubic_spline_smooth(cube.λ[filt], cube.psf_model[c, filt], n_knots)(cube.λ)
     end
 
     # Renormalize
@@ -350,8 +348,8 @@ function generate_nuclear_template(cube::DataCube, ap_r::Real=0.; spline_width::
     # Do a cubic spline fit to get a good S/N and fill in holes
     if spline_width > 0
         good = isfinite.(nuc1d) .& (abs.(nuc1d) .< 1e10)
-        λknots = cube.λ[good][1+spline_width:spline_width:end-spline_width]
-        nuc1d = Spline1D(cube.λ[good], nuc1d[good], λknots, k=3, bc="extrapolate")(cube.λ)
+        n_knots = fld(length(cube.λ[good]), spline_width)
+        nuc1d = cubic_spline_smooth(cube.λ[good], nuc1d[good], n_knots)(cube.λ)
     end
 
     [nuc1d[k] * cube.psf_model[i,j,k] for i ∈ axes(cube.psf_model, 1), j ∈ axes(cube.psf_model, 2), k ∈ axes(cube.psf_model, 3)]

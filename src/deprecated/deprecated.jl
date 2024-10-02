@@ -261,7 +261,7 @@ end
     # # if requested, recalculate the extra parameters obtained with the calculate_extra_parameters function
     # if recalculate_params
     #     # Get the line mask and cubic spline continuum
-    #     mask_lines, I_spline, σ_spline = continuum_cubic_spline(λ, I, σ)
+    #     mask_lines, I_spline = continuum_cubic_spline(λ, I, σ)
 
     #     # Separate the fit parameters
     #     popt_c = p_out[1:cube_fitter.n_params_cont]

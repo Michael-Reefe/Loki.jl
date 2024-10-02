@@ -369,8 +369,8 @@ function log_rebin!(cube::DataCube, factor::Integer=1)
         if !isnothing(cube.psf_model)
             cube.psf_model = resample_flux_permuted3D(lnλ, cube.λ, cube.psf_model)
         end
-        cube.psf = Spline1D(cube.λ, cube.psf, k=1, bc="extrapolate")(lnλ)
-        cube.lsf = Spline1D(cube.λ, cube.lsf, k=1, bc="extrapolate")(lnλ)
+        cube.psf = LinearInterpolation(cube.psf, cube.λ; extrapolate=true)(lnλ)
+        cube.lsf = LinearInterpolation(cube.lsf, cube.λ; extrapolate=true)(lnλ)
         cube.λ = lnλ
     else
         @warn "Cube is already log-rebinned! Will not be rebinned again."
@@ -413,29 +413,15 @@ function interpolate_nans!(cube::DataCube)
             @debug "Too many NaNs in spaxel $index -- this spaxel will not be fit"
             continue
         end
-        filt = .!isfinite.(I) .& .!isfinite.(σ)
+        filt = .~isfinite.(I) .& .~isfinite.(σ)
 
         # Interpolate the NaNs
         if sum(filt) > 0
             @debug "NaNs found in spaxel $index -- interpolating"
 
-            finite = isfinite.(I)
-            scale = 7
-
-            # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
-            λknots = λ[finite][(1+scale):scale:(length(λ[finite])-scale)]
-            good = []
-            for i ∈ eachindex(λknots) 
-                _, λc = findmin(abs.(λknots[i] .- λ))
-                if !isnan(I[λc])
-                    append!(good, [i])
-                end
-            end
-            λknots = λknots[good]
-
-            # ONLY replace NaN values, keep the rest of the data as-is
-            I[filt] .= Spline1D(λ[isfinite.(I)], I[isfinite.(I)], λknots, k=1, bc="extrapolate")(λ[filt])
-            σ[filt] .= Spline1D(λ[isfinite.(σ)], σ[isfinite.(σ)], λknots, k=1, bc="extrapolate")(λ[filt])
+            finite = .~filt
+            I[filt] .= DataInterpolations.LinearInterpolation(I[finite], λ[finite]; extrapolate=true)(λ[filt])
+            σ[filt] .= DataInterpolations.LinearInterpolation(σ[finite], λ[finite]; extrapolate=true)(λ[filt])
 
             # Reassign data in cube structure
             cube.I[index, :] .= I
@@ -443,7 +429,8 @@ function interpolate_nans!(cube::DataCube)
 
             # Do for PSF models as well
             if !isnothing(psf)
-                psf[filt] .= Spline1D(λ[isfinite.(psf)], psf[isfinite.(psf)], λknots, k=1, bc="extrapolate")(λ[filt])
+                _m = isfinite.(psf)
+                psf[filt] .= DataInterpolations.LinearInterpolation(psf[_m], λ[_m]; extrapolate=true)(λ[filt])
                 cube.psf_model[index, :] .= psf
             end
 
@@ -545,7 +532,7 @@ function calculate_statistical_errors!(cube::DataCube, Δ::Union{Integer,Nothing
         I = cube.I[spaxel, :]
         σ = cube.σ[spaxel, :]
         # Perform a cubic spline fit, also obtaining the line mask
-        mask_lines, I_spline, _ = continuum_cubic_spline(λ, I, σ, Δ, n_inc_thresh, thresh, overrides)
+        mask_lines, I_spline = continuum_cubic_spline(λ, I, σ, Δ, n_inc_thresh, thresh, overrides)
         mask_bad = cube.mask[spaxel, :]
         mask = mask_lines .| mask_bad
 
@@ -2141,10 +2128,11 @@ function frebin(array::AbstractArray, nsout::S, nlout::S=1; total::Bool=false) w
     if (nsout % ns == 0) && (nlout % nl == 0)
         xindex = (1:nsout) / (nsout/ns)
         if isone(nl)  # 1D case, linear interpolation
-            return Spline1D(1:ns, array, k=1)(xindex) * (total ? sbox : 1.)
+            interpfunc = extrapolate(interpolate(array, BSpline(Constant())), Interpolations.Flat())
+            return interpfunc(xindex) * (total ? sbox : 1.)
         end
         yindex = (1:nlout) / (nlout/nl)
-        interpfunc = Spline2D(1:ns, 1:Int(nl), array, kx=1, ky=1)
+        interpfunc = extrapolate(interpolate(array, BSpline(Constant())), Interpolations.Flat())
         return [interpfunc(x, y) for x in xindex, y in yindex] .* (total ? sbox.*lbox : 1.)
     end
 

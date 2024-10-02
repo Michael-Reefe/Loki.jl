@@ -820,7 +820,7 @@ end
 function get_mir_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, continuum::MIRContinuum,
     λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vector{<:Real}, N::Real, tau_guess::Real)
 
-    cubic_spline = Spline1D(λ, I, k=3)
+    cubic_spline = cubic_spline_interp(λ, I)
 
     # Stellar amplitude
     λ_s = minimum(λ) < 5 ? minimum(λ)+0.1 : 5.1

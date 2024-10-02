@@ -12,9 +12,9 @@ using Random
 using Statistics
 using StatsBase
 using NaNStatistics
-using QuadGK
 using NumericalIntegration
-using Dierckx
+using Interpolations
+using DataInterpolations
 using LinearAlgebra
 using FFTW
 using SpecialFunctions

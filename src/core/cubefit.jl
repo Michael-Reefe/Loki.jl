@@ -402,8 +402,8 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     sys_err::Real
     extinction_curve::String
     extinction_screen::Bool
-    κ_abs::Vector{Spline1D}
-    custom_ext_template::Union{Spline1D,Nothing}
+    κ_abs::Vector{<:Base.Callable}
+    custom_ext_template::Union{<:Base.Callable,Nothing}
     extinction_map::Union{Array{T,3},Nothing}
     fit_stellar_continuum::Bool
     fit_sil_emission::Bool
@@ -443,7 +443,7 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     # Optical continuum parameters
     n_ssps::S
     ssp_λ::Union{Vector{T},Nothing}
-    ssp_templates::Union{Vector{Spline2D},Nothing}
+    ssp_templates::Union{Vector{Interpolations.Extrapolation},Nothing}
     feii_templates_fft::Union{Matrix{C},Nothing}
     vres::T
     vsyst_ssp::T
@@ -823,7 +823,7 @@ function cubefitter_add_default_options!(cube::DataCube, spectral_region::Symbol
     if !haskey(out, :custom_ext_template)
         out[:custom_ext_template] = nothing
     else
-        out[:custom_ext_template] = Spline1D(out[:custom_ext_template][:,1], out[:custom_ext_template][:,2], k=1, bc="extrapolate")
+        out[:custom_ext_template] = linear_interp(out[:custom_ext_template][:,1], out[:custom_ext_template][:,2])
     end
 
 end

@@ -117,7 +117,7 @@ at the given wavelengths `λ`, given the parameter vector `params`.
     addition to the overall fit
 """
 function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, vres::Real, vsyst_ssp::Real, vsyst_feii::Real, 
-    npad_feii::Integer, n_ssps::Integer, ssp_λ::Vector{<:Real}, ssp_templates::Union{Vector{Spline2D},Matrix{<:Real}}, 
+    npad_feii::Integer, n_ssps::Integer, ssp_λ::Vector{<:Real}, ssp_templates::Union{Vector{Interpolations.Extrapolation},Matrix{<:Real}}, 
     feii_templates_fft::Matrix{<:Complex}, n_power_law::Integer, fit_uv_bump::Bool, fit_covering_frac::Bool, fit_opt_na_feii::Bool, 
     fit_opt_br_feii::Bool, extinction_curve::String, templates::Matrix{<:Real}, fit_temp_multexp::Bool, nuc_temp_fit::Bool, 
     return_components::Bool)   
@@ -132,7 +132,7 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, vr
     # Interpolate the SSPs to the right ages/metallicities (this is slow)
     for i in 1:n_ssps
         # normalize the templates by their median so that the amplitude is properly separated from the age and metallicity during fitting
-        if ssp_templates isa Vector{Spline2D}
+        if ssp_templates isa Vector{Interpolations.Extrapolation}
             temp = [ssp_templates[j](params[pᵢ+1], params[pᵢ+2]) for j in eachindex(ssp_λ)]
         else
             temp = @view ssp_templates[:,i]
@@ -210,7 +210,7 @@ end
 
 # Multiple versions for more efficiency
 function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, vres::Real, vsyst_ssp::Real, vsyst_feii::Real, 
-    npad_feii::Integer, n_ssps::Integer, ssp_λ::Vector{<:Real}, ssp_templates::Union{Vector{Spline2D},Matrix{<:Real}}, 
+    npad_feii::Integer, n_ssps::Integer, ssp_λ::Vector{<:Real}, ssp_templates::Union{Vector{Interpolations.Extrapolation},Matrix{<:Real}}, 
     feii_templates_fft::Matrix{<:Complex}, n_power_law::Integer, fit_uv_bump::Bool, fit_covering_frac::Bool, fit_opt_na_feii::Bool, 
     fit_opt_br_feii::Bool, extinction_curve::String, templates::Matrix{<:Real}, fit_temp_multexp::Bool, nuc_temp_fit::Bool)   
 
@@ -223,7 +223,7 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, vr
     # Interpolate the SSPs to the right ages/metallicities (this is slow)
     for i in 1:n_ssps
         # normalize the templates by their median so that the amplitude is properly separated from the age and metallicity during fitting
-        if ssp_templates isa Vector{Spline2D}
+        if ssp_templates isa Vector{Interpolations.Extrapolation}
             temp = [ssp_templates[j](params[pᵢ+1], params[pᵢ+2]) for j in eachindex(ssp_λ)]
         else
             temp = @view ssp_templates[:,i]

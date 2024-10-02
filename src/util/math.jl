@@ -51,32 +51,43 @@ const kvt_prof::Matrix{Float64} =  [8.0  0.06;
                                     12.6 0.045;
                                     12.7 0.04314]
 
+# Convenience function for interpolation with constant extrapolation at the edges
+extrapolate_constant(itp::DataInterpolations.AbstractInterpolation) = x -> itp(clamp.(x, extrema(itp.t)...))
+
+# 1:1 interpolation methods (all data points will be on the spline)
+linear_interp(x, y) = DataInterpolations.LinearInterpolation(y, x; extrapolate=false) |> extrapolate_constant
+quadratic_spline_interp(x, y) = DataInterpolations.QuadraticSpline(y, x; extrapolate=false) |> extrapolate_constant
+cubic_spline_interp(x, y) = DataInterpolations.CubicSpline(y, x; extrapolate=false) |> extrapolate_constant
+
+# smoothing interpolation methods (not all data points will be on the spline)
+linear_spline_smooth(x, y, n_knots::Integer) = DataInterpolations.BSplineApprox(y, x, 1, n_knots, :Uniform, :Uniform; extrapolate=true)
+cubic_spline_smooth(x, y, n_knots::Integer) = DataInterpolations.BSplineApprox(y, x, 3, n_knots, :Uniform, :Uniform; extrapolate=true)
 
 # Save the Donnan et al. 2022 profile as a constant
 const DP_prof = silicate_dp()
-const DP_interp = Spline1D(DP_prof[1], DP_prof[2]; k=3)
+const DP_interp = cubic_spline_interp(DP_prof[1], DP_prof[2])
 
 # Save the Chiar+Tielens 2005 profile as a constant
 const CT_prof = silicate_ct()
-const CT_interp = Spline1D(CT_prof[1], CT_prof[2]; k=3)
+const CT_interp = cubic_spline_interp(CT_prof[1], CT_prof[2])
 
 # Save the KVT profile as a constant
-const KVT_interp = Spline1D(kvt_prof[:, 1], kvt_prof[:, 2], k=2, bc="nearest")
-const KVT_interp_end = Spline1D([kvt_prof[end, 1], kvt_prof[end, 1]+2], [kvt_prof[end, 2], 0.], k=1, bc="nearest")
+const KVT_interp = quadratic_spline_interp(kvt_prof[:, 1], kvt_prof[:, 2])
+const KVT_interp_end = linear_interp([kvt_prof[end, 1], kvt_prof[end, 1]+2], [kvt_prof[end, 2], 0.])
 
 # Save the OHM 1992 profile as a constant
 const OHM_prof = silicate_ohm()
-const OHM_interp = Spline1D(OHM_prof[1], OHM_prof[2]; k=3)
+const OHM_interp = cubic_spline_interp(OHM_prof[1], OHM_prof[2])
 
 # Save the Smith+2006 PAH templates as constants
 const SmithTemps = read_smith_temps()
-const Smith3_interp = Spline1D(SmithTemps[1], SmithTemps[2]; k=3)
-const Smith4_interp = Spline1D(SmithTemps[3], SmithTemps[4]; k=3)
+const Smith3_interp = cubic_spline_interp(SmithTemps[1], SmithTemps[2])
+const Smith4_interp = cubic_spline_interp(SmithTemps[3], SmithTemps[4])
 
 # Save the Ice+CH optical depth template as a constant
 const IceCHTemp = read_ice_ch_temps()
-const Ice_interp = Spline1D(IceCHTemp[1], IceCHTemp[2]; k=3)
-const CH_interp = Spline1D(IceCHTemp[3], IceCHTemp[4]; k=3)
+const Ice_interp = cubic_spline_interp(IceCHTemp[1], IceCHTemp[2])
+const CH_interp = cubic_spline_interp(IceCHTemp[3], IceCHTemp[4])
 
 # Polynomials for calculating the CCM extinction curve
 const CCM_optPoly_a = Polynomial([1.0, 0.104, -0.609, 0.701, 1.137, -1.718, -0.827, 1.647, -0.505])
@@ -965,7 +976,7 @@ end
 Calculate the total silicate absorption optical depth given a series of column densities and
 mass absorption coefficients.
 """
-function τ_decompose(λ::Vector{<:Real}, N_col::Vector{<:Real}, κ_abs::Vector{Spline1D})
+function τ_decompose(λ::Vector{<:Real}, N_col::Vector{<:Real}, κ_abs::Vector{<:Base.Callable})
     sum([N_col[i] .* κ_abs[i](λ) for i in eachindex(N_col)])
 end
 
@@ -1444,7 +1455,7 @@ function calculate_composite_params(λ::Vector{<:Real}, flux::Vector{<:Real}, λ
     end
 
     # Interpolate to find where velocity is at 5, 10 and 90, and 95%
-    vinterp = Spline1D(line_cdf, velocity, k=3, bc="extrapolate")
+    vinterp = CubicSpline(velocity, line_cdf; extrapolate=true)
     v5 = vinterp(0.05)
     v10 = vinterp(0.10)
     vmed = vinterp(0.50)
@@ -1458,7 +1469,7 @@ function calculate_composite_params(λ::Vector{<:Real}, flux::Vector{<:Real}, λ
     w80 = sqrt(clamp(w80^2 - w80_inst^2, 0., Inf))
 
     # Calculate peak velocity
-    finterp = Spline1D(velocity, flux[m][w][wd], k=3, bc="extrapolate")
+    finterp = CubicSpline(flux[m][w][wd], velocity; extrapolate=true)
     guess = velocity[nanargmax(flux[m][w][wd])]
     res = Optim.optimize(v -> -finterp(v), guess-50., guess+50.)
     vpeak = res.minimizer[1]

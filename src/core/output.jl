@@ -284,7 +284,7 @@ this will make a grid of 3 plots containing the total combined flux, and the flu
 all on the same color scale. Kinematic components such as the velocity don't have an equivalent "total" that is well
 defined, so they would just get 2 plots containing the kinematics of each component.
 """
-function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMaps, psf_interp::Spline1D, 
+function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMaps, psf_interp::Base.Callable, 
     snr_thresh::Real=3., marker::Union{Vector{<:Real},Nothing}=nothing)
 
     for (i, line) ∈ enumerate(cube_fitter.lines.names)
@@ -429,7 +429,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
     @debug "Using solid angle $(cube_fitter.cube.Ω), redshift $(cube_fitter.z), cosmology $(cube_fitter.cosmology)"
 
     # Ineterpolate the PSF FWHM
-    psf_interp = Spline1D(cube_fitter.cube.λ, cube_fitter.cube.psf, k=1)
+    psf_interp = linear_interp(cube_fitter.cube.λ, cube_fitter.cube.psf)
     psf_med = median(cube_fitter.cube.psf)
 
     # Calculate the centroid
