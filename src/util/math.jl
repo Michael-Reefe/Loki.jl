@@ -294,7 +294,7 @@ The concept for this function was based on a similar function in the pPXF python
 (Cappellari 2017, https://ui.adsabs.harvard.edu/abs/2017MNRAS.466..798C/abstract),
 however the implementation is different.
 """
-function convolveGaussian1D(flux::Vector{<:Real}, fwhm::Vector{<:Real})
+function convolveGaussian1D(flux::AbstractVector, fwhm::AbstractVector)
 
     # clamp with a minimum of 0.01 so as to not cause problems with Gaussians with 0 std dev
     fwhm_clamped = clamp.(fwhm, 0.01, Inf)
@@ -449,22 +449,6 @@ end
 
 
 """
-    ln_likelihood(data, model, err)
-
-Natural log of the likelihood for a given `model`, `data`, and `err`
-
-# Example
-```jldoctest
-julia> ln_likelihood([1.1, 1.9, 3.2], [1., 2., 3.], [0.1, 0.1, 0.1])
-1.1509396793681144
-```
-"""
-@inline function ln_likelihood(data::Vector{T}, model::Vector{T}, err::Vector{T}) where {T<:Real}
-    -0.5 * sum(@. (data - model)^2 / err^2 + log(2π * err^2))
-end
-
-
-"""
     hermite(x, n)
 
 Hermite polynomial of order n computed using the recurrence relations
@@ -480,7 +464,7 @@ julia> hermite(2., 3)
 40.0
 ```
 """
-function hermite(x::Real, n::Integer)
+function hermite(x, n::Integer)
     if iszero(n)
         1.
     elseif isone(n)
@@ -500,8 +484,8 @@ end
 Return the Blackbody function Bν (per unit FREQUENCY) in MJy/sr,
 given a wavelength in μm and a temperature in Kelvins.
 """
-@inline function Blackbody_ν(λ::Real, Temp::Real)
-    Bν_1/λ^3 / expm1(Bν_2/(λ*Temp))
+@inline function Blackbody_ν(λ, Temp)
+    @. Bν_1/λ^3 / expm1(Bν_2/(λ*Temp))
 end
 
 
@@ -511,7 +495,7 @@ end
 Return the peak wavelength (in μm) of a Blackbody spectrum at a given temperature `Temp`,
 using Wein's Displacement Law.
 """
-@inline function Wein(Temp::Real)
+@inline function Wein(Temp)
     b_Wein / Temp
 end
 
@@ -522,8 +506,8 @@ end
 Simple power law function where the flux is proportional to the wavelength to the power alpha,
 normalized at 9.7 um.
 """
-@inline function power_law(λ::Real, α::Real, ref_λ::Real=9.7)
-    (λ/ref_λ)^α
+@inline function power_law(λ, α, ref_λ=9.7)
+    @. (λ/ref_λ)^α
 end
 
 
@@ -552,9 +536,9 @@ end
 Calculate a Drude profile at location `x`, with amplitude `A`, central value `μ`, and full-width at half-max `FWHM`
 Optional asymmetry parameter `asym`
 """
-@inline function Drude(x::Real, A::Real, μ::Real, FWHM::Real, asym::Real)
-    γ = 2FWHM / (1 + exp(asym*(x-μ)))
-    A * (γ/μ)^2 / ((x/μ - μ/x)^2 + (γ/μ)^2)
+@inline function Drude(x, A, μ, FWHM, asym)
+    γ = @. 2FWHM / (1 + exp(asym*(x-μ)))
+    @. A * (γ/μ)^2 / ((x/μ - μ/x)^2 + (γ/μ)^2)
 end
 
 
@@ -566,9 +550,9 @@ parameter `a`, index `m`, and exponential cutoff `ν`.
 
 See Pearson (1895), and https://iopscience.iop.org/article/10.3847/1538-4365/ac4989/pdf
 """
-function PearsonIV(x::Real, A::Real, μ::Real, a::Real, m::Real, ν::Real)
+function PearsonIV(x, A, μ, a, m, ν)
     n = (1 + (-ν/(2m))^2)^-m * exp(-ν * atan(-ν/(2m)))
-    A/n * (1 + ((x - μ)/a)^2)^-m * exp(-ν * atan((x - μ)/a))
+    @. A/n * (1 + ((x - μ)/a)^2)^-m * exp(-ν * atan((x - μ)/a))
 end
 
 ########################################## STELLAR POP FUNCTIONS #########################################
@@ -586,8 +570,8 @@ the specific implementation is different. See:
 - Cappellari (2017): http://adsabs.harvard.edu/abs/2017MNRAS.466..798C
 - Sexton et al. (2021): https://ui.adsabs.harvard.edu/abs/2021MNRAS.500.2871S/abstract 
 """
-function convolve_losvd(_templates::AbstractArray{T}, vsyst::Real, v::Real, σ::Real, vres::Real, npix::Integer;
-    temp_fft::Bool=false, npad_in::Integer=0) where {T<:Number}
+function convolve_losvd(_templates::AbstractArray, vsyst, v, σ, vres, npix::Integer;
+    temp_fft::Bool=false, npad_in::Integer=0)
 
     if temp_fft
         @assert npad_in > 0 "npad_in must be specified for inputs that are already FFT'ed!"
@@ -643,7 +627,7 @@ A small helper function to calculate the k'(λ) attenuation curve from Calzetti 
 This function is used by the different methods in `attenuation_calzetti` to reduce repetition,
 since all methods include this same calculation.
 """
-function _calzetti_kprime_curve(λ::Vector{<:Real}, E_BV::Real, Rv::Real)
+function _calzetti_kprime_curve(λ::AbstractVector, E_BV, Rv)
 
     # eq. (4) from Calzetti et al. (2000)
     kprime = zeros(eltype(E_BV), length(λ))
@@ -671,7 +655,7 @@ for more complitcated geometries.
 This idea for this function was based on a similar function from pPXF (Cappellari 2017), but
 the implementation is different.
 """
-function attenuation_calzetti(λ::Vector{<:Real}, E_BV::Real; Cf::Real=0., Rv::Real=4.05)
+function attenuation_calzetti(λ::AbstractVector, E_BV; Cf=0., Rv=4.05)
 
     # Get the actual extinction curve
     kprime = _calzetti_kprime_curve(λ, E_BV, Rv)
@@ -683,7 +667,7 @@ function attenuation_calzetti(λ::Vector{<:Real}, E_BV::Real; Cf::Real=0., Rv::R
     @. Cf + (1 - Cf)*atten
 end
 
-function attenuation_calzetti(λ::Vector{<:Real}, E_BV::Real, δ_uv::Real; Cf::Real=0., Rv::Real=4.05)
+function attenuation_calzetti(λ::AbstractVector, E_BV, δ_uv; Cf=0., Rv=4.05)
 
     # Get the actual extinction curve
     kprime = _calzetti_kprime_curve(λ, E_BV, Rv)
@@ -743,7 +727,7 @@ have been pasted below:
 7. For the optical/NIR transformation, the coefficients from 
    O'Donnell (1994) are used
 """
-function attenuation_cardelli(λ::Vector{<:Real}, E_BV::Real, Rv::Real=3.10)
+function attenuation_cardelli(λ::AbstractVector, E_BV, Rv=3.10)
     # inverse wavelength (microns)
     x = 1.0 ./ λ
 
@@ -804,10 +788,10 @@ end
 Evaluate a Gaussian profile at `x`, parameterized by the amplitude `A`, mean value `μ`, and 
 full-width at half-maximum `FWHM`
 """
-@inline function Gaussian(x::Real, A::Real, μ::Real, FWHM::Real)
+@inline function Gaussian(x, A, μ, FWHM)
     # Reparametrize FWHM as dispersion σ
     σ = FWHM / (2√(2log(2)))
-    A * exp(-(x-μ)^2 / (2σ^2))
+    @. A * exp(-(x-μ)^2 / (2σ^2))
 end
 
 
@@ -819,28 +803,28 @@ full-width at half-maximum `FWHM`, 3rd moment / skewness `h₃`, and 4th moment 
 
 See Riffel et al. (2010)
 """
-function GaussHermite(x::Real, A::Real, μ::Real, FWHM::Real, h₃::Real, h₄::Real)
+function GaussHermite(x, A, μ, FWHM, h₃, h₄)
 
     h = [h₃, h₄]
     # Reparametrize FWHM as dispersion σ
     σ = FWHM / (2√(2log(2)))
     # Gaussian exponential argument w
-    w = (x - μ) / σ
+    w = @. (x - μ) / σ
     # Normalized Gaussian
-    α = exp(-w^2 / 2)
+    α = @. exp(-w^2 / 2)
 
     # Calculate coefficients for the Hermite basis
     n = 3:(length(h)+2)
     norm = .√(factorial.(n) .* 2 .^ n)
     coeff = vcat([1, 0, 0], h./norm)
     # Calculate hermite basis
-    Herm = sum([coeff[nᵢ] * hermite(w, nᵢ-1) for nᵢ ∈ eachindex(coeff)])
+    Herm = sum([coeff[nᵢ] .* hermite(w, nᵢ-1) for nᵢ ∈ eachindex(coeff)])
 
     # Calculate peak height (i.e. value of function at w=0)
-    Herm0 = sum([coeff[nᵢ] * hermite(0., nᵢ-1) for nᵢ ∈ eachindex(coeff)])
+    Herm0 = sum([coeff[nᵢ] .* hermite(0., nᵢ-1) for nᵢ ∈ eachindex(coeff)])
 
     # Combine the Gaussian and Hermite profiles
-    A * α * Herm / Herm0
+    @. A * α * Herm / Herm0
 end
 
 
@@ -850,8 +834,8 @@ end
 Evaluate a Lorentzian profile at `x`, parametrized by the amplitude `A`, mean value `μ`,
 and full-width at half-maximum `FWHM`
 """
-@inline function Lorentzian(x::Real, A::Real, μ::Real, FWHM::Real)
-    A * (FWHM/2)^2 / ((x-μ)^2 + (FWHM/2)^2)
+@inline function Lorentzian(x, A, μ, FWHM)
+    @. A * (FWHM/2)^2 / ((x-μ)^2 + (FWHM/2)^2)
 end
 
 
@@ -863,20 +847,20 @@ full-width at half-maximum `FWHM`, and mixing ratio `η`
 
 https://docs.mantidproject.org/nightly/fitting/fitfunctions/PseudoVoigt.html
 """
-function Voigt(x::Real, A::Real, μ::Real, FWHM::Real, η::Real)
+function Voigt(x, A, μ, FWHM, η)
 
     # Reparametrize FWHM as dispersion σ
     σ = FWHM / (2√(2log(2))) 
     # Normalized Gaussian
-    G = 1/√(2π * σ^2) * exp(-(x-μ)^2 / (2σ^2))
+    G = @. 1/√(2π * σ^2) * exp(-(x-μ)^2 / (2σ^2))
     # Normalized Lorentzian
-    L = 1/π * (FWHM/2) / ((x-μ)^2 + (FWHM/2)^2)
+    L = @. 1/π * (FWHM/2) / ((x-μ)^2 + (FWHM/2)^2)
 
     # Normalize the function so that the integral is given by this
     I = ∫Voigt(A, FWHM, η)
 
     # Mix the two distributions with the mixing parameter η
-    I * (η * G + (1 - η) * L)
+    @. I * (η * G + (1 - η) * L)
 end
 
 
@@ -891,7 +875,7 @@ Calculate the mixed silicate extinction profile based on Kemper, Vriend, & Tiele
 Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 (with modifications)
 """
-function τ_kvt(λ::Vector{<:Real}, β::Real)
+function τ_kvt(λ::AbstractVector, β)
 
     # Get limits of the values that we have datapoints for via the kvt_prof constant
     mx, mn = argmax(kvt_prof[:, 1]), argmin(kvt_prof[:, 1])
@@ -925,7 +909,7 @@ end
 
 Calculate the extinction profile based on Chiar & Tielens (2005)
 """
-function τ_ct(λ::Vector{<:Real})
+function τ_ct(λ::AbstractVector)
 
     mx = argmax(CT_prof[1])
     λ_mx = CT_prof[1][mx]
@@ -946,7 +930,7 @@ end
 
 Calculate the extinction profile based on Ossenkopf, Henning, & Mathis (1992)
 """
-function τ_ohm(λ::Vector{<:Real})
+function τ_ohm(λ::AbstractVector)
 
     ext = OHM_interp(λ)
     _, wh = findmin(x -> abs(x - 9.7), OHM_prof[1])
@@ -961,7 +945,7 @@ end
 
 Calculate the mixed silicate extinction profile based on Donnan et al. (2022)
 """
-function τ_dp(λ::Vector{<:Real}, β::Real)
+function τ_dp(λ::AbstractVector, β)
 
     # Simple cubic spline interpolation
     ext = DP_interp(λ)
@@ -976,7 +960,7 @@ end
 Calculate the total silicate absorption optical depth given a series of column densities and
 mass absorption coefficients.
 """
-function τ_decompose(λ::Vector{<:Real}, N_col::Vector{<:Real}, κ_abs::Vector{<:Base.Callable})
+function τ_decompose(λ::AbstractVector, N_col::AbstractVector, κ_abs::AbstractVector{<:Base.Callable})
     sum([N_col[i] .* κ_abs[i](λ) for i in eachindex(N_col)])
 end
 
@@ -986,7 +970,7 @@ end
 
 Calculate the ice extinction profiles
 """
-function τ_ice(λ::Vector{<:Real})
+function τ_ice(λ::AbstractVector)
 
     # Simple cubic spline interpolation
     ext = Ice_interp(λ)
@@ -1001,7 +985,7 @@ end
 
 Calculate the CH extinction profiles
 """
-function τ_ch(λ::Vector{<:Real})
+function τ_ch(λ::AbstractVector)
 
     # Simple cubic spline interpolation
     ext = CH_interp(λ)
@@ -1017,11 +1001,11 @@ end
 Calculate the extinction factor given the normalized curve `ext` and the optical depth
 at 9.7 microns, `τ_97`, either assuming a screen or mixed geometry.
 """
-function extinction(ext::Real, τ_97::Real; screen::Bool=false)
+function extinction(ext, τ_97; screen::Bool=false)
     if screen
-        exp(-τ_97*ext)
+        @. exp(-τ_97*ext)
     else
-        iszero(τ_97) ? 1. : (1 - exp(-τ_97*ext)) / (τ_97*ext)
+        @. ifelse(iszero(τ_97), 1., (1 - exp(-τ_97*ext)) / (τ_97*ext))
     end
 end
 
@@ -1065,7 +1049,7 @@ function resample_flux_permuted3D(new_wave::AbstractVector, old_wave::AbstractVe
 end
 
 
-function multiplicative_exponentials(λ::Vector{<:Real}, p::Vector{<:Real})
+function multiplicative_exponentials(λ::AbstractVector, p::AbstractVector)
     λmin, λmax = extrema(λ)
     λ̄ = @. (λ - λmin) / (λmax - λmin)
     # Equation 2 of Rupke et al. (2017): https://arxiv.org/pdf/1708.05139.pdf
@@ -1150,8 +1134,8 @@ wavelength solution in the data
 - `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
 addition to the overall fit
 """
-function model_line_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, n_lines::S, n_comps::S, lines::TransitionLines, 
-    flexible_wavesol::Bool, ext_curve::Vector{<:Real}, lsf::Function, relative_flags::BitVector, template_norm::Union{Nothing,Vector{<:Real}},
+function model_line_residuals(λ::AbstractVector, params::AbstractVector, n_lines::S, n_comps::S, lines::TransitionLines, 
+    flexible_wavesol::Bool, ext_curve::AbstractVector, lsf::Function, relative_flags::BitVector, template_norm::Union{Nothing,AbstractVector},
     nuc_temp_fit::Bool, return_components::Bool) where {S<:Integer}
 
     # Prepare outputs
@@ -1256,8 +1240,8 @@ end
 
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
-function model_line_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, n_lines::S, n_comps::S, lines::TransitionLines, 
-    flexible_wavesol::Bool, ext_curve::Vector{<:Real}, lsf::Function, relative_flags::BitVector, template_norm::Union{Nothing,Vector{<:Real}},
+function model_line_residuals(λ::AbstractVector, params::AbstractVector, n_lines::S, n_comps::S, lines::TransitionLines, 
+    flexible_wavesol::Bool, ext_curve::AbstractVector, lsf::Function, relative_flags::BitVector, template_norm::Union{Nothing,AbstractVector},
     nuc_temp_fit::Bool) where {S<:Integer}
 
     # Prepare outputs
@@ -1359,7 +1343,7 @@ end
 Calculate the integrated flux of a spectral feature, i.e. a PAH or emission line. Calculates the integral
 of the feature profile, using an analytic form if available, otherwise integrating numerically with QuadGK.
 """
-function calculate_flux(profile::Symbol, λ::Vector{<:Real}, amp::T, amp_err::T, peak::T, peak_err::T, fwhm::T, fwhm_err::T;
+function calculate_flux(profile::Symbol, λ::AbstractVector, amp::T, amp_err::T, peak::T, peak_err::T, fwhm::T, fwhm_err::T;
     asym::Union{T,Nothing}=nothing, asym_err::Union{T,Nothing}=nothing, m::Union{T,Nothing}=nothing, m_err::Union{T,Nothing}=nothing, 
     ν::Union{T,Nothing}=nothing, ν_err::Union{T,Nothing}=nothing, h3::Union{T,Nothing}=nothing, 
     h3_err::Union{T,Nothing}=nothing, h4::Union{T,Nothing}=nothing, h4_err::Union{T,Nothing}=nothing, 
@@ -1428,7 +1412,7 @@ end
 Calculate the w80 (width containing 80% of the flux) and Δv (asymmetry parameter), both in km/s,
 for a line profile.
 """
-function calculate_composite_params(λ::Vector{<:Real}, flux::Vector{<:Real}, λ0::Real, fwhm_inst::Real)
+function calculate_composite_params(λ::AbstractVector, flux::AbstractVector, λ0::Real, fwhm_inst::Real)
 
     # Get the cumulative distribution function
     m = flux .> 0

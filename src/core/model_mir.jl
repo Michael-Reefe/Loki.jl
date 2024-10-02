@@ -2,8 +2,8 @@
 ############################################## FITTING FUNCTIONS #############################################
 
 # Helper function for getting the extinction profile for a given fit
-function get_extinction_profile(λ::Vector{<:Real}, params::Vector{<:Real}, 
-    extinction_curve::String, extinction_screen::Bool, κ_abs::Vector{<:Base.Callable},
+function get_extinction_profile(λ::AbstractVector, params::AbstractVector, 
+    extinction_curve::String, extinction_screen::Bool, κ_abs::AbstractVector{<:Base.Callable},
     custom_ext::Union{<:Base.Callable,Nothing}, n_dust_cont::Integer, n_power_law::Integer)
 
     pₑ = 3 + 2n_dust_cont + 2n_power_law
@@ -44,8 +44,8 @@ end
 
 
 # Helper function for getting the normalized templates for a given fit
-function get_normalized_templates(λ::Vector{<:Real}, params::Vector{<:Real}, templates::Matrix{<:Real}, 
-    N::Real, channel_masks::Vector{BitVector}, fit_temp_multexp::Bool, pstart::Integer)
+function get_normalized_templates(λ::AbstractVector, params::AbstractVector, templates::AbstractMatrix, 
+    N, channel_masks::Vector{BitVector}, fit_temp_multexp::Bool, pstart::Integer)
 
     temp_norm = zeros(eltype(params), size(templates)...)
     # Add generic templates with a normalization parameter
@@ -70,7 +70,7 @@ end
 
 
 # Helper function to calculate the normalized nuclear template amplitudes for a given fit
-function get_nuctempfit_templates(params::Vector{<:Real}, templates::Matrix{<:Real}, 
+function get_nuctempfit_templates(params::AbstractVector, templates::AbstractMatrix, 
     channel_masks::Vector{BitVector}, pstart::Integer)
 
     nuc_temp_norm = zeros(eltype(params), size(templates, 1))
@@ -119,10 +119,10 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
-function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, 
-    dust_prof::Vector{Symbol}, n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, κ_abs::Vector{<:Base.Callable}, 
+function model_continuum(λ::AbstractVector, params::AbstractVector, N, n_dust_cont::Integer, n_power_law::Integer, 
+    dust_prof::Vector{Symbol}, n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, κ_abs::AbstractVector{<:Base.Callable}, 
     custom_ext::Union{<:Base.Callable,Nothing}, fit_sil_emission::Bool, fit_temp_multexp::Bool, use_pah_templates::Bool, 
-    templates::Matrix{<:Real}, channel_masks::Vector{BitVector}, nuc_temp_fit::Bool, return_components::Bool)
+    templates::AbstractMatrix, channel_masks::Vector{BitVector}, nuc_temp_fit::Bool, return_components::Bool)
 
     # Prepare outputs
     out_type = eltype(params)
@@ -240,9 +240,9 @@ end
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
 
-function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
-    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, κ_abs::Vector{<:Base.Callable}, custom_ext::Union{<:Base.Callable,Nothing}, 
-    fit_sil_emission::Bool, fit_temp_multexp::Bool, use_pah_templates::Bool, templates::Matrix{<:Real}, channel_masks::Vector{BitVector},
+function model_continuum(λ::AbstractVector, params::AbstractVector, N, n_dust_cont::Integer, n_power_law::Integer, dust_prof::Vector{Symbol},
+    n_abs_feat::Integer, extinction_curve::String, extinction_screen::Bool, κ_abs::AbstractVector{<:Base.Callable}, custom_ext::Union{<:Base.Callable,Nothing}, 
+    fit_sil_emission::Bool, fit_temp_multexp::Bool, use_pah_templates::Bool, templates::AbstractMatrix, channel_masks::Vector{BitVector},
     nuc_temp_fit::Bool)
 
     # Prepare outputs
@@ -359,8 +359,8 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 - `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in
     addition to the overall fit
 """
-function model_pah_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, dust_prof::Vector{Symbol}, ext_curve::Vector{<:Real}, 
-    template_norm::Union{Nothing,Vector{<:Real}}, nuc_temp_fit::Bool, return_components::Bool) 
+function model_pah_residuals(λ::AbstractVector, params::AbstractVector, dust_prof::Vector{Symbol}, ext_curve::AbstractVector, 
+    template_norm::Union{Nothing,AbstractVector}, nuc_temp_fit::Bool, return_components::Bool) 
 
     # Prepare outputs
     out_type = eltype(params)
@@ -395,8 +395,8 @@ end
 
 
 # Multiple dispatch for more efficiency
-function model_pah_residuals(λ::Vector{<:Real}, params::Vector{<:Real}, dust_prof::Vector{Symbol}, ext_curve::Vector{<:Real},
-    template_norm::Union{Nothing,Vector{<:Real}}, nuc_temp_fit::Bool)
+function model_pah_residuals(λ::AbstractVector, params::AbstractVector, dust_prof::Vector{Symbol}, ext_curve::AbstractVector,
+    template_norm::Union{Nothing,AbstractVector}, nuc_temp_fit::Bool)
 
     # Prepare outputs
     out_type = eltype(params)
@@ -442,10 +442,10 @@ end
 Calculate extra parameters that are not fit, but are nevertheless important to know, for a given spaxel.
 Currently this includes the integrated intensity, equivalent width, and signal to noise ratios of dust features and emission lines.
 """
-function calculate_extra_parameters(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, comps::Dict, 
-    nuc_temp_fit::Bool, lsf::Function, popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}, 
-    extinction_pah::Vector{T}, extinction::Vector{T}, templates_psfnuc::Union{Nothing,Vector{<:Real}}, 
-    mask_lines::BitVector, continuum::Vector{T}, area_sr::Vector{T}, spaxel::CartesianIndex, propagate_err::Bool=true) where {T<:Real}
+function calculate_extra_parameters(cube_fitter::CubeFitter, λ::AbstractVector, I::AbstractVector, N, comps::Dict, 
+    nuc_temp_fit::Bool, lsf::Base.Callable, popt_c::AbstractVector, popt_l::AbstractVector, perr_c::AbstractVector, perr_l::AbstractVector, 
+    extinction_pah::AbstractVector, extinction::AbstractVector, templates_psfnuc::Union{Nothing,AbstractVector}, 
+    mask_lines::BitVector, continuum::AbstractVector, area_sr::AbstractVector, spaxel::CartesianIndex, propagate_err::Bool=true) 
 
     @debug "Calculating extra parameters"
 
@@ -787,8 +787,8 @@ end
 Calculate the equivalent width (in microns) of a spectral feature, i.e. a PAH or emission line. Calculates the
 integral of the ratio of the feature profile to the underlying continuum.
 """
-function calculate_eqw(cube_fitter::CubeFitter, λ::Vector{T}, feature::Vector{T}, comps::Dict, line::Bool,
-    nuc_temp_fit::Bool; feature_err::Union{Matrix{T},Nothing}=nothing, propagate_err::Bool=true) where {T<:Real}
+function calculate_eqw(cube_fitter::CubeFitter, λ::AbstractVector, feature::AbstractVector, comps::Dict, line::Bool,
+    nuc_temp_fit::Bool; feature_err::Union{AbstractMatrix,Nothing}=nothing, propagate_err::Bool=true) 
 
     contin = zeros(length(λ))
     contin .+= comps["obscured_continuum"] .+ comps["unobscured_continuum"]
