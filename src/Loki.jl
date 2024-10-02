@@ -9,19 +9,15 @@ using SharedArrays
 # Math packages
 using Distributions
 using Random
-using Statistics
-using StatsBase
-using NaNStatistics
+using StatsBase, Statistics, NaNStatistics
 using NumericalIntegration
-using Interpolations
-using DataInterpolations
+using Interpolations, DataInterpolations
 using LinearAlgebra
 using FFTW
 using SpecialFunctions
 using Polynomials
 using NLsolve
-using ImageFiltering
-using ImageTransformations
+using ImageFiltering, ImageTransformations
 
 # Optimization packages
 using Optim
@@ -41,9 +37,9 @@ using SpectralResampling
 
 # File I/O
 using Glob
-using TOML
 using DelimitedFiles
 using CSV
+using TOML
 using Serialization
 using DataFrames
 
@@ -53,8 +49,7 @@ using PlotlyJS
 # Misc packages/utilites
 using ProgressMeter
 using Printf
-using Logging
-using LoggingExtras
+using Logging, LoggingExtras
 using Dates
 using InteractiveUtils
 using ColorSchemes

@@ -2,7 +2,7 @@
 ############################################## FITTING FUNCTIONS #############################################
 
 # Helper function for getting the extinction profile for a given fit
-function get_extinction_profile(λ::Vector{<:Real}, params::Vector{<:Real}, extinction_curve::String,
+function get_extinction_profile(λ::AbstractVector, params::AbstractVector, extinction_curve::String,
     fit_uv_bump::Bool, fit_covering_frac::Bool, n_ssps::Integer)
 
     pₑ = 1 + 3n_ssps + 2
@@ -45,8 +45,8 @@ end
 
 
 # Helper function for getting the normalized templates for a given fit
-function get_normalized_templates(λ::Vector{<:Real}, params::Vector{<:Real}, templates::Matrix{<:Real}, 
-    N::Real, fit_temp_multexp::Bool, pstart::Integer)
+function get_normalized_templates(λ::AbstractVector, params::AbstractVector, templates::AbstractMatrix, 
+    N, fit_temp_multexp::Bool, pstart::Integer)
 
     temp_norm = zeros(eltype(params), size(templates)...)
     # Add generic templates with a normalization parameter
@@ -69,7 +69,7 @@ end
 
 
 # Helper function to calculate the normalized nuclear template amplitudes for a given fit
-function get_nuctempfit_templates(params::Vector{<:Real}, templates::Matrix{<:Real}, 
+function get_nuctempfit_templates(params::AbstractVector, templates::AbstractMatrix, 
     pstart::Integer)
 
     nuc_temp_norm = nothing
@@ -116,10 +116,10 @@ at the given wavelengths `λ`, given the parameter vector `params`.
 - `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
-function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, vres::Real, vsyst_ssp::Real, vsyst_feii::Real, 
-    npad_feii::Integer, n_ssps::Integer, ssp_λ::Vector{<:Real}, ssp_templates::Union{Vector{Interpolations.Extrapolation},Matrix{<:Real}}, 
-    feii_templates_fft::Matrix{<:Complex}, n_power_law::Integer, fit_uv_bump::Bool, fit_covering_frac::Bool, fit_opt_na_feii::Bool, 
-    fit_opt_br_feii::Bool, extinction_curve::String, templates::Matrix{<:Real}, fit_temp_multexp::Bool, nuc_temp_fit::Bool, 
+function model_continuum(λ::AbstractVector, params::AbstractVector, N, vres, vsyst_ssp, vsyst_feii, 
+    npad_feii::Integer, n_ssps::Integer, ssp_λ::AbstractVector, ssp_templates::Union{Vector{Interpolations.Extrapolation},AbstractMatrix}, 
+    feii_templates_fft::AbstractMatrix, n_power_law::Integer, fit_uv_bump::Bool, fit_covering_frac::Bool, fit_opt_na_feii::Bool, 
+    fit_opt_br_feii::Bool, extinction_curve::String, templates::AbstractMatrix, fit_temp_multexp::Bool, nuc_temp_fit::Bool, 
     return_components::Bool)   
 
     # Prepare outputs
@@ -209,10 +209,10 @@ end
 
 
 # Multiple versions for more efficiency
-function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, vres::Real, vsyst_ssp::Real, vsyst_feii::Real, 
-    npad_feii::Integer, n_ssps::Integer, ssp_λ::Vector{<:Real}, ssp_templates::Union{Vector{Interpolations.Extrapolation},Matrix{<:Real}}, 
-    feii_templates_fft::Matrix{<:Complex}, n_power_law::Integer, fit_uv_bump::Bool, fit_covering_frac::Bool, fit_opt_na_feii::Bool, 
-    fit_opt_br_feii::Bool, extinction_curve::String, templates::Matrix{<:Real}, fit_temp_multexp::Bool, nuc_temp_fit::Bool)   
+function model_continuum(λ::AbstractVector, params::AbstractVector, N, vres, vsyst_ssp, vsyst_feii, 
+    npad_feii::Integer, n_ssps::Integer, ssp_λ::AbstractVector, ssp_templates::Union{Vector{Interpolations.Extrapolation},AbstractMatrix}, 
+    feii_templates_fft::AbstractMatrix, n_power_law::Integer, fit_uv_bump::Bool, fit_covering_frac::Bool, fit_opt_na_feii::Bool, 
+    fit_opt_br_feii::Bool, extinction_curve::String, templates::AbstractMatrix, fit_temp_multexp::Bool, nuc_temp_fit::Bool)   
 
     # Prepare outputs
     out_type = eltype(params)
@@ -293,9 +293,10 @@ end
 Calculate extra parameters that are not fit, but are nevertheless important to know, for a given spaxel.
 Currently this includes the integrated intensity, equivalent width, and signal to noise ratios of dust features and emission lines.
 """
-function calculate_extra_parameters(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, N::Real, comps::Dict, 
-    nuc_temp_fit::Bool, lsf::Function, popt_l::Vector{T}, perr_l::Vector{T}, extinction::Vector{T}, mask_lines::BitVector, 
-    continuum::Vector{T}, area_sr::Vector{T}, spaxel::CartesianIndex, propagate_err::Bool=true) where {T<:Real}
+function calculate_extra_parameters(cube_fitter::CubeFitter, λ::AbstractVector, I::AbstractVector, N, comps::Dict, 
+    nuc_temp_fit::Bool, lsf::Base.Callable, popt_l::AbstractVector, perr_l::AbstractVector, extinction::AbstractVector, 
+    mask_lines::BitVector, continuum::AbstractVector, area_sr::AbstractVector, spaxel::CartesianIndex, 
+    propagate_err::Bool=true)
 
     @debug "Calculating extra parameters"
 
@@ -523,8 +524,8 @@ end
 Calculate the equivalent width (in microns) of a spectral feature, i.e. a PAH or emission line. Calculates the
 integral of the ratio of the feature profile to the underlying continuum.
 """
-function calculate_eqw(cube_fitter::CubeFitter, λ::Vector{T}, feature::Vector{T}, comps::Dict,
-    nuc_temp_fit::Bool; feature_err::Union{Matrix{T},Nothing}=nothing, propagate_err::Bool=true) where {T<:Real}
+function calculate_eqw(cube_fitter::CubeFitter, λ::AbstractVector, feature::AbstractVector, comps::Dict,
+    nuc_temp_fit::Bool; feature_err::Union{AbstractMatrix,Nothing}=nothing, propagate_err::Bool=true)
 
     contin = zeros(length(λ))
     for i ∈ 1:cube_fitter.n_ssps
