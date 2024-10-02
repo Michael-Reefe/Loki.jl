@@ -369,8 +369,8 @@ function log_rebin!(cube::DataCube, factor::Integer=1)
         if !isnothing(cube.psf_model)
             cube.psf_model = resample_flux_permuted3D(lnλ, cube.λ, cube.psf_model)
         end
-        cube.psf = LinearInterpolation(cube.psf, cube.λ; extrapolate=true)(lnλ)
-        cube.lsf = LinearInterpolation(cube.lsf, cube.λ; extrapolate=true)(lnλ)
+        cube.psf = linear_interp(cube.λ, cube.psf)(lnλ)
+        cube.lsf = linear_interp(cube.λ, cube.lsf)(lnλ)
         cube.λ = lnλ
     else
         @warn "Cube is already log-rebinned! Will not be rebinned again."
