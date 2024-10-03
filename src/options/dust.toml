@@ -20,7 +20,7 @@ val = 400.0
 plim = [35.0, 1500.0]
 locked = false
 [[dust_continuum_temps]]
-val = 300.0
+val = 200.0
 plim = [35.0, 300.0]
 locked = false
 [[dust_continuum_temps]]

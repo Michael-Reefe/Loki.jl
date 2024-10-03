@@ -284,6 +284,20 @@ end
 
 
 """
+    ln_likelihood(data, model, err)
+Natural log of the likelihood for a given `model`, `data`, and `err`
+# Example
+```jldoctest
+julia> ln_likelihood([1.1, 1.9, 3.2], [1., 2., 3.], [0.1, 0.1, 0.1])
+1.1509396793681144
+```
+"""
+@inline function ln_likelihood(data, model, err)
+    -0.5 * sum(@. (data - model)^2 / err^2 + log(2π * err^2))
+end
+
+
+"""
     convolveGaussian1D(flux, fwhm)
 
 Convolve a spectrum by a Gaussian with different FWHM for every pixel.
@@ -485,7 +499,7 @@ Return the Blackbody function Bν (per unit FREQUENCY) in MJy/sr,
 given a wavelength in μm and a temperature in Kelvins.
 """
 @inline function Blackbody_ν(λ, Temp)
-    @. Bν_1/λ^3 / expm1(Bν_2/(λ*Temp))
+    Bν_1/λ^3 / expm1(Bν_2/(λ*Temp))
 end
 
 
@@ -507,7 +521,7 @@ Simple power law function where the flux is proportional to the wavelength to th
 normalized at 9.7 um.
 """
 @inline function power_law(λ, α, ref_λ=9.7)
-    @. (λ/ref_λ)^α
+    (λ/ref_λ)^α
 end
 
 
@@ -518,11 +532,7 @@ A hot silicate dust emission profile, i.e. Gallimore et al. (2010), with an ampl
 temperature T, covering fraction Cf, and optical depths τ_warm and τ_cold.
 """
 function silicate_emission(λ, A, T, Cf, τ_warm, τ_cold, λ_peak)
-    o_peak = 10.0178
-    Δλ = o_peak - λ_peak
-    λshift = λ .+ Δλ
-    ext_curve = τ_ohm(λshift)
-
+    ext_curve = τ_ohm(λ)
     bb = @. A * Blackbody_ν(λ, T) * (1 - extinction(ext_curve, τ_warm, screen=true))
     @. bb * (1 - Cf) + bb * Cf * extinction(ext_curve, τ_cold, screen=true)
 end
@@ -537,8 +547,8 @@ Calculate a Drude profile at location `x`, with amplitude `A`, central value `μ
 Optional asymmetry parameter `asym`
 """
 @inline function Drude(x, A, μ, FWHM, asym)
-    γ = @. 2FWHM / (1 + exp(asym*(x-μ)))
-    @. A * (γ/μ)^2 / ((x/μ - μ/x)^2 + (γ/μ)^2)
+    γ = 2FWHM / (1 + exp(asym*(x-μ)))
+    A * (γ/μ)^2 / ((x/μ - μ/x)^2 + (γ/μ)^2)
 end
 
 
@@ -552,7 +562,7 @@ See Pearson (1895), and https://iopscience.iop.org/article/10.3847/1538-4365/ac4
 """
 function PearsonIV(x, A, μ, a, m, ν)
     n = (1 + (-ν/(2m))^2)^-m * exp(-ν * atan(-ν/(2m)))
-    @. A/n * (1 + ((x - μ)/a)^2)^-m * exp(-ν * atan((x - μ)/a))
+    A/n * (1 + ((x - μ)/a)^2)^-m * exp(-ν * atan((x - μ)/a))
 end
 
 ########################################## STELLAR POP FUNCTIONS #########################################
@@ -791,7 +801,7 @@ full-width at half-maximum `FWHM`
 @inline function Gaussian(x, A, μ, FWHM)
     # Reparametrize FWHM as dispersion σ
     σ = FWHM / (2√(2log(2)))
-    @. A * exp(-(x-μ)^2 / (2σ^2))
+    A * exp(-(x-μ)^2 / (2σ^2))
 end
 
 
@@ -809,22 +819,22 @@ function GaussHermite(x, A, μ, FWHM, h₃, h₄)
     # Reparametrize FWHM as dispersion σ
     σ = FWHM / (2√(2log(2)))
     # Gaussian exponential argument w
-    w = @. (x - μ) / σ
+    w = (x - μ) / σ
     # Normalized Gaussian
-    α = @. exp(-w^2 / 2)
+    α = exp(-w^2 / 2)
 
     # Calculate coefficients for the Hermite basis
     n = 3:(length(h)+2)
     norm = .√(factorial.(n) .* 2 .^ n)
     coeff = vcat([1, 0, 0], h./norm)
     # Calculate hermite basis
-    Herm = sum([coeff[nᵢ] .* hermite(w, nᵢ-1) for nᵢ ∈ eachindex(coeff)])
+    Herm = sum([coeff[nᵢ] * hermite(w, nᵢ-1) for nᵢ ∈ eachindex(coeff)])
 
     # Calculate peak height (i.e. value of function at w=0)
-    Herm0 = sum([coeff[nᵢ] .* hermite(0., nᵢ-1) for nᵢ ∈ eachindex(coeff)])
+    Herm0 = sum([coeff[nᵢ] * hermite(0., nᵢ-1) for nᵢ ∈ eachindex(coeff)])
 
     # Combine the Gaussian and Hermite profiles
-    @. A * α * Herm / Herm0
+    A * α * Herm / Herm0
 end
 
 
@@ -835,7 +845,7 @@ Evaluate a Lorentzian profile at `x`, parametrized by the amplitude `A`, mean va
 and full-width at half-maximum `FWHM`
 """
 @inline function Lorentzian(x, A, μ, FWHM)
-    @. A * (FWHM/2)^2 / ((x-μ)^2 + (FWHM/2)^2)
+    A * (FWHM/2)^2 / ((x-μ)^2 + (FWHM/2)^2)
 end
 
 
@@ -852,15 +862,15 @@ function Voigt(x, A, μ, FWHM, η)
     # Reparametrize FWHM as dispersion σ
     σ = FWHM / (2√(2log(2))) 
     # Normalized Gaussian
-    G = @. 1/√(2π * σ^2) * exp(-(x-μ)^2 / (2σ^2))
+    G = 1/√(2π * σ^2) * exp(-(x-μ)^2 / (2σ^2))
     # Normalized Lorentzian
-    L = @. 1/π * (FWHM/2) / ((x-μ)^2 + (FWHM/2)^2)
+    L = 1/π * (FWHM/2) / ((x-μ)^2 + (FWHM/2)^2)
 
     # Normalize the function so that the integral is given by this
     I = ∫Voigt(A, FWHM, η)
 
     # Mix the two distributions with the mixing parameter η
-    @. I * (η * G + (1 - η) * L)
+    I * (η * G + (1 - η) * L)
 end
 
 
@@ -1003,9 +1013,9 @@ at 9.7 microns, `τ_97`, either assuming a screen or mixed geometry.
 """
 function extinction(ext, τ_97; screen::Bool=false)
     if screen
-        @. exp(-τ_97*ext)
+        exp(-τ_97*ext)
     else
-        @. ifelse(iszero(τ_97), 1., (1 - exp(-τ_97*ext)) / (τ_97*ext))
+        ifelse(iszero(τ_97), 1., (1 - exp(-τ_97*ext)) / (τ_97*ext))
     end
 end
 

@@ -47,7 +47,8 @@ end
 function get_normalized_templates(λ::AbstractVector, params::AbstractVector, templates::AbstractMatrix, 
     N, channel_masks::Vector{BitVector}, fit_temp_multexp::Bool, pstart::Integer)
 
-    temp_norm = zeros(eltype(params), size(templates)...)
+    out_type = eltype(params)
+    temp_norm = zeros(out_type, size(templates)...)
     # Add generic templates with a normalization parameter
     if fit_temp_multexp
         ex = multiplicative_exponentials(λ, params[pstart:pstart+7])
@@ -73,7 +74,8 @@ end
 function get_nuctempfit_templates(params::AbstractVector, templates::AbstractMatrix, 
     channel_masks::Vector{BitVector}, pstart::Integer)
 
-    nuc_temp_norm = zeros(eltype(params), size(templates, 1))
+    out_type = eltype(params)
+    nuc_temp_norm = zeros(out_type, size(templates, 1))
     dp = 0
     for i in axes(templates, 2)
         for ch_mask in channel_masks
@@ -245,12 +247,9 @@ function model_continuum(λ::AbstractVector, params::AbstractVector, N, n_dust_c
     fit_sil_emission::Bool, fit_temp_multexp::Bool, use_pah_templates::Bool, templates::AbstractMatrix, channel_masks::Vector{BitVector},
     nuc_temp_fit::Bool)
 
-    # Prepare outputs
-    out_type = eltype(params)
-    contin = zeros(out_type, length(λ))
-
     # Stellar blackbody continuum (usually at 5000 K)
-    contin .+= params[1] .* Blackbody_ν.(λ, params[2]) ./ N
+    contin = params[1] .* Blackbody_ν.(λ, params[2]) ./ N
+    out_type = eltype(contin)
     pᵢ = 3
 
     # Add dust continua at various temperatures
@@ -363,7 +362,7 @@ function model_pah_residuals(λ::AbstractVector, params::AbstractVector, dust_pr
     template_norm::Union{Nothing,AbstractVector}, nuc_temp_fit::Bool, return_components::Bool) 
 
     # Prepare outputs
-    out_type = eltype(params)
+    out_type = eltype(λ)
     comps = Dict{String, Vector{out_type}}()
     contin = zeros(out_type, length(λ))
 
@@ -399,7 +398,7 @@ function model_pah_residuals(λ::AbstractVector, params::AbstractVector, dust_pr
     template_norm::Union{Nothing,AbstractVector}, nuc_temp_fit::Bool)
 
     # Prepare outputs
-    out_type = eltype(params)
+    out_type = eltype(λ)
     contin = zeros(out_type, length(λ))
 
     # Add dust features with drude profiles

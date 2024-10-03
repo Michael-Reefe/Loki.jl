@@ -10,12 +10,12 @@ using SharedArrays
 using Distributions
 using Random
 using StatsBase, Statistics, NaNStatistics
-using NumericalIntegration
 using Interpolations, DataInterpolations
+using NumericalIntegration
 using LinearAlgebra
 using FFTW
 using SpecialFunctions
-using Polynomials
+using Polynomials 
 using NLsolve
 using ImageFiltering, ImageTransformations
 
