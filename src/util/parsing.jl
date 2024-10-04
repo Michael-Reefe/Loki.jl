@@ -273,119 +273,151 @@ end
 
 
 """
-    create_dust_features(dust)
+    create_dust_features(dust, λlim, user_mask)
 
 Uses the dust options file to create a DustFeatures object for the
 PAH features.
 """
-function create_dust_features(dust::Dict)
+function create_dust_features(dust::Dict, λlim::Tuple, user_mask::Vector{Tuple})
 
     # Dust feature central wavelengths and FWHMs
-    cent_vals = zeros(length(dust["dust_features"]))
-    name = Vector{String}(undef, length(dust["dust_features"]))
-    mean = Vector{Parameter}(undef, length(dust["dust_features"]))
-    fwhm = Vector{Parameter}(undef, length(dust["dust_features"]))
-    asym = Vector{Union{Parameter,Nothing}}(nothing, length(dust["dust_features"]))
-    index = Vector{Union{Parameter,Nothing}}(nothing, length(dust["dust_features"]))
-    cutoff = Vector{Union{Parameter,Nothing}}(nothing, length(dust["dust_features"]))
-    complexes = Vector{Union{String,Nothing}}(nothing, length(dust["dust_features"]))
-    _local = falses(length(dust["dust_features"]))
-    profiles = [:Drude for _ in 1:length(name)]
+    n_df = length(dust["dust_features"])
+    cent_vals = zeros(n_df)
+    profiles = [:Drude for _ in 1:n_df]
+    complexes = Vector{Union{String,Nothing}}(nothing, n_df)
+    parameters = Vector{FitParameters}(undef, n_df)
 
     msg = "Dust features:"
     for (i, df) ∈ enumerate(keys(dust["dust_features"]))
-        name[i] = df
-        mean[i] = from_dict_wave(dust["dust_features"][df]["wave"])
-        msg *= "\nWave $(mean[i])"
-        fwhm[i] = from_dict_fwhm(dust["dust_features"][df]["fwhm"])
-        msg *= "\nFWHM $(fwhm[i])"
-        if haskey(dust["dust_features"][df], "index")
-            index[i] = from_dict(dust["dust_features"][df]["index"])
-            profiles[i] = :PearsonIV
-            msg *= "\nIndex $(index[i])"
+
+        # First things first, check if this feature is within our wavelength range
+        mean_wave = dust["dust_features"][df]["wave"]["val"]
+        if !(λlim[1]-0.1 < mean_wave < λlim[2]+0.1)
+            continue
         end
-        if haskey(dust["dust_features"][df], "cutoff")
-            cutoff[i] = from_dict(dust["dust_features"][df]["cutoff"])
-            profiles[i] = :PearsonIV
-            msg *= "\nCutoff $(cutoff[i])"
+        for pair in user_mask
+            if pair[1] < mean_wave < pair[2]
+                continue
+            end
         end
-        if haskey(dust["dust_features"][df], "asym")
-            asym[i] = from_dict_fwhm(dust["dust_features"][df]["asym"])  # (fwhm method so that uncertainties are fractional)
-            msg *= "\nAsym $(asym[i])"
-        elseif profiles[i] == :Drude  # only add a default asym parameter if its a Drude profile
-            asym[i] = Parameter(0., true, (-0.01, 0.01))
-            msg *= "\nAsym $(asym[i])"
+
+        prefix = "dust_features.$(df)."
+
+        # amplitudes (not in file)
+        amp = FitParameter(NaN, false, (0., Inf))   # the NaN is a placeholder for now and will be replaced
+        msg *= "\nAmp $(amp)"
+        mean = parameter_from_dict_wave(dust["dust_features"][df]["wave"])
+        msg *= "\nWave $(mean)"
+        fwhm = parameter_from_dict_fwhm(dust["dust_features"][df]["fwhm"])
+        msg *= "\nFWHM $(fwhm)"
+
+        names = prefix .* ["amp", "mean", "fwhm"]
+        _params = [amp, mean, fwhm]
+
+        if haskey(dust["dust_features"][df], "index") && haskey(dust["dust_features"][df], "cutoff")
+            profiles[i] = :PearsonIV
+            index = parameter_from_dict(dust["dust_features"][df]["index"])
+            msg *= "\nIndex $(index)"
+            cutoff = parameter_from_dict(dust["dust_features"][df]["cutoff"])
+            msg *= "\nCutoff $(cutoff)"
+            append!(names, prefix .* ["index", "cutoff"])
+            append!(_params, [index, cutoff])
+        end
+        if profiles[i] == :Drude
+            push!(names, prefix * "asym")
+            if haskey(dust["dust_features"][df], "asym")
+                asym = parameter_from_dict_fwhm(dust["dust_features"][df]["asym"])  # (fwhm method so that uncertainties are fractional)
+                msg *= "\nAsym $(asym)"
+                push!(_params, asym)
+            else # only add a default asym parameter if its a Drude profile
+                asym = FitParameter(0., true, (-0.01, 0.01))
+                msg *= "\nAsym $(asym)"
+                push!(_params, asym)
+            end
         end
         if haskey(dust["dust_features"][df], "complex")
             complexes[i] = dust["dust_features"][df]["complex"]
         end
-        cent_vals[i] = mean[i].value
+        cent_vals[i] = mean.value
+        parameters[i] = FitParameters(names, _params)
     end
     @debug msg
 
     # Sort by cent_vals
     ss = sortperm(cent_vals)
-    DustFeatures(name[ss], profiles[ss], mean[ss], fwhm[ss], asym[ss], index[ss], cutoff[ss], complexes[ss], _local[ss])
+    dust_parameters = parameters[ss] 
+    dust_features = FitProfiles(profiles[ss], complexes[ss])
+
+    dust_features, dust_parameters
 end
 
 
 """
-    create_absorption_features(dust)
+    create_absorption_features(dust, λlim, user_mask)
 
 Uses the dust options file to create a DustFeatures object for the
 absorption features.
 """
-function create_absorption_features(dust)
+function create_absorption_features(dust::Dict, λlim::Tuple, user_mask::Vector{Tuple})
 
     # Repeat for absorption features
     if haskey(dust, "absorption_features")
-        cent_vals = zeros(length(dust["absorption_features"]))
-        name = Vector{String}(undef, length(dust["absorption_features"]))
-        depth = Vector{Parameter}(undef, length(dust["absorption_features"]))
-        mean = Vector{Parameter}(undef, length(dust["absorption_features"]))
-        fwhm = Vector{Parameter}(undef, length(dust["absorption_features"]))
-        asym = Vector{Union{Parameter,Nothing}}(nothing, length(dust["absorption_features"]))
-        complexes = Vector{Union{String,Nothing}}(nothing, length(dust["absorption_features"]))
-        _local = falses(length(dust["absorption_features"]))
+
+        n_ab = length(dust["absorption_features"])
+        cent_vals = zeros(n_ab)
+        profiles = [:Drude for _ in 1:n_ab]
+        complexes = Vector{Union{String,Nothing}}(nothing, n_ab)
+        parameters = Vector{FitParameters}(undef, n_ab)
 
         msg = "Absorption features:"
         for (i, ab) ∈ enumerate(keys(dust["absorption_features"]))
-            name[i] = ab
-            depth[i] = from_dict(dust["absorption_features"][ab]["tau"])
-            msg *= "\nTau $(depth[i])"
-            mean[i] = from_dict_wave(dust["absorption_features"][ab]["wave"])
-            msg *= "\nWave $(mean[i])"
-            fwhm[i] = from_dict_fwhm(dust["absorption_features"][ab]["fwhm"])
-            msg *= "\nFWHM $(fwhm[i])"
-            cent_vals[i] = mean[i].value
-            if haskey(dust["absorption_features"][ab], "asym")
-                asym[i] = from_dict_fwhm(dust["absorption_features"][ab]["asym"])
-                msg *= "\nAsym $(asym[i])"
-            else
-                asym[i] = Parameter(0., true, (-0.01, 0.01))
-                msg *= "\nAsym $(asym[i])"
+
+            # First things first, check if this feature is within our wavelength range
+            mean_wave = dust["absorption_features"][ab]["wave"]["val"]
+            if !(λlim[1]-0.1 < mean_wave < λlim[2]+0.1)
+                continue
+            end
+            for pair in user_mask
+                if pair[1] < mean_wave < pair[2]
+                    continue
+                end
             end
 
-            if haskey(dust["absorption_features"][ab], "local")
-                _local[i] = dust["absorption_features"][ab]["local"]
+            prefix = "abs_features.$(ab)."
+
+            depth = parameter_from_dict(dust["absorption_features"][ab]["tau"])
+            msg *= "\nTau $(depth)"
+            mean = parameter_from_dict_wave(dust["absorption_features"][ab]["wave"])
+            msg *= "\nWave $(mean)"
+            fwhm = parameter_from_dict_fwhm(dust["absorption_features"][ab]["fwhm"])
+            msg *= "\nFWHM $(fwhm)"
+            cent_vals[i] = mean.value
+
+            if haskey(dust["absorption_features"][ab], "asym")
+                asym = parameter_from_dict_fwhm(dust["absorption_features"][ab]["asym"])
+                msg *= "\nAsym $(asym)"
+            else
+                asym = FitParameter(0., true, (-0.01, 0.01))
+                msg *= "\nAsym $(asym)"
             end
+
+            names = prefix .* ["tau", "mean", "fwhm", "asym"]
+            _params = [depth, mean, fwhm, asym]
+
+            parameters[i] = FitParameters(names, _params)
         end
         @debug msg
 
         # Sort by cent_vals
         ss = sortperm(cent_vals)
-        abs_features = DustFeatures(name[ss], [:Drude for _ in 1:length(name)], mean[ss], fwhm[ss], asym[ss],
-            Union{Parameter,Nothing}[nothing for _ in 1:length(name)], 
-            Union{Parameter,Nothing}[nothing for _ in 1:length(name)],
-            complexes[ss], _local[ss])
-        abs_taus = depth[ss]
+        abs_parameters = parameters[ss]
+        abs_features = FitProfiles(profiles[ss], complexes[ss])
     else
-        abs_features = DustFeatures(String[], Symbol[], Parameter[], Parameter[], Vector{Union{Parameter,Nothing}}(),
-            Vector{Union{Parameter,Nothing}}(), Vector{Union{Parameter,Nothing}}(), Vector{Union{String,Nothing}}(), BitVector[])
-        abs_taus = Vector{Parameter}()
+        abs_parameters = FitParameters[]
+        abs_features = FitProfiles(Symbol[], Vector{Union{String,Nothing}}())
     end
 
-    abs_features, abs_taus
+    abs_features, abs_parameters
 end
 
 
@@ -396,7 +428,7 @@ Read in the dust.toml configuration file, checking that it is formatted correctl
 and convert it into a julia dictionary with Parameter objects for dust fitting parameters.
 This deals with continuum, PAH features, and extinction options.
 """
-function parse_dust(n_channels::Int=0)
+function parse_dust(out::Dict, λlim::Tuple, n_channels::Int=0)
 
     @debug """\n
     Parsing dust file
@@ -411,99 +443,125 @@ function parse_dust(n_channels::Int=0)
 
     # Convert the options into Parameter objects, and set them to the output dictionary
 
-    # Stellar continuum temperature
-    T_s = from_dict(dust["stellar_continuum_temp"])
-    @debug "Stellar continuum:\nTemp $T_s"
+    # Stellar continuum amp & temperature
+    @debug "Stellar Continuum:"
+    A_s = FitParameter(out[:fit_stellar_continuum] ? NaN : 0.0, !out[:fit_stellar_continuum], (0., Inf))
+    @debug "\nAmp $A_s"
+    T_s = parameter_from_dict(dust["stellar_continuum_temp"])
+    @debug "\nTemp $T_s"
+    params = [A_s, T_s]
+    pnames = ["continuum.stellar.amp", "continuum.stellar.temp"]
 
     # Dust continuum temperatures
     if haskey(dust, "dust_continuum_temps")
-        T_dc = [from_dict(dust["dust_continuum_temps"][i]) for i ∈ eachindex(dust["dust_continuum_temps"])]
         msg = "Dust continuum:"
-        for dci ∈ T_dc
-            msg *= "\nTemp $dci"
+        for i in eachindex(dust["dust_continuum_temps"])
+            prefix = "continuum.dust.$(i)."
+            A_dc = FitParameter(NaN, false, (0., Inf))
+            msg *= "\nAmp $A_dc"
+            T_dc = parameter_from_dict(dust["dust_continuum_temps"][i])
+            msg *= "\nTemp $T_dc"
+            @debug msg
+            append!(params, [A_dc, T_dc])
+            append!(pnames, prefix .* ["amp", "temp"])
         end
-        @debug msg
-    else
-        T_dc = []
     end
         
     # Power law indices
     if haskey(dust, "power_law_indices")
-        α = [from_dict(dust["power_law_indices"][i]) for i ∈ eachindex(dust["power_law_indices"])]
         msg = "Power laws:"
-        for αi ∈ α
-            msg *= "\nAlpha $αi"
+        for i in eachindex(dust["power_law_indices"])
+            prefix = "continuum.power_law.$(i)."
+            A_pl = FitParameter(NaN, false, (0., Inf))
+            msg *= "\nAmp $A_pl"
+            α_pl = parameter_from_dict(dust["power_law_indices"][i])
+            msg *= "\nAlpha $α_pl"
+            @debug msg
+            append!(params, [A_pl, α_pl])
+            append!(pnames, prefix .* ["amp", "index"])
         end
-        @debug msg
+    end
+
+    # Extinction parameters, optical depth and mixing ratio
+    msg = "Extinction:"
+    prefix = "extinction."
+    # Write tau_9_7 value based on the provided guess
+    if out[:extinction_curve] == "decompose"
+        N_oli = parameter_from_dict(dust["extinction"]["N_oli"])
+        msg *= "\nN_oli $N_oli"
+        N_pyr = parameter_from_dict(dust["extinction"]["N_pyr"])
+        msg *= "\nN_pyr $N_pyr"
+        N_for = parameter_from_dict(dust["extinction"]["N_for"])
+        msg *= "\nN_for $N_for"
+        append!(params, [N_oli, N_pyr, N_for])
+        append!(pnames, prefix .* ["N_oli", "N_pyr", "N_for"])
     else
-        α = []
+        τ_97 = parameter_from_dict(dust["extinction"]["tau_9_7"])
+        msg *= "\nTau_sil $τ_97"
+        push!(params, τ_97)
+        push!(pnames, prefix * "tau_97")
+    end
+    τ_ice = parameter_from_dict(dust["extinction"]["tau_ice"])
+    msg *= "\nTau_ice $τ_ice"
+    τ_ch = parameter_from_dict(dust["extinction"]["tau_ch"])
+    msg *= "\nTau_CH $τ_ch"
+    β = parameter_from_dict(dust["extinction"]["beta"])
+    msg *= "\nBeta $β"
+    Cf = parameter_from_dict(dust["extinction"]["frac"])
+    msg *= "\nFrac $Cf"
+    @debug msg
+    append!(params, [τ_ice, τ_ch, β, Cf])
+    append!(pnames, prefix .* ["tau_ice", "tau_ch", "beta", "frac"])
+
+    abs_features, abs_parameters = create_absorption_features(dust, λlim, out[:user_mask])
+    append!(params, abs_parameters._parameters)
+    append!(pnames, abs_parameters.names)
+
+    # Hot dust parameters, temperature, covering fraction, warm tau, and cold tau
+    msg = "Hot Dust:"
+    if out[:fit_sil_emission]
+        prefix = "continuum.hot_dust."
+        A_hot = FitParameter(NaN, false, (0., Inf))
+        msg *= "\nAmp $A_hot"
+        T_hot = parameter_from_dict(dust["hot_dust"]["temp"])
+        msg *= "\nTemp $T_hot"
+        hd_Cf = parameter_from_dict(dust["hot_dust"]["frac"])
+        msg *= "\nFrac $hd_Cf"
+        τ_warm = parameter_from_dict(dust["hot_dust"]["tau_warm"])
+        msg *= "\nTau_Warm $τ_warm"
+        τ_cold = parameter_from_dict(dust["hot_dust"]["tau_cold"])
+        msg *= "\nTau_Cold $τ_cold"
+        sil_peak = parameter_from_dict(dust["hot_dust"]["peak"])
+        msg *= "\nSil_Peak $sil_peak"
+        @debug msg
+        append!(params, [A_hot, T_hot, hd_Cf, τ_warm, τ_cold, sil_peak])
+        append!(pnames, prefix .* ["amp", "temp", "frac", "tau_warm", "tau_cold", "sil_peak"])
     end
 
     # Template amplitudes
     if haskey(dust, "template_amps")
-        temp_A = []
+        msg = "Template amplitudes:"
         for i ∈ eachindex(dust["template_amps"])
-            for _ in 1:n_channels
-                push!(temp_A, from_dict(dust["template_amps"][i]))
+            tname = out[:template_names][i]
+            for ni in 1:n_channels
+                temp_A = parameter_from_dict(dust["template_amps"][i])
+                msg *= "\n$temp_A"
+                push!(params, temp_A)
+                push!(pnames, "templates.$(tname).amp_$ni")
             end
         end
-        msg = "Template amplitudes:"
-        for Ai ∈ temp_A
-            msg *= "\n$Ai"
-        end
         @debug msg
-    else
-        temp_A = []
     end
 
     # Create the dust features and absorption features objects
-    dust_features = create_dust_features(dust)
-    abs_features, abs_taus = create_absorption_features(dust)
+    dust_features, dust_parameters = create_dust_features(dust, λlim, out[:user_mask])
+    # append!(params, dust_parameters._parameters)
+    # append!(pnames, dust_parameters.names)
 
-    # Extinction parameters, optical depth and mixing ratio
-    msg = "Extinction:"
-    # Write tau_9_7 value based on the provided guess
-    # dust["extinction"]["tau_9_7"]["val"] = τ_guess
-    τ_97 = from_dict(dust["extinction"]["tau_9_7"])
-    msg *= "\nTau_sil $τ_97"
-    N_oli = from_dict(dust["extinction"]["N_oli"])
-    msg *= "\nN_oli $N_oli"
-    N_pyr = from_dict(dust["extinction"]["N_pyr"])
-    msg *= "\nN_pyr $N_pyr"
-    N_for = from_dict(dust["extinction"]["N_for"])
-    msg *= "\nN_for $N_for"
-    τ_ice = from_dict(dust["extinction"]["tau_ice"])
-    msg *= "\nTau_ice $τ_ice"
-    τ_ch = from_dict(dust["extinction"]["tau_ch"])
-    msg *= "\nTau_CH $τ_ch"
-    β = from_dict(dust["extinction"]["beta"])
-    msg *= "\nBeta $β"
-    Cf = from_dict(dust["extinction"]["frac"])
-    msg *= "\nFrac $Cf"
-    @debug msg
+    # All of the continuum and PAH parameters conjoined into neat little objects
+    continuum = FitParameters(pnames, params)
 
-    # Hot dust parameters, temperature, covering fraction, warm tau, and cold tau
-    msg = "Hot Dust:"
-    # Write warm_tau and col_tau values based on the provided guess
-    # dust["hot_dust"]["tau_warm"]["val"] = τ_guess
-    # dust["hot_dust"]["tau_cold"]["val"] = τ_guess
-    T_hot = from_dict(dust["hot_dust"]["temp"])
-    msg *= "\nTemp $T_hot"
-    hd_Cf = from_dict(dust["hot_dust"]["frac"])
-    msg *= "\nFrac $hd_Cf"
-    τ_warm = from_dict(dust["hot_dust"]["tau_warm"])
-    msg *= "\nTau_Warm $τ_warm"
-    τ_cold = from_dict(dust["hot_dust"]["tau_cold"])
-    msg *= "\nTau_Cold $τ_cold"
-    sil_peak = from_dict(dust["hot_dust"]["peak"])
-    msg *= "\nSil_Peak $sil_peak"
-    @debug msg
-
-    # Create continuum object
-    continuum = MIRContinuum(T_s, T_dc, α, τ_97, N_oli, N_pyr, N_for, τ_ice, τ_ch, β, Cf, 
-        T_hot, hd_Cf, τ_warm, τ_cold, sil_peak, temp_A)
-
-    continuum, dust_features, abs_features, abs_taus
+    continuum, dust_parameters, dust_features, abs_features
 end
 
 

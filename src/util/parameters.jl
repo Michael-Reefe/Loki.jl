@@ -5,8 +5,10 @@ that are helpful for containing certain combinations of model parameters and
 related quantities.
 =#
 
+# abstract type Parameter end
+
 """
-    Parameter(value, locked, limits)
+    FitParameter(value, locked, limits)
 
 A struct for holding information about parameters' intial values and priors
 
@@ -15,22 +17,45 @@ A struct for holding information about parameters' intial values and priors
 - `locked::Bool`: false to allow the parameter to vary based on the prior, true to keep it fixed
 - `limits::Tuple`: lower/upper limits on the parameter, if it is allowed to vary
 """
-mutable struct Parameter{T<:Number}
+mutable struct FitParameter{T<:Number}
 
     value::T
     locked::Bool
     limits::Tuple{T, T}
     
     # Constructor function
-    function Parameter(value::T, locked::Bool, limits::Tuple{T, T}) where {T<:Number}
-
-        # Make sure the upper limit is greater than the lower limit
+    function FitParameter(value::T, locked::Bool, limits::Tuple{T, T}) where {T<:Number}
+        # Make sure the upper limit is strictly greater than the lower limit
         @assert limits[2] > limits[1]
-
-        new{typeof(value)}(value, locked, limits)
+        new{T}(value, locked, limits)
     end
 
 end
+
+
+# lock or unlock the parameter
+lock!(p::FitParameter) = (p.locked = true)
+unlock!(p::FitParameter) = (p.locked = false)
+
+# update the limits or value of the parameter
+function set_plim!(p::FitParameter, limits::Tuple) 
+    @assert limits[1] < limits[2]
+    _, _, l1, l2 = promote(p.limits[1], p.limits[2], limits[1], limits[2])
+    p.limits = (l1, l2)
+end
+function set_val!(p::FitParameter{T}, v::Number) where {T}
+    _, vnew = promote(p.value, v)
+    p.value = vnew
+end
+
+# check if everything is good
+function check_valid(p::FitParameter)
+    @assert isfinite(p.value)
+    @assert typeof(p.value) == typeof(p.limits[1]) == typeof(p.limits[2])
+    @assert p.limits[1] < p.limits[2]
+    @assert p.limits[1] ≤ p.value ≤ p.limits[2]
+end
+
 
 
 """
@@ -38,17 +63,17 @@ end
 
 Show the parameter object as a nicely formatted string
 """
-function Base.show(io::IO, p::Parameter)
+function Base.show(io::IO, p::FitParameter)
     Base.show(io, "Parameter: value = $(p.value) | locked = $(p.locked) | limits = $(p.limits)")
 end
 
 
 """
-    from_dict(dict)
+    parameter_from_dict(dict)
 
 A constructor function for Parameter structs given a Dictionary
 """
-function from_dict(dict::Dict)::Parameter
+function parameter_from_dict(dict::Dict)
 
     # Unpack the dictionary into fields of the Parameter
     value = dict["val"]
@@ -56,18 +81,18 @@ function from_dict(dict::Dict)::Parameter
     # plim: absolute upper/lower limits
     lims = (dict["plim"]...,)
 
-    Parameter(value, locked, lims)
+    FitParameter(value, locked, lims)
 end 
 
 
 """
-    from_dict_wave(dict)
+    parameter_from_dict_wave(dict)
 
 A constructor function for Parameter structs given a Dictionary,
 using deltas on upper/lower limits, i.e. if val = 5 and plim = [-0.1, 0.1],
 then the true limits will be 5 .+ [-0.1, 0.1] = [4.9, 5.1]
 """
-function from_dict_wave(dict::Dict)::Parameter
+function parameter_from_dict_wave(dict::Dict)
 
     # Unpack the dictionary into fields of the Parameter
     value = dict["val"]
@@ -75,18 +100,18 @@ function from_dict_wave(dict::Dict)::Parameter
     # plim: absolute upper/lower limits
     lims = (dict["plim"].+value...,)
 
-    Parameter(value, locked, lims)
+    FitParameter(value, locked, lims)
 end
 
 
 """
-    from_dict_fwhm(dict)
+    parameter_from_dict_fwhm(dict)
 
 A constructor function for Parameter structs given a Dictionary,
 using fractional values on upper/lower limits, i.e. if val = 5 and
 plim = [0.5, 2], then the true limits will be 5 .* [0.5, 2] = [2.5, 10]
 """
-function from_dict_fwhm(dict::Dict)::Parameter
+function parameter_from_dict_fwhm(dict::Dict)
 
     # Unpack the dictionary into fields of the Parameter
     value = dict["val"]
@@ -94,98 +119,134 @@ function from_dict_fwhm(dict::Dict)::Parameter
     # plim: absolute upper/lower limits
     lims = (dict["plim"].*value...,)
 
-    Parameter(value, locked, lims)
+    FitParameter(value, locked, lims)
 end
 
 
-abstract type Continuum end
+struct FitParameters{T<:Number}
+    names::Vector{String}                  # names of all the parameters
+    _parameters::Vector{FitParameter{T}}   # the internal storage of the parameter objects
+end
 
-"""
-    MIRContinuum(T_s, T_dc, α, τ_97, τ_ice, τ_ch, β, T_hot, Cf_hot, τ_warm, τ_cold, sil_peak, temp_amp)
 
-A container for various MIR continuum modeling parameters.
-"""
-struct MIRContinuum <: Continuum
+# methods for obtaining a named parameter
+Base.getindex(p::FitParameters, ind) = p._parameters[ind]
+function Base.getindex(p::FitParameters, name::String)
+    ind = findfirst(p.names .== name)
+    p._parameters[ind]
+end
+function Base.getindex(p::FitParameters, names::AbstractVector{String})
+    inds = [findfirst(p.names .== name) for name in names]
+    p._parameters[inds]
+end
 
-    # MIR Continuum parameters
-    T_s::Parameter
-    T_dc::Vector{Parameter}
-    α::Vector{Parameter}
-    τ_97::Parameter
-    N_oli::Parameter
-    N_pyr::Parameter
-    N_for::Parameter
-    τ_ice::Parameter
-    τ_ch::Parameter
-    β::Parameter
-    Cf::Parameter
-    T_hot::Parameter
-    Cf_hot::Parameter
-    τ_warm::Parameter
-    τ_cold::Parameter
-    sil_peak::Parameter
-    temp_amp::Vector{Parameter}
+# methods for obtaining the vector of parameter limits
+get_plims(p::FitParameters, ind::Int) = p[ind].limits   
+get_plims(p::FitParameters, name::String) = p[name].limits   
+function get_plims(p::FitParameters, names::Vector{String})
+    plims = Vector{Tuple}(undef, length(names))
+    for (i, param) in enumerate(p[names])
+        plims[i] = param.limits
+    end
+    plims
+end
+function get_plims(p::FitParameters)
+    get_plims(p, p.names)
+end
 
+# methods for obtaining the lock vector
+get_lock(p::FitParameters, ind::Int) = p[ind].locked
+get_lock(p::FitParameters, name::String) = p[name].locked
+function get_lock(p::FitParameters, names::Vector{String})
+    locks = BitVector(undef, length(names))
+    for (i, param) in enumerate(p[names])
+        locks[i] = param.locked
+    end
+    locks
+end
+function get_lock(p::FitParameters)
+    get_lock(p, p.names)
+end
+
+# methods for obtaining the value vector
+get_val(p::FitParameters, ind::Int) = p[ind].value
+get_val(p::FitParameters, name::String) = p[name].value
+function get_val(p::FitParameters{T}, names::Vector{String}) where {T}
+    vals = Vector{T}(undef, length(names))
+    for (i, param) in enumerate(p[names])
+        vals[i] = param.value
+    end
+    vals
+end
+function get_val(p::FitParameters)
+    get_val(p, p.names)
+end
+
+# methods for locking a named parameter
+lock!(p::FitParameters, ind::Int) = lock!(p[ind])
+lock!(p::FitParameters, name::String) = lock!(p[name])
+function lock!(p::FitParameters, names::AbstractVector{String})
+    for param in p[names]
+        lock!(param)
+    end
+end
+
+# methods for unlocking a named parameter
+unlock!(p::FitParameters, ind::Int) = unlock!(p[ind])
+unlock!(p::FitParameters, name::String) = unlock!(p[name])
+function unlock!(p::FitParameters, names::AbstractVector{String})
+    for param in p[names]
+        unlock!(param)
+    end
+end
+
+# methods for updating parameter limits
+set_plim!(p::FitParameters, ind::Int, limits::Tuple) = set_plim!(p[ind], limits)
+set_plim!(p::FitParameters, name::String, limits::Tuple) = set_plim!(p[name], limits)
+function set_plim!(p::FitParameters, names::AbstractVector{String}, limits::AbstractVector{<:Tuple})
+    for (param, plimit) in zip(p[names], limits)
+        set_plim!(param, plimit)
+    end
+end
+
+# methods for updating parameter values
+set_val!(p::FitParameters, ind::Int, v::Number) = set_val!(p[ind], v)
+set_val!(p::FitParameters, name::String, v::Number) = set_val!(p[name], v)
+function set_val!(p::FitParameters, names::AbstractVector{String}, vs::AbstractVector{<:Number})
+    for (param, v) in zip(p[names], vs)
+        set_val!(param, v)
+    end
+end
+
+function check_valid(p::FitParameters)
+    for param in p[:]
+        check_valid(param)
+    end
 end
 
 
 """
-    OpticalContinuum(ssp_ages, ssp_metallicities, stel_vel, stel_vdisp,
-        na_feii_vel, na_feii_vdisp, br_feii_vel, br_feii_vdisp, α, E_BV,
-        E_BV_factor, δ_uv, frac)
+    NonFitParameter(name, value)
 
-A container for various optical continuum modeling parameters.
+A parameter that is not being fit for, but is nevertheless of interest to us
+
+# Fields
+- `name::String`: The name of the parameter
+- `value::Number`: The value of the parameter
 """
-struct OpticalContinuum <: Continuum
-
-    # Simple Stellar Population parameters
-    ssp_ages::Vector{Parameter}
-    ssp_metallicities::Vector{Parameter}
-
-    # Stellar kinematics
-    stel_vel::Parameter
-    stel_vdisp::Parameter
-
-    # Fe II kinematics
-    na_feii_vel::Parameter
-    na_feii_vdisp::Parameter
-    br_feii_vel::Parameter
-    br_feii_vdisp::Parameter
-    
-    # Power law indices
-    α::Vector{Parameter}
-
-    # Dust attenuation
-    E_BV::Parameter
-    E_BV_factor::Parameter
-    δ_uv::Parameter
-    frac::Parameter
-
-    # Template amplitudes
-    temp_amp::Vector{Parameter}
-
+mutable struct NonFitParameter{T<:Number}
+    const name::String
+    value::T
 end
 
 
 """
-    DustFeatures(names, profiles, mean, fwhm, index, cutoff, complexes, _local)
-
-A container for the modeling parameters relating to PAH dust features
-and absorption features.
 """
-struct DustFeatures
-
-    names::Vector{String}
-    profiles::Vector{Symbol}
-    mean::Vector{Parameter}
-    fwhm::Vector{Parameter}
-    asym::Vector{Union{Parameter,Nothing}}
-    index::Vector{Union{Parameter,Nothing}}
-    cutoff::Vector{Union{Parameter,Nothing}}
+struct FitProfiles{T<:Number,S<:Union{Symbol,String}}
+    profiles::Vector{S}
     complexes::Vector{Union{String,Nothing}}
-    _local::BitVector
-
 end
+
 
 
 """

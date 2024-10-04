@@ -338,23 +338,6 @@ function cubemodel_empty(shape::Tuple, n_dust_cont::Integer, n_power_law::Intege
 end
 
 
-# Helper function for moving absorption features marked as "local" into the proper frame 
-# for a redshifted spectrum
-function cubefitter_mir_adjust_local_absorption!(abs_features_0::DustFeatures, z::Real)
-    # Adjust wavelengths/FWHMs for any local absorption features
-    for i in 1:length(abs_features_0.names)
-        if abs_features_0._local[i]
-            abs_features_0.mean[i].value /= (1 + z)
-            abs_features_0.mean[i].limits = (abs_features_0.mean[i].limits[1] / (1 + z),
-                                        abs_features_0.mean[i].limits[2] / (1 + z))
-            abs_features_0.fwhm[i].value /= (1 + z)
-            abs_features_0.fwhm[i].limits = (abs_features_0.fwhm[i].limits[1] / (1 + z),
-                                        abs_features_0.fwhm[i].limits[2] / (1 + z))
-        end
-    end
-end
-
-
 # Helper function for calculating the number of subchannels covered by MIRI observations
 function cubefitter_mir_get_n_channels(λ::Vector{<:Real}, z::Real)
     # NOTE: do not use n_channels to count the ACTUAL number of channels/bands in an observation,
@@ -395,9 +378,8 @@ end
 function cubefitter_mir_prepare_continuum(λ::Vector{<:Real}, z::Real, out::Dict, n_channels::Integer)
 
     # Get dust options from the configuration file
-    continuum, dust_features_0, abs_features_0, abs_taus_0 = parse_dust(n_channels)
-    # Moves absorption features marked as "local" into the rest frame of the observed spectrum
-    cubefitter_mir_adjust_local_absorption!(abs_features_0, z)
+    λlim = extrema(λ)
+    continuum, dust_features_0, abs_features_0, abs_taus_0 = parse_dust(out, λlim, n_channels)
 
     #### PREPARE OUTPUTS ####
     @debug "### Model will include 1 stellar continuum component ###" *
@@ -520,8 +502,7 @@ end
 
 
 # MIR implementation of the get_continuum_plimits function
-function get_mir_continuum_plimits(cube_fitter::CubeFitter, spaxel::CartesianIndex, I::Vector{<:Real}, σ::Vector{<:Real}, 
-    init::Bool, templates_spax::Matrix{<:Real}; split::Bool=false, force_noext::Bool=false)
+function get_mir_continuum_plimits(cube_fitter::CubeFitter; init::Bool=false, split::Bool=false)
 
     dust_features = cube_fitter.dust_features
     abs_features = cube_fitter.abs_features
@@ -579,13 +560,13 @@ function get_mir_continuum_plimits(cube_fitter::CubeFitter, spaxel::CartesianInd
         end
     end
     # Also lock if force_noext
-    if force_noext
-        ext_lock[1] = true
-    end
-    # Also lock if the continuum is within 1 std dev of 0
-    if nanmedian(I) ≤ 2nanmedian(σ)
-        ext_lock[:] .= true
-    end
+    # if force_noext
+    #     ext_lock[1] = true
+    # end
+    # # Also lock if the continuum is within 1 std dev of 0
+    # if nanmedian(I) ≤ 2nanmedian(σ)
+    #     ext_lock[:] .= true
+    # end
     # Lock N_pyr and N_for if the option is given
     if cube_fitter.extinction_curve == "decompose" && cube_fitter.decompose_lock_column_densities && !init
         ext_lock[2:3] .= true
@@ -632,9 +613,9 @@ end
 
 
 # Helper function for calculating an estimate of optical depth based on continuum slopes
-function guess_optical_depth(cube_fitter::CubeFitter, λ::Vector{<:Real}, continuum::MIRContinuum, 
-    init::Bool)
+function guess_optical_depth(cube_fitter::CubeFitter, λ::Vector{<:Real}, init::Bool)
 
+    continuum = cube_fitter.continuum
     i1 = nanmedian(I[cube_fitter.guess_tau[1][1] .< λ .< cube_fitter.guess_tau[1][2]])
     i2 = nanmedian(I[cube_fitter.guess_tau[2][1] .< λ .< cube_fitter.guess_tau[2][2]])
     m = (i2 - i1) / (mean(cube_fitter.guess_tau[2]) - mean(cube_fitter.guess_tau[1]))
@@ -698,7 +679,7 @@ end
 
 # Helper function for getting initial MIR parameters based on the initial fit
 function get_mir_continuum_initial_values_from_previous(cube_fitter::CubeFitter, spaxel::CartesianIndex,
-    λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vector{<:Real}, N::Real, tau_guess::Real)
+    I::Vector{<:Real}, N::Real, tau_guess::Real)
 
     # Set the parameters to the best parameters
     p₀ = copy(cube_fitter.p_init_cont)
@@ -738,17 +719,17 @@ function get_mir_continuum_initial_values_from_previous(cube_fitter::CubeFitter,
     end
 
     # Set τ_9.7 and τ_CH to 0 if the continuum is within 1 std dev of 0
-    lock_abs = false
-    if nanmedian(I) ≤ 2nanmedian(σ)
-        lock_abs = true
-        if cube_fitter.extinction_curve != "decompose"
-            p₀[pᵢ] = 0.
-            p₀[pᵢ+2] = 0.
-        else
-            p₀[pᵢ:pᵢ+2] .= 0.
-            p₀[pᵢ+4] = 0.
-        end
-    end
+    # lock_abs = false
+    # if nanmedian(I) ≤ 2nanmedian(σ)
+    #     lock_abs = true
+    #     if cube_fitter.extinction_curve != "decompose"
+    #         p₀[pᵢ] = 0.
+    #         p₀[pᵢ+2] = 0.
+    #     else
+    #         p₀[pᵢ:pᵢ+2] .= 0.
+    #         p₀[pᵢ+4] = 0.
+    #     end
+    # end
 
     # Set τ_9.7 to the guess if the guess_tau flag is set
     if !isnothing(cube_fitter.guess_tau) && (cube_fitter.extinction_curve != "decompose")
@@ -778,9 +759,9 @@ function get_mir_continuum_initial_values_from_previous(cube_fitter::CubeFitter,
     # Do not adjust absorption feature amplitudes since they are multiplicative
     pᵢ += 4 + (cube_fitter.extinction_curve == "decompose" ? 3 : 1)
     for _ ∈ 1:cube_fitter.n_abs_feat
-        if lock_abs
-            p₀[pᵢ] = 0.
-        end
+        # if lock_abs
+        #     p₀[pᵢ] = 0.
+        # end
         pᵢ += 4
     end
 
@@ -817,10 +798,11 @@ end
 
 
 # Helper function for getting initial MIR parameters based on estimates from the data
-function get_mir_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, continuum::MIRContinuum,
-    λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vector{<:Real}, N::Real, tau_guess::Real)
+function get_mir_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, λ::Vector{<:Real}, 
+    I::Vector{<:Real}, N::Real, tau_guess::Real)
 
     cubic_spline = Spline1D(λ, I, k=3)
+    continuum = cube_fitter.continuum
 
     # Stellar amplitude
     λ_s = minimum(λ) < 5 ? minimum(λ)+0.1 : 5.1
@@ -905,11 +887,12 @@ end
 
 
 # Helper function for getting MIR parameter step sizes 
-function get_mir_continuum_step_sizes(cube_fitter::CubeFitter, continuum::MIRContinuum, λ::Vector{<:Real})
+function get_mir_continuum_step_sizes(cube_fitter::CubeFitter, λ::Vector{<:Real})
 
     # Calculate relative step sizes for finite difference derivatives
     dλ = (λ[end] - λ[1]) / length(λ)
     deps = sqrt(eps())
+    continuum = cube_fitter.continuum
 
     stellar_dstep = [deps, 1e-4]
     dc_dstep = vcat([[deps, 1e-4] for _ in continuum.T_dc]...)
@@ -939,7 +922,7 @@ end
 
 # MIR implementation of the get_continuum_initial_values function
 function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
-    σ::Vector{<:Real}, N::Real, init::Bool, templates_spax::Matrix{<:Real}; split::Bool=false, force_noext::Bool=false)
+    N::Real; init::Bool=false, split::Bool=false, force_noext::Bool=false)
 
     continuum = cube_fitter.continuum
     n_split = cubefitter_mir_count_cont_parameters(cube_fitter.extinction_curve, cube_fitter.fit_sil_emission, 
@@ -949,7 +932,7 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
     # guess optical depth from the dip in the continuum level
     tau_guess = 0.
     if !isnothing(cube_fitter.guess_tau) && (cube_fitter.extinction_curve != "decompose")
-        tau_guess = guess_optical_depth(cube_fitter, λ, continuum, init)
+        tau_guess = guess_optical_depth(cube_fitter, λ, init)
     end
 
     # Check if cube fitter has initial cube
@@ -959,11 +942,11 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
     # Check if the cube fitter has initial fit parameters 
     elseif !init
         @debug "Using initial best fit continuum parameters..."
-        p₀, pah_frac = get_mir_continuum_initial_values_from_previous(cube_fitter, spaxel, λ, I, σ, N, tau_guess)
+        p₀, pah_frac = get_mir_continuum_initial_values_from_previous(cube_fitter, spaxel, I, N, tau_guess)
     # Otherwise, we estimate the initial parameters based on the data
     else
         @debug "Calculating initial starting points..."
-        p₀, pah_frac = get_mir_continuum_initial_values_from_estimation(cube_fitter, continuum, λ, I, σ, N, tau_guess)
+        p₀, pah_frac = get_mir_continuum_initial_values_from_estimation(cube_fitter, λ, I, N, tau_guess)
     end
     if force_noext
         pₑ = [3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law]
@@ -983,7 +966,7 @@ function get_mir_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
             "$(df)_asym") for (n, df) ∈ enumerate(cube_fitter.dust_features.names)], ", ") * "]"
     @debug "Continuum Starting Values: \n $p₀"
 
-    deps, dstep = get_mir_continuum_step_sizes(cube_fitter, continuum, λ)
+    deps, dstep = get_mir_continuum_step_sizes(cube_fitter, λ)
     @debug "Continuum relative step sizes: \n $dstep"
 
     if !split

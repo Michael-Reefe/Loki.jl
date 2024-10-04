@@ -339,8 +339,7 @@ end
 
 
 # Optical implementation of the get_continuum_plimits function
-function get_opt_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, init::Bool,
-    nuc_temp_fit::Bool)
+function get_opt_continuum_plimits(cube_fitter::CubeFitter; init::Bool=false, nuc_temp_fit::Bool=false)
 
     continuum = cube_fitter.continuum
 
@@ -350,11 +349,6 @@ function get_opt_continuum_plimits(cube_fitter::CubeFitter, λ::Vector{<:Real}, 
     age_lim = [(ai.limits[1], clamp(ai.limits[2], 0., age_univ)) for ai in continuum.ssp_ages]
 
     ssp_plim = vcat([[amp_ssp_plim, ai, zi.limits] for (ai, zi) in zip(age_lim, continuum.ssp_metallicities)]...)
-    # if !init
-    #     ssp_locked = vcat([[false, true, true] for _ in 1:cube_fitter.n_ssps]...)
-    # else
-    #     ssp_locked = vcat([[false, ai.locked, zi.locked] for (ai, zi) in zip(continuum.ssp_ages, continuum.ssp_metallicities)]...)
-    # end
     ssp_locked = vcat([[false, ai.locked, zi.locked] for (ai, zi) in zip(continuum.ssp_ages, continuum.ssp_metallicities)]...)
 
     stel_kin_plim = [continuum.stel_vel.limits, continuum.stel_vdisp.limits]
@@ -415,7 +409,9 @@ end
 
 # Helper function for getting optical parameters based on the initial fit
 function get_opt_continuum_initial_values_from_previous(cube_fitter::CubeFitter, spaxel::CartesianIndex, 
-    continuum::OpticalContinuum, λ::Vector{<:Real}, I::Vector{<:Real})
+    λ::Vector{<:Real}, I::Vector{<:Real})
+
+    continuum = cube_fitter.continuum
 
     # Set the parameters to the best parameters
     p₀ = copy(cube_fitter.p_init_cont)
@@ -521,8 +517,9 @@ end
 
 
 # Helper function for getting optical continuum parameters based on estimates from the data
-function get_opt_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, continuum::OpticalContinuum,
-    λ::Vector{<:Real}, I::Vector{<:Real})
+function get_opt_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real})
+
+    continuum = cube_fitter.continuum
 
     if cube_fitter.extinction_curve == "ccm"
         att = attenuation_cardelli([median(λ)], continuum.E_BV.value)[1]
@@ -594,8 +591,9 @@ end
 
 
 # Helper function for getting optical parameter step sizes 
-function get_opt_continuum_step_sizes(cube_fitter::CubeFitter, continuum::OpticalContinuum)
+function get_opt_continuum_step_sizes(cube_fitter::CubeFitter)
 
+    continuum = cube_fitter.continuum
     # Calculate relative step sizes for finite difference derivatives
     deps = sqrt(eps())
 
@@ -627,18 +625,18 @@ end
 
 
 # Optical implementation of the get_continuum_initial_values function
-function get_opt_continuum_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, 
-    N::Real, init::Bool, nuc_temp_fit::Bool)
+function get_opt_continuum_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}; 
+    init::Bool=false, nuc_temp_fit::Bool=false)
 
     continuum = cube_fitter.continuum
 
     # Check if the cube fitter has initial fit parameters 
     if !init
         @debug "Using initial best fit continuum parameters..."
-        p₀ = get_opt_continuum_initial_values_from_previous(cube_fitter, spaxel, continuum, λ, I)
+        p₀ = get_opt_continuum_initial_values_from_previous(cube_fitter, spaxel, λ, I)
     else
         @debug "Calculating initial starting points..." 
-        p₀ = get_opt_continuum_initial_values_from_estimation(cube_fitter, continuum, λ, I)
+        p₀ = get_opt_continuum_initial_values_from_estimation(cube_fitter, λ, I)
     end
 
     if nuc_temp_fit
@@ -657,7 +655,7 @@ function get_opt_continuum_initial_values(cube_fitter::CubeFitter, spaxel::Carte
         "temp_multexp_ind2, temp_multexp_amp3, temp_multexp_ind3, temp_multexp_amp4, temp_multexp_ind4, " : 
         join(["$(tp)_amp_1" for tp ∈ cube_fitter.template_names], ", ")) "]"
 
-    dstep = get_opt_continuum_step_sizes(cube_fitter, continuum) 
+    dstep = get_opt_continuum_step_sizes(cube_fitter) 
 
     @debug "Continuum Starting Values: \n $p₀"
     @debug "Continuum relative step sizes: \n $dstep"

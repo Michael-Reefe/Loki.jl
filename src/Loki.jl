@@ -280,6 +280,7 @@ include("core/model_opt.jl")
 include("core/fitdata.jl")
 include("core/fitplot.jl")
 include("core/fitting.jl")
+include("core/fitprep.jl")
 
 include("core/output.jl")
 include("core/output_mir.jl")

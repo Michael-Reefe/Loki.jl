@@ -1327,15 +1327,14 @@ end
 
 
 """
-    get_continuum_plimits(cube_fitter, spaxel, λ, I, σ, init; split)
+    get_continuum_plimits(cube_fitter)
 
 Get the continuum limits vector for a given CubeFitter object, possibly split up by the 2 continuum fitting steps.
 Also returns a boolean vector for which parameters are allowed to vary.
 """
-get_continuum_plimits(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vector{<:Real},
-    init::Bool, templates_spax::Matrix{<:Real}, nuc_temp_fit::Bool; kwargs...) = cube_fitter.spectral_region == :MIR ? 
-    get_mir_continuum_plimits(cube_fitter, spaxel, I, σ, init, templates_spax; kwargs...) : 
-    get_opt_continuum_plimits(cube_fitter, λ, I, init, nuc_temp_fit)
+get_continuum_plimits(cube_fitter::CubeFitter, kwargs...) = cube_fitter.spectral_region == :MIR ? 
+    get_mir_continuum_plimits(cube_fitter; kwargs...) : 
+    get_opt_continuum_plimits(cube_fitter; kwargs...)
 
 
 """
@@ -1345,10 +1344,9 @@ Get the vectors of starting values and relative step sizes for the continuum fit
 Again, the vector may be split up by the 2 continuum fitting steps in the MIR case.
 """
 get_continuum_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:Real}, I::Vector{<:Real},
-    σ::Vector{<:Real}, N::Real, init::Bool, templates_spax::Matrix{<:Real}, nuc_temp_fit::Bool; kwargs...) = 
-    cube_fitter.spectral_region == :MIR ? 
-    get_mir_continuum_initial_values(cube_fitter, spaxel, λ, I, σ, N, init, templates_spax; kwargs...) :
-    get_opt_continuum_initial_values(cube_fitter, spaxel, λ, I, N, init, nuc_temp_fit)
+    N::Real; kwargs...) = cube_fitter.spectral_region == :MIR ? 
+    get_mir_continuum_initial_values(cube_fitter, spaxel, λ, I, N; kwargs...) :
+    get_opt_continuum_initial_values(cube_fitter, spaxel, λ, I; kwargs...)
 
 
 """
@@ -1577,37 +1575,36 @@ end
 Get the line limits vector for a given CubeFitter object. Also returns boolean locked values and
 names of each parameter as strings.
 """
-function get_line_plimits(cube_fitter::CubeFitter, init::Bool, nuc_temp_fit::Bool, 
-    ext_curve::Union{Vector{<:Real},Nothing}=nothing)
+function get_line_plimits(cube_fitter::CubeFitter)
 
-    if !isnothing(ext_curve)
-        max_amp = clamp(1 / minimum(ext_curve), 1., Inf) * (nuc_temp_fit ? 1000. : 1.)
-        if cube_fitter.lines_allow_negative
-            amp_plim = (-max_amp, max_amp)
+    # if !isnothing(ext_curve)
+    #     max_amp = clamp(1 / minimum(ext_curve), 1., Inf) * (nuc_temp_fit ? 1000. : 1.)
+    #     if cube_fitter.lines_allow_negative
+    #         amp_plim = (-max_amp, max_amp)
+    #     else
+    #         amp_plim = (0., max_amp)
+    #     end
+    # else
+    if cube_fitter.spectral_region == :MIR
+        max_amp = 1 / exp(-cube_fitter.continuum.τ_97.limits[2])
+    elseif cube_fitter.extinction_curve == "ccm"
+        max_amp = 1 / attenuation_cardelli([cube_fitter.cube.λ[1]], cube_fitter.continuum.E_BV.limits[2])[1]
+    elseif cube_fitter.extinction_curve == "calzetti"
+        Cf_dust = cube_fitter.fit_covering_frac ? cube_fitter.continuum.frac : 0.
+        if cube_fitter.fit_uv_bump 
+            max_amp = 1 / attenuation_calzetti([cube_fitter.cube.λ[1]], cube_fitter.continuum.E_BV.limits[2],
+                cube_fitter.continuum.δ_uv, Cf=Cf_dust)[1]
         else
-            amp_plim = (0., max_amp)
+            max_amp = 1 / attenuation_calzetti([cube_fitter.cube.λ[1]], cube_fitter.continuum.E_BV.limits[2],
+                Cf=Cf_dust)[1]
         end
+    end 
+    if cube_fitter.lines_allow_negative
+        amp_plim = (-max_amp, max_amp)
     else
-        if cube_fitter.spectral_region == :MIR
-            max_amp = 1 / exp(-cube_fitter.continuum.τ_97.limits[2])
-        elseif cube_fitter.extinction_curve == "ccm"
-            max_amp = 1 / attenuation_cardelli([cube_fitter.cube.λ[1]], cube_fitter.continuum.E_BV.limits[2])[1]
-        elseif cube_fitter.extinction_curve == "calzetti"
-            Cf_dust = cube_fitter.fit_covering_frac ? cube_fitter.continuum.frac : 0.
-            if cube_fitter.fit_uv_bump 
-                max_amp = 1 / attenuation_calzetti([cube_fitter.cube.λ[1]], cube_fitter.continuum.E_BV.limits[2],
-                    cube_fitter.continuum.δ_uv, Cf=Cf_dust)[1]
-            else
-                max_amp = 1 / attenuation_calzetti([cube_fitter.cube.λ[1]], cube_fitter.continuum.E_BV.limits[2],
-                    Cf=Cf_dust)[1]
-            end
-        end 
-        if cube_fitter.lines_allow_negative
-            amp_plim = (-max_amp, max_amp)
-        else
-            amp_plim = (0, max_amp)
-        end
+        amp_plim = (0, max_amp)
     end
+
     ln_plims = Vector{Tuple}()
     ln_lock = BitVector()
     ln_names = Vector{String}()
