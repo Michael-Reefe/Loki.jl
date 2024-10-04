@@ -127,22 +127,9 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
         stellar_templates = precompute_stellar_templates(cube_fitter, pars_0, plock)
     end
 
-    # Fitting functions for either optical or MIR continuum
-    function fit_cont_mir(x, pfree_tied)
-        ptot = rebuild_full_parameters(pfree_tied, pfix_tied, plock_tied, tied_pairs, tied_indices, n_tied)
-        model_continuum(x, ptot, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
-            cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.κ_abs, 
-            cube_fitter.custom_ext_template, cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, false, templates_spax,
-            channel_masks, nuc_temp_fit)
-    end
-    function fit_cont_opt(x, pfree_tied)
-        ptot = rebuild_full_parameters(pfree_tied, pfix_tied, plock_tied, tied_pairs, tied_indices, n_tied)
-        model_continuum(x, ptot, N, cube_fitter.vres, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
-            cube_fitter.n_ssps, cube_fitter.ssp_λ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, 
-            cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, 
-            cube_fitter.extinction_curve, templates_spax, cube_fitter.fit_temp_multexp, nuc_temp_fit)
-    end
-    fit_cont = cube_fitter.spectral_region == :MIR ? fit_cont_mir : fit_cont_opt
+    # Fitting functions for either optical or MIR continuum (includes automatic differentiation)
+    fit_cont = cmpfit_function(cube_fitter, pfix_tied, plock_tied, tied_pairs, tied_indices, n_tied, N, 
+        templates_spax, channel_masks, stellar_templates, nuc_temp_fit)
 
     # Do initial fit
     res = cmpfit(λ_spax, I_spax, σ_spax, fit_cont, pfree_tied, parinfo=parinfo, config=config)
@@ -257,20 +244,10 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
 
     @debug "Beginning continuum fitting with Levenberg-Marquardt least squares (CMPFit):"
 
-    function fit_step1(x, pfree_tied, return_comps=false)
-        ptot = rebuild_full_parameters(pfree_tied, p1fix_tied, lock_1_tied, tied_pairs, tied_indices, n_tied_1)
-        if !return_comps
-            model_continuum(x, ptot, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
-                cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.κ_abs, 
-                cube_fitter.custom_ext_template, cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, true, templates_spax,
-                channel_masks, nuc_temp_fit)
-        else
-            model_continuum(x, ptot, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
-                cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.κ_abs, 
-                cube_fitter.custom_ext_template, cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, true, templates_spax,
-                channel_masks, nuc_temp_fit, true)
-        end
-    end
+    # Fitting functions for MIR continuum step 1: the continuum + PAHs with templates (includes automatic differentiation)
+    fit_step1 = cmpfit_function(cube_fitter, p1fix_tied, lock_1_tied, tied_pairs, tied_indices, n_tied_1, N, 
+        templates_spax, channel_masks, nuc_temp_fit)
+
     res_1 = cmpfit(λ_spax, I_spax, σ_spax, fit_step1, p1free_tied, parinfo=parinfo_1, config=config)
     res_1 = repeat_fit_jitter(λ_spax, I_spax, σ_spax, fit_step1, p1free_tied, lb_1_free_tied, ub_1_free_tied, parinfo_1, config,
         res_1, "continuum (step 1)", spaxel; check_cont_snr=true)
@@ -292,17 +269,9 @@ function continuum_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, �
 
     @debug "Beginning continuum fitting with Levenberg-Marquardt least squares (CMPFit):"
 
-    # Wrapper function
-    function fit_step2(x, pfree, return_comps=false)
-        ptot = zeros(Float64, length(pars_2))
-        ptot[.~lock_2] .= pfree
-        ptot[lock_2] .= p2fix
-        if !return_comps
-            model_pah_residuals(x, ptot, cube_fitter.dust_features.profiles, ccomps["extinction"], template_norm, nuc_temp_fit)
-        else
-            model_pah_residuals(x, ptot, cube_fitter.dust_features.profiles, ccomps["extinction"], template_norm, nuc_temp_fit, true)
-        end
-    end
+    # Fitting functions for MIR continuum step 2: just the PAHs with no templates (includes automatic differentiation)
+    fit_step2 = cmpfit_function(cube_fitter, pars_2, p2fix, lock_2, ccomps, template_norm, nuc_temp_fit)
+ 
     res_2 = cmpfit(λ_spax, I_spax.-I_cont, σ_spax, fit_step2, p2free, parinfo=parinfo_2, config=config)
     res_2 = repeat_fit_jitter(λ_spax, I_spax.-I_cont, σ_spax, fit_step2, p2free, lb_2, ub_2, parinfo_2, config, res_2, 
         "continuum (step 2)", spaxel; check_cont_snr=true)
@@ -677,13 +646,8 @@ function line_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Ve
     # Get CMPFit parinfo object from bounds
     parinfo, config = get_line_parinfo(n_free, lbfree_tied, ubfree_tied, dfree_tied)
 
-    # Wrapper function for fitting only the free, tied parameters
-    function fit_step3(x, pfree_tied)
-        ptot = rebuild_full_parameters(pfree_tied, pfix_tied, param_lock_tied, tied_pairs, tied_indices, n_tied)
-        model_line_residuals(x, ptot, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, 
-            cube_fitter.flexible_wavesol, ext_curve_norm, lsf_interp_func, cube_fitter.relative_flags,
-            nuc_temp_fit ? template_norm : nothing, nuc_temp_fit) 
-    end
+    fit_step3 = cmpfit_function(cube_fitter, pfix_tied, param_lock_tied, tied_pairs, tied_indices, n_tied, ext_curve_norm, 
+        lsf_interp_func, template_norm, nuc_temp_fit)
 
     # Do an optional global fit with simulated annealing
     _fit_global = false
@@ -834,74 +798,9 @@ function all_fit_spaxel(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vec
         stellar_templates = precompute_stellar_templates(cube_fitter, pars_0_cont, lock_cont)
     end
 
-    # Fitting functions for either optical or MIR continuum
-    function fit_joint_mir(x, pfree_tied_all; n=0)
-        out_type = eltype(pfree_tied_all)
-
-        # Split into continuum and lines parameters
-        pfree_cont_tied = pfree_tied_all[1:n_free_cont]
-        pfree_lines_tied = pfree_tied_all[n_free_cont+1:end]
-
-        # Organize parameters
-        ptot_cont = rebuild_full_parameters(pfree_cont_tied, pfix_cont_tied, lock_cont_tied, tied_pairs_cont, tied_indices_cont, n_tied_cont)
-        ptot_lines = rebuild_full_parameters(pfree_lines_tied, pfix_lines_tied, lock_lines_tied, tied_pairs_lines, tied_indices_lines, n_tied_lines)
-
-        # Generate the extinction curve and nuclear template normalization beforehand so it can be used for the lines
-        pₑ = 3 + 2cube_fitter.n_dust_cont + 2cube_fitter.n_power_law
-        ext_curve, dp, _, _, _ = get_extinction_profile(λ, ptot_cont, cube_fitter.extinction_curve, cube_fitter.extinction_screen,
-            cube_fitter.κ_abs, cube_fitter.custom_ext_template, cube_fitter.n_dust_cont, cube_fitter.n_power_law)
-        pₑ += dp 
-        pₑ += 4 + 3cube_fitter.n_abs_feat + (cube_fitter.fit_sil_emission ? 6 : 0)
-        template_norm = nothing
-        if nuc_temp_fit
-            template_norm, _ = get_nuctempfit_templates(ptot_cont, templates_spax, channel_masks, pₑ)
-        end
-
-        # Generate the models
-        Icont = model_continuum(x, ptot_cont, N, cube_fitter.n_dust_cont, cube_fitter.n_power_law, cube_fitter.dust_features.profiles,
-            cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, cube_fitter.κ_abs, cube_fitter.custom_ext_template,
-            cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, false, templates_spax, channel_masks, nuc_temp_fit)
-        Ilines = model_line_residuals(x, ptot_lines, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol,
-            ext_curve, lsf_interp_func, cube_fitter.relative_flags, template_norm, nuc_temp_fit)
-        
-        # Return the sum of the models
-        Icont .+ Ilines
-    end
-
-    function fit_joint_opt(x, pfree_tied_all; n=0)
-        out_type = eltype(pfree_tied_all)
-
-        # Split into continuum and lines parameters
-        pfree_cont_tied = pfree_tied_all[1:n_free_cont]
-        pfree_lines_tied = pfree_tied_all[n_free_cont+1:end]
-
-        # Organize parameters
-        ptot_cont = rebuild_full_parameters(pfree_cont_tied, pfix_cont_tied, lock_cont_tied, tied_pairs_cont, tied_indices_cont, n_tied_cont)
-        ptot_lines = rebuild_full_parameters(pfree_lines_tied, pfix_lines_tied, lock_lines_tied, tied_pairs_lines, tied_indices_lines, n_tied_lines)
-
-        # Generate the attenuation curve beforehand so it can be used for the lines
-        pₑ = 1 + 3cube_fitter.n_ssps + 2
-        ext_curve_gas, ext_curve_stars, dp = get_extinction_profile(λ, ptot_cont, cube_fitter.extinction_curve, 
-            cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, cube_fitter.n_ssps)
-        pₑ += dp
-        pₑ += (cube_fitter.fit_opt_na_feii ? 3 : 0) + (cube_fitter.fit_opt_br_feii ? 3 : 0) + 2cube_fitter.n_power_law
-        template_norm = nothing
-        if nuc_temp_fit
-            template_norm, _ = get_nuctempfit_templates(params, templates, pₑ)
-        end
-        
-        # Generate the models
-        Icont = model_continuum(x, ptot_cont, N, cube_fitter.vres, cube_fitter.vsyst_ssp, cube_fitter.vsyst_feii, cube_fitter.npad_feii,
-            cube_fitter.n_ssps, cube_fitter.ssp_λ, stellar_templates, cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, 
-            cube_fitter.fit_covering_frac, cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve,
-            templates_spax, cube_fitter.fit_temp_multexp, nuc_temp_fit)
-        Ilines = model_line_residuals(x, ptot_lines, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.lines, cube_fitter.flexible_wavesol,
-            ext_curve_gas, lsf_interp_func, cube_fitter.relative_flags, template_norm, nuc_temp_fit)
-
-        # Return the sum of the models
-        Icont .+ Ilines
-    end
-    fit_joint = cube_fitter.spectral_region == :MIR ? fit_joint_mir : fit_joint_opt
+    fit_joint = cmpfit_function(cube_fitter, λ, pfix_cont_tied, lock_cont_tied, tied_pairs_cont, tied_indices_cont, 
+        n_tied_cont, n_free_cont, pfix_lines_tied, lock_lines_tied, tied_pairs_lines, tied_indices_lines,
+        n_tied_lines, N, templates_spax, channel_masks, stellar_templates, lsf_interp_func, nuc_temp_fit)
        
     # Combine parameters
     p₀ = [pfree_cont_tied; pfree_lines_tied]

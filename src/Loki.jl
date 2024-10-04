@@ -9,10 +9,7 @@ using SharedArrays
 # Math packages
 using Distributions
 using Random
-using Statistics
-using StatsBase
-using NaNStatistics
-using QuadGK
+using StatsBase, Statistics, NaNStatistics
 using NumericalIntegration
 using Dierckx
 using LinearAlgebra
@@ -41,9 +38,9 @@ using SpectralResampling
 
 # File I/O
 using Glob
-using TOML
 using DelimitedFiles
 using CSV
+using TOML
 using Serialization
 using DataFrames
 
@@ -53,8 +50,7 @@ using PlotlyJS
 # Misc packages/utilites
 using ProgressMeter
 using Printf
-using Logging
-using LoggingExtras
+using Logging, LoggingExtras
 using Dates
 using InteractiveUtils
 using ColorSchemes
@@ -62,8 +58,7 @@ using LaTeXStrings
 using ArgParse
 
 # PyCall needed for some matplotlib modules
-using PyCall
-using Conda
+using PyCall, Conda
 
 # Matplotlib modules
 const plt::PyObject = PyNULL()
