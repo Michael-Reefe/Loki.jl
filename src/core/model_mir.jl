@@ -170,10 +170,10 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
     # Other absorption features
     abs_tot = one(out_type)
     for k ∈ 1:n_abs_feat
-        prof = Gaussian.(λ, 1.0, params[pᵢ+1:pᵢ+2]...)
+        prof = Drude.(λ, 1.0, params[pᵢ+1:pᵢ+3]...)
         comps["abs_feat_$k"] = extinction.(prof, params[pᵢ], screen=true)
         abs_tot = abs_tot .* comps["abs_feat_$k"]
-        pᵢ += 3
+        pᵢ += 4
     end
 
     # only obscure the part of the continuum that is defined by the covering fraction Cf
@@ -281,9 +281,9 @@ function model_continuum(λ::Vector{<:Real}, params::Vector{<:Real}, N::Real, n_
     # Other absorption features
     abs_tot = one(out_type)
     for k ∈ 1:n_abs_feat
-        prof = Gaussian.(λ, 1.0, params[pᵢ+1:pᵢ+2]...)
+        prof = Drude.(λ, 1.0, params[pᵢ+1:pᵢ+3]...)
         abs_tot = abs_tot .* extinction.(prof, params[pᵢ], screen=true)
-        pᵢ += 3
+        pᵢ += 4
     end
     
     contin = @. Cf * contin * ext * abs_ice * abs_ch * abs_tot + (1 - Cf) * contin

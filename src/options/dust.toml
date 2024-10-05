@@ -142,7 +142,7 @@ plim = [1.5, 0.5]
 locked = false
 
 [dust_features."PAH_518"]
-complex = "5.2"
+complex = "PAH_520"
 
 [dust_features."PAH_518".wave]
 val = 5.18
@@ -155,7 +155,7 @@ plim = [0.4, 1.1]
 locked = false
 
 [dust_features."PAH_524"]
-complex = "5.2"
+complex = "PAH_520"
 
 [dust_features."PAH_524".wave]
 val = 5.24
@@ -193,7 +193,7 @@ plim = [0.4, 1.1]
 locked = false
 
 [dust_features."PAH_564"]
-complex = "5.7"
+complex = "PAH_570"
 
 [dust_features."PAH_564".wave]
 val = 5.64
@@ -205,21 +205,21 @@ val = 0.10
 plim = [0.4, 1.1]
 locked = false
 
-[dust_features."PAH_570"]
-complex = "5.7"
+[dust_features."PAH_571"]
+complex = "PAH_570"
 
-[dust_features."PAH_570".wave]
+[dust_features."PAH_571".wave]
 val = 5.70
 plim = [-0.05, 0.05]
 locked = false
 
-[dust_features."PAH_570".fwhm]
+[dust_features."PAH_571".fwhm]
 val = 0.10
 plim = [0.4, 1.1]
 locked = false
 
 [dust_features."PAH_576"]
-complex = "5.7"
+complex = "PAH_570"
 
 [dust_features."PAH_576".wave]
 val = 5.76
@@ -250,9 +250,6 @@ locked = false
 val = 0.20
 plim = [0.4, 1.1]
 locked = false
-
-[dust_features."PAH_620"]
-complex = "6.2"
 
 [dust_features."PAH_620".wave]
 val = 6.20
@@ -290,7 +287,7 @@ plim = [0.4, 1.1]
 locked = false
 
 [dust_features."PAH_742"]
-complex = "7.7"
+complex = "PAH_770"
 
 [dust_features."PAH_742".wave]
 val = 7.42
@@ -303,7 +300,7 @@ plim = [0.4, 1.1]
 locked = false
 
 [dust_features."PAH_755"]
-complex = "7.7"
+complex = "PAH_770"
 
 [dust_features."PAH_755".wave]
 val = 7.55
@@ -316,7 +313,7 @@ plim = [0.9, 1.1]
 locked = false
 
 [dust_features."PAH_761"]
-complex = "7.7"
+complex = "PAH_770"
 
 [dust_features."PAH_761".wave]
 val = 7.61
@@ -329,7 +326,7 @@ plim = [0.4, 1.1]
 locked = false
 
 [dust_features."PAH_782"]
-complex = "7.7"
+complex = "PAH_770"
 
 [dust_features."PAH_782".wave]
 val = 7.82
@@ -352,7 +349,7 @@ plim = [0.4, 1.1]
 locked = false
 
 [dust_features."PAH_850"]
-complex = "8.6"
+complex = "PAH_860"
 
 [dust_features."PAH_850".wave]
 val = 8.50
@@ -365,7 +362,7 @@ plim = [0.4, 1.1]
 locked = false
 
 [dust_features."PAH_861"]
-complex = "8.6"
+complex = "PAH_860"
 
 [dust_features."PAH_861".wave]
 val = 8.61
@@ -413,7 +410,7 @@ plim = [1.5, 0.5]
 locked = false
 
 [dust_features."PAH_1120"]
-complex = "11.3"
+complex = "PAH_1130"
 
 [dust_features."PAH_1120".wave]
 val = 11.20
@@ -426,7 +423,7 @@ plim = [0.4, 1.1]
 locked = false
 
 [dust_features."PAH_1126"]
-complex = "11.3"
+complex = "PAH_1130"
 
 [dust_features."PAH_1126".wave]
 val = 11.26
@@ -454,7 +451,7 @@ plim = [0.4, 1.1]
 locked = false
 
 [dust_features."PAH_1260"]
-complex = "12.7"
+complex = "PAH_1270"
 
 [dust_features."PAH_1260".wave]
 val = 12.60
@@ -467,7 +464,7 @@ plim = [0.4, 1.1]
 locked = false
 
 [dust_features."PAH_1277"]
-complex = "12.7"
+complex = "PAH_1270"
 
 [dust_features."PAH_1277".wave]
 val = 12.77
@@ -540,7 +537,7 @@ plim = [0.4, 1.1]
 locked = false
 
 [dust_features."PAH_1645"]
-complex = "17"
+complex = "PAH_1700"
 
 [dust_features."PAH_1645".wave]
 val = 16.45
@@ -553,7 +550,7 @@ plim = [0.4, 1.1]
 locked = false
 
 [dust_features."PAH_1704"]
-complex = "17"
+complex = "PAH_1700"
 
 [dust_features."PAH_1704".wave]
 val = 17.04
@@ -566,7 +563,7 @@ plim = [0.4, 1.1]
 locked = false
 
 [dust_features."PAH_1738"]
-complex = "17"
+complex = "PAH_1700"
 
 [dust_features."PAH_1738".wave]
 val = 17.38
@@ -579,7 +576,7 @@ plim = [0.4, 1.1]
 locked = false
 
 [dust_features."PAH_1788"]
-complex = "17"
+complex = "PAH_1700"
 
 [dust_features."PAH_1788".wave]
 val = 17.887

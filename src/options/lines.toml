@@ -23,8 +23,23 @@ acomp_1_kinematic_group_H2 = [
 #     "HI_H_"
 # ]
 # # Case B recombination amplitude ratios for (Hzeta, Hepsilon, Hdelta, Hgamma, Hbeta, Halpha)
-# tie_amp_Balmer = [0.105, 0.158, 0.256, 0.466, 1.0, 2.87]
-# tie_acomp_1_amp_Balmer = [0.105, 0.158, 0.256, 0.466, 1.0, 2.87]
+# # You do need to specify individual lines here to make sure the right line gets the right ratio
+# [tie_amp_Balmer]
+# HI_H_alpha = 2.87
+# HI_H_beta = 1.0
+# HI_H_gamma = 0.466
+# HI_H_delta = 0.256
+# HI_H_epsilon = 0.158
+# HI_H_zeta = 0.105
+
+# [tie_acomp_1_amp_Balmer]
+# HI_H_alpha = 2.87
+# HI_H_beta = 1.0
+# HI_H_gamma = 0.466
+# HI_H_delta = 0.256
+# HI_H_epsilon = 0.158
+# HI_H_zeta = 0.105
+
 
 kinematic_group_lo = [
     "HI_",
@@ -92,34 +107,74 @@ acomp_1_kinematic_group_hi = [
 # Lines to make combined flux/eqw maps for
 combined_maps = [["OII_03727", "OII_03729"]]
 
-# Line voff and FWHM limits
-voff_plim = [-800.0, 800.0]              # -1000 to 1000 km/s from the rest wavelength
-fwhm_plim = [0.0, 2000.0]                # 0 to 1000 km/s FWHM velocity of the line -- this is the *intrinsic* FWHM,
-                                         #    i.e. the FWHM after the instrumental FWHM has been subtracted in quadrature
-h3_plim = [-0.5, 0.5]                    # skewness (3rd moment): limits (-0.5, 0.5), to remain mostly gaussian
-h4_plim = [-0.5, 0.5]                    # kurtosis (4th moment): limits (-0.5, 0.5), to remain mostly gaussian
-eta_plim = [0.0, 1.0]                    # mixing parameter for Voigt profiles: limits (0.0, 1.0)
-eta_init = 1.0                           # start the mixing ratio fully Gaussian
-eta_locked = true                        # the MIRI/MRS line-spread function should essentially be purely Gaussian
-
 # Additional line components
 n_acomps = 1
 rel_amp = false
 rel_voff = false 
 rel_fwhm = false
 
-acomp_amp_plim = [[0.0, 1.0]]            # if rel_amp is true: multiplicative factor with the main line amp
-acomp_voff_plim = [[-800.0, 800.0]]      # if rel_voff is true: additive factor with the main line voff
-acomp_fwhm_plim = [[0.0, 2000.0]]      # if rel_fwhm is true: multiplicative factor with the main line FWHM
-# acomp_fwhm_plim = [[0.0, 3.0]]
-
-# Uncertainty in the wavelength solution of the data
-flexible_wavesol = false                 # allow tied voffs to vary slightly based on wavelength solution uncertainty
-wavesol_unc = 30.0                       # wavelength solution uncertainties in each of the 4 MIRI channels (<30 km/s)
-
 # Default sorting order for lines components: 
 # -1 = decreasing (largest first), 1 = increasing (smallest first)
 default_sort_order = -1
+
+# Line voff and FWHM limits
+[voff]
+val = 0.0
+plim = [-800.0, 800.0]              # -800 to 800 km/s from the rest wavelength
+locked = false
+
+[fwhm]
+val = 500.0
+plim = [0.0, 2000.0]                # 0 to 1000 km/s FWHM velocity of the line -- this is the *intrinsic* FWHM,
+locked = false                      #    i.e. the FWHM after the instrumental FWHM has been subtracted in quadrature
+                                   
+[h3]
+val = 0.0
+plim = [-0.5, 0.5]                    # skewness (3rd moment): limits (-0.5, 0.5), to remain mostly gaussian
+locked = false
+
+[h4]
+val = 0.0
+plim = [-0.5, 0.5]                    # kurtosis (4th moment): limits (-0.5, 0.5), to remain mostly gaussian
+locked = false
+
+[eta]
+val = 1.0                           # start the mixing ratio fully Gaussian
+plim = [0.0, 1.0]                    # mixing parameter for Voigt profiles: limits (0.0, 1.0)
+locked = true                        # the MIRI/MRS line-spread function should essentially be purely Gaussian
+
+# if rel_amp is set, this is a fraction of the main component amp
+# if not, this is a fraction of the maximum intensity in the spectrum over the maximum possible extinction
+# ( i.e. 1/exp(-max(tau_9.7)) )
+[[acomp_amp]]
+val = 0.1
+plim = [0.0, inf]
+locked = false
+
+[[acomp_voff]]
+val = 0.0
+plim = [-800.0, 800.0]
+locked = false
+
+[[acomp_fwhm]]
+val = 500.0
+plim = [0.0, 2000.0]
+locked = false
+
+[[acomp_h3]]
+val = 0.0
+plim = [-0.5, 0.5]
+locked = false
+
+[[acomp_h4]]
+val = 0.0
+plim = [-0.5, 0.5]
+locked = false
+
+[[acomp_eta]]
+val = 1.0
+plim = [0.0, 1.0]
+locked = true
 
 # Central wavelengths of each line that should be included in the model, in microns
 # Line wavelengths should be *vacuum* wavelengths, not air wavelengths
@@ -1007,96 +1062,8 @@ default = "Voigt"
 
 # NeIII_15555 = ["Voigt"]
 
-# optional: add [parameters] key to specify individual line priors that 
+# optional: add [parameters] keywords to specify individual line priors that 
 # are different from the defaults
 
-### Optical ###
+# [parameters]
 
-# [parameters.HI_H_beta]
-# fwhm_plim = [0.0, 800.0]
-# acomp_fwhm_plim = [[800.0, 1500.0]]
-
-# [parameters.HI_H_gamma]
-# fwhm_plim = [0.0, 800.0]
-# acomp_fwhm_plim = [[800.0, 1500.0]]
-
-# [parameters.HI_H_delta]
-# fwhm_plim = [0.0, 800.0]
-# acomp_fwhm_plim = [[800.0, 1500.0]]
-
-# [parameters.HI_H_epsilon]
-# fwhm_plim = [0.0, 800.0]
-# acomp_fwhm_plim = [[800.0, 1500.0]]
-
-# [parameters.HI_H_zeta]
-# fwhm_plim = [0.0, 800.0]
-# acomp_fwhm_plim = [[800.0, 1500.0]]
-
-# [parameters.OIII_04960]
-# fwhm_plim = [0.0, 800.0]
-# acomp_fwhm_plim = [[800.0, 1500.0]]
-
-# [parameters.OIII_05008]
-# fwhm_plim = [0.0, 800.0]
-# acomp_fwhm_plim = [[800.0, 1500.0]]
-
-### MIR ###
-
-# [parameters.H2]
-# fwhm_plim = [0.0, 400.0]
-# acomp_fwhm_plim = [[400.0, 800.0]]
-
-# [parameters.lo]
-# fwhm_plim = [0.0, 1500.0]
-# acomp_fwhm_plim = [[0.0, 700.0]]
-
-# In channel 3A, 1 pixel ~ 61 km/s
-# [parameters.ArIII_8991]
-# voff_init = -117.1
-# voff_plim = [-178.1, -56.1]
-# fwhm_init = 1001.5
-# fwhm_plim = [900.0, 1100.0]
-# acomp_fwhm_init = 100.0
-# acomp_fwhm_plim = [[0.0, 800.0]]
-
-# [parameters.NeVI_7652]
-# voff_init = -55.7
-# voff_plim = [-116.7, 6.7]
-# fwhm_init = 1408.1
-# fwhm_plim = [1300.0, 1500.0]
-# # fwhm_plim = [[1267.3, 1548.9]]
-# acomp_fwhm_init = 100.0
-# acomp_fwhm_plim = [[0.0, 800.0]]
-
-# [parameters.SIV_10511]
-# voff_init = -2.5
-# voff_plim = [-63.5, 59.5]
-# fwhm_init = 972.3
-# fwhm_plim = [870.0, 1070.0]
-# acomp_fwhm_init = 100.0
-# acomp_fwhm_plim = [[0.0, 700.0]]
-
-# [parameters.FeVII_9527]
-# voff_init = -192.3
-# voff_plim = [-253.3, -131.3]
-# fwhm_init = 1055.7
-# fwhm_plim = [950.0, 1150.0]
-# acomp_fwhm_init = 100.0
-# acomp_fwhm_plim = [[0.0, 800.0]]
-
-# [parameters.OIII_04960]
-# acomp_amp_init = 0.0
-# acomp_amp_locked = true
-
-# [parameters.OIII_05008]
-# acomp_amp_init = 0.0
-# acomp_amp_locked = true
-
-# [parameters.NeII_12813]
-# acomp_amp_plim = [[0.0, 0.5]]
-# acomp_fwhm_plim = [[1.5, 5.0]]
-
-# [parameters.ArIII_8991]
-# acomp_amp_plim = [[0.0, 0.5]]
-# acomp_fwhm_plim = [[1.5, 5.0]]
-# acomp_voff_plim = [[-500.0, -100.0]]

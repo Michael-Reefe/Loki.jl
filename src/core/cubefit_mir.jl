@@ -379,7 +379,7 @@ function cubefitter_mir_prepare_continuum(λ::Vector{<:Real}, z::Real, out::Dict
 
     # Get dust options from the configuration file
     λlim = extrema(λ)
-    continuum, dust_features_0, abs_features_0, abs_taus_0 = parse_dust(out, λlim, n_channels)
+    continuum, dust_features_0, abs_features_0, abs_taus_0 = construct_parameters_mir(out, λlim, n_channels)
 
     #### PREPARE OUTPUTS ####
     @debug "### Model will include 1 stellar continuum component ###" *
@@ -446,7 +446,6 @@ function cubefitter_mir_prepare_continuum(λ::Vector{<:Real}, z::Real, out::Dict
     end
     @debug msg
 
-    n_templates = size(out[:templates], 4)
 
     if n_templates == 0
         # Ignore any template amplitude entries in the dust.toml options if there are no templates
@@ -456,12 +455,6 @@ function cubefitter_mir_prepare_continuum(λ::Vector{<:Real}, z::Real, out::Dict
                                     continuum.τ_cold, continuum.sil_peak, Parameter[])
     end
 
-    # If we are using AGN templates, lock the hot dust component to 0
-    if !haskey(out, :lock_hot_dust)
-        lock_hot_dust = n_templates > 0
-    else
-        lock_hot_dust = out[:lock_hot_dust]
-    end
     # Check for locked tau_CH parameter
     if haskey(out, :fit_ch_abs)
         if !out[:fit_ch_abs]
@@ -480,7 +473,7 @@ function cubefitter_mir_prepare_continuum(λ::Vector{<:Real}, z::Real, out::Dict
     end
 
     continuum, dust_features_0, dust_features, abs_features_0, abs_features, abs_taus, 
-        n_dust_cont, n_power_law, n_dust_features, n_abs_features, n_templates, lock_hot_dust,
+        n_dust_cont, n_power_law, n_dust_features, n_abs_features,
         F_test_ext
 end
 

@@ -5,6 +5,13 @@ them into code objects.
 
 ############################## OPTIONS/SETUP/PARSING FUNCTIONS ####################################
 
+function pah_name_to_float(name::String)
+    # assumed to be formatted such that the wavelength is given to two decimal places,
+    # i.e. "PAH_620" is interpreted at 6.20
+    wl = split(name, "_")[end]
+    parse(Float64, wl[1:end-2] * "." * wl[end-1:end])
+end
+
 """
     parse_resolving(z, channel)
 
@@ -201,36 +208,44 @@ sorts the profiles and acomp_profiles keys into dictionaries.
 """
 function validate_lines_file(lines)
 
-    keylist1 = ["default_sort_order", "tie_voigt_mixing", "voff_plim", "fwhm_plim", "h3_plim", "h4_plim", "acomp_voff_plim", 
-        "acomp_fwhm_plim", "flexible_wavesol", "wavesol_unc", "lines", "profiles", "acomps", "n_acomps"]
+    keylist1 = ["default_sort_order", "tie_voigt_mixing", "lines", "profiles", "acomps", "n_acomps", 
+        "rel_amp", "rel_fwhm", "rel_voff"]
     keylist2 = ["wave", "latex", "annotate"]
+
+    keylist3 = ["voff", "fwhm", "h3", "h4", "acomp_amp", "acomp_voff", "acomp_fwhm"]
+    keylist4 = ["val", "plim", "locked"]
 
     # Loop through all the required keys that should be in the file and confirm that they are there
     for key ∈ keylist1
         @assert haskey(lines, key) "$key not found in line options!"
     end
     for key ∈ keys(lines["lines"])
-        for key2 in keylist2
+        for key2 ∈ keylist2
             @assert haskey(lines["lines"][key], key2) "$key2 not found in $key line options!"
         end
     end
+    for key ∈ keylist3
+        @assert haskey(lines, key) "$key not found in line options!"
+        for key2 ∈ keylist4
+            @assert haskey(lines[key], key2) "$key2 not found in $key line options!"
+        end
+    end
+
     @assert haskey(lines["profiles"], "default") "default not found in line profile options!"
-    profiles = Dict(ln => lines["profiles"]["default"] for ln ∈ keys(lines["lines"]))
-    if haskey(lines, "profiles")
-        for line ∈ keys(lines["lines"])
-            if haskey(lines["profiles"], line)
-                profiles[line] = lines["profiles"][line]
-            end
+    profiles = Dict(ln => Symbol(lines["profiles"]["default"]) for ln ∈ keys(lines["lines"]))
+    for line ∈ keys(lines["lines"])
+        if haskey(lines["profiles"], line)
+            profiles[line] = Symbol(lines["profiles"][line])
         end
     end
     # Keep in mind that a line can have multiple acomp profiles
-    acomp_profiles = Dict{String, Vector{Union{String,Nothing}}}()
+    acomp_profiles = Dict{String, Vector{Union{Symbol,Nothing}}}()
     for line ∈ keys(lines["lines"])
-        acomp_profiles[line] = Vector{Union{String,Nothing}}(nothing, lines["n_acomps"])
+        acomp_profiles[line] = Vector{Union{Symbol,Nothing}}(nothing, lines["n_acomps"])
         if haskey(lines, "acomps")
             if haskey(lines["acomps"], line)
                 # Pad to match the length of n_acomps
-                acomp_profiles[line] = vcat(lines["acomps"][line], [nothing for _ in 1:(lines["n_acomps"]-length(lines["acomps"][line]))])
+                acomp_profiles[line] = vcat(Symbol.(lines["acomps"][line]), [nothing for _ in 1:(lines["n_acomps"]-length(lines["acomps"][line]))])
             end
         end
     end
@@ -278,55 +293,64 @@ end
 Uses the dust options file to create a DustFeatures object for the
 PAH features.
 """
-function create_dust_features(dust::Dict, λlim::Tuple, user_mask::Vector{Tuple})
+function create_dust_features(dust::Dict, λlim::Tuple, user_mask::Vector{Tuple};
+    do_absorption::Bool=false)
 
     # Dust feature central wavelengths and FWHMs
-    n_df = length(dust["dust_features"])
-    cent_vals = zeros(n_df)
-    profiles = [:Drude for _ in 1:n_df]
-    complexes = Vector{Union{String,Nothing}}(nothing, n_df)
-    parameters = Vector{FitParameters}(undef, n_df)
+    cent_vals = Float64[]
+    complexes = String[]
+    latex = String[]
+    fit_profiles = FitProfiles()
+    key = do_absorption ? "absorption_features" : "dust_features"
+    short_key = do_absorption ? "abs_features" : "dust_features"
 
-    msg = "Dust features:"
-    for (i, df) ∈ enumerate(keys(dust["dust_features"]))
+    msg = "$(do_absorption ? "Absorption" : "Dust") features:"
+    for df ∈ keys(dust[key])
 
         # First things first, check if this feature is within our wavelength range
-        mean_wave = dust["dust_features"][df]["wave"]["val"]
-        if !(λlim[1]-0.1 < mean_wave < λlim[2]+0.1)
+        cent_val = dust[key][df]["wave"]["val"]
+        if !(λlim[1]-0.1 < cent_val < λlim[2]+0.1)
             continue
         end
         for pair in user_mask
-            if pair[1] < mean_wave < pair[2]
+            if pair[1] < cent_val < pair[2]
                 continue
             end
         end
 
-        prefix = "dust_features.$(df)."
+        profile = :Drude
+        complex = df
+
+        prefix = "$(short_key).$(df)."
 
         # amplitudes (not in file)
-        amp = FitParameter(NaN, false, (0., Inf))   # the NaN is a placeholder for now and will be replaced
-        msg *= "\nAmp $(amp)"
-        mean = parameter_from_dict_wave(dust["dust_features"][df]["wave"])
+        if do_absorption
+            amp = parameter_from_dict(dust[key][df]["tau"])
+        else
+            amp = FitParameter(NaN, false, (0., Inf))   # the NaN is a placeholder for now and will be replaced
+        end
+        msg *= "\n$(do_absorption ? "Depth" : "Amp") $(amp)"
+        mean = parameter_from_dict_wave(dust[key][df]["wave"])
         msg *= "\nWave $(mean)"
-        fwhm = parameter_from_dict_fwhm(dust["dust_features"][df]["fwhm"])
+        fwhm = parameter_from_dict_fwhm(dust[key][df]["fwhm"])
         msg *= "\nFWHM $(fwhm)"
 
-        names = prefix .* ["amp", "mean", "fwhm"]
+        names = prefix .* [do_absorption ? "tau" : "amp", "mean", "fwhm"]
         _params = [amp, mean, fwhm]
 
-        if haskey(dust["dust_features"][df], "index") && haskey(dust["dust_features"][df], "cutoff")
-            profiles[i] = :PearsonIV
-            index = parameter_from_dict(dust["dust_features"][df]["index"])
+        if haskey(dust[key][df], "index") && haskey(dust[key][df], "cutoff") && !do_absorption 
+            profile = :PearsonIV
+            index = parameter_from_dict(dust[key][df]["index"])
             msg *= "\nIndex $(index)"
-            cutoff = parameter_from_dict(dust["dust_features"][df]["cutoff"])
+            cutoff = parameter_from_dict(dust[key][df]["cutoff"])
             msg *= "\nCutoff $(cutoff)"
             append!(names, prefix .* ["index", "cutoff"])
             append!(_params, [index, cutoff])
         end
-        if profiles[i] == :Drude
+        if profile == :Drude
             push!(names, prefix * "asym")
-            if haskey(dust["dust_features"][df], "asym")
-                asym = parameter_from_dict_fwhm(dust["dust_features"][df]["asym"])  # (fwhm method so that uncertainties are fractional)
+            if haskey(dust[key][df], "asym")
+                asym = parameter_from_dict_fwhm(dust[key][df]["asym"])  # (fwhm method so that uncertainties are fractional)
                 msg *= "\nAsym $(asym)"
                 push!(_params, asym)
             else # only add a default asym parameter if its a Drude profile
@@ -335,100 +359,62 @@ function create_dust_features(dust::Dict, λlim::Tuple, user_mask::Vector{Tuple}
                 push!(_params, asym)
             end
         end
-        if haskey(dust["dust_features"][df], "complex")
-            complexes[i] = dust["dust_features"][df]["complex"]
+        if haskey(dust[key][df], "complex")
+            complex = dust[key][df]["complex"]
         end
-        cent_vals[i] = mean.value
-        parameters[i] = FitParameters(names, _params)
+
+        fit_parameters = FitParameters(names, _params)
+
+        # non-fit parameters
+        if !do_absorption
+            npnames = prefix .* ["flux", "eqw", "SNR"]
+            nparams = [NonFitParameter() for _ in 1:3]
+            nonfit_parameters = NonFitParameters(npnames, nparams)
+        else
+            nonfit_parameters = NonFitParameters(String[], NonFitParameter[])
+        end
+
+        push!(fit_profiles, FitProfile(profile, fit_parameters, nonfit_parameters))
+        push!(cent_vals, cent_val) 
+        push!(complexes, complex)
+
+        wl = pah_name_to_float(complex)
+        push!(latex, "PAH $wl " * L"${\rm \mu m}$")
     end
     @debug msg
 
-    # Sort by cent_vals
+    # Sort by cent_vals, then reshape 
     ss = sortperm(cent_vals)
-    dust_parameters = parameters[ss] 
-    dust_features = FitProfiles(profiles[ss], complexes[ss])
+    cent_vals = cent_vals[ss]
+    complexes = complexes[ss]
+    latex = latex[ss]
+    fit_profiles = fit_profiles[ss]
 
-    dust_features, dust_parameters
-end
-
-
-"""
-    create_absorption_features(dust, λlim, user_mask)
-
-Uses the dust options file to create a DustFeatures object for the
-absorption features.
-"""
-function create_absorption_features(dust::Dict, λlim::Tuple, user_mask::Vector{Tuple})
-
-    # Repeat for absorption features
-    if haskey(dust, "absorption_features")
-
-        n_ab = length(dust["absorption_features"])
-        cent_vals = zeros(n_ab)
-        profiles = [:Drude for _ in 1:n_ab]
-        complexes = Vector{Union{String,Nothing}}(nothing, n_ab)
-        parameters = Vector{FitParameters}(undef, n_ab)
-
-        msg = "Absorption features:"
-        for (i, ab) ∈ enumerate(keys(dust["absorption_features"]))
-
-            # First things first, check if this feature is within our wavelength range
-            mean_wave = dust["absorption_features"][ab]["wave"]["val"]
-            if !(λlim[1]-0.1 < mean_wave < λlim[2]+0.1)
-                continue
-            end
-            for pair in user_mask
-                if pair[1] < mean_wave < pair[2]
-                    continue
-                end
-            end
-
-            prefix = "abs_features.$(ab)."
-
-            depth = parameter_from_dict(dust["absorption_features"][ab]["tau"])
-            msg *= "\nTau $(depth)"
-            mean = parameter_from_dict_wave(dust["absorption_features"][ab]["wave"])
-            msg *= "\nWave $(mean)"
-            fwhm = parameter_from_dict_fwhm(dust["absorption_features"][ab]["fwhm"])
-            msg *= "\nFWHM $(fwhm)"
-            cent_vals[i] = mean.value
-
-            if haskey(dust["absorption_features"][ab], "asym")
-                asym = parameter_from_dict_fwhm(dust["absorption_features"][ab]["asym"])
-                msg *= "\nAsym $(asym)"
-            else
-                asym = FitParameter(0., true, (-0.01, 0.01))
-                msg *= "\nAsym $(asym)"
-            end
-
-            names = prefix .* ["tau", "mean", "fwhm", "asym"]
-            _params = [depth, mean, fwhm, asym]
-
-            parameters[i] = FitParameters(names, _params)
-        end
-        @debug msg
-
-        # Sort by cent_vals
-        ss = sortperm(cent_vals)
-        abs_parameters = parameters[ss]
-        abs_features = FitProfiles(profiles[ss], complexes[ss])
-    else
-        abs_parameters = FitParameters[]
-        abs_features = FitProfiles(Symbol[], Vector{Union{String,Nothing}}())
+    # sort into vectors based on where the complex is the same
+    all_fit_profiles = FitProfiles[]
+    u_complexes = unique(complexes)
+    u_cent_vals = Float64[]
+    u_latex = String[]
+    for complex in u_complexes
+        inds = findall(complexes .== complex)
+        push!(all_fit_profiles, length(inds) > 1 ? fit_profiles[inds] : [fit_profiles[inds]])
+        wl = pah_name_to_float(complex)
+        push!(u_cent_vals, wl)
+        push!(u_latex, "PAH $wl " * L"${\rm \mu m}$")
     end
 
-    abs_features, abs_parameters
+    FitFeatures(u_complexes, u_latex, u_cent_vals, all_fit_profiles, NoConfig())
 end
 
 
 """
-    parse_dust(n_channels)
+    construct_parameters_mir(out, λlim, n_channels)
 
 Read in the dust.toml configuration file, checking that it is formatted correctly,
 and convert it into a julia dictionary with Parameter objects for dust fitting parameters.
 This deals with continuum, PAH features, and extinction options.
 """
-function parse_dust(out::Dict, λlim::Tuple, n_channels::Int=0)
+function construct_parameters_mir(out::Dict, λlim::Tuple, n_channels::Int=0)
 
     @debug """\n
     Parsing dust file
@@ -513,7 +499,8 @@ function parse_dust(out::Dict, λlim::Tuple, n_channels::Int=0)
     append!(params, [τ_ice, τ_ch, β, Cf])
     append!(pnames, prefix .* ["tau_ice", "tau_ch", "beta", "frac"])
 
-    abs_features, abs_parameters = create_absorption_features(dust, λlim, out[:user_mask])
+    abs_features = create_dust_features(dust, λlim, out[:user_mask]; do_absorption=true)
+    abs_parameters = get_flattened_fit_parameters(abs_features)
     append!(params, abs_parameters._parameters)
     append!(pnames, abs_parameters.names)
 
@@ -554,14 +541,12 @@ function parse_dust(out::Dict, λlim::Tuple, n_channels::Int=0)
     end
 
     # Create the dust features and absorption features objects
-    dust_features, dust_parameters = create_dust_features(dust, λlim, out[:user_mask])
-    # append!(params, dust_parameters._parameters)
-    # append!(pnames, dust_parameters.names)
+    dust_features = create_dust_features(dust, λlim, out[:user_mask])
 
     # All of the continuum and PAH parameters conjoined into neat little objects
-    continuum = FitParameters(pnames, params)
+    continuum_parameters = FitParameters(pnames, params)
 
-    continuum, dust_parameters, dust_features, abs_features
+    continuum_parameters, dust_features, abs_features
 end
 
 
@@ -660,63 +645,70 @@ end
 
 
 # Check if the kinematics should be tied to other lines based on the kinematic groups
-function check_tied_kinematics!(lines::Dict, kinematic_groups::Vector, tied_amp::Vector,
-    tied_voff::Vector, tied_fwhm::Vector, i::Integer, line::String)
+function check_tied_kinematics!(lines::Dict, prefix::String, line::String, kinematic_groups::Vector, fit_profiles::FitProfiles)
 
-    tied_amp[i] = tied_voff[i] = tied_fwhm[i] = nothing
     for group ∈ kinematic_groups
         for groupmember ∈ lines["kinematic_group_" * group]
+
             #= Loop through the items in the "kinematic_group_*" list and see if the line name matches any of them.
             It needn't be a perfect match, the line name just has to contain the value in the kinematic group list.
             i.e. if you want to automatically tie all FeII lines together, instead of manually listing out each one,
-            you can just include an item "FeII" and it will automatically catch all the FeII lines
+            you can just include an item "FeII_" and it will automatically catch all the FeII lines. Note the underscore
+            is important, otherwise "FeII" would also match "FeIII" lines.
             =#
             if occursin(groupmember, line)
 
                 # Check if amp should  be tied
-                tie_amp_group = false
-                if haskey(lines, "tie_amp_" * group)
-                    tie_amp_group = true
+                params = []
+                amp_ratio = nothing
+                if haskey(lines, "tie_amp_" * group) && !isnothing(lines["tie_amp_" * group])
+                    amp_ratio = lines["tie_amp_" * group][line]
+                    push!(params, "amp")
                 end
                 # Check if voff should be tied
-                tie_voff_group = true
-                if haskey(lines, "tie_voff_" * group)
-                    tie_voff_group = lines["tie_voff_" * group]
+                if haskey(lines, "tie_voff_" * group) && lines["tie_voff_" * group]
+                    push!(params, "voff")
                 end
                 # Check if fwhm should be tied
-                tie_fwhm_group = true
-                if haskey(lines, "tie_fwhm_" * group)
-                    tie_fwhm_group = lines["tie_fwhm_" * group]
+                if haskey(lines, "tie_fwhm_" * group) && lines["tie_fwhm_" * group]
+                    push!(params, "fwhm")
                 end
 
-                if tie_amp_group
-                    @assert isnothing(tied_amp[i]) "Line $(line[i]) is already part of the kinematic group $(tied_amp[i]), but it also passed filtering criteria" *
-                        "to be included in the group $group. Make sure your filters are not too lenient!"
-                    @debug "Tying amplitudes for $line to the group: $group"
+                for param in params
+
+                    ind = prefix * "1." * param
+                    @assert isnothing(fit_profiles[1].fit_parameters[ind].tie) "$(line) fulfills criteria" * 
+                        " to be in multiple kinematic groups! Please amend your kinematic group filters."
+                    @debug "Tying $param for $line to the group: $group"
                     # Use the group label
-                    tied_amp[i] = Symbol(group)
-                end
-                if tie_voff_group
-                    # Make sure line is not already a member of another group
-                    @assert isnothing(tied_voff[i]) "Line $(line[i]) is already part of the kinematic group $(tied_voff[i]), but it also passed filtering criteria" * 
-                        "to be included in the group $group. Make sure your filters are not too lenient!"
-                    @debug "Tying kinematics for $line to the group: $group"
-                    # Use the group label (which can be anything you want) to categorize what lines are tied together
-                    tied_voff[i] = Symbol(group)
-                    # If the wavelength solution is bad, allow the kinematics to still be flexible based on its accuracy
-                    if lines["flexible_wavesol"]
-                        δv = lines["wavesol_unc"]
-                        voff_plim = (-δv, δv)
-                        @debug "Using flexible tied voff with lenience of +/-$δv km/s"
+                    groupname = join([group, "1", param], "_") |> Symbol
+                    if !isnothing(amp_ratio) 
+                        tie!(fit_profiles[1].fit_parameters[ind], groupname, amp_ratio)
+                    else
+                        tie!(fit_profiles[1].fit_parameters[ind], groupname)
                     end
-                end
-                if tie_fwhm_group
-                    # Make sure line is not already a member of another group
-                    @assert isnothing(tied_fwhm[i]) "Line $(line[i]) is already part of the kinematic group $(tied_fwhm[i]), but it also passed filtering criteria" * 
-                    "to be included in the group $group. Make sure your filters are not too lenient!"
-                    @debug "Tying kinematics for $line to the group: $group"
-                    # Use the group label (which can be anything you want) to categorize what lines are tied together
-                    tied_fwhm[i] = Symbol(group)
+
+                    # Check if we need to change the values of any parameters now that it's tied 
+                    if haskey(lines, "parameters") && haskey(lines["parameters"], group)
+                        if haskey(lines["parameters"][group], param)
+                            if haskey(lines["parameters"][group][param], "plim")
+                                @debug "Overriding $param limits for $line in group $group"
+                                set_plim!(fit_profiles[1].fit_parameters[ind], (lines["parameters"][line][param]["plim"]...,))
+                            if haskey(lines["parameters"][group][param], "locked")
+                                @debug "Overriding $param locked value for $line in group $group"
+                                if lines["parameters"][group][param]["locked"]
+                                    lock!(fit_profiles[1].fit_parameters[ind])
+                                else
+                                    unlock!(fit_profiles[1].fit_parameters[ind])
+                                end
+                            end
+                            if haskey(lines["parameters"][group][param], "val")
+                                @debug "Overriding $param initial value for $line"
+                                set_val!(fit_profiles[1].fit_parameters[ind], lines["parameters"][line][param]["val"])
+                            end 
+                        end
+                    end       
+
                 end
 
                 break
@@ -724,68 +716,68 @@ function check_tied_kinematics!(lines::Dict, kinematic_groups::Vector, tied_amp:
         end
     end
 
-    tied_amp[i], tied_voff[i], tied_fwhm[i]
 end
 
 
 # Same as above but for the additional components
-function check_acomp_tied_kinematics!(lines::Dict, acomp_kinematic_groups::Vector, 
-    acomp_tied_amp::Matrix, acomp_tied_voff::Matrix, acomp_tied_fwhm::Matrix,
-    acomp_profiles::Dict, i::Integer, line::String)
+function check_acomp_tied_kinematics!(lines::Dict, prefix::String, line::String, acomp_kinematic_groups::Vector, 
+    fit_profiles::FitProfiles)
 
-    acomp_tied_amp[i, :] .= nothing
-    acomp_tied_voff[i, :] .= nothing
-    acomp_tied_fwhm[i, :] .= nothing
-    for j ∈ 1:lines["n_acomps"]
+    for j ∈ 1:(length(fit_profiles)-1)
         for group ∈ acomp_kinematic_groups[j]
             for groupmember ∈ lines["acomp_$(j)_kinematic_group_" * group]
                 if occursin(groupmember, line)
 
+                    params = []
                     # Check if amp should be tied
-                    tie_acomp_amp_group = false
-                    if haskey(lines, "tie_acomp_$(j)_amp_" * group)
-                        tie_acomp_amp_group = true
+                    amp_ratio = nothing
+                    if haskey(lines, "tie_acomp_$(j)_amp_" * group) && !isnothing(lines["tie_acomp_$(j)_amp_" * group])
+                        amp_ratio = lines["tie_acomp_$(j)_amp_" * group][line]
+                        push!(params, "amp")
                     end
-
                     # Check if voff should be tied
-                    tie_acomp_voff_group = true
-                    if haskey(lines, "tie_acomp_$(j)_voff_" * group)
-                        tie_acomp_voff_group = lines["tie_acomp_$(j)_voff_" * group]
+                    if haskey(lines, "tie_acomp_$(j)_voff_" * group) && lines["tie_acomp_$(j)_voff_" * group]
+                        push!(params, "voff")
                     end
                     # Check if fwhm should be tied
-                    tie_acomp_fwhm_group = true
-                    if haskey(lines, "tie_acomp_$(j)_fwhm_" * group)
-                        tie_acomp_fwhm_group = lines["tie_acomp_$(j)_fwhm_" * group]
+                    if haskey(lines, "tie_acomp_$(j)_fwhm_" * group) && lines["tie_acomp_$(j)_fwhm_" * group]
+                        push!(params, "fwhm")
                     end
 
-                    if !isnothing(acomp_profiles[line][j]) && tie_acomp_amp_group
-                        # Make sure line is not already a member of another group
-                        @assert isnothing(acomp_tied_amp[i, j]) "Line $(line[i]) acomp $(j) is already part of the kinematic group $(acomp_tied_amp[i, j]), " *
-                            "but it also passed filtering criteria to be included in the group $group. Make sure your filters are not too lenient!"
-                        @debug "Tying amplitudes for $line acomp $(j) to the group: $group"
+                    for param in params
+                        ind = prefix * "$(j+1)." * param
+                        @assert isnothing(fit_profiles[j+1].fit_parameters[ind].tied) "$(line) acomp $(j) fulfills criteria" * 
+                            " to be in multiple kinematic groups! Please amend your kinematic group filters."
+                        @debug "Tying $param for $line acomp $j to the group: $group"
+                        # Use the group label
+                        groupname = join([group, "$(j+1)", param], "_") |> Symbol
+                        if !isnothing(amp_ratio)
+                            tie!(fit_profiles[j+1].fit_parameters[ind], groupname, amp_ratio) 
+                        else
+                            tie!(fit_profiles[j+1].fit_parameters[ind], groupname)
+                        end
 
-                        # only set acomp_tied if the line actually *has* an acomp
-                        acomp_tied_amp[i,j] = Symbol(group)
-                    end
-
-                    if !isnothing(acomp_profiles[line][j]) && tie_acomp_voff_group
-                        # Make sure line is not already a member of another group
-                        @assert isnothing(acomp_tied_voff[i, j]) "Line $(line[i]) acomp $(j) is already part of the kinematic group $(acomp_tied_voff[i, j]), " *
-                            "but it also passed filtering criteria to be included in the group $group. Make sure your filters are not too lenient!"
-                        @debug "Tying kinematics for $line acomp $(j) to the group: $group"
-
-                        # Only set acomp_tied if the line actually *has* an acomp
-                        acomp_tied_voff[i,j] = Symbol(group)
-                    end
-
-                    if !isnothing(acomp_profiles[line][j]) && tie_acomp_fwhm_group
-                        # Make sure line is not already a member of another group
-                        @assert isnothing(acomp_tied_fwhm[i, j]) "Line $(line[i]) acomp $(j) is already part of the kinematic group $(acomp_tied_fwhm[i, j]), " *
-                            "but it also passed filtering criteria to be included in the group $group. Make sure your filters are not too lenient!"
-                        @debug "Tying kinematics for $line acomp $(j) to the group: $group"
-                    
-                        # Only set acomp_tied if the line actually *has* an acomp
-                        acomp_tied_fwhm[i,j] = Symbol(group)
+                        # Check if we need to change the values of any parameters now that it's tied 
+                        param_key = "acomp_" * param
+                        if haskey(lines, "parameters") && haskey(lines["parameters"], group)
+                            if haskey(lines["parameters"][group], param_key)
+                                if haskey(lines["parameters"][group][param_key][j], "plim")
+                                    @debug "Overriding $param_key $j limits for $line in group $group"
+                                    set_plim!(fit_profiles[1].fit_parameters[ind], (lines["parameters"][line][param_key][j]["plim"]...,))
+                                if haskey(lines["parameters"][group][param_key][j], "locked")
+                                    @debug "Overriding $param_key $j locked value for $line in group $group"
+                                    if lines["parameters"][group][param_key][j]["locked"]
+                                        lock!(fit_profiles[1].fit_parameters[ind])
+                                    else
+                                        unlock!(fit_profiles[1].fit_parameters[ind])
+                                    end
+                                end
+                                if haskey(lines["parameters"][group][param_key][j], "val")
+                                    @debug "Overriding $param initial value for $line"
+                                    set_val!(fit_profiles[1].fit_parameters[ind], lines["parameters"][line][param_key][j]["val"])
+                                end 
+                            end
+                        end    
                     end
 
                     break
@@ -796,115 +788,130 @@ function check_acomp_tied_kinematics!(lines::Dict, acomp_kinematic_groups::Vecto
 end
 
 
-# Helper function that takes a TransitionLines object parsed from the lines options file
-# and creates a TiedKinematics object summarizing the tied amp, voff, and fwhm parameters
-function create_tied_kinematics_object(lines_out::TransitionLines, lines::Dict)
+function check_tied_voigt_mixing!(lines::Dict, prefix::String, line::String, fit_profiles::FitProfiles)
+    # Go through each profile, check if it's a Voigt, and if so, tie it
+    if lines["tie_voigt_mixing"] 
+        group = :voigt_mixing
+        for i in eachindex(fit_profiles)
+            if fit_profiles[i].profile == :Voigt
+                @debug "Tying mixing $i for $line to the group $group"
+                tie!(fit_profiles[i].fit_parameters[prefix * "$i." * "mixing"], group)
+            end
+        end
+    end
+end
 
-    # Create a dictionary containing all of the unique `tie` keys, and the tied parameters 
-    # corresponding to that tied key
-    kin_tied_key_amp = [unique(lines_out.tied_amp[:, j]) for j ∈ 1:size(lines_out.tied_amp, 2)]
-    kin_tied_key_amp = [kin_tied_key_amp[i][.!isnothing.(kin_tied_key_amp[i])] for i in eachindex(kin_tied_key_amp)]
-    kin_tied_key_voff = [unique(lines_out.tied_voff[:, j]) for j ∈ 1:size(lines_out.tied_voff, 2)]
-    kin_tied_key_voff = [kin_tied_key_voff[i][.!isnothing.(kin_tied_key_voff[i])] for i in eachindex(kin_tied_key_voff)]
-    kin_tied_key_fwhm = [unique(lines_out.tied_fwhm[:, j]) for j ∈ 1:size(lines_out.tied_fwhm, 2)]
-    kin_tied_key_fwhm = [kin_tied_key_fwhm[i][.!isnothing.(kin_tied_key_fwhm[i])] for i in eachindex(kin_tied_key_fwhm)]
-    @debug "kin_tied_key_amp: $kin_tied_key_amp"
-    @debug "kin_tied_key_voff: $kin_tied_key_voff"
-    @debug "kin_tied_key_fwhm: $kin_tied_key_fwhm"
-    
-    amp_tied = [Vector{Dict{Symbol, Float64}}(undef, length(kin_tied_key_amp[j])) for j ∈ 1:size(lines_out.tied_amp, 2)]
-    voff_tied = [Vector{Parameter}(undef, length(kin_tied_key_voff[j])) for j ∈ 1:size(lines_out.tied_voff, 2)]
-    fwhm_tied = [Vector{Parameter}(undef, length(kin_tied_key_fwhm[j])) for j ∈ 1:size(lines_out.tied_fwhm, 2)]
-    msg = ""
-    # Iterate and create the tied amplitude parameters
-    for j ∈ 1:size(lines_out.tied_amp, 2)
-        for (i, kin_tie) ∈ enumerate(kin_tied_key_amp[j])
-            a_ratio = isone(j) ? lines["tie_amp_$kin_tie"] : lines["tie_acomp_$(j-1)_amp_$kin_tie"]
-            lines_in_group = lines_out.names[lines_out.tied_amp[:, j] .== kin_tie]
-            amp_tied[j][i] = Dict(ln => ai for (ln, ai) in zip(lines_in_group, a_ratio))
-            msg *= "\namp_tied_$(kin_tie)_$(j) $(amp_tied[j][i])"
+function default_line_parameters(lines::Dict, prefix::String, profile::Symbol, acomp_profiles::Vector{Union{Symbol,Nothing}})
+
+    n_acomps = lines["n_acomps"]
+    profs = FitProfiles([])
+
+    all_profiles = [profile; acomp_profiles]
+
+    # Define the initial values of line parameters given the values in the options file (if present)
+    for component in 1:(n_acomps+1)
+
+        # Skip acomp components that have not been specified
+        if isnothing(all_profiles[component])
+            continue
         end
-    end
-    # Iterate and create the tied voff parameters
-    for j ∈ 1:size(lines_out.tied_voff, 2)
-        for (i, kin_tie) ∈ enumerate(kin_tied_key_voff[j])
-            v_plim = isone(j) ? (lines["voff_plim"]...,) : (lines["acomp_voff_plim"][j-1]...,)
-            v_locked = false
-            v_init = isone(j) && haskey(lines, "voff_init") ? lines["voff_init"] : 0.0
-            # Check if there is an overwrite option in the lines file
-            if haskey(lines, "parameters")
-                if haskey(lines["parameters"], string(kin_tie))
-                    param_str = isone(j) ? "voff" : "acomp_voff"
-                    if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_plim")
-                        v_plim = isone(j) ? (lines["parameters"][string(kin_tie)]["$(param_str)_plim"]...,) :
-                                            (lines["parameters"][string(kin_tie)]["$(param_str)_plim"][j-1]...,)
-                    end
-                    if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_locked")
-                        v_locked = isone(j) ? lines["parameters"][string(kin_tie)]["$(param_str)_locked"] :
-                                            lines["parameters"][string(kin_tie)]["$(param_str)_locked"][j-1]
-                    end
-                    if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_init")
-                        v_init = isone(j) ? lines["parameters"][string(kin_tie)]["$(param_str)_init"] :
-                                            lines["parameters"][string(kin_tie)]["$(param_str)_init"][j-1]
-                    end
-                end
-            end
-            if !(v_plim[1] ≤ v_init ≤ v_plim[2])
-                if abs(v_plim[1]) < abs(v_plim[2])
-                    v_init = v_plim[1]
-                else
-                    v_init = v_plim[2]
-                end
-            end
-            voff_tied[j][i] = Parameter(v_init, v_locked, v_plim)
-            msg *= "\nvoff_tied_$(kin_tie)_$(j) $(voff_tied[j][i])"
+
+        msg = "Component $component:"
+        amp = component > 1 ? parameter_from_dict(lines["acomp_amp"][component-1]) : FitParameter(NaN, false, (0., Inf))
+        msg *= "\nAmp $amp"
+        voff = parameter_from_dict(component > 1 ? lines["acomp_voff"][component-1] : lines["voff"])
+        msg *= "\nVoff $voff"
+        fwhm = parameter_from_dict(component > 1 ? lines["acomp_fwhm"][component-1] : lines["fwhm"])
+        msg *= "\nFWHM $fwhm"
+        params = [amp, voff, fwhm]
+        pnames = prefix .* "$component." .* ["amp", "voff", "fwhm"]
+        if all_profiles[component] == :GaussHermite
+            h3 = parameter_from_dict(component > 1 ? lines["acomp_h3"][component-1] : lines["h3"])
+            msg *= "\nh3 $h3"
+            h4 = parameter_from_dict(component > 1 ? lines["acomp_h4"][component-1] : lines["h4"])
+            msg *= "\nh4 $h4"
+            append!(params, [h3, h4])
+            append!(pnames, prefix .* "$component." .* ["h3", "h4"])
+        elseif all_profiles[component] == :Voigt
+            η = parameter_from_dict(component > 1 ? lines["acomp_eta"][component-1] : lines["eta"])
+            msg *= "\neta $η"
+            push!(params, η)
+            push!(pnames, prefix * "$component.mixing")
         end
-    end
-    # Iterate and create the tied fwhm parameters
-    for j ∈ 1:size(lines_out.tied_fwhm, 2)
-        for (i, kin_tie) ∈ enumerate(kin_tied_key_fwhm[j])
-            f_plim = isone(j) ? (lines["fwhm_plim"]...,) : (lines["acomp_fwhm_plim"][j-1]...,)
-            f_locked = false
-            f_init = isone(j) && haskey(lines, "fwhm_init") ? lines["fwhm_init"] : 100.0
-            # Check if there is an overwrite option in the lines file
-            if haskey(lines, "parameters")
-                if haskey(lines["parameters"], string(kin_tie))
-                    param_str = isone(j) ? "fwhm" : "acomp_fwhm"
-                    if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_plim")
-                        f_plim = isone(j) ? (lines["parameters"][string(kin_tie)]["$(param_str)_plim"]...,) :
-                                            (lines["parameters"][string(kin_tie)]["$(param_str)_plim"][j-1]...,)
-                    end
-                    if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_locked")
-                        f_locked = isone(j) ? lines["parameters"][string(kin_tie)]["$(param_str)_locked"] :
-                                            lines["parameters"][string(kin_tie)]["$(param_str)_locked"][j-1]
-                    end
-                    if haskey(lines["parameters"][string(kin_tie)], "$(param_str)_init")
-                        f_init = isone(j) ?   lines["parameters"][string(kin_tie)]["$(param_str)_init"] :
-                                            lines["parameters"][string(kin_tie)]["$(param_str)_init"][j-1]
-                    end
-                end
-            end
-            if !(f_plim[1] ≤ f_init ≤ f_plim[2])
-                f_init = f_plim[1]
-            end
-            fwhm_tied[j][i] = Parameter(f_init, f_locked, f_plim)
-            msg *= "\nfwhm_tied_$(kin_tie)_$(j) $(fwhm_tied[j][i])"
-        end
+        @debug msg
+        fit_parameters = FitParameters(pnames, params)
+
+        nparams = [NonFitParameter() for _ in 1:3]
+        npnames = prefix .* "$component." .* ["flux", "eqw", "SNR"]
+        nonfit_parameters = NonFitParameters(npnames, nparams)
+
+        push!(profs, FitProfile(profile, fit_parameters, nonfit_parameters))
     end
 
-    @debug msg
-    tied_kinematics = TiedKinematics(kin_tied_key_amp, amp_tied, kin_tied_key_voff, voff_tied, kin_tied_key_fwhm, fwhm_tied)
+    profs
+end
+
+
+function override_line_parameters!(lines::Dict, prefix::String, fit_profiles::FitProfiles)
+
+    # Check if there are any specific override values present in the options file,
+    # and if so, use them
+    if haskey(lines, "parameters") && haskey(lines["parameters"], line)
+        for param_key in keys(lines["parameters"][line])  
+            # Check normal line parameters (amp, voff, fwhm, h3, h4, eta)
+            if !contains(param_key, "acomp")
+                if haskey(lines["parameters"][line][param_key], "plim")
+                    @debug "Overriding $param_key limits for $line"
+                    set_plim!(fit_profiles[1].fit_parameters[prefix * "1." * param_key], 
+                                (lines["parameters"][line][param_key]["plim"]...,))
+                if haskey(lines["parameters"][line][param_key], "locked")
+                    @debug "Overriding $param_key locked value for $line"
+                    if lines["parameters"][line][param_key]["locked"]
+                        lock!(fit_profiles[1].fit_parameters[prefix * "1." * param_key])
+                    else
+                        unlock!(fit_profiles[1].fit_parameters[prefix * "1." * param_key])
+                    end
+                end
+                if haskey(lines["parameters"][line][param_key], "val")
+                    @debug "Overriding $param_key initial value for $line"
+                    set_val!(fit_profiles[1].fit_parameters[prefix * "1." * param_key], 
+                                lines["parameters"][line][param_key]["val"])
+                end
+            # Repeat for acomp parameters
+            else
+                for i in 1:length(lines["parameters"][line][param_key])
+                    if haskey(lines["parameters"][line][param_key][i], "plim")
+                        @debug "Overriding $param_key acomp $i limits for $line"
+                        set_plim!(fit_profiles[i+1].fit_parameters[prefix * "$(i+1)." * param_key], 
+                                    (lines["parameters"][line][param_key][i]["plim"]...,))
+                    if haskey(lines["parameters"][line][param_key][i], "locked")
+                        @debug "Overriding $param_key acomp $i locked value for $line"
+                        if lines["parameters"][line][param_key]["locked"]
+                            lock!(fit_profiles[i+1].fit_parameters[prefix * "$(i+1)." * param_key])
+                        else
+                            unlock!(fit_profiles[i+1].fit_parameters[prefix * "$(i+1)." * param_key])
+                        end
+                    end
+                    if haskey(lines["parameters"][line][param_key][i], "val")
+                        @debug "Overriding $param_key acomp $i initial value for $line"
+                        set_val!(fit_profiles[i+1].fit_parameters[prefix * "$(i+1)." * param_key], 
+                                    lines["parameters"][line][param_key][i]["val"])
+                    end 
+                end
+            end
+        end
+    end
 end
 
 
 """
-    parse_lines()
+    construct_line_parameters(out, λlim)
 
 Read in the lines.toml configuration file, checking that it is formatted correctly,
 and convert it into a julia dictionary with Parameter objects for line fitting parameters.
 This deals purely with emission line options.
 """
-function parse_lines()
+function construct_line_parameters(out::Dict, λlim::Tuple)
 
     @debug """\n
     Parsing lines file
@@ -936,231 +943,61 @@ function parse_lines()
         append!(acomp_kinematic_groups, [acomp_kinematic_group_j])
     end
 
-    # Initialize undefined vectors for each TransitionLine attribute that will be filled in
-    names = Vector{Symbol}(undef, length(lines["lines"]))
-    latex = Vector{String}(undef, length(lines["lines"]))
-    annotate = BitVector(undef, length(lines["lines"]))
-    cent_vals = zeros(length(lines["lines"]))
-    voffs = Vector{Parameter}(undef, length(lines["lines"]))
-    fwhms = Vector{Parameter}(undef, length(lines["lines"]))
-    h3s = Vector{Union{Parameter,Nothing}}(nothing, length(lines["lines"]))
-    h4s = Vector{Union{Parameter,Nothing}}(nothing, length(lines["lines"]))
-    ηs = Vector{Union{Parameter,Nothing}}(nothing, length(lines["lines"]))
-    tied_amp = Vector{Union{Symbol,Nothing}}(nothing, length(lines["lines"]))
-    tied_voff = Vector{Union{Symbol,Nothing}}(nothing, length(lines["lines"]))
-    tied_fwhm = Vector{Union{Symbol,Nothing}}(nothing, length(lines["lines"]))
-    prof_out = Vector{Union{Symbol,Nothing}}(nothing, length(lines["lines"]))
-    sort_order = ones(Int, length(lines["lines"])) .* lines["default_sort_order"]
-
-    # Additional components
-    acomp_amps = Matrix{Union{Parameter,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
-    acomp_voffs = Matrix{Union{Parameter,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
-    acomp_fwhms = Matrix{Union{Parameter,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
-    acomp_h3s = Matrix{Union{Parameter,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
-    acomp_h4s = Matrix{Union{Parameter,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
-    acomp_ηs = Matrix{Union{Parameter,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
-    acomp_tied_amp = Matrix{Union{Symbol,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
-    acomp_tied_voff = Matrix{Union{Symbol,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
-    acomp_tied_fwhm = Matrix{Union{Symbol,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
-    acomp_prof_out = Matrix{Union{Symbol,Nothing}}(nothing, length(lines["lines"]), lines["n_acomps"])
+    # Create buffers
+    names = Symbol[]
+    latex = String[]
+    annotate = BitVector()
+    cent_vals = Float64[]
+    all_fit_profiles = FitProfiles[]
+    sort_order = Int[]
 
     # Loop through all the lines
-    for (i, line) ∈ enumerate(keys(lines["lines"]))
+    for line ∈ keys(lines["lines"])
 
-        # Define the initial values of line parameters given the values in the options file (if present)
-        fwhm_init = haskey(lines, "fwhm_init") ? lines["fwhm_init"] : 300.0
-        voff_init = haskey(lines, "voff_init") ? lines["voff_init"] : 0.0
-        h3_init = haskey(lines, "h3_init") ? lines["h3_init"] : 0.0        # gauss-hermite series start fully gaussian,
-        h4_init = haskey(lines, "h4_init") ? lines["h4_init"] : 0.0        # with both h3 and h4 moments starting at 0
-        η_init = haskey(lines, "eta_init") ? lines["eta_init"] : 0.5       # Voigts start half gaussian, half lorentzian
-
-        names[i] = Symbol(line)
-        latex[i] = lines["lines"][line]["latex"]
-        cent_vals[i] = lines["lines"][line]["wave"]
-        annotate[i] = lines["lines"][line]["annotate"]
-        prof_out[i] = isnothing(profiles[line]) ? nothing : Symbol(profiles[line])
-        if haskey(lines["lines"][line], "sort_order")
-            sort_order[i] = lines["lines"][line]["sort_order"]
+        # Do not add lines outside the wavelength range we need
+        cent_val = lines["lines"][line]["wave"]
+        if !(λlim[1] ≤ cent_val ≤ λlim[2])
+            continue
+        end
+        for pair in out[:user_mask]
+            if pair[1] < cent_val < pair[2]
+                continue
+            end
         end
 
-        mask = isnothing.(acomp_profiles[line])
-        acomp_prof_out[i, mask] .= nothing
-        acomp_prof_out[i, .!mask] .= Symbol.(acomp_profiles[line][.!mask])
+        push!(cent_vals, cent_val)
+        name = Symbol(line)
+        push!(names, name)
+        push!(latex, lines["lines"][line]["latex"])
+        push!(annotate, lines["lines"][line]["annotate"])
+        so = lines["default_sort_order"]
+        if haskey(lines["lines"][line], "sort_order")
+            so = lines["lines"][line]["sort_order"]
+        end
+        push!(sort_order, so)
+
+        prof_out = profiles[line]
+        acomp_prof_out = acomp_profiles[line]
+        prefix = "lines.$(name)."
 
         @debug """\n
         ################# $line #######################
-        # Rest wavelength: $(lines["lines"][line]["wave"]) um #
+        # Rest wavelength: $(cent_val) um #
         """
 
-        # Set the parameter limits for FWHM, voff, h3, h4, and eta based on the values in the options file
-        voff_plim = (lines["voff_plim"]...,)
-        voff_locked = false
-        fwhm_plim = (lines["fwhm_plim"]...,)
-        fwhm_locked = false
-        h3_plim = h3_locked = h4_plim = h4_locked = η_plim = η_locked = nothing
-        if profiles[line] == "GaussHermite"
-            h3_plim = (lines["h3_plim"]...,)
-            h3_locked = false
-            h4_plim = (lines["h4_plim"]...,)
-            h4_locked = false
-        elseif profiles[line] == "Voigt"
-            η_plim = (lines["eta_plim"]...,)
-            η_locked = false
-        end
-
-        # Determine the initial values for the additional components
-        acomp_amp_init = haskey(lines, "acomp_amp_init") ? lines["acomp_amp_init"] : repeat([0.1], lines["n_acomps"])
-        acomp_fwhm_init = haskey(lines, "acomp_fwhm_init") ? lines["acomp_fwhm_init"] : repeat([fwhm_init], lines["n_acomps"])
-        acomp_voff_init = haskey(lines, "acomp_voff_init") ? lines["acomp_voff_init"] : repeat([voff_init], lines["n_acomps"])
-        acomp_h3_init = haskey(lines, "acomp_h3_init") ? lines["acomp_h3_init"] : repeat([h3_init], lines["n_acomps"])
-        acomp_h4_init = haskey(lines, "acomp_h4_init") ? lines["acomp_h4_init"] : repeat([h4_init], lines["n_acomps"])
-        acomp_η_init = haskey(lines, "acomp_eta_init") ? lines["acomp_eta_init"] : repeat([η_init], lines["n_acomps"])
-
-        # Set the parameter limits for additional component FWHM, voff, h3, h4, and eta based on the values in the options file
-        acomp_amp_plims = Vector{Union{Tuple,Nothing}}(nothing, lines["n_acomps"])
-        acomp_amp_locked = falses(lines["n_acomps"])
-        acomp_voff_plims = Vector{Union{Tuple,Nothing}}(nothing, lines["n_acomps"])
-        acomp_voff_locked = falses(lines["n_acomps"])
-        acomp_fwhm_plims = Vector{Union{Tuple,Nothing}}(nothing, lines["n_acomps"])
-        acomp_fwhm_locked = falses(lines["n_acomps"]) 
-        acomp_h3_plims = Vector{Union{Tuple,Nothing}}(nothing, lines["n_acomps"]) 
-        acomp_h3_locked = falses(lines["n_acomps"])
-        acomp_h4_plims = Vector{Union{Tuple,Nothing}}(nothing, lines["n_acomps"])
-        acomp_h4_locked = falses(lines["n_acomps"])
-        acomp_η_plims = Vector{Union{Tuple,Nothing}}(nothing, lines["n_acomps"])
-        acomp_η_locked = falses(lines["n_acomps"])
-        for j ∈ 1:lines["n_acomps"]
-            if !isnothing(acomp_profiles[line][j])
-                acomp_amp_plims[j] = (lines["acomp_amp_plim"][j]...,)
-                acomp_voff_plims[j] = (lines["acomp_voff_plim"][j]...,)
-                acomp_fwhm_plims[j] = (lines["acomp_fwhm_plim"][j]...,)
-                if acomp_profiles[line][j] == "GaussHermite"
-                    acomp_h3_plims[j] = (lines["h3_plim"]...,)
-                    acomp_h4_plims[j] = (lines["h4_plim"]...,)
-                elseif acomp_profiles[line][j] == "Voigt"
-                    acomp_η_plims[j] = (0.0, 1.0)
-                end
-            end
-        end
-
-        # Check if there are any specific override values present in the options file,
-        # and if so, use them
-        if haskey(lines, "parameters")
-            if haskey(lines["parameters"], line)
-                # Dictionary mapping parameter strings to their limits/locked values
-                paramvars = Dict("voff" => [voff_plim, voff_locked, voff_init],
-                                 "fwhm" => [fwhm_plim, fwhm_locked, fwhm_init],
-                                 "h3" => [h3_plim, h3_locked, h3_init],
-                                 "h4" => [h4_plim, h4_locked, h4_init],
-                                 "eta" => [η_plim, η_locked, η_init])
-                # Iterate over parameters and check if they should be overwritten by the contents of the lines file
-                for param_str ∈ ["voff", "fwhm", "h3", "h4", "eta"]
-                    if haskey(lines["parameters"][line], "$(param_str)_plim")
-                        @debug "Overriding $param_str limits for $line"
-                        paramvars[param_str][1] = (lines["parameters"][line]["$(param_str)_plim"]...,)
-                    end
-                    if haskey(lines["parameters"][line], "$(param_str)_locked")
-                        @debug "Overriding $param_str locked value for $line"
-                        paramvars[param_str][2] = lines["parameters"][line]["$(param_str)_locked"]
-                    end
-                    if haskey(lines["parameters"][line], "$(param_str)_init")
-                        @debug "Overriding $param_str initial value for $line"
-                        paramvars[param_str][3] = lines["parameters"][line]["$(param_str)_init"]
-                    end
-                end
-                # Unpack paramvars back into the appropriate variables
-                voff_plim, voff_locked, voff_init = paramvars["voff"]
-                fwhm_plim, fwhm_locked, fwhm_init = paramvars["fwhm"]
-                h3_plim, h3_locked, h3_init = paramvars["h3"]
-                h4_plim, h4_locked, h4_init = paramvars["h4"]
-                η_plim, η_locked, η_init = paramvars["eta"]
-
-                # Repeat for acomp parameters
-                acomp_paramvars = Dict("acomp_amp" => [acomp_amp_plims, acomp_amp_locked, acomp_amp_init],
-                                       "acomp_voff" => [acomp_voff_plims, acomp_voff_locked, acomp_voff_init],
-                                       "acomp_fwhm" => [acomp_fwhm_plims, acomp_fwhm_locked, acomp_fwhm_init],
-                                       "acomp_h3" => [acomp_h3_plims, acomp_h3_locked, acomp_h3_init],
-                                       "acomp_h4" => [acomp_h4_plims, acomp_h4_locked, acomp_h4_init],
-                                       "acomp_eta" => [acomp_η_plims, acomp_η_locked, acomp_η_init])
-                for param_str ∈ ["acomp_amp", "acomp_voff", "acomp_fwhm", "acomp_h3", "acomp_h4", "acomp_eta"]
-                    if haskey(lines["parameters"][line], "$(param_str)_plim")
-                        @debug "Overriding $param_str limits for $line"
-                        for j ∈ 1:lines["n_acomps"]
-                            acomp_paramvars[param_str][1][j] = (lines["parameters"][line]["$(param_str)_plim"][j]...,)
-                        end
-                    end
-                    if haskey(lines["parameters"][line], "$(param_str)_locked")
-                        @debug "Overriding $param_str locked value for $line"
-                        for j ∈ 1:lines["n_acomps"]
-                            acomp_paramvars[param_str][2][j] = lines["parameters"][line]["$(param_str)_locked"][j]
-                        end
-                    end
-                    if haskey(lines["parameters"][line], "$(param_str)_init")
-                        @debug "Overriding $param_str initial value for $line"
-                        for j ∈ 1:lines["n_acomps"]
-                            acomp_paramvars[param_str][3][j] = lines["parameters"][line]["$(param_str)_init"][j]
-                        end
-                    end
-                end
-                # Dont need to unpack acomp_paramvars since they are vectors (modified in-place) and not individual variables
-
-            end
-        end
+        fit_profiles = default_line_parameters(lines, prefix, prof_out, acomp_prof_out)
+        override_line_parameters!(lines, prefix, fit_profiles)
 
         @debug "Profile: $(profiles[line])"
 
         # Check if any of the amplitudes/voffs/fwhms should be tied to kinematic groups
-        check_tied_kinematics!(lines, kinematic_groups, tied_amp, tied_voff, tied_fwhm, i, line)
+        check_tied_kinematics!(lines, prefix, line, kinematic_groups, fit_profiles)
         # Repeat for the acomps
-        check_acomp_tied_kinematics!(lines, acomp_kinematic_groups, acomp_tied_amp, acomp_tied_voff, acomp_tied_fwhm, 
-            acomp_profiles, i, line)
-        
-        # Create parameter objects using the parameter limits
-        voffs[i] = Parameter(voff_init, voff_locked, voff_plim)
-        @debug "Voff $(voffs[i])"
-        fwhms[i] = Parameter(fwhm_init, fwhm_locked, fwhm_plim)
-        @debug "FWHM $(fwhms[i])"
-        if profiles[line] == "GaussHermite"
-            h3s[i] = Parameter(h3_init, h3_locked, h3_plim)
-            @debug "h3 $(h3s[i])"
-            h4s[i] = Parameter(h4_init, h4_locked, h4_plim)
-            @debug "h4 $(h4s[i])"
-        elseif profiles[line] == "Voigt" 
-            ηs[i] = Parameter(η_init, η_locked, η_plim)
-            @debug "eta $(ηs[i])"
-        end
+        check_acomp_tied_kinematics!(lines, prefix, line, acomp_kinematic_groups, fit_profiles)
+        # Check the voigt mixing parameter
+        check_tied_voigt_mixing!(lines, prefix, line, fit_profiles)
 
-        # Do the same for the additional component parameters, but only if the line has an additional component
-        for j ∈ 1:lines["n_acomps"]
-            if !isnothing(acomp_profiles[line][j])
-                @debug "acomp profile: $(acomp_profiles[line][j])"
-                acomp_amps[i,j] = Parameter(acomp_amp_init[j], acomp_amp_locked[j], acomp_amp_plims[j])
-                if !(acomp_voff_plims[j][1] ≤ acomp_voff_init[j] ≤ acomp_voff_plims[j][2])
-                    if abs(acomp_voff_plims[j][1]) < abs(acomp_voff_plims[j][2])
-                        acomp_voff_init[j] = acomp_voff_plims[j][1]
-                    else
-                        acomp_voff_init[j] = acomp_voff_plims[j][2]
-                    end
-                end
-                acomp_voffs[i,j] = Parameter(acomp_voff_init[j], acomp_voff_locked[j], acomp_voff_plims[j])
-                @debug "Voff $(acomp_voffs[i,j])"
-                if !(acomp_fwhm_plims[j][1] ≤ acomp_fwhm_init[j] ≤ acomp_fwhm_plims[j][2])
-                    acomp_fwhm_init[j] = acomp_fwhm_plims[j][1]
-                end
-                acomp_fwhms[i,j] = Parameter(acomp_fwhm_init[j], acomp_fwhm_locked[j], acomp_fwhm_plims[j])
-                @debug "FWHM $(acomp_fwhms[i,j])"
-                if acomp_profiles[line][j] == "GaussHermite"
-                    acomp_h3s[i,j] = Parameter(acomp_h3_init[j], acomp_h3_locked[j], acomp_h3_plims[j])
-                    @debug "h3 $(acomp_h3s[i,j])"
-                    acomp_h4s[i,j] = Parameter(acomp_h4_init[j], acomp_h4_locked[j], acomp_h4_plims[j])
-                    @debug "h4 $(acomp_h4s[i,j])"
-                elseif acomp_profiles[line][j] == "Voigt" 
-                    acomp_ηs[i,j] = Parameter(acomp_η_init[j], acomp_η_locked[j], acomp_η_plims[j])
-                    @debug "eta $(acomp_ηs[i,j])"
-                end
-            end
-        end
-
+        push!(all_fit_profiles, fit_profiles)
     end
 
     # sort by cent_vals
@@ -1173,41 +1010,24 @@ function parse_lines()
         combined = [[Symbol(ln) for ln in c] for c in combined]
     end
 
-    rel_amp = rel_voff = rel_fwhm = false
-    if haskey(lines, "rel_amp")
-        rel_amp = lines["rel_amp"]
-    end
-    if haskey(lines, "rel_voff")
-        rel_voff = lines["rel_voff"]
-    end
-    if haskey(lines, "rel_fwhm")
-        rel_fwhm = lines["rel_fwhm"]
-    end
+    rel_amp = lines["rel_amp"]
+    rel_voff = lines["rel_voff"]
+    rel_fwhm = lines["rel_fwhm"]
 
-    # create vectorized object for all the line data
-    lines_out = TransitionLines(names[ss], latex[ss], annotate[ss], cent_vals[ss], sort_order[ss], hcat(prof_out[ss], acomp_prof_out[ss, :]), 
-        hcat(tied_amp[ss], acomp_tied_amp[ss, :]), hcat(tied_voff[ss], acomp_tied_voff[ss, :]), hcat(tied_fwhm[ss], acomp_tied_fwhm[ss, :]), 
-        acomp_amps[ss, :], hcat(voffs[ss], acomp_voffs[ss, :]), hcat(fwhms[ss], acomp_fwhms[ss, :]), hcat(h3s[ss], acomp_h3s[ss, :]), 
-        hcat(h4s[ss], acomp_h4s[ss, :]), hcat(ηs[ss], acomp_ηs[ss, :]), combined, rel_amp, rel_voff, rel_fwhm)
+    # Make the line profile object
+    cfg = LineConfig(
+        annotate[ss], 
+        sort_order[ss],
+        combined,
+        rel_amp,
+        rel_voff,
+        rel_fwhm
+    )
+    lines_out = FitFeatures(names[ss], latex[ss], cent_vals[ss], all_fit_profiles[ss], cfg)
 
     @debug "#######################################################"
 
-    # Make the tied kinematics object to summarizes the tied amplitudes, voffs, and fwhms
-    tied_kinematics = create_tied_kinematics_object(lines_out, lines)
-
-    # If tie_voigt_mixing is set, all Voigt profiles have the same tied mixing parameter eta
-    if lines["tie_voigt_mixing"]
-        η_init = haskey(lines, "eta_init") ? lines["eta_init"] : 0.5       # Voigts start half gaussian, half lorentzian
-        η_plim = (lines["eta_plim"]...,)
-        η_locked = haskey(lines, "eta_locked") ? lines["eta_locked"] : false
-        voigt_mix_tied = Parameter(η_init, η_locked, η_plim)
-        @debug "voigt_mix_tied $voigt_mix_tied (tied)"
-    else
-        voigt_mix_tied = nothing
-        @debug "voigt_mix_tied is $voigt_mix_tied (untied)"
-    end
-
-    lines_out, tied_kinematics, lines["flexible_wavesol"], lines["tie_voigt_mixing"], voigt_mix_tied
+    lines_out
 end
 
 
