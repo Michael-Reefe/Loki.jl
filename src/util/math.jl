@@ -7,20 +7,20 @@ to access it they must use the "Loki" prefix.
 
 # CONSTANTS
 
-const C_KMS::Float64 = 299792.458          # Speed of light in km/s
-const h_ERGS::Float64 = 6.62607015e-27     # Planck constant in erg*s
-const kB_ERGK::Float64 = 1.380649e-16      # Boltzmann constant in erg/K
+const C_KMS = 299792.458*u"km/s"           # Speed of light in km/s
+const h_ERGS = 6.62607015e-27*u"erg*s"     # Planck constant in erg*s
+const kB_ERGK = 1.380649e-16*u"erg/K"      # Boltzmann constant in erg/K
 
 # First constant for Planck function, in MJy/sr/μm:
 # 2hν^3/c^2 = 2h(c/λ)^3/c^2 = (2h/c^2 erg/s/cm^2/Hz/sr) * (1e23 Jy per erg/s/cm^2/Hz) / (1e6 MJy/Jy) * (c * 1e9 μm/km)^3 / (λ μm)^3
-const Bν_1::Float64 = 2h_ERGS/(C_KMS*1e5)^2 * 1e23 / 1e6 * (C_KMS*1e9)^3
+# const Bν_1::Float64 = 2h_ERGS/(C_KMS*1e5)^2 * 1e23 / 1e6 * (C_KMS*1e9)^3
 
 # Second constant for Planck function, in μm*K  
 # hν/kT = hc/λkT = (hc/k cm*K) * (1e4 μm/cm) / (λ μm)
-const Bν_2::Float64 = h_ERGS*(C_KMS*1e5) / kB_ERGK * 1e4
+# const Bν_2::Float64 = h_ERGS*(C_KMS*1e5) / kB_ERGK * 1e4
 
 # Wein's law constant of proportionality in μm*K
-const b_Wein::Float64 = 2897.771955   
+const b_Wein::Float64 = 2897.771955*u"μm*K"
 
 # Saved Kemper, Vriend, & Tielens (2004) extinction profile
 const kvt_prof::Matrix{Float64} =  [8.0  0.06;
@@ -54,11 +54,11 @@ const kvt_prof::Matrix{Float64} =  [8.0  0.06;
 
 # Save the Donnan et al. 2022 profile as a constant
 const DP_prof = silicate_dp()
-const DP_interp = Spline1D(DP_prof[1], DP_prof[2]; k=3)
+const DP_interp = Spline1D(DP_prof[1], DP_prof[2]; k=3, bc="nearest")
 
 # Save the Chiar+Tielens 2005 profile as a constant
 const CT_prof = silicate_ct()
-const CT_interp = Spline1D(CT_prof[1], CT_prof[2]; k=3)
+const CT_interp = Spline1D(CT_prof[1], CT_prof[2]; k=3, bc="nearest")
 
 # Save the KVT profile as a constant
 const KVT_interp = Spline1D(kvt_prof[:, 1], kvt_prof[:, 2], k=2, bc="nearest")
@@ -66,12 +66,12 @@ const KVT_interp_end = Spline1D([kvt_prof[end, 1], kvt_prof[end, 1]+2], [kvt_pro
 
 # Save the OHM 1992 profile as a constant
 const OHM_prof = silicate_ohm()
-const OHM_interp = Spline1D(OHM_prof[1], OHM_prof[2]; k=3)
+const OHM_interp = Spline1D(OHM_prof[1], OHM_prof[2]; k=3, bc="nearest")
 
 # Save the Smith+2006 PAH templates as constants
 const SmithTemps = read_smith_temps()
-const Smith3_interp = Spline1D(SmithTemps[1], SmithTemps[2]; k=3)
-const Smith4_interp = Spline1D(SmithTemps[3], SmithTemps[4]; k=3)
+const Smith3_interp = Spline1D(SmithTemps[1], SmithTemps[2]; k=3, bc="nearest")
+const Smith4_interp = Spline1D(SmithTemps[3], SmithTemps[4]; k=3, bc="nearest")
 
 # Save the Ice+CH optical depth template as a constant
 const IceCHTemp = read_ice_ch_temps()
@@ -248,6 +248,15 @@ julia> Doppler_width_λ(0, 10)
 ```
 """
 @inline Doppler_width_λ(Δv, λ₀) = Δv / C_KMS * λ₀
+
+
+# Function for converting between per-unit-frequency units and per-unit-wavelength units
+function fluxconvert(Iν::Quantity{<:Real, u"𝐌*𝐓^-2"}, λ::Quantity{<:Real, u"𝐋"}) 
+    uconvert(unit(Iν)*u"Hz"/unit(λ), Iν * C_KMS / λ^2)
+end
+function fluxconvert(Iλ::Quantity{<:Real, u"𝐌*𝐋^-1*𝐓^-3"}, λ::Quantity{<:Real, u"𝐋"})
+    uconvert(unit(Iλ)*unit(λ)/u"Hz", Iλ * λ^2 / C_KMS)
+end
 
 
 """
@@ -626,26 +635,7 @@ end
 
 
 """
-    _calzetti_kprime_curve(λ, E_BV, Rv)
-
-A small helper function to calculate the k'(λ) attenuation curve from Calzetti et al. (2000).
-This function is used by the different methods in `attenuation_calzetti` to reduce repetition,
-since all methods include this same calculation.
-"""
-function _calzetti_kprime_curve(λ::Vector{<:Real}, E_BV::Real, Rv::Real)
-
-    # eq. (4) from Calzetti et al. (2000)
-    kprime = zeros(eltype(E_BV), length(λ))
-    good = λ .≥ 0.63
-    kprime[good] .= 2.659 .* Calz_poly_a.(1 ./ λ[good]) .+ Rv
-    kprime[.~good] .= 2.659 .* Calz_poly_b.(1 ./ λ[.~good]) .+ Rv
-
-    kprime
-end
-
-
-"""
-    attenuation_calzetti(λ, E_BV[, δ_uv]; Cf=0., Rv=4.05)
+    attenuation_calzetti(λ, E_BV; δ_uv=0., Cf=0., Rv=4.05)
 
 Calculate dust attenuation factor using the Calzetti et al. (2000) attenuation law:
 http://ui.adsabs.harvard.edu/abs/2000ApJ...533..682C.  
@@ -660,22 +650,17 @@ for more complitcated geometries.
 This idea for this function was based on a similar function from pPXF (Cappellari 2017), but
 the implementation is different.
 """
-function attenuation_calzetti(λ::Vector{<:Real}, E_BV::Real; Cf::Real=0., Rv::Real=4.05)
+function attenuation_calzetti(λ::Vector{<:Real}, E_BV::Real; δ_uv::Real=0., Cf::Real=0., Rv::Real=4.05)
 
-    # Get the actual extinction curve
-    kprime = _calzetti_kprime_curve(λ, E_BV, Rv)
-
-    # dust attenuation factor using E(B-V) in magnitudes
-    atten = @. 10^(-0.4 * E_BV * kprime)
-
-    # apply covering fraction
-    @. Cf + (1 - Cf)*atten
-end
-
-function attenuation_calzetti(λ::Vector{<:Real}, E_BV::Real, δ_uv::Real; Cf::Real=0., Rv::Real=4.05)
-
-    # Get the actual extinction curve
-    kprime = _calzetti_kprime_curve(λ, E_BV, Rv)
+    # eq. (4) from Calzetti et al. (2000)
+    kprime = zeros(eltype(E_BV), length(λ))     # selective extinction A(λ)/E(B-V)
+    good = λ .≥ 0.63
+    # curve from 6300 A down to 900 A
+    kprime[good] .= 2.659 .* Calz_poly_a.(1 ./ λ[good]) .+ Rv
+    # curve from 6300 A up to 2.2 um
+    kprime[.~good] .= 2.659 .* Calz_poly_b.(1 ./ λ[.~good]) .+ Rv
+    # allow extrapolation until the curve goes to 0 
+    kprime[kprime .< 0] .= 0.
 
     # Calculate the UV bump 
     # Kriek & Conroy (2013) eq. (3): relation between UV bump amplitude Eb and slope δ_uv
@@ -758,12 +743,12 @@ function attenuation_cardelli(λ::Vector{<:Real}, E_BV::Real, Rv::Real=3.10)
 
     # Mid-UV
     good = 3.3 .≤ x .< 8.0
+    y = x[good]
     Fa = zeros(sum(good))
     Fb = zeros(sum(good))
 
-    good1 = x .> 5.9
+    good1 = y .> 5.9
     if sum(good1) > 0
-        y = x .- 5.9
         Fa[good1] = @. -0.04473y[good1]^2 - 0.009779y[good1]^3
         Fb[good1] = @. 0.2130y[good1]^2 + 0.1207y[good1]^3
     end

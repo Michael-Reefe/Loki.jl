@@ -5,91 +5,12 @@ them into code objects.
 
 ############################## OPTIONS/SETUP/PARSING FUNCTIONS ####################################
 
+
 function pah_name_to_float(name::String)
     # assumed to be formatted such that the wavelength is given to two decimal places,
     # i.e. "PAH_620" is interpreted at 6.20
     wl = split(name, "_")[end]
     parse(Float64, wl[1:end-2] * "." * wl[end-1:end])
-end
-
-"""
-    parse_resolving(z, channel)
-
-Read in the resolving_mrs.csv configuration file to create a cubic spline interpolation of the
-MIRI MRS resolving power as a function of wavelength.  The function that is returned provides the
-FWHM of the line-spread function as a function of (observed-frame) wavelength.
-
-# Arguments
-- `channel::String`: The channel of the fit
-"""
-function parse_resolving(channel::String)
-
-    @debug "Parsing MRS resoling power from resolving_mrs.csv for channel $channel"
-
-    # Read in the resolving power data
-    resolve = readdlm(joinpath(@__DIR__, "..", "templates", "resolving_mrs.csv"), ',', Float64, '\n', header=true)
-    wave = resolve[1][:, 1]
-    R = resolve[1][:, 2]
-
-    # Find points where wavelength jumps down (b/w channels)
-    jumps = diff(wave) .< 0
-    indices = eachindex(wave)
-    ind_left = indices[BitVector([0; jumps])]
-    ind_right = indices[BitVector([jumps; 0])]
-
-    # Channel 1: everything before jump 3
-    if channel == "1"
-        edge_left = 1
-        edge_right = ind_right[3]
-    # Channel 2: between jumps 3 & 6
-    elseif channel == "2"
-        edge_left = ind_left[3]
-        edge_right = ind_right[6]
-    # Channel 3: between jumps 6 & 9
-    elseif channel == "3"
-        edge_left = ind_left[6]
-        edge_right = ind_right[9]
-    # Channel 4: everything above jump 9
-    elseif channel == "4"
-        edge_left = ind_left[9]
-        edge_right = length(wave)
-    elseif channel == "MULTIPLE"
-        edge_left = 1
-        edge_right = length(wave)
-    else
-        error("Unrecognized channel: $(channel)")
-    end
-
-    # Filter down to the channel we want
-    wave = wave[edge_left:edge_right]
-    R = R[edge_left:edge_right]
-
-    # Now get the jumps within the individual channel we're interested in
-    jumps = diff(wave) .< 0
-
-    # Define regions of overlapping wavelength space
-    wave_left = wave[BitVector([0; jumps])]
-    wave_right = wave[BitVector([jumps; 0])]
-
-    # Sort the data to be monotonically increasing in wavelength
-    ss = sortperm(wave)
-    wave = wave[ss]
-    R = R[ss]
-
-    # Smooth the data in overlapping regions
-    for i ∈ 1:sum(jumps)
-        region = wave_left[i] .≤ wave .≤ wave_right[i]
-        R[region] .= movmean(R, 10)[region]
-    end
-
-    # Create a linear interpolation function so we can evaluate it at the points of interest for our data,
-    # taking an input wi in the OBSERVED frame
-    interp_R = Spline1D(wave, R, k=1)
-
-    # The line-spread function in km/s - reduce by 25% from the pre-flight data
-    lsf = wi -> C_KMS / interp_R(wi)
-    
-    lsf
 end
 
 
@@ -210,7 +131,7 @@ function validate_lines_file(lines)
 
     keylist1 = ["default_sort_order", "tie_voigt_mixing", "lines", "profiles", "acomps", "n_acomps", 
         "rel_amp", "rel_fwhm", "rel_voff"]
-    keylist2 = ["wave", "latex", "annotate"]
+    keylist2 = ["wave", "latex", "annotate", "unit"]
 
     keylist3 = ["voff", "fwhm", "h3", "h4", "acomp_amp", "acomp_voff", "acomp_fwhm"]
     keylist4 = ["val", "plim", "locked"]
@@ -287,14 +208,45 @@ function parse_options()
 end
 
 
+# Template amplitudes
+function construct_template_params!(params::Vector{FitParameters}, pnames::Vector{String}, out::Dict, 
+    contin_options::Dict, region::SpectralRegion)
+
+    if haskey(contin_options, "template_amps") && !out[:fit_temp_multexp]
+        msg = "Template amplitudes:"
+        for i ∈ eachindex(contin_options["template_amps"])
+            tname = out[:template_names][i]
+            for ni in 1:nchannels(region)
+                temp_A = parameter_from_dict(contin_options["template_amps"][i])
+                msg *= "\n$temp_A channel $ni"
+                push!(params, temp_A)
+                push!(pnames, "templates.$(tname).amp_$ni")
+            end
+        end
+        @debug msg
+    elseif haskey(contin_options, "template_inds") && out[:fit_temp_multexp]
+        msg = "Template amplitudes:"
+        for i ∈ 1:4
+            temp_A = FitParameter(NaN, false, (0., Inf))
+            msg *= "\nAmp $i $temp_A"
+            temp_i = parameter_from_dict(contin_options["template_inds"][i])
+            msg *= "\nIndex $i $temp_i"
+            append!(params, [temp_A, temp_i])
+            append!(pnames, "templates." .* ["amp_$i", "index_$i"])
+        end
+        @debug msg
+    end
+
+end
+
+
 """
     create_dust_features(dust, λlim, user_mask)
 
 Uses the dust options file to create a DustFeatures object for the
 PAH features.
 """
-function create_dust_features(dust::Dict, λlim::Tuple, user_mask::Vector{Tuple};
-    do_absorption::Bool=false)
+function create_dust_features(dust::Dict, region::SpectralRegion; do_absorption::Bool=false)
 
     # Dust feature central wavelengths and FWHMs
     cent_vals = Float64[]
@@ -309,13 +261,8 @@ function create_dust_features(dust::Dict, λlim::Tuple, user_mask::Vector{Tuple}
 
         # First things first, check if this feature is within our wavelength range
         cent_val = dust[key][df]["wave"]["val"]
-        if !(λlim[1]-0.1 < cent_val < λlim[2]+0.1)
+        if !is_valid(cent_val, 0.1, region)
             continue
-        end
-        for pair in user_mask
-            if pair[1] < cent_val < pair[2]
-                continue
-            end
         end
 
         profile = :Drude
@@ -408,13 +355,13 @@ end
 
 
 """
-    construct_parameters_mir(out, λlim, n_channels)
+    _construct_parameters_ir(out, region)
 
 Read in the dust.toml configuration file, checking that it is formatted correctly,
 and convert it into a julia dictionary with Parameter objects for dust fitting parameters.
 This deals with continuum, PAH features, and extinction options.
 """
-function construct_parameters_mir(out::Dict, λlim::Tuple, n_channels::Int=0)
+function _construct_parameters_ir(out::Dict, region::SpectralRegion)
 
     @debug """\n
     Parsing dust file
@@ -428,15 +375,8 @@ function construct_parameters_mir(out::Dict, λlim::Tuple, n_channels::Int=0)
     validate_dust_file(dust)
 
     # Convert the options into Parameter objects, and set them to the output dictionary
-
-    # Stellar continuum amp & temperature
-    @debug "Stellar Continuum:"
-    A_s = FitParameter(out[:fit_stellar_continuum] ? NaN : 0.0, !out[:fit_stellar_continuum], (0., Inf))
-    @debug "\nAmp $A_s"
-    T_s = parameter_from_dict(dust["stellar_continuum_temp"])
-    @debug "\nTemp $T_s"
-    params = [A_s, T_s]
-    pnames = ["continuum.stellar.amp", "continuum.stellar.temp"]
+    pnames = String[]
+    params = FitParameter[]
 
     # Dust continuum temperatures
     if haskey(dust, "dust_continuum_temps")
@@ -453,21 +393,6 @@ function construct_parameters_mir(out::Dict, λlim::Tuple, n_channels::Int=0)
         end
     end
         
-    # Power law indices
-    if haskey(dust, "power_law_indices")
-        msg = "Power laws:"
-        for i in eachindex(dust["power_law_indices"])
-            prefix = "continuum.power_law.$(i)."
-            A_pl = FitParameter(NaN, false, (0., Inf))
-            msg *= "\nAmp $A_pl"
-            α_pl = parameter_from_dict(dust["power_law_indices"][i])
-            msg *= "\nAlpha $α_pl"
-            @debug msg
-            append!(params, [A_pl, α_pl])
-            append!(pnames, prefix .* ["amp", "index"])
-        end
-    end
-
     # Extinction parameters, optical depth and mixing ratio
     msg = "Extinction:"
     prefix = "extinction."
@@ -499,7 +424,7 @@ function construct_parameters_mir(out::Dict, λlim::Tuple, n_channels::Int=0)
     append!(params, [τ_ice, τ_ch, β, Cf])
     append!(pnames, prefix .* ["tau_ice", "tau_ch", "beta", "frac"])
 
-    abs_features = create_dust_features(dust, λlim, out[:user_mask]; do_absorption=true)
+    abs_features = create_dust_features(dust, region; do_absorption=true)
     abs_parameters = get_flattened_fit_parameters(abs_features)
     append!(params, abs_parameters._parameters)
     append!(pnames, abs_parameters.names)
@@ -525,39 +450,25 @@ function construct_parameters_mir(out::Dict, λlim::Tuple, n_channels::Int=0)
         append!(pnames, prefix .* ["amp", "temp", "frac", "tau_warm", "tau_cold", "sil_peak"])
     end
 
-    # Template amplitudes
-    if haskey(dust, "template_amps")
-        msg = "Template amplitudes:"
-        for i ∈ eachindex(dust["template_amps"])
-            tname = out[:template_names][i]
-            for ni in 1:n_channels
-                temp_A = parameter_from_dict(dust["template_amps"][i])
-                msg *= "\n$temp_A"
-                push!(params, temp_A)
-                push!(pnames, "templates.$(tname).amp_$ni")
-            end
-        end
-        @debug msg
-    end
-
-    # Create the dust features and absorption features objects
-    dust_features = create_dust_features(dust, λlim, out[:user_mask])
+    # Appends the template parameters and pnames in-place
+    construct_template_params!(params, pnames, out, dust, region)
 
     # All of the continuum and PAH parameters conjoined into neat little objects
     continuum_parameters = FitParameters(pnames, params)
+    dust_features = create_dust_features(dust, region)
 
-    continuum_parameters, dust_features, abs_features
+    continuum_parameters, dust_features
 end
 
 
 """
-    parse_optical()
+    _construct_parameters_opt(out, region)
 
 Read in the optical.toml configuration file, checking that it is formatted correctly,
 and convert it into a julia dictionary with Parameter objects for optical fitting parameters.
 This deals with the optical continuum options.
 """
-function parse_optical()
+function _construct_parameters_opt(out::Dict, region::SpectralRegion)
 
     @debug """\n
     Parsing optical file
@@ -569,78 +480,132 @@ function parse_optical()
 
     validate_optical_file(optical)
 
-    msg = "Stellar populations:"
-    ssp_ages = Parameter[]
-    ssp_metallicities = Parameter[]
-    for (age, metal) ∈ zip(optical["stellar_population_ages"], optical["stellar_population_metallicities"])
-        a = from_dict(age)
-        push!(ssp_ages, a)
-        msg *= "\nAge $a"
-        z = from_dict(metal)
-        msg *= "\nMetallicity $z"
-        push!(ssp_metallicities, z)
-    end
-    @debug msg
+    params = FitParameter[]
+    pnames = String[]    
 
-    msg = "Stellar kinematics:"
-    stel_vel = from_dict(optical["stellar_kinematics"]["vel"])
-    msg *= "\nVelocity $stel_vel"
-    stel_vdisp = from_dict(optical["stellar_kinematics"]["vdisp"])
-    msg *= "\nVdisp $stel_vdisp"
-    @debug msg
+    if out[:fit_stellar_continuum]
 
-    msg = "Fe II kinematics:"
-    na_feii_vel = from_dict(optical["na_feii_kinematics"]["vel"])
-    msg *= "\nNA Velocity $na_feii_vel"
-    na_feii_vdisp = from_dict(optical["na_feii_kinematics"]["vdisp"])
-    msg *= "\nNA Vdisp $na_feii_vdisp"
-    br_feii_vel = from_dict(optical["br_feii_kinematics"]["vel"])
-    msg *= "\nBR Velocity $br_feii_vel"
-    br_feii_vdisp = from_dict(optical["br_feii_kinematics"]["vdisp"])
-    msg *= "\nBR Vdisp $br_feii_vdisp"
-    @debug msg
-
-    α = Parameter[]
-    if haskey(optical, "power_law_indices")
-        msg *= "Power Laws:"
-        α = [from_dict(optical["power_law_indices"][i]) for i in eachindex(optical["power_law_indices"])]
-        for αi in α
-            msg *= "\nIndex $αi"
+        msg = "Stellar populations:"
+        for (i, (age, metal)) ∈ enumerate(zip(optical["stellar_population_ages"], optical["stellar_population_metallicities"]))
+            prefix = "continuum.stellar_populations.$(i)."
+            mass = FitParameter(NaN, false, (0., Inf)) 
+            msg *= "\nMass $mass"
+            a = parameter_from_dict(age)
+            msg *= "\nAge $a"
+            z = parameter_from_dict(metal)
+            msg *= "\nMetallicity $z"
+            append!(params, [mass, a, z])
+            append!(pnames, prefix .* ["mass", "age", "metallicity"])
         end
         @debug msg
+
+        msg = "Stellar kinematics:"
+        prefix = "continuum.stellar_kinematics."
+        stel_vel = parameter_from_dict(optical["stellar_kinematics"]["vel"])
+        msg *= "\nVelocity $stel_vel"
+        stel_vdisp = parameter_from_dict(optical["stellar_kinematics"]["vdisp"])
+        msg *= "\nVdisp $stel_vdisp"
+        append!(params, [stel_vel, stel_vdisp])
+        append!(pnames, prefix .* ["vel", "vdisp"])
+        @debug msg
+
     end
- 
+
     # attenuation parameters
     msg = "Attenuation:"
-    E_BV = from_dict(optical["attenuation"]["E_BV"])
+    prefix = "attenuation."
+    E_BV = parameter_from_dict(optical["attenuation"]["E_BV"])
+    E_BV_factor = parameter_from_dict(optical["attenuation"]["E_BV_factor"])
+    # if wavelength range is infrared, dont try fitting a full attenuation curve
+    # (the silicate absorption features are still included)
+    is_ir = wavelength_range(region) == Infrared
+    if is_ir
+        set_val!(E_BV, 0.)
+        lock!(E_BV)
+        lock!(E_BV_factor)
+    end
     msg *= "\nE(B-V) $E_BV"
-    E_BV_factor = from_dict(optical["attenuation"]["E_BV_factor"])
     msg *= "\nE(B-V) factor $E_BV_factor"
-    δ_uv = from_dict(optical["attenuation"]["uv_slope"])
-    msg *= "\nδ_uv $δ_uv"
-    frac = from_dict(optical["attenuation"]["frac"])
-    msg *= "\nfrac $frac"
-    @debug msg
-
-    # template parameters
-    if haskey(optical, "template_amps")
-        temp_A = []
-        for i ∈ eachindex(optical["template_amps"])
-            push!(temp_A, from_dict(optical["template_amps"][i]))
+    append!(params, [E_BV, E_BV_factor])
+    append!(pnames, prefix .* ["E_BV", "E_BV_factor"])
+    if out[:fit_uv_bump]
+        δ_uv = parameter_from_dict(optical["attenuation"]["uv_slope"])
+        if is_ir
+            set_val!(δ_uv, 0.)
+            lock!(δ_uv)
         end
-        msg = "Template amplitudes:"
-        for Ai ∈ temp_A
-            msg *= "\n$Ai"
+        msg *= "\nδ_uv $δ_uv"
+        push!(params, δ_uv)
+        push!(pnames, prefix * "delta_UV")
+    end
+    if out[:fit_covering_frac]
+        frac = parameter_from_dict(optical["attenuation"]["frac"])
+        if is_ir
+            set_val!(frac, 0.)
+            lock!(frac)
         end
+        msg *= "\nfrac $frac"
+        push!(params, frac)
+        push!(pnames, prefix * "frac")
         @debug msg
-    else
-        temp_A = []
     end
 
-    continuum = OpticalContinuum(ssp_ages, ssp_metallicities, stel_vel, stel_vdisp, na_feii_vel, na_feii_vdisp, 
-        br_feii_vel, br_feii_vdisp, α, E_BV, E_BV_factor, δ_uv, frac, temp_A)
+    msg = "Fe II kinematics:"
+    prefix = "continuum.feii."
+    if out[:fit_opt_na_feii]
+        na_feii_A = FitParameter(NaN, false, (0., Inf))
+        msg *= "\nNA Amp $na_feii_A"
+        na_feii_vel = parameter_from_dict(optical["na_feii_kinematics"]["vel"])
+        msg *= "\nNA Velocity $na_feii_vel"
+        na_feii_vdisp = parameter_from_dict(optical["na_feii_kinematics"]["vdisp"])
+        msg *= "\nNA Vdisp $na_feii_vdisp"
+        append!(params, [na_feii_A, na_feii_vel, na_feii_vdisp])
+        append!(pnames, prefix .* "na." .* ["amp", "vel", "vdisp"])
+    end
+    if out[:fit_opt_br_feii]
+        br_feii_A = FitParameter(NaN, false, (0., Inf))
+        msg *= "\nBR Amp $br_feii_A"
+        br_feii_vel = parameter_from_dict(optical["br_feii_kinematics"]["vel"])
+        msg *= "\nBR Velocity $br_feii_vel"
+        br_feii_vdisp = parameter_from_dict(optical["br_feii_kinematics"]["vdisp"])
+        msg *= "\nBR Vdisp $br_feii_vdisp"
+        append!(params, [br_feii_A, br_feii_vel, br_feii_vdisp])
+        append!(pnames, prefix .* "br." .* ["amp", "vel", "vdisp"])
+    end
+    @debug msg
 
-    continuum
+    if haskey(optical, "power_law_indices")
+        msg = "Power Laws:"
+        for (i, power_law_index) in enumerate(optical["power_law_indices"])
+            prefix = "continuum.power_law.$(i)"
+            A_pl = FitParameter(NaN, false, (0., Inf))
+            msg *= "\nAmp $A_pl"
+            α_pl = parameter_from_dict(power_law_index)
+            msg *= "\nIndex $α_pl"
+            append!(params, [A_pl, α_pl])
+            append!(pnames, prefix .* ["amp", "index"])
+        end
+        @debug msg
+    end
+
+    # Appends the template parameters and pnames in-place
+    construct_template_params!(params, pnames, out, optical, 1)
+
+    # Pack everything up into a FitParameters object
+    continuum_parameters = FitParameters(pnames, params)
+ 
+    continuum_parameters
+end
+
+
+function construct_parameters(out::Dict, region::SpectralRegion)
+
+    continuum_ir, dust_features = construct_parameters(out, region)
+    continuum = construct_parameters(out, region)
+
+    append!(continuum, continuum_ir)
+
+    continuum, dust_features
 end
 
 
@@ -694,6 +659,7 @@ function check_tied_kinematics!(lines::Dict, prefix::String, line::String, kinem
                             if haskey(lines["parameters"][group][param], "plim")
                                 @debug "Overriding $param limits for $line in group $group"
                                 set_plim!(fit_profiles[1].fit_parameters[ind], (lines["parameters"][line][param]["plim"]...,))
+                            end
                             if haskey(lines["parameters"][group][param], "locked")
                                 @debug "Overriding $param locked value for $line in group $group"
                                 if lines["parameters"][group][param]["locked"]
@@ -764,6 +730,7 @@ function check_acomp_tied_kinematics!(lines::Dict, prefix::String, line::String,
                                 if haskey(lines["parameters"][group][param_key][j], "plim")
                                     @debug "Overriding $param_key $j limits for $line in group $group"
                                     set_plim!(fit_profiles[1].fit_parameters[ind], (lines["parameters"][line][param_key][j]["plim"]...,))
+                                end
                                 if haskey(lines["parameters"][group][param_key][j], "locked")
                                     @debug "Overriding $param_key $j locked value for $line in group $group"
                                     if lines["parameters"][group][param_key][j]["locked"]
@@ -864,6 +831,7 @@ function override_line_parameters!(lines::Dict, prefix::String, fit_profiles::Fi
                     @debug "Overriding $param_key limits for $line"
                     set_plim!(fit_profiles[1].fit_parameters[prefix * "1." * param_key], 
                                 (lines["parameters"][line][param_key]["plim"]...,))
+                end
                 if haskey(lines["parameters"][line][param_key], "locked")
                     @debug "Overriding $param_key locked value for $line"
                     if lines["parameters"][line][param_key]["locked"]
@@ -884,6 +852,7 @@ function override_line_parameters!(lines::Dict, prefix::String, fit_profiles::Fi
                         @debug "Overriding $param_key acomp $i limits for $line"
                         set_plim!(fit_profiles[i+1].fit_parameters[prefix * "$(i+1)." * param_key], 
                                     (lines["parameters"][line][param_key][i]["plim"]...,))
+                    end
                     if haskey(lines["parameters"][line][param_key][i], "locked")
                         @debug "Overriding $param_key acomp $i locked value for $line"
                         if lines["parameters"][line][param_key]["locked"]
@@ -904,6 +873,29 @@ function override_line_parameters!(lines::Dict, prefix::String, fit_profiles::Fi
 end
 
 
+function parse_lines(region::SpectralRegion)
+
+    lines = TOML.parsefile(joinpath(@__DIR__, "..", "options", "lines.toml"))
+    profiles, acomp_profiles = validate_lines_file(lines)
+
+    cent_vals = Vector{typeof(1.0u"μm")}()    # provide all the line wavelengths in microns
+    for line in keys(lines["lines"])
+        cent_unit = uparse(replace(lines["lines"][line]["unit"], 'u' => 'μ'), unit_context=UnitfulAstro)
+        cent_val = lines["lines"][line]["wave"] * cent_unit
+        if !is_valid(cent_val, 0, region)
+            # remove this line from the dictionary
+            delete!(lines["lines"], line)
+            delete!(profiles, line)
+            delete!(acomp_profiles, line)
+            continue
+        end
+        push!(cent_vals, cent_val)
+    end
+
+    lines, profiles, acomp_profiles, cent_vals
+end
+
+
 """
     construct_line_parameters(out, λlim)
 
@@ -911,7 +903,7 @@ Read in the lines.toml configuration file, checking that it is formatted correct
 and convert it into a julia dictionary with Parameter objects for line fitting parameters.
 This deals purely with emission line options.
 """
-function construct_line_parameters(out::Dict, λlim::Tuple)
+function construct_line_parameters(out::Dict, region::SpectralRegion)
 
     @debug """\n
     Parsing lines file
@@ -919,8 +911,7 @@ function construct_line_parameters(out::Dict, λlim::Tuple)
     """
 
     # Read in the lines file
-    lines = TOML.parsefile(joinpath(@__DIR__, "..", "options", "lines.toml"))
-    profiles, acomp_profiles = validate_lines_file(lines)
+    lines, profiles, acomp_profiles, cent_vals = parse_lines(region)
 
     # Create the kinematic groups
     #   ---> kinematic groups apply to all additional components of lines as well as the main component
@@ -947,25 +938,12 @@ function construct_line_parameters(out::Dict, λlim::Tuple)
     names = Symbol[]
     latex = String[]
     annotate = BitVector()
-    cent_vals = Float64[]
     all_fit_profiles = FitProfiles[]
     sort_order = Int[]
 
     # Loop through all the lines
     for line ∈ keys(lines["lines"])
 
-        # Do not add lines outside the wavelength range we need
-        cent_val = lines["lines"][line]["wave"]
-        if !(λlim[1] ≤ cent_val ≤ λlim[2])
-            continue
-        end
-        for pair in out[:user_mask]
-            if pair[1] < cent_val < pair[2]
-                continue
-            end
-        end
-
-        push!(cent_vals, cent_val)
         name = Symbol(line)
         push!(names, name)
         push!(latex, lines["lines"][line]["latex"])
@@ -982,7 +960,7 @@ function construct_line_parameters(out::Dict, λlim::Tuple)
 
         @debug """\n
         ################# $line #######################
-        # Rest wavelength: $(cent_val) um #
+        # Rest wavelength: $(lines["lines"][line]["wave"]) $(lines["lines"][line]["unit"]) #
         """
 
         fit_profiles = default_line_parameters(lines, prefix, prof_out, acomp_prof_out)

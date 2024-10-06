@@ -8,6 +8,38 @@ using the "correct" function.  The data should then be handed off to the structs
 "CubeFit" file, which handles actually fitting the cubes.
 =#
 
+# quick check for determining whether the intensities are per unit frequency or per unit wavelength 
+@enum IntensityUnits begin
+    PerFrequency
+    PerWavelength
+end
+
+# latex string representations of units 
+get_latex_str(u) = latexify(u)
+get_latex_str(::typeof(u"erg/s/cm^2/Hz/sr")) = L"$\mathrm{erg}\,\mathrm{s}^{-1}\,\mathrm{cm}^{-2}\,\mathrm{Hz}^{-1}\,\mathrm{sr}^{-1}$"
+get_latex_str(::typeof(u"erg/s/cm^2/angstrom/sr")) = L"$\mathrm{erg}\,\mathrm{s}^{-1}\,\mathrm{cm}^{-2}\,\mathrm{\AA}^{-1}\,\mathrm{sr}^{-1}$"
+get_latex_str(::typeof(u"erg/s/cm^2/μm/sr")) = L"$\mathrm{erg}\,\mathrm{s}^{-1}\,\mathrm{cm}^{-2}\,\mathrm{\mu{}m}^{-1}\,\mathrm{sr}^{-1}$"
+
+# Functions approximating the MIRI MRS line-spread function and point-spread function
+# Note: the inputs of both are the OBSERVED-FRAME wavelengths
+@inline mrs_lsf(λ::Quantity) = @. C_KMS / (4603 - 128*(λ/u"μm") + 10^(-7.4*(λ/u"μm")))
+@inline mrs_psf(λ::Quantity) = @. (0.033*(λ/u"μm") + 0.016) * u"arcsecond"
+
+# very simple parser; bound to not work in all cases but that's a lotta work
+function fits_unitstr_to_unitful(unit_string::String)
+    unit_string = replace(unit_string, "u" => "μ", "." => "*")
+    i = 1
+    while i ≤ lastindex(unit_string)
+        # insert an exponent before each number in the string
+        char = unit_string[i]
+        if char in ('-','+') || (isdigit(char) && !(unit_string[i-1] in ['-','+','^']))
+            unit_string = unit_string[1:prevind(unit_string, i)] * "^" * unit_string[i:end]
+            i = nextind(unit_string, i)
+        end
+        i = nextind(unit_string, i)
+    end
+    unit_string
+end
 
 ############################## DATACUBE STRUCTURE AND FUNCTIONS ####################################
 
@@ -18,48 +50,54 @@ using the "correct" function.  The data should then be handed off to the structs
 An object for holding 3D IFU spectroscopy data. 
 
 # Fields
-- `λ::Vector{<:Real}`: 1D array of wavelengths, in μm
-- `I::Array{<:Real,3}`: 3D array of intensity, in MJy/sr (MIR) or erg/s/cm^2/ang/sr (OPT)
-- `σ::Array{<:Real,3}`: 3D array of uncertainties, in MJy/sr (MIR) or erg/s/cm^2/ang/sr (OPT)
-- `mask::BitArray{3}=falses(size(Iν))`: 3D array of booleans acting as a mask for the flux/error data
-- `psf_model::Union{Array{<:Real,3},Nothing}=nothing`: 3D model of the point-spread function which should be normalized such that the sum
+- `λ`: 1D array of wavelengths, in μm or angstroms
+- `I`: 3D array of intensity, in erg/s/cm^2/Hz/sr, erg/s/cm^2/ang/sr, or erg/s/cm^2/μm/sr
+- `σ`: 3D array of uncertainties, in the same units as I
+- `mask`: 3D array of booleans acting as a mask for the flux/error data
+- `psf_model`: 3D model of the point-spread function which should be normalized such that the sum
     of the 2D point-spread function at each wavelength slice integrates to 1. Defaults to `nothing`, but can be generated using the
     `generate_psf_model` function from `psf.jl`.
-- `Ω::Real=NaN`: the solid angle subtended by each spaxel, in steradians
-- `α::Real=NaN`: the right ascension of the observation, in decimal degrees
-- `δ::Real=NaN`: the declination of the observation, in decimal degrees
-- `θ_sky::Real=NaN`: the rotation angle between the MIRI/MRS IFU axes and the RA/Dec sky axes, in radians
-- `psf::Function`: the FWHM of the spatial point-spread function in arcseconds as a function of (observed-frame) wavelength in microns
-- `lsf::Function`: the FWHM of the spectral line-spread function in km/s as a function of (observed-frame) wavelength in microns
-- `wcs::Union{WCSTransform,Nothing}=nothing`: a World Coordinate System conversion object, optional
-- `channel::String="Generic Channel"`: the MIRI channel of the observation, from 1-4
-- `band::String="Generic Band"`: the MIRI band of the observation, i.e. "SHORT", "MEDIUM", "LONG", or "MULTIPLE"
-- `nx::Integer=size(Iν,1)`: the length of the x dimension of the cube
-- `ny::Integer=size(Iν,2)`: the length of the y dimension of the cube
-- `nz::Integer=size(Iν,3)`: the length of the z dimension of the cube
-- `spectral_region::Symbol`: which spectral region does the DataCube cover. Must be either :MIR for mid-infrared or :OPT for optical.
-- `rest_frame::Bool=false`: whether or not the DataCube wavelength vector is in the rest-frame
-- `masked::Bool=false`: whether or not the DataCube has been masked
-- `vacuum_wave::Bool=true`: whether or not the wavelength vector is in vacuum wavelengths; if false, it is assumed to be air wavelengths
-- `sky_aligned::Bool=false`: whether or not the data cube is aligned to the sky (RA/Dec) axes or the IFU (α/β) axes
-- `voronoi_bins::Union{Matrix{<:Integer,3},Nothing}=nothing`: a map giving unique labels to each spaxel which place them within voronoi bins
+- `Ω`: the solid angle subtended by each spaxel, in steradians
+- `α`: the right ascension of the observation, in decimal degrees
+- `δ`: the declination of the observation, in decimal degrees
+- `θ_sky`: the rotation angle between the MIRI/MRS IFU axes and the RA/Dec sky axes, in radians
+- `psf`: the FWHM of the spatial point-spread function in arcseconds as a function of (observed-frame) wavelength in microns
+- `lsf`: the FWHM of the spectral line-spread function in km/s as a function of (observed-frame) wavelength in microns
+- `wcs`: a World Coordinate System conversion object, optional
+- `channel`: the channel name of the observation
+- `band`: the band of the observation, i.e. "SHORT", "MEDIUM", "LONG", or "MULTIPLE"
+- `nx`: the length of the x dimension of the cube
+- `ny`: the length of the y dimension of the cube
+- `nz`: the length of the z dimension of the cube
+- `spectral_region`: which spectral region does the DataCube cover
+- `rest_frame`: whether or not the DataCube wavelength vector is in the rest-frame
+- `masked`: whether or not the DataCube has been masked
+- `vacuum_wave`: whether or not the wavelength vector is in vacuum wavelengths; if false, it is assumed to be air wavelengths
+- `sky_aligned`: whether or not the data cube is aligned to the sky (RA/Dec) axes or the IFU (α/β) axes
+- `voronoi_bins`: a map giving unique labels to each spaxel which place them within voronoi bins
 """
-mutable struct DataCube
+mutable struct DataCube{T, S} where {
+        T<:Vector{<:Union{typeof(1.0u"μm"),typeof(1.0u"angstrom")}},   # units must be either angstroms or microns
+        S<:Array{<:Union{                                              # units must be one of:
+            typeof(1.0u"erg*s^-1*cm^-2*Hz^-1*sr^-1"),                  #    erg s^-1 cm^-2 Hz^-1 sr^-1
+            typeof(1.0u"erg*s^-1*cm^-2*μm^-1*sr^-1"),                  #    erg s^-1 cm^-2 μm^-1 sr^-1
+            typeof(1.0u"erg*s^-1*cm^-2*angstrom^-1*sr^-1")             #    erg s^-1 cm^-2 Å^-1 sr^-1
+        }, 3}
+    }
 
-    λ::Vector{<:Real}
-    I::Array{<:Real,3}
-    σ::Array{<:Real,3}
- 
+    λ::T
+    I::S
+    σ::S
     mask::BitArray{3}
 
-    psf_model::Union{Array{<:Real,3},Nothing}
+    psf_model::Union{Array{<:Real,3},Nothing}   # unitless
 
-    Ω::Real
-    α::Real
-    δ::Real
-    θ_sky::Real
-    psf::Vector{<:Real}
-    lsf::Vector{<:Real}
+    Ω::typeof(1.0u"sr")        
+    α::typeof(1.0u"°")         
+    δ::typeof(1.0u"°")    
+    θ_sky::typeof(1.0u"rad") 
+    psf::Vector{typeof(1.0u"arcsecond")}
+    lsf::Vector{typeof(1.0u"km/s")}
 
     wcs::Union{WCSTransform,Nothing}
 
@@ -70,7 +108,8 @@ mutable struct DataCube
     ny::Integer
     nz::Integer
 
-    spectral_region::Symbol
+    spectral_region::SpectralRegion
+    intensity_units::IntensityUnits
     rest_frame::Bool
     masked::Bool
     vacuum_wave::Bool
@@ -79,11 +118,13 @@ mutable struct DataCube
     voronoi_bins::Union{Matrix{<:Integer},Nothing}
 
     # This is the constructor for the DataCube struct; see the DataCube docstring for details
-    function DataCube(λ::Vector{<:Real}, I::Array{<:Real,3}, σ::Array{<:Real,3}, mask::Union{BitArray{3},Nothing}=nothing,
-        psf_model::Union{Array{<:Real,3},Nothing}=nothing, Ω::Real=NaN, α::Real=NaN, δ::Real=NaN, θ_sky::Real=NaN, 
-        psf::Union{Vector{<:Real},Nothing}=nothing, lsf::Union{Vector{<:Real},Nothing}=nothing, wcs::Union{WCSTransform,Nothing}=nothing, 
-        channel::String="Generic Channel", band::String="Generic Band", spectral_region::Symbol=:MIR, rest_frame::Bool=false, 
-        masked::Bool=false, vacuum_wave::Bool=true, sky_aligned::Bool=false, voronoi_bins::Union{Matrix{<:Integer},Nothing}=nothing)
+    function DataCube(λ::T, I::S, σ::S, mask::Union{BitArray{3},Nothing}=nothing, psf_model::Union{Array{<:Real,3},Nothing}=nothing, 
+        Ω=NaN*u"sr", α=NaN*u"°", δ=NaN*u"°", θ_sky=NaN*u"rad", psf::Union{U,Nothing}=nothing, lsf::Union{V,Nothing}=nothing, 
+        wcs::Union{WCSTransform,Nothing}=nothing, channel::String="Generic Channel", band::String="Generic Band", n_channels::Int=1,
+        rest_frame::Bool=false, masked::Bool=false, vacuum_wave::Bool=true, sky_aligned::Bool=false, 
+        voronoi_bins::Union{Matrix{<:Integer},Nothing}=nothing) where {
+            T<:Vector{<:Quantity},S<:Array{<:Quantity,3},U<:Vector{<:Quantity},V<:Vector{<:Quantity}
+            }
 
         # Make sure inputs have the right dimensions
         @assert ndims(λ) == 1 "Wavelength vector must be 1-dimensional!"
@@ -95,6 +136,22 @@ mutable struct DataCube
         if !isnothing(lsf)
             @assert size(lsf) == size(λ) "The LSF FWHM vector must be the same size as the wavelength vector!"
         end
+
+        # Make sure units are consistent with each other
+        I_unit = unit(I[1])
+        @assert I_unit == unit(σ[1]) "The intensity and error cubes must have the same units!"
+
+        # If units arent in the code's standard, try to convert them 
+        if dimension(I_unit) == u"𝐌*𝐓^-2"
+            new_I_unit = u"erg*s^-1*cm^-2*Hz^-1*sr^-1"
+            intensity_units = PerFrequency
+        elseif dimension(I_unit) == u"𝐌*𝐋^-1*𝐓^-3"
+            λ_unit = unit(λ[1])
+            new_I_unit = uparse("erg*s^-1*cm^-2*$(λ_unit)^-1*sr^-1", unit_context=UnitfulAstro)
+            intensity_units = PerWavelength
+        end
+        I = uconvert.(new_I_unit, I)
+        σ = uconvert.(new_I_unit, σ)
 
         nx, ny, nz = size(I)
 
@@ -109,9 +166,21 @@ mutable struct DataCube
             @assert size(psf_model) == size(I) "The PSF model must be the same size as the intensity cube!"
         end
 
+        λlim = extrema(λ)
+        # the range parameter mainly determines what to do about extinction curves
+        # since calzetti and CCM are not defined past ~2-3 um
+        λrange = if λlim[1] < 2.2u"μm" && λlim[2] > 2.2u"μm"
+            UVOptIR
+        elseif λlim[1] > 2.2u"μm"
+            Infrared
+        else
+            UVOptical
+        end
+        spectral_region = SpectralRegion(λlim, [], n_channels, λrange)
+
         # Return a new instance of the DataCube struct
-        new(λ, I, σ, mask, psf_model, Ω, α, δ, θ_sky, psf, lsf, wcs, channel, band, nx, ny, nz, spectral_region, rest_frame, masked, 
-            vacuum_wave, sky_aligned, voronoi_bins)
+        new(λ, I, σ, mask, psf_model, Ω, α, δ, θ_sky, psf, lsf, wcs, channel, band, nx, ny, nz, spectral_region, intensity_units, 
+            rest_frame, masked, vacuum_wave, sky_aligned, voronoi_bins)
     end
 
 end
@@ -149,22 +218,25 @@ function from_fits_jwst(filename::String)::DataCube
     # Unpack data cube dimensions
     nx, ny, nz = hdr["NAXIS1"], hdr["NAXIS2"], hdr["NAXIS3"]
     # Solid angle of each spaxel
-    Ω = hdr["PIXAR_SR"]
+    Ω = hdr["PIXAR_SR"] * u"sr"
     # Intensity and error arrays
-    Iν = read(hdu["SCI"])
-    σI = read(hdu["ERR"])
+    # JWST cubes come in units of MJy/sr
+    bunit = uparse(fits_unitstr_to_unitful(hdr["BUNIT"]); unit_context=UnitfulAstro)
+    Iν = read(hdu["SCI"]) * bunit
+    σI = read(hdu["ERR"]) * bunit
 
     @debug "FITS data dimensions: ($nx, $ny, $nz), solid angle per spaxel: $Ω"
 
     # Construct 3D World coordinate system to convert from pixels to (RA,Dec,wave) and vice versa
     wcs = WCS.from_header(read_header(hdu["SCI"], String))[1]
+    cunit3 = uparse(fits_unitstr_to_unitful(hdr["CUNIT3"]); unit_context=UnitfulAstro)
 
     # Wavelength vector
     λ = try
         read(hdu["AUX"], "wave")
     catch
         hdr["CRVAL3"] .+ hdr["CDELT3"] .* (collect(0:hdr["NAXIS3"]-1) .+ hdr["CRPIX3"] .- 1)
-    end
+    end * cunit3
     # Alternative method using the WCS directly:
     # λ = pix_to_world(wcs, Matrix(hcat(ones(nz), ones(nz), collect(1:nz))'))[3,:] ./ 1e-6
 
@@ -177,16 +249,16 @@ function from_fits_jwst(filename::String)::DataCube
 
     # Target info from the header
     hdr0 = read_header(hdu[1])
-    name = hdr0["TARGNAME"]    # name of the target
-    ra = hdr0["TARG_RA"]       # right ascension in deg
-    dec = hdr0["TARG_DEC"]     # declination in deg
-    channel = string(hdr0["CHANNEL"])  # MIRI channel (1-4)
-    band = hdr0["BAND"]        # MIRI band (long,med,short,multiple)
+    name = hdr0["TARGNAME"]           # name of the target
+    ra = hdr0["TARG_RA"] * u"°"       # right ascension in deg
+    dec = hdr0["TARG_DEC"] * u"°"     # declination in deg
+    channel = string(hdr0["CHANNEL"]) # MIRI channel (1-4)
+    band = hdr0["BAND"]               # MIRI band (long,med,short,multiple)
 
     # Sky rotation angle
     cosθ = -hdr["PC1_1"]    # negative because of the flipped RA axis (RA increases to the left)
     sinθ = -hdr["PC1_2"]    # negative because of how the rotation matrix is defined
-    θ_sky = atan(sinθ, cosθ)
+    θ_sky = atan(sinθ, cosθ) * u"rad"
     sky_aligned = iszero(θ_sky)
 
     @debug """\n
@@ -196,7 +268,7 @@ function from_fits_jwst(filename::String)::DataCube
     name: \t\t $name
     RA: \t\t\t $ra
     Dec: \t\t\t $dec
-    Rotation angle: \t\t $(θ_sky*180/π)
+    Rotation angle: \t\t $(uconvert(u"°", θ_sky))
     Channel: \t $channel
     Band: \t\t $band
     ##################################################################
@@ -211,19 +283,23 @@ function from_fits_jwst(filename::String)::DataCube
 
     # Get the rough PSF FWHM in arcseconds
     psf = try
-        read(hdu["AUX"], "psf")
+        read(hdu["AUX"], "psf") * u"arcsecond"
     catch
-        @. 0.033 * λ + 0.016
+        mrs_psf(λ)
     end
     lsf = try
-        read(hdu["AUX"], "lsf")
+        read(hdu["AUX"], "lsf") * u"km/s"
     catch
-        parse_resolving(channel).(λ)
+        mrs_lsf(λ)
     end
 
-    spectral_region = :MIR
-    if haskey(hdr0, "SPECREG")
-        spectral_region = Symbol(hdr0["SPECREG"])
+    n_channels = nothing
+    if band in ("SHORT", "MEDIUM", "LONG")
+        n_channels = 1
+    end
+
+    if haskey(hdr0, "N_CHANNELS")
+        n_channels = parse(Int, hdr0["N_CHANNELS"])
     end
     rest_frame = false
     if haskey(hdr0, "RESTFRAM")
@@ -238,7 +314,11 @@ function from_fits_jwst(filename::String)::DataCube
         vacuum_wave = hdr0["VACWAVE"]
     end
 
-    DataCube(λ, Iν, σI, mask, psf_model, Ω, ra, dec, θ_sky, psf, lsf, wcs, channel, band, spectral_region, rest_frame, masked, vacuum_wave, sky_aligned)
+    if isnothing(n_channels)
+        error("Please only input single-band data cubes! You can combine them into multi-channel cubes using LOKI routines.")
+    end
+
+    DataCube(λ, Iν, σI, mask, psf_model, Ω, ra, dec, θ_sky, psf, lsf, wcs, channel, band, n_channels, rest_frame, masked, vacuum_wave, sky_aligned)
 end
 
 
@@ -260,17 +340,19 @@ function to_rest_frame!(cube::DataCube, z::Real)
         @debug "Converting the wavelength vector of cube with channel $(cube.channel), band $(cube.band)" *
         " to the rest frame using redshift z=$z"
 
-        # Wavelength is shorter in the rest frame
-        cube.λ = @. cube.λ / (1 + z)
-        if cube.spectral_region == :MIR
-            # To conserve flux, which here is measured per unit frequency, we must also divide by the same factor
-            cube.I = @. cube.I / (1 + z)
-            # Uncertainty follows the same scaling as flux
-            cube.σ = @. cube.σ / (1 + z)
-        elseif cube.spectral_region == :OPT
-            # Optical spectra are measured per unit wavelength, so we multiply by the 1+z factor instead
-            cube.I = @. cube.I * (1 + z)
-            cube.σ = @. cube.σ * (1 + z)
+        z1 = 1 + z
+
+        # Wavelength is always shorter in the rest frame
+        cube.λ = @. cube.λ / z1
+
+        # To conserve flux, we have to either multiply or divide by the 1+z factor depending on whether it's
+        # measure per unit wavelength or per unit frequency
+        if cube.intensity_units == PerFrequency
+            cube.I = @. cube.I / z1
+            cube.σ = @. cube.σ / z1
+        elseif cube.intensity_units == PerWavelength
+            cube.I = @. cube.I * z1
+            cube.σ = @. cube.σ * z1
         end
 
         cube.rest_frame = true
@@ -293,7 +375,9 @@ function to_vacuum_wavelength!(cube::DataCube; linear_resample::Bool=true)
         @debug "Converting the wavelength vector of cube with channel $(cube.channel), band $(cube.band)" *
             " to vacuum wavelengths."
         # Convert to vacuum wavelengths (airtovac uses Angstroms, 1 Angstrom = 10^-4 μm)
-        cube.λ = airtovac.(cube.λ .* 1e4) .* 1e-4
+        λ_unit = unit(cube.λ)
+        # airtovac always works in angstroms, so we need to convert to them and back
+        cube.λ = uconvert(λ_unit, airtovac.(uconvert(u"angstrom", cube.λ) |> ustrip)*u"angstrom")
         # Optionally resample back onto a linear grid
         if linear_resample
             λlin = range(minimum(cube.λ), maximum(cube.λ), length=length(cube.λ))
@@ -330,10 +414,10 @@ function apply_mask!(cube::DataCube)
     if !cube.masked
         @debug "Masking the intensity and error maps of cube with channel $(cube.channel), band $(cube.band)"
 
-        cube.I[cube.mask] .= NaN
-        cube.σ[cube.mask] .= NaN
+        cube.I[cube.mask] .*= NaN
+        cube.σ[cube.mask] .*= NaN
         if !isnothing(cube.psf_model)
-            cube.psf_model[cube.mask] .= NaN
+            cube.psf_model[cube.mask] .*= NaN
         end
         cube.masked = true
 
@@ -354,23 +438,18 @@ function log_rebin!(cube::DataCube, factor::Integer=1)
 
     # check if it is already log-rebinned
     log_check = (cube.λ[2]/cube.λ[1]) ≈ (cube.λ[end]/cube.λ[end-1])
-    if cube.spectral_region == :MIR
-        @warn "The LOKI code does not require logarithmic rebinning for MIR spectra, only for optical spectra." *
-            " In fact, it is discouraged to logarithmically rebin MIR spectra since it is unnecessary." *
-            " However, doing so should not drastically affect fit results, so this is merely a warning."
-    end
 
     # rebin onto a logarithmically spaced wavelength grid
     if !log_check
         dλ = (maximum(cube.λ) - minimum(cube.λ)) / length(cube.λ) * factor
         linλ = minimum(cube.λ):dλ:maximum(cube.λ)
-        lnλ = get_logarithmic_λ(linλ)
+        lnλ = get_logarithmic_λ(ustrip.(linλ)) * unit(linλ[1])
         cube.I, cube.σ, cube.mask = resample_flux_permuted3D(lnλ, cube.λ, cube.I, cube.σ, cube.mask)
         if !isnothing(cube.psf_model)
             cube.psf_model = resample_flux_permuted3D(lnλ, cube.λ, cube.psf_model)
         end
-        cube.psf = Spline1D(cube.λ, cube.psf, k=1, bc="extrapolate")(lnλ)
-        cube.lsf = Spline1D(cube.λ, cube.lsf, k=1, bc="extrapolate")(lnλ)
+        cube.psf = Spline1D(ustrip.(cube.λ), ustrip.(cube.psf), k=1, bc="extrapolate")(ustrip.(lnλ)) * unit(cube.psf[1])
+        cube.lsf = Spline1D(ustrip.(cube.λ), ustrip.(cube.lsf), k=1, bc="extrapolate")(ustrip.(lnλ)) * unit(cube.lsf[1])
         cube.λ = lnλ
     else
         @warn "Cube is already log-rebinned! Will not be rebinned again."
@@ -395,13 +474,13 @@ See also [`DataCube`](@ref)
 """
 function interpolate_nans!(cube::DataCube)
 
-    λ = cube.λ
+    λ = ustrip.(cube.λ)
     @info "Interpolating NaNs in cube with channel $(cube.channel), band $(cube.band):"
 
     for index ∈ CartesianIndices(selectdim(cube.I, 3, 1))
 
-        I = cube.I[index, :]
-        σ = cube.σ[index, :]
+        I = ustrip.(cube.I[index, :])
+        σ = ustrip.(cube.σ[index, :])
         psf = nothing
         if !isnothing(cube.psf_model)
             psf = cube.psf_model[index, :]
@@ -434,17 +513,12 @@ function interpolate_nans!(cube::DataCube)
             λknots = λknots[good]
 
             # ONLY replace NaN values, keep the rest of the data as-is
-            I[filt] .= Spline1D(λ[isfinite.(I)], I[isfinite.(I)], λknots, k=1, bc="extrapolate")(λ[filt])
-            σ[filt] .= Spline1D(λ[isfinite.(σ)], σ[isfinite.(σ)], λknots, k=1, bc="extrapolate")(λ[filt])
-
-            # Reassign data in cube structure
-            cube.I[index, :] .= I
-            cube.σ[index, :] .= σ
+            cube.I[index, filt] .= Spline1D(λ[isfinite.(I)], I[isfinite.(I)], λknots, k=1, bc="extrapolate")(λ[filt]) * unit(cube.I[1])
+            cube.σ[index, filt] .= Spline1D(λ[isfinite.(σ)], σ[isfinite.(σ)], λknots, k=1, bc="extrapolate")(λ[filt]) * unit(cube.σ[1])
 
             # Do for PSF models as well
             if !isnothing(psf)
-                psf[filt] .= Spline1D(λ[isfinite.(psf)], psf[isfinite.(psf)], λknots, k=1, bc="extrapolate")(λ[filt])
-                cube.psf_model[index, :] .= psf
+                cube.psf_model[index, filt] .= Spline1D(λ[isfinite.(psf)], psf[isfinite.(psf)], λknots, k=1, bc="extrapolate")(λ[filt])
             end
 
         end 
@@ -467,7 +541,7 @@ function rotate_to_sky_axes!(cube::DataCube)
         @debug "Rotating cube to sky axes"
 
         # negative because `imrotate` rotates clockwise
-        out_shape2d = size(imrotate(cube.I[:,:,1], cube.θ_sky))
+        out_shape2d = size(imrotate(cube.I[:,:,1], ustrip(cube.θ_sky)))
 
         # prepare output arrays
         I_rot = zeros(eltype(cube.I), out_shape2d..., size(cube.I, 3))
@@ -480,11 +554,11 @@ function rotate_to_sky_axes!(cube::DataCube)
 
         # rotate
         for k ∈ axes(I_rot, 3)
-            I_rot[:, :, k] = imrotate(cube.I[:, :, k], cube.θ_sky)
-            σ_rot[:, :, k] = imrotate(cube.σ[:, :, k], cube.θ_sky)
-            mask_rot[:, :, k] = imrotate(cube.mask[:, :, k], cube.θ_sky) .> 0.
+            I_rot[:, :, k] = imrotate(cube.I[:, :, k], ustrip(cube.θ_sky))
+            σ_rot[:, :, k] = imrotate(cube.σ[:, :, k], ustrip(cube.θ_sky))
+            mask_rot[:, :, k] = imrotate(cube.mask[:, :, k], ustrip(cube.θ_sky)) .> 0.
             if !isnothing(psf_rot)
-                psf_rot[:, :, k] = imrotate(cube.psf_model[:, :, k], cube.θ_sky)
+                psf_rot[:, :, k] = imrotate(cube.psf_model[:, :, k], ustrip(cube.θ_sky))
             end
         end
 
@@ -518,8 +592,8 @@ fit to the flux, within a small window (60 pixels). Emission lines are masked ou
 """
 function calculate_statistical_errors!(cube::DataCube, Δ::Union{Integer,Nothing}=nothing, 
     n_inc_thresh::Union{Integer,Nothing}=nothing, thresh::Union{Real,Nothing}=nothing,
-    overrides::Vector{Tuple{T,T}}=Vector{Tuple{Real,Real}}(); mask_width::Real=1000.,
-    median::Bool=false) where {T<:Real}
+    overrides::Union{Vector{Tuple{Quantity{<:Real, u"𝐋"},Quantity{<:Real, u"𝐋"}}},Nothing}=nothing; 
+    mask_width::typeof(1.0u"km/s")=1000u"km/s", median::Bool=false)
 
     λ = cube.λ
     if isnothing(Δ)
@@ -532,20 +606,23 @@ function calculate_statistical_errors!(cube::DataCube, Δ::Union{Integer,Nothing
         thresh = 3.0
     end
 
-    if length(overrides) == 0
-        lines, _, _, _, _ = parse_lines()
-        for λi in lines.λ₀
+    if isnothing(overrides)
+        _, _, _, cent_vals = parse_lines(cube.spectral_region)
+        overrides = Vector{Tuple{eltype(cent_vals),eltype(cent_vals)}}()
+        for λi in cent_vals
             push!(overrides, λi .* (1-mask_width/C_KMS, 1+mask_width/C_KMS))
         end
     end
 
     @info "Calculating statistical errors for each spaxel..."
     @showprogress for spaxel ∈ CartesianIndices(size(cube.I)[1:2])
+
         # Get the flux/error for this spaxel
         I = cube.I[spaxel, :]
         σ = cube.σ[spaxel, :]
+
         # Perform a cubic spline fit, also obtaining the line mask
-        mask_lines, I_spline, _ = continuum_cubic_spline(λ, I, σ, Δ, n_inc_thresh, thresh, overrides)
+        mask_lines, I_spline = continuum_cubic_spline(λ, I, σ, overrides; do_err=false)
         mask_bad = cube.mask[spaxel, :]
         mask = mask_lines .| mask_bad
 
@@ -554,7 +631,7 @@ function calculate_statistical_errors!(cube::DataCube, Δ::Union{Integer,Nothing
             continue
         end
         # Statistical uncertainties based on the local RMS of the residuals with a cubic spline fit
-        σ_stat = zeros(l_mask)
+        σ_stat = zeros(eltype(σ), l_mask)
         for i in 1:l_mask
             σ_stat[i] = std(I[.~mask][max(1,i-30):min(l_mask,i+30)] .- I_spline[.~mask][max(1,i-30):min(l_mask,i+30)])
         end
@@ -587,6 +664,7 @@ labels to each voronoi bin.
 function voronoi_rebin!(cube::DataCube, target_SN::Real)
 
     @info "Performing Voronoi rebinning with target S/N=$target_SN"
+
     # Get the signal and noise 
     signal = dropdims(nanmedian(cube.I, dims=3), dims=3)
     noise = dropdims(nanmedian(cube.σ, dims=3), dims=3)
@@ -601,10 +679,10 @@ function voronoi_rebin!(cube::DataCube, target_SN::Real)
     x = x[.~mask]
     y = y[.~mask]
     # make sure signals are nonnegative
-    signal = clamp.(signal, 0., Inf)
+    signal = clamp.(signal, 0*unit(signal), Inf*unit(signal))
     # perform voronoi rebinning
-    bin_numbers, _, _, _, _, _, _, _ = py_vorbin.voronoi_2d_binning(x, y, signal, noise, target_SN, pixelsize=1.0, 
-        cvt=true, wvt=true, plot=false)
+    bin_numbers, _, _, _, _, _, _, _ = py_vorbin.voronoi_2d_binning(x, y, ustrip.(signal), ustrip.(noise), target_SN, 
+        pixelsize=1.0, cvt=true, wvt=true, plot=false)
     # reformat bin numbers as a 2D array so that we don't need the x/y vectors anymore
     voronoi_bins = zeros(Int, size(cube.I)[1:2])
     for i in eachindex(bin_numbers)
@@ -616,49 +694,49 @@ function voronoi_rebin!(cube::DataCube, target_SN::Real)
 end
 
 
-function get_physical_scales(data::DataCube, cosmo::Union{Cosmology.AbstractCosmology,Nothing}=nothing, z::Union{Real,Nothing}=nothing)
-    
+function get_physical_scales(data::DataCube, cosmo::Union{Cosmology.AbstractCosmology,Nothing}=nothing, 
+    z::Union{Real,Nothing}=nothing)
+
+    # Angular and physical scalebars
+    pix_as = uconvert(u"arcsecond", sqrt(data.Ω))
+    n_pix = 1.0/ustrip(pix_as)
+
     if !isnothing(cosmo) && !isnothing(z)
-        # Angular and physical scalebars
-        pix_as = sqrt(data.Ω) * 180/π * 3600
-        n_pix = 1/pix_as
         @debug "Using angular diameter distance $(angular_diameter_dist(cosmo, z))"
         # Calculate in pc
         dA = angular_diameter_dist(u"pc", cosmo, z)
         # Remove units
         dA = uconvert(NoUnits, dA/u"pc")
         # l = d * theta (") where theta is chosen as 1/5 the horizontal extent of the image
-        l = dA * (size(data.I, 1) * pix_as / 5) * π/180 / 3600  
+        l = dA * ustrip(uconvert(u"rad", size(data.I, 1) * pix_as / 5))
         # Round to a nice even number
-        l = Int(round(l, sigdigits=1))
+        l = round(typeof(1u"pc"), l, sigdigits=1)
         # new angular size for this scale
-        θ = l / dA
-        θ_as = round(θ * 180/π * 3600, digits=1)  # should be close to the original theta, by definition
-        n_pix = 1/sqrt(data.Ω) * θ   # number of pixels = (pixels per radian) * radians
-        unit = "pc"
+        θ = l / dA * u"rad"
+        θ_as = round(u"arcsecond", θ, digits=1)  # should be close to the original theta, by definition
+        n_pix = 1.0/sqrt(data.Ω) * θ   # number of pixels = (pixels per radian) * radians
+        new_unit = u"pc"
         # convert to kpc if l is more than 1000 pc
-        if l ≥ 10^3
-            l = Int(l / 10^3)
-            unit = "kpc"
-        elseif l ≥ 10^6
-            l = Int(l / 10^6)
-            unit = "Mpc"
-        elseif l ≥ 10^9
-            l = Int(l / 10^9)
-            unit = "Gpc"
+        if l ≥ 1e3u"pc"
+            new_unit = u"kpc"
+        elseif l ≥ 1e6u"pc"
+            new_unit = u"Mpc"
+        elseif l ≥ 1e9u"pc"
+            new_unit = u"Gpc"
         end
-        scalebar_text_dist = cosmo.h ≈ 1.0 ? L"%$l$h^{-1}$ %$unit" : L"$%$l$ %$unit"
+        l = uconvert(new_unit, l)
+        l_val = ustrip(l)
+        scalebar_text_dist = cosmo.h ≈ 1.0 ? L"%$(l_val)$h^{-1}$ %$(new_unit)" : L"$%$(l_val)$ %$(new_unit)"
     else
-        pix_as = sqrt(data.Ω) * 180/π * 3600
-        n_pix = 1/pix_as
-        θ_as = round(size(data.I, 1) * pix_as / 4, digits=1)
-        n_pix = 1/sqrt(data.Ω) * θ_as / 3600 * π/180
+        θ_as = round(u"arcsecond", size(data.I, 1) * pix_as / 5, digits=1)
+        n_pix = 1.0/sqrt(data.Ω) * uconvert(u"rad", θ_as)
         scalebar_text_dist = ""
     end
-    scalebar_text_ang = L"$\ang[angle-symbol-over-decimal]{;;%$θ_as}$"
-    if θ_as > 60
-        θ_as = round(θ_as/60, digits=1)  # convert to arcminutes
-        scalebar_text_ang = L"$\ang[angle-symbol-over-decimal]{;%$θ_as;}$"
+
+    scalebar_text_ang = L"$\ang[angle-symbol-over-decimal]{;;%$(ustrip(θ_as))}$"
+    if θ_as > 60u"arcsecond"
+        θ_as = round(u"arcminute", θ_as, digits=1)  # convert to arcminutes
+        scalebar_text_ang = L"$\ang[angle-symbol-over-decimal]{;%$(ustrip(θ_as));}$"
     end
 
     n_pix, scalebar_text_dist, scalebar_text_ang
@@ -978,13 +1056,14 @@ function save_fits(path::String, obs::Observation, channels::Vector)
         # Header information
         hdr = FITSHeader(
             Vector{String}(["TARGNAME", "REDSHIFT", "CHANNEL", "BAND", "PIXAR_SR", "TARG_RA", "TARG_DEC", "INSTRUME", "DETECTOR", 
-                "ROTANGLE", "SPECREG", "RESTFRAM", "MASKED", "VACWAVE", "DATAMODL", "NAXIS1", "NAXIS2", "NAXIS3", "WCSAXES", "CDELT1", "CDELT2", "CDELT3", 
+                "ROTANGLE", "N_CHANNELS", "RESTFRAM", "MASKED", "VACWAVE", "DATAMODL", "NAXIS1", "NAXIS2", "NAXIS3", "WCSAXES", "CDELT1", "CDELT2", "CDELT3", 
                 "CTYPE1", "CTYPE2", "CTYPE3", "CRPIX1", "CRPIX2", "CRPIX3", "CRVAL1", "CRVAL2", "CRVAL3", "CUNIT1", "CUNIT2", "CUNIT3", 
                 "PC1_1", "PC1_2", "PC1_3", "PC2_1", "PC2_2", "PC2_3", "PC3_1", "PC3_2", "PC3_3"]),
 
             [obs.name, obs.z, string(channel), obs.channels[channel].band, obs.channels[channel].Ω, 
-                obs.α, obs.δ, obs.instrument, obs.detector, obs.channels[channel].θ_sky, string(obs.spectral_region), obs.rest_frame, obs.masked, obs.vacuum_wave, 
-                "IFUCubeModel", size(obs.channels[channel].I, 1), size(obs.channels[channel].I, 2), size(obs.channels[channel].I, 3), obs.channels[channel].wcs.naxis, 
+                obs.α, obs.δ, obs.instrument, obs.detector, obs.channels[channel].θ_sky, nchannels(obs.channels[channel].spectral_region), 
+                obs.rest_frame, obs.masked, obs.vacuum_wave, "IFUCubeModel", size(obs.channels[channel].I, 1), size(obs.channels[channel].I, 2), 
+                size(obs.channels[channel].I, 3), obs.channels[channel].wcs.naxis, 
                 obs.channels[channel].wcs.cdelt[1], obs.channels[channel].wcs.cdelt[2], obs.channels[channel].wcs.cdelt[3],
                 obs.channels[channel].wcs.ctype[1], obs.channels[channel].wcs.ctype[2], obs.channels[channel].wcs.ctype[3],
                 obs.channels[channel].wcs.crpix[1], obs.channels[channel].wcs.crpix[2], obs.channels[channel].wcs.crpix[3],
@@ -996,9 +1075,9 @@ function save_fits(path::String, obs::Observation, channels::Vector)
 
             Vector{String}(["Target name", "Target redshift", "Channel", "Band",
                 "Solid angle per pixel (rad.)", "Right ascension of target (deg.)", "Declination of target (deg.)",
-                "Instrument name", "Detector name", "rotation angle to sky axes", "spectral region", "data in rest frame", "data masked", 
-                "vacuum wavelengths", "data model", "length of the first axis", "length of the second axis", "length of the third axis",
-                "number of World Coordinate System axes", 
+                "Instrument name", "Detector name", "rotation angle to sky axes", "number of combined channels in the data", 
+                "data in rest frame", "data masked", "vacuum wavelengths", "data model", "length of the first axis", 
+                "length of the second axis", "length of the third axis", "number of World Coordinate System axes", 
                 "first axis increment per pixel", "second axis increment per pixel", "third axis increment per pixel",
                 "first axis coordinate type", "second axis coordinate type", "third axis coordinate type",
                 "axis 1 coordinate of the reference pixel", "axis 2 coordinate of the reference pixel", "axis 3 coordinate of the reference pixel",
@@ -1935,9 +2014,9 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
 
     # New PSF FWHM function with input in the rest frame
     if obs.rest_frame
-        psf_fwhm_out = @. 0.033 * λ_out * (1 + obs.z) + 0.106
+        psf_fwhm_out = mrs_psf(@. λ_out * (1 + obs.z))
     else
-        psf_fwhm_out = @. 0.033 * λ_out + 0.106
+        psf_fwhm_out = mrs_psf(λ_out)
     end
     if match_psf
         psf_fwhm_out = repeat([out_fwhm], length(λ_out))
@@ -1945,9 +2024,9 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
 
     # New LSF FWHM function with input in the rest frame
     if obs.rest_frame
-        lsf_fwhm_out = parse_resolving("MULTIPLE").(λ_out .* (1 .+ obs.z))
+        lsf_fwhm_out = mrs_lsf(@. λ_out * (1 + obs.z))
     else
-        lsf_fwhm_out = parse_resolving("MULTIPLE").(λ_out)
+        lsf_fwhm_out = mrs_lsf(λ_out)
     end
 
     if obs.masked

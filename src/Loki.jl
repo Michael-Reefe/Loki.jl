@@ -33,7 +33,6 @@ using AstroAngles
 using SkyCoords
 using WCS
 using Reproject
-using Unitful, UnitfulAstro
 using SpectralResampling
 
 # File I/O
@@ -54,7 +53,8 @@ using Logging, LoggingExtras
 using Dates
 using InteractiveUtils
 using ColorSchemes
-using LaTeXStrings
+using LaTeXStrings, Latexify
+using Unitful, UnitfulAstro, UnitfulLatexify
 using ArgParse
 
 # PyCall needed for some matplotlib modules

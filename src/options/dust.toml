@@ -81,9 +81,29 @@ locked = false
 # do NOT repeat entries here for different subchannel amplitudes -- those are handled internally
 # and the initial value/limits/locked are assumed to be the same for each subchannel amplitude for a given
 # template
+# ONLY APPLIES if the fit_temp_multexp option is disabled
 [[template_amps]]
 val = 1.0
 plim = [0.5, 1.5]
+locked = false
+
+# template_inds: exponential indices on templates - ONLY APPLIES if the fit_temp_multexp option is enabled
+# i.e. these are mutually exclusive with [[template_amps]]
+[[template_inds]]
+val = 0.0
+plim = [0.0, inf]
+locked = false
+[[template_inds]]
+val = 0.0
+plim = [0.0, inf]
+locked = false
+[[template_inds]]
+val = 0.0
+plim = [0.0, inf]
+locked = false
+[[template_inds]]
+val = 0.0
+plim = [0.0, inf]
 locked = false
 
 # dust_features: each of these specifies a Polycyclic Aromatic 

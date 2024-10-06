@@ -379,7 +379,7 @@ function cubefitter_mir_prepare_continuum(λ::Vector{<:Real}, z::Real, out::Dict
 
     # Get dust options from the configuration file
     λlim = extrema(λ)
-    continuum, dust_features_0, abs_features_0, abs_taus_0 = construct_parameters_mir(out, λlim, n_channels)
+    continuum, dust_features = construct_parameters_mir(out, λlim, n_channels)
 
     #### PREPARE OUTPUTS ####
     @debug "### Model will include 1 stellar continuum component ###" *

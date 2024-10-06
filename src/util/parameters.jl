@@ -5,11 +5,17 @@ that are helpful for containing certain combinations of model parameters and
 related quantities.
 =#
 
+# Create some type categories
 abstract type Parameter end
 abstract type Parameters end
 abstract type Tie end
 abstract type Config end
 
+@enum WavelengthRange begin
+    UVOptical
+    Infrared
+    UVOptIR
+end
 
 
 """
@@ -21,6 +27,7 @@ A struct for holding information about parameters' intial values and priors
 - `value::Number`: The initial value of the parameter
 - `locked::Bool`: false to allow the parameter to vary based on the prior, true to keep it fixed
 - `limits::Tuple`: lower/upper limits on the parameter, if it is allowed to vary
+- `tie::Union{Tie,Nothing}`: an optional tie that specifies what other parameters this one is tied to
 """
 mutable struct FitParameter{T<:Number} <: Parameter
 
@@ -40,6 +47,8 @@ mutable struct FitParameter{T<:Number} <: Parameter
 end
 
 
+# Tie parameters give a group identifier and an optional ratio between the tied parameters
+# (i.e. for fitting lines with fixed amplitude ratios)
 struct RatioTie{T<:Real} <: Tie
     group::Symbol
     ratio::T
@@ -49,15 +58,11 @@ struct FlatTie <: Tie
     group::Symbol
 end
 
-
-"""
-    NonFitParameter(name, value)
-
-A parameter that is not being fit for, but is nevertheless of interest to us
-"""
+# A parameter that is not being fit for, but is nevertheless of interest to us
 struct NonFitParameter{T<:Number} <: Parameter end
 
-
+# A collection of FitParameter with names 
+# Think of this like a dictionary but with a defined order (couldve just used an OrderedDict but I already wrote all of this so...)
 struct FitParameters{T<:Number} <: Parameters
     names::Vector{String}                  # names of all the parameters
     _parameters::Vector{FitParameter{T}}   # the internal storage of the parameter objects
@@ -68,7 +73,7 @@ struct FitParameters{T<:Number} <: Parameters
     end
 end
 
-
+# The non-fit equivalent of FitParameters
 struct NonFitParameters{T<:Number} <: Parameters
     names::Vector{String}
     _parameters::Vector{NonFitParameter{T}}
@@ -90,10 +95,10 @@ FitProfiles = Vector{FitProfile}
 
 
 struct FitFeatures{S}
-    names::Vector{S}                     # PAH or emission line names
-    latex::Vector{String}                # latex-formatted labels
-    λ₀::Vector{<:Real}                   # central wavelengths of the features
-    profiles::Vector{FitProfiles}        # first index = each feature, second index = each profile in the feature
+    names::Vector{S}                                             # PAH or emission line names
+    latex::Vector{String}                                        # latex-formatted labels
+    λ₀::Vector{<:Union{typeof(1.0u"μm"),typeof(1.0u"angstrom")}} # central wavelengths of the features
+    profiles::Vector{FitProfiles}  # first index = each feature, second index = each profile in the feature
     config::Config
 end
 
@@ -109,6 +114,26 @@ struct LineConfig <: Config
     rel_fwhm::Bool                       #  ...fwhm relative
 end
 
+# These will define how CubeFitter objects behave
+struct SpectralRegion{T<:Union{typeof(1.0u"μm"),typeof(1.0u"angstrom")}}
+    λlim::Tuple{T,T}
+    mask::Vector{Tuple{T,T}}
+    n_channels::Int
+    wavelength_range::WavelengthRange
+end
+
+
+λlim(region::SpectralRegion) = region.λlim
+nchannels(region::SpectralRegion) = region.n_channels
+mask(region::SpectralRegion) = region.mask
+wavelength_range(region::SpectralRegion) = region.wavelength_range
+function is_valid(λ::Quantity{<:Real, u"𝐋"}, tol::Real, region::SpectralRegion) 
+    lim = λlim(region)
+    valid = (lim[1]-tol) < λ < (lim[2]+tol)
+    for mlim in mask(region)
+        valid &= !(mlim[1] < λ < mlim[2])
+    end
+end
 
 # lock or unlock the parameter
 lock!(p::FitParameter) = (p.locked = true)
@@ -221,7 +246,7 @@ function Base.push!(p::Parameters, name::String, new::Parameter)
     push!(p.names, name)
     push!(p._parameters, new)
 end
-function Base.append!(p::Parameters{T}, new::Parameters{T}) where {T}
+function Base.append!(p::Parameters, new::Parameters) 
     for new_name in new.names
         @assert !(new_name in p.names) "$new_name has an entry in both $(typeof(p)) objects!"
     end
@@ -242,7 +267,7 @@ end
 # methods for obtaining the vector of parameter limits
 get_plims(p::FitParameters, ind::Int) = p[ind].limits   
 get_plims(p::FitParameters, name::String) = p[name].limits   
-function Base.getproperty(p::FitParameters, :limits) 
+function Base.getproperty(p::FitParameters, ::Val{:limits}) 
     plims = Vector{Tuple}(undef, length(p.names))
     for (i, param) in enumerate(p._parameters)
         plims[i] = param.limits
@@ -253,7 +278,7 @@ end
 # methods for obtaining the lock vector
 get_lock(p::FitParameters, ind::Int) = p[ind].locked
 get_lock(p::FitParameters, name::String) = p[name].locked
-function Base.getproperty(p::FitParameters, :locked) 
+function Base.getproperty(p::FitParameters, ::Val{:locked}) 
     locks = BitVector(undef, length(p.names))
     for (i, param) in enumerate(p._parameters)
         locks[i] = param.locked
@@ -264,7 +289,7 @@ end
 # methods for obtaining the value vector
 get_val(p::FitParameters, ind::Int) = p[ind].value
 get_val(p::FitParameters, name::String) = p[name].value
-function Base.getproperty(p::FitParameters{T}, :values) where {T}
+function Base.getproperty(p::FitParameters{T}, ::Val{:values}) where {T}
     vals = Vector{T}(undef, length(p.names))
     for (i, param) in enumerate(p._parameters)
         vals[i] = param.value
@@ -275,7 +300,7 @@ end
 # methods for obtaining the tied vector (vector of symbols)
 get_tie(p::FitParameters, ind::Int) = p[ind].tie
 get_tie(p::FitParameters, name::String) = p[name].tie
-function Base.getproperty(p::FitParameters, :ties)
+function Base.getproperty(p::FitParameters, ::Val{:ties})
     ties = Vector{Union{Tie,Nothing}}(undef, length(p.names))
     for (i, param) in enumerate(p._parameters)
         ties[i] = param.tie

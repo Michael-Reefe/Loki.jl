@@ -193,217 +193,257 @@ locked = true
 
 # Balmer Series (Hydrogen, n -> 2) lines
 [lines.HI_H_alpha]
-wave = 0.6564632
+wave = 6564.632
 latex = "H$\\alpha$"
 annotate = true
+unit = "angstrom"
 
 [lines.HI_H_beta]
-wave = 0.4862691
+wave = 4862.691
 latex = "H$\\beta$"
 annotate = true
+unit = "angstrom"
 
 [lines.HI_H_gamma]
-wave = 0.4341691
+wave = 4341.691
 latex = "H$\\gamma$"
 annotate = true
+unit = "angstrom"
 
 [lines.HI_H_delta]
-wave = 0.4102900
+wave = 4102.900
 latex = "H$\\delta$"
 annotate = true
+unit = "angstrom"
 
 [lines.HI_H_epsilon]
-wave = 0.3971202
+wave = 3971.202
 latex = "H$\\varepsilon$"
 annotate = true
+unit = "angstrom"
 
 [lines.HI_H_zeta]
-wave = 0.3890166
+wave = 3890.166
 latex = "H$\\zeta$"
 annotate = true
+unit = "angstrom"
 
 # Helium lines
-[lines.HeI_03889]
-wave = 0.3889749
+[lines.HeI_3889A]
+wave = 3889.749
 latex = "He $\\textsc{i}$"
 annotate = true
+unit = "angstrom"
 
-[lines.HeII_04687]
-wave = 0.4687021
+[lines.HeII_4687A]
+wave = 4687.021
 latex = "He $\\textsc{ii}$"
 annotate = true
+unit = "angstrom"
 
-# [lines.HeI_05877]
-# wave = 0.5877253
+# [lines.HeI_5877A]
+# wave = 5877.253
 # latex = "He $\\textsc{i}$"
 # annotate = true
+# unit = "angstrom"
 
-# [lines.HeI_07067]
-# wave = 0.7067144
+# [lines.HeI_7067A]
+# wave = 7067.144
 # latex = "He $\\textsc{i}$"
 # annotate = true
+# unit = "angstrom"
 
 # Neon lines
 
 # [Ne V] doublet
-[lines.NeV_03346]
-wave = 0.3346783
+[lines.NeV_3346A]
+wave = 3346.783
 latex = "[Ne $\\textsc{v}$]"
 annotate = true
+unit = "angstrom"
 
-[lines.NeV_03426]
-wave = 0.3426863
+[lines.NeV_3426A]
+wave = 3426.863
 latex = "[Ne $\\textsc{v}$]"
 annotate = true
+unit = "angstrom"
 
-[lines.NeIII_03869]
-wave = 0.3869856
+[lines.NeIII_3869A]
+wave = 3869.856
 latex = "[Ne $\\textsc{iii}$]"
 annotate = true
+unit = "angstrom"
 
-[lines.NeIII_03967]
-wave = 0.3968593
+[lines.NeIII_3967A]
+wave = 3968.593
 latex = "[Ne $\\textsc{iii}$]"
 annotate = true
+unit = "angstrom"
 
 # Oxygen lines
 
-[lines.OIII_03445]
-wave = 0.3445039
+[lines.OIII_3445A]
+wave = 3445.039
 latex = "O $\\textsc{iii}$"
 annotate = true
+unit = "angstrom"
 
 # [O II] doublet
-[lines.OII_03727]
-wave = 0.3727092
+[lines.OII_3727A]
+wave = 3727.092
 latex = "[O $\\textsc{ii}$]"
 annotate = true
+unit = "angstrom"
 
-[lines.OII_03729]
-wave = 0.3729875
+[lines.OII_3729A]
+wave = 3729.875
 latex = "[O $\\textsc{ii}$]"
 annotate = true
+unit = "angstrom"
 
-[lines.OIII_04364]
-wave = 0.4364436
+[lines.OIII_4364A]
+wave = 4364.436
 latex = "[O $\\textsc{iii}$]"
 annotate = true
+unit = "angstrom"
 
 # [O III] doublet
-[lines.OIII_04960]
-wave = 0.4960295
+[lines.OIII_4960A]
+wave = 4960.295
 latex = "[O $\\textsc{iii}$]"
 annotate = true
+unit = "angstrom"
 
-[lines.OIII_05008]
-wave = 0.5008240
+[lines.OIII_5008A]
+wave = 5008.240
 latex = "[O $\\textsc{iii}$]"
 annotate = true
+unit = "angstrom"
 
-[lines.OI_06302]
-wave = 0.6302046
+[lines.OI_06302A]
+wave = 6302.046
 latex = "[O $\\textsc{i}$]"
 annotate = true
+unit = "angstrom"
 
-[lines.OI_06366]
-wave = 0.6365535
+[lines.OI_6366A]
+wave = 6365.535
 latex = "[O $\\textsc{i}$]"
 annotate = true
+unit = "angstrom"
 
-[lines.OII_07322]
-wave = 0.7322007
+[lines.OII_7322A]
+wave = 7322.007
 latex = "[O $\\textsc{ii}$]"
 annotate = true
+unit = "angstrom"
 
-[lines.OII_07333]
-wave = 0.7332750
+[lines.OII_7333A]
+wave = 7332.750
 latex = "[O $\\textsc{ii}$]"
 annotate = true
+unit = "angstrom"
 
 # Iron lines
-# [lines.FeXIV_05304]
-# wave = 0.5304335
+# [lines.FeXIV_5304A]
+# wave = 5304.335
 # latex = "[Fe $\\textsc{xiv}$]"
 # annotate = true
+# unit = "angstrom"
 
-# [lines.FeVI_05639]
-# wave = 0.5639165
+# [lines.FeVI_5639A]
+# wave = 5639.165
 # latex = "[Fe $\\textsc{vi}$]"
 # annotate = true
+# unit = "angstrom"
 
-# [lines.FeVI_05679]
-# wave = 0.5678575
+# [lines.FeVI_5679A]
+# wave = 5678.575
 # latex = "[Fe $\\textsc{vi}$]"
 # annotate = true
+# unit = "angstrom"
 
-# [lines.FeVII_05722]
-# wave = 0.5722287
+# [lines.FeVII_5722A]
+# wave = 5722.287
 # latex = "[Fe $\\textsc{vii}$]"
 # annotate = true
+# unit = "angstrom"
 
-# [lines.FeVII_06088]
-# wave = 0.6088685
+# [lines.FeVII_6088A]
+# wave = 6088.685
 # latex = "[Fe $\\textsc{vii}$]"
 # annotate = true
+# unit = "angstrom"
 
-[lines.FeX_06374]
-wave = 0.6376272
+[lines.FeX_6376A]
+wave = 6376.272
 latex = "[Fe $\\textsc{x}$]"
 annotate = true
+unit = "angstrom"
 
-[lines.FeXI_07894]
-wave = 0.7893971
+[lines.FeXI_7894A]
+wave = 7893.971
 latex = "[Fe $\\textsc{xi}$]"
 annotate = true
+unit = "angstrom"
 
 # Sulfur lines
-[lines.SII_04069]
-wave = 0.4069749
+[lines.SII_4069A]
+wave = 4069.749
 latex = "[S $\\textsc{ii}$]"
 annotate = true
+unit = "angstrom"
 
-[lines.SII_04077]
-wave = 0.4077500
+[lines.SII_4077A]
+wave = 4077.500
 latex = "[S $\\textsc{ii}$]"
 annotate = true
+unit = "angstrom"
 
-[lines.SIII_06314]
-wave = 0.6313806
+[lines.SIII_6314A]
+wave = 6313.806
 latex = "[S $\\textsc{iii}$]"
 annotate = true
+unit = "angstrom"
 
-[lines.SII_06718]
-wave = 0.6718294
+[lines.SII_6718A]
+wave = 6718.294
 latex = "[S $\\textsc{ii}$]"
 annotate = true
+unit = "angstrom"
 
-[lines.SII_06733]
-wave = 0.6732668
+[lines.SII_6733A]
+wave = 6732.668
 latex = "[S $\\textsc{ii}$]"
 annotate = true
+unit = "angstrom"
 
 # Nitrogen lines
-[lines.NII_06550]
-wave = 0.6549859
+[lines.NII_6550A]
+wave = 6549.859
 latex = "[N $\\textsc{ii}$]"
 annotate = true
+unit = "angstrom"
 
-[lines.NII_06585]
-wave = 0.6585279
+[lines.NII_6585A]
+wave = 6585.279
 latex = "[N $\\textsc{ii}$]"
 annotate = true
+unit = "angstrom"
 
 # Argon lines
-[lines.ArIII_07138]
-wave = 0.7137757
+[lines.ArIII_7138A]
+wave = 7137.757
 latex = "[Ar $\\textsc{iii}$]"
 annotate = true
+unit = "angstrom"
 
 # Nickel lines
-[lines.NiIII_07892]
-wave = 0.7892071
+[lines.NiIII_7892A]
+wave = 7892.071
 latex = "[Ni $\\textsc{iii}$]"
 annotate = true
+unit = "angstrom"
 
 ####################################### MIR LINES ##################################################
 
@@ -412,296 +452,352 @@ annotate = true
 wave = 4.05225
 latex = "Br$\\alpha$"
 annotate = true
+unit = "um"
 
 [lines.HI_Br_beta]
 wave = 2.6259
 latex = "Br$\\beta$"
 annotate = true
+unit = "um"
 
 [lines.HI_Br_gamma]
 wave = 2.1661
 latex = "Br$\\gamma$"
 annotate = true
+unit = "um"
 
 # Pfund Series (Hydrogen, n -> 5) Lines
 [lines.HI_Pf_alpha]
 wave = 7.4599
 latex = "Pf$\\alpha$"
 annotate = true
+unit = "um"
 
 [lines.HI_Pf_beta]
 wave = 4.6538
 latex = "Pf$\\beta$"
 annotate = false
+unit = "um"
 
 [lines.HI_Pf_gamma]
 wave = 3.7405
 latex = "Pf$\\gamma$"
 annotate = false
+unit = "um"
 
 [lines.HI_Pf_delta]
 wave = 3.2970
 latex = "Pf$\\delta$"
 annotate = false
+unit = "um"
 
 [lines.HI_Pf_epsilon]
 wave = 3.0392
 latex = "Pf$\\varepsilon$"
 annotate = false
+unit = "um"
 
 # Humphreys Series (Hydrogen, n -> 6) Lines
 [lines.HI_Hu_alpha]
 wave = 12.372
 latex = "Hu$\\alpha$"
 annotate = true
+unit = "um"
 
 [lines.HI_Hu_beta]
 wave = 7.503
 latex = "Hu$\\beta$"
 annotate = false
+unit = "um"
 
 [lines.HI_Hu_gamma]
 wave = 5.908
 latex = "Hu$\\gamma$"
 annotate = false
+unit = "um"
 
 [lines.HI_Hu_delta]
 wave = 5.129
 latex = "Hu$\\delta$"
 annotate = false
+unit = "um"
 
 [lines.HI_Hu_epsilon]
 wave = 4.673
 latex = "Hu$\\varepsilon$"
 annotate = false
+unit = "um"
 
 # Argon Lines
-[lines.ArVI_4529]
+[lines.ArVI_4529m]
 wave = 4.529520
 latex = "[Ar $\\textsc{vi}$]"
 annotate = true
+unit = "um"
 
-[lines.ArII_6985]
+[lines.ArII_6985m]
 wave = 6.985274
 latex = "[Ar $\\textsc{ii}$]"
 annotate = true
+unit = "um"
 
-# [lines.ArV_7901]
+# [lines.ArV_7901m]
 # wave = 7.901600
 # latex = "[Ar $\\textsc{v}$]"
 # annotate = true
+# unit = "um"
 
-[lines.ArIII_8991]
+[lines.ArIII_8991m]
 wave = 8.991380
 latex = "[Ar $\\textsc{iii}$]"
 annotate = true
+unit = "um"
 
-# [lines.ArV_13102]
+# [lines.ArV_13102m]
 # wave = 13.102200
 # latex = "[Ar $\\textsc{v}$]"
 # annotate = true
+# unit = "um"
 
 # Chlorine Lines
-[lines.ClII_14368]
+[lines.ClII_14368m]
 wave = 14.367800
 latex = "[Cl $\\textsc{ii}$]"
 annotate = true
+unit = "um"
 
 # Iron Lines
-# [lines.FeII_4889]
+# [lines.FeII_4889m]
 # wave = 4.889137
 # latex = "[Fe $\\textsc{ii}$]"
 # annotate = true
+# unit = "um"
 
-# [lines.FeII_5062]
+# [lines.FeII_5062m]
 # wave = 5.062350
 # latex = "[Fe $\\textsc{ii}$]"
 # annotate = true
+# unit = "um"
 
-[lines.FeII_5340]
+[lines.FeII_5340m]
 wave = 5.340169
 latex = "[Fe $\\textsc{ii}$]"
 annotate = true
+unit = "um"
 
-[lines.FeVIII_5447]
+[lines.FeVIII_5447m]
 wave = 5.4466
 latex = "[Fe $\\textsc{viii}$]"
 annotate = true
+unit = "um"
 
-[lines.FeII_6721]
+[lines.FeII_6721m]
 wave = 6.721283
 latex = "[Fe $\\textsc{ii}$]"
 annotate = true
+unit = "um"
 
-[lines.FeVII_7814]
+[lines.FeVII_7814m]
 wave = 7.814500
 latex = "[Fe $\\textsc{vii}$]"
 annotate = true
+unit = "um"
 
-[lines.FeVII_9527]
+[lines.FeVII_9527m]
 wave = 9.526700
 latex = "[Fe $\\textsc{vii}$]"
 annotate = true
+unit = "um"
 
-[lines.FeII_17936]
+[lines.FeII_17936m]
 wave = 17.935950
 latex = "[Fe $\\textsc{ii}$]"
 annotate = true
+unit = "um"
 
-[lines.FeIII_22925]
+[lines.FeIII_22925m]
 wave = 22.925000
 latex = "[Fe $\\textsc{iii}$]"
 annotate = true
+unit = "um"
 
-[lines.FeII_25988]
+[lines.FeII_25988m]
 wave = 25.988290
 latex = "[Fe $\\textsc{ii}$]"
 annotate = true
+unit = "um"
 
 # Helium Lines
-# [lines.HeII_5228]
+# [lines.HeII_5228m]
 # wave = 5.2279972
 # latex = "He $\\textsc{ii}$"
 # annotate = true
+# unit = "um"
 
 # Magnesium Lines
-[lines.MgIV_4867]
+[lines.MgIV_4867m]
 wave = 4.486680
 latex = "[Mg $\\textsc{iv}$]"
 annotate = true
+unit = "um"
 
-[lines.MgVII_5503]
+[lines.MgVII_5503m]
 wave = 5.503200
 latex = "[Mg $\\textsc{vii}$]"
 annotate = true
+unit = "um"
 
-[lines.MgV_5609]
+[lines.MgV_5609m]
 wave = 5.609850
 latex = "[Mg $\\textsc{v}$]"
 annotate = true
+unit = "um"
 
-[lines.MgVII_9009]
+[lines.MgVII_9009m]
 wave = 9.009000
 latex = "[Mg $\\textsc{vii}$]"
 annotate = true
+unit = "um"
 
-# [lines.MgV_13521]
+# [lines.MgV_13521m]
 # wave = 13.521300
 # latex = "[Mg $\\textsc{v}$]"
 # annotate = true
+# unit = "um"
 
 # Sodium Lines
-[lines.NaIII_7318]
+[lines.NaIII_7318m]
 wave = 7.317700
 latex = "[Na $\\textsc{iii}$]"
 annotate = true
+unit = "um"
 
 # Neon Lines
-[lines.NeVI_7652]
+[lines.NeVI_7652m]
 wave = 7.652400
 latex = "[Ne $\\textsc{vi}$]"
 annotate = true
+unit = "um"
 
-[lines.NeII_12813]
+[lines.NeII_12813m]
 wave = 12.813550
 latex = "[Ne $\\textsc{ii}$]"
 annotate = true
+unit = "um"
 
-[lines.NeV_14322]
+[lines.NeV_14322m]
 wave = 14.321700
 latex = "[Ne $\\textsc{v}$]"
 annotate = true
+unit = "um"
 
-[lines.NeIII_15555]
+[lines.NeIII_15555m]
 wave = 15.555100
 latex = "[Ne $\\textsc{iii}$]"
 annotate = true
+unit = "um"
 
-[lines.NeV_24318]
+[lines.NeV_24318m]
 wave = 24.317500
 latex = "[Ne $\\textsc{v}$]"
 annotate = true
+unit = "um"
 
 # Nickel Lines
-[lines.NiII_6636]
+[lines.NiII_6636m]
 wave = 6.636000
 latex = "[Ni $\\textsc{ii}$]"
 annotate = false
+unit = "um"
 
 # Oxygen Lines
-[lines.OIV_25890]
+[lines.OIV_25890m]
 wave = 25.890300
 latex = "[O $\\textsc{iv}$]"
 annotate = true
+unit = "um"
 
 # Phosphorus Lines
-[lines.PIII_17885]
+[lines.PIII_17885m]
 wave = 17.885000
 latex = "[P $\\textsc{iii}$]"
 annotate = true
+unit = "um"
 
 # Silicon lines
-[lines.SiIX_3936]
+[lines.SiIX_3936m]
 wave = 3.935700
 latex = "[Si $\\textsc{ix}$]"
 annotate = true
+unit = "um"
 
 # Sulfur Lines
-[lines.SIV_10511]
+[lines.SIV_10511m]
 wave = 10.510500
 latex = "[S $\\textsc{iv}$]"
 annotate = true
+unit = "um"
 
-[lines.SIII_18713]
+[lines.SIII_18713m]
 wave = 18.713000
 latex = "[S $\\textsc{iii}$]"
 annotate = true
+unit = "um"
 
 # Molecular Hydrogen Lines
 [lines.H200_S8]
 wave = 5.05312
 latex = "H$_2$ 0-0 $S(8)$"
 annotate = true
+unit = "um"
 
 [lines.H200_S7]
 wave = 5.51118
 latex = "H$_2$ 0-0 $S(7)$"
 annotate = true
+unit = "um"
 
 [lines.H200_S6]
 wave = 6.10857
 latex = "H$_2$ 0-0 $S(6)$"
 annotate = true
+unit = "um"
 
 [lines.H200_S5]
 wave = 6.90952
 latex = "H$_2$ 0-0 $S(5)$"
 annotate = true
+unit = "um"
 
 [lines.H200_S4]
 wave = 8.02505
 latex = "H$_2$ 0-0 $S(4)$"
 annotate = true
+unit = "um"
 
 [lines.H200_S3]
 wave = 9.66492
 latex = "H$_2$ 0-0 $S(3)$"
 annotate = true
+unit = "um"
 
 [lines.H200_S2]
 wave = 12.27861
 latex = "H$_2$ 0-0 $S(2)$"
 annotate = true
+unit = "um"
 
 [lines.H200_S1]
 wave = 17.03484
 latex = "H$_2$ 0-0 $S(1)$"
 annotate = true
+unit = "um"
 
 [lines.H200_S0]
 wave = 28.21883
 latex = "H$_2$ 0-0 $S(0)$"
 annotate = true
+unit = "um"
 
 # Other molecular Hydrogen lines (disabled):
 

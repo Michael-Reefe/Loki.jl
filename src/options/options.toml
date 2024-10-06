@@ -64,14 +64,17 @@ save_full_model = true
 # systematic error.
 sys_err = 0.0
 
-# extinction_curve: May be "kvt" for the Kemper, Vriend, & Tielens (2004) 
+# silicate_absorption: May be "kvt" for the Kemper, Vriend, & Tielens (2004) 
 # extinction profile, "ct" for the Chiar & Tielens (2005) extinction profile,
 # "ohm" for the Ossenkopf, Henning, & Mathis (1992) extinction profile, or "d+" for the 
 # Donnan et al. (2022) extinction profile.
 # May also be "decompose" to fit as a combination of amorphous olivine, pyroxene, and crystalline forsterite absorption
-# optical options: may be either "calzetti" for the Calzetti et al. (2000) starburst galaxy curve,
+# Note that for combined optical+IR fitting, only "kvt" and "dp" are supported here because the 
+# other templates also include other types of extinction which are covered by the calzetti/CCM curves
+silicate_absorption = "d+"
+# optical options: may be either "calz" for the Calzetti et al. (2000) starburst galaxy curve,
 # or "ccm" for the Cardelli, Clayton, & Mathis (1989) Milky Way curve.
-extinction_curve = "d+"
+extinction_curve = "calz"
 
 # The following 3 options are only used if extinction_screen = "decompose"
 # Magnesium content for olivine 

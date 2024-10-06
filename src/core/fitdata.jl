@@ -1,7 +1,7 @@
 
 
 """
-    mask_emission_lines(λ, I; [Δ, n_inc_thresh, thresh])
+    mask_emission_lines(λ, mask_regions) 
 
 Mask out emission lines in a given spectrum using a numerical second derivative and flagging 
 negative(positive) spikes, indicating strong concave-downness(upness) up to some tolerance threshold (i.e. 3-sigma).
@@ -9,89 +9,20 @@ The widths of the lines are estimated using the number of pixels for which the n
 is above some (potentially different) tolerance threshold. Returns the mask as a BitVector.
 
 # Arguments
-- `λ::Vector{<:Real}`: The wavelength vector of the spectrum
-- `I::Vector{<:Real}`: The intensity vector of the spectrum
-- `spectral_region::Symbol`: Either :MIR for mid-infrared or :OPT for optical
-- `Δ::Union{Integer,Nothing}=nothing`: The resolution (width) of the numerical derivative calculations, in pixels
-- `n_inc_thresh::Union{Integer,Nothing}=nothing`
-- `thresh::Real=3.`: The sensitivity threshold for flagging lines with the second derivative test, in units of the RMS.
+- `λ`: The wavelength vector of the spectrum
+- `mask_regions`: A vector of tuples giving the regions to mask out
 
 See also [`continuum_cubic_spline`](@ref)
 """
-function mask_emission_lines(λ::Vector{<:Real}, I::Vector{<:Real}, Δ::Integer, n_inc_thresh::Integer, thresh::Real,
-    overrides::Vector{Tuple{T,T}}=Vector{Tuple{Real,Real}}()) where {T<:Real}
-
+function mask_emission_lines(λ::Vector{S}, mask_regions::Vector{Tuple{T,T}}) where {S<:Quantity, T<:Quantity}
 
     mask = falses(length(λ))
     # manual regions that wish to be masked out
-    if length(overrides) > 0
-        for override in overrides
-            mask[override[1] .< λ .< override[2]] .= 1
-        end
-        return mask
+    for region in mask_regions
+        mask[region[1] .< λ .< region[2]] .= 1
     end
 
-    # Wavelength difference vector
-    diffs = diff(λ)
-    diffs = [diffs; diffs[end]]
-
-    # Calculate the numerical second derivative
-    d2f = zeros(length(λ))
-    @simd for i ∈ 1:length(λ)
-        d2f[i] = (I[min(length(λ), i+Δ)] - 2I[i] + I[max(1, i-Δ)]) / (Δ * diffs[i])^2
-    end
-    W = (10 * Δ, 1000)
-
-    # Find where the second derivative is significantly concave-down 
-    for j ∈ 7:(length(λ)-7)
-        # Only consider the spectrum within +/- W pixels from the point in question
-        if any([abs(d2f[j]) > thresh * nanstd(d2f[max(1, j-Wi):min(length(λ), j+Wi)]) for Wi ∈ W])
-
-            n_pix_l = 0
-            n_pix_r = 0
-
-            # Travel left/right from the center until the flux goes up 3 times
-            n_inc = 0
-            while n_inc < n_inc_thresh
-                dI = I[j-n_pix_l-1] - I[j-n_pix_l]
-                if dI > 0
-                    n_inc += 1
-                end
-                if j-n_pix_l-1 == 1
-                    break
-                end
-                n_pix_l += 1
-            end
-            n_inc = 0
-            while n_inc < n_inc_thresh
-                dI = I[j+n_pix_r+1] - I[j+n_pix_r]
-                if dI > 0
-                    n_inc += 1
-                end
-                if j+n_pix_r+1 == length(I)
-                    break
-                end
-                n_pix_r += 1
-            end
-
-            mask[max(j-n_pix_l,1):min(j+n_pix_r,length(mask))] .= 1
-
-        end
-    end
-
-    # Don't mask out these regions that tends to trick this method sometimes
-    mask[11.10 .< λ .< 11.15] .= 0
-    mask[11.17 .< λ .< 11.24] .= 0
-    mask[11.26 .< λ .< 11.355] .= 0
-    # mask[12.5 .< λ .< 12.79] .= 0
-
-    # Force the beginning/end few pixels to be unmasked to prevent runaway splines at the edges
-    mask[1:7] .= 0
-    mask[end-7:end] .= 0
-
-    # Return the line locations and the mask
     mask
-
 end
 
 
@@ -286,37 +217,42 @@ end
 
 
 """
-    continuum_cubic_spline(λ, I, σ, spectral_region)
+    continuum_cubic_spline(λ, I, mask_regions)
 
 Mask out the emission lines in a given spectrum using `mask_emission_lines` and replace them with
 a coarse cubic spline fit to the continuum, using wide knots to avoid reinterpolating the lines or
 noise. Returns the line mask, spline-interpolated I, and spline-interpolated σ.
 
 # Arguments
-- `λ::Vector{<:Real}`: The wavelength vector of the spectrum
-- `I::Vector{<:Real}`: The flux vector of the spectrum
-- `σ::Vector{<:Real}`: The uncertainty vector of the spectrum 
-- `spectral_region::Symbol`: Either :MIR for mid-infrared or :OPT for optical
+- `λ` The wavelength vector of the spectrum
+- `I`: The flux vector of the spectrum
+- `mask_regions`: The emission line regions to be masked out 
 
 See also [`mask_emission_lines`](@ref)
 """
-function continuum_cubic_spline(λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vector{<:Real}, linemask_Δ::Integer, 
-    linemask_n_inc_thresh::Integer, linemask_thresh::Real, overrides::Vector{Tuple{T,T}}=Vector{Tuple{Real,Real}}()) where {T<:Real}
+function continuum_cubic_spline(λ::Vector{<:Quantity}, I::Vector{S}, σ::Vector{S}, 
+    overrides::Vector{Tuple{T,T}}=Vector{Tuple{Quantity,Quantity}}(); do_err::Bool=true) where {S<:Quantity,T<:Quantity}
 
     # Mask out emission lines so that they aren't included in the continuum fit
-    mask_lines = mask_emission_lines(λ, I, linemask_Δ, linemask_n_inc_thresh, linemask_thresh, overrides)
+    mask_lines = mask_emission_lines(λ, overrides)
 
     # Interpolate the NaNs
     # Break up cubic spline interpolation into knots 7 pixels long
     # (longer than a narrow emission line but not too long)
     scale = 7
 
+    _λ = ustrip.(λ)
+    _I = ustrip.(I)
+    if do_err
+        _σ = ustrip.(σ)
+    end
+
     # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
-    λknots = λ[1+scale:scale:end-scale]
+    λknots = _λ[1+scale:scale:end-scale]
     # Remove any knots that happen to fall within a masked pixel
     good = []
     for i ∈ eachindex(λknots)
-        _, ind = findmin(abs.(λ .- λknots[i]))
+        _, ind = findmin(abs.(_λ .- λknots[i]))
         if ~mask_lines[ind]
             append!(good, [i])
         end
@@ -325,13 +261,18 @@ function continuum_cubic_spline(λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vecto
     @debug "Performing cubic spline continuum fit with $(length(λknots)) knots"
 
     # Do a full cubic spline interpolation of the data
-    I_spline = Spline1D(λ[.~mask_lines], I[.~mask_lines], λknots, k=3, bc="extrapolate").(λ)
-    σ_spline = Spline1D(λ[.~mask_lines], σ[.~mask_lines], λknots, k=3, bc="extrapolate").(λ)
+    I_spline = Spline1D(_λ[.~mask_lines], _I[.~mask_lines], λknots, k=3, bc="extrapolate").(_λ) * unit(I[1])
     # Linear interpolation over the lines
-    I_spline[mask_lines] .= Spline1D(λ[.~mask_lines], I[.~mask_lines], λknots, k=1, bc="extrapolate").(λ[mask_lines])
-    σ_spline[mask_lines] .= Spline1D(λ[.~mask_lines], σ[.~mask_lines], λknots, k=1, bc="extrapolate").(λ[mask_lines])
+    I_spline[mask_lines] .= Spline1D(_λ[.~mask_lines], _I[.~mask_lines], λknots, k=1, bc="extrapolate").(_λ[mask_lines]) * unit(I[1])
 
-    mask_lines, I_spline, σ_spline
+    if do_err
+        σ_spline = Spline1D(_λ[.~mask_lines], _σ[.~mask_lines], λknots, k=3, bc="extrapolate").(_λ) * unit(σ[1])
+        σ_spline[mask_lines] .= Spline1D(_λ[.~mask_lines], _σ[.~mask_lines], λknots, k=1, bc="extrapolate").(_λ[mask_lines]) * unit(σ[1])
+
+        return mask_lines, I_spline, σ_spline
+    end
+
+    mask_lines, I_spline
 end
 
 
