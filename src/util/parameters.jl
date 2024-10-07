@@ -5,6 +5,22 @@ that are helpful for containing certain combinations of model parameters and
 related quantities.
 =#
 
+# aliases for convenience
+const QLength = Quantity{<:Real, u"𝐋"}
+
+const Qum = typeof(1.0u"μm")
+const QAng = typeof(1.0u"angstrom")
+const QWave = Union{Qum,QAng}
+
+const QPerFreq = typeof(1.0u"erg/s/cm^2/Hz/sr")
+const QPerum = typeof(1.0u"erg/s/cm^2/μm/sr")
+const QPerAng = typeof(1.0u"erg/s/cm^2/angstrom/sr")
+const QPerWave = Union{QPerum,QPerAng}
+const QSIntensity = Union{QPerFreq,QPerum,QPerAng}
+const QIntensity = typeof(1.0u"erg/s/cm^2/sr")
+const QFlux = typeof(1.0u"erg/s/cm^2")
+
+
 # Create some type categories
 abstract type Parameter end
 abstract type Parameters end
@@ -125,14 +141,15 @@ end
 
 λlim(region::SpectralRegion) = region.λlim
 nchannels(region::SpectralRegion) = region.n_channels
-mask(region::SpectralRegion) = region.mask
+umask(region::SpectralRegion) = region.mask
 wavelength_range(region::SpectralRegion) = region.wavelength_range
-function is_valid(λ::Quantity{<:Real, u"𝐋"}, tol::Real, region::SpectralRegion) 
+function is_valid(λ::Quantity{<:Real, u"𝐋"}, tol::Quantity{<:Real, u"𝐋"}, region::SpectralRegion) 
     lim = λlim(region)
     valid = (lim[1]-tol) < λ < (lim[2]+tol)
-    for mlim in mask(region)
+    for mlim in umask(region)
         valid &= !(mlim[1] < λ < mlim[2])
     end
+    valid
 end
 
 # lock or unlock the parameter
@@ -415,6 +432,30 @@ function get_flattened_nonfit_parameters(p::FitFeatures)
     end
     flat
 end
+
+
+# the range parameter mainly determines what to do about extinction curves
+# since calzetti and CCM are not defined past ~2-3 um
+function get_λrange(λlim::Tuple{QLength,QLength})
+    if λlim[1] < 2.2u"μm" && λlim[2] > 2.2u"μm"
+        UVOptIR
+    elseif λlim[1] > 2.2u"μm"
+        Infrared
+    else
+        UVOptical
+    end
+end
+
+
+# latex string representations of units 
+latex(u) = latexify(u)
+latex(::Unitful.FreeUnits{(), NoDims, nothing}) = L""
+latex(::typeof(unit(QFlux))) = L"$\mathrm{erg}\,\mathrm{s}^{-1}\,\mathrm{cm}^{-2}"
+latex(::typeof(unit(QPerFreq))) = L"$\mathrm{erg}\,\mathrm{s}^{-1}\,\mathrm{cm}^{-2}\,\mathrm{Hz}^{-1}\,\mathrm{sr}^{-1}$"
+latex(::typeof(unit(QPerAng))) = L"$\mathrm{erg}\,\mathrm{s}^{-1}\,\mathrm{cm}^{-2}\,\mathrm{\AA}^{-1}\,\mathrm{sr}^{-1}$"
+latex(::typeof(unit(QPerum))) = L"$\mathrm{erg}\,\mathrm{s}^{-1}\,\mathrm{cm}^{-2}\,\mathrm{\mu{}m}^{-1}\,\mathrm{sr}^{-1}$"
+# some more unconventional units too
+latex(::typeof(u"erg/s/cm^2/Hz/sr*μm")) = L"$\mathrm{erg}\,\mathrm{s}^{-1}\,\mathrm{cm}^{-2}\,\mathrm{Hz}^{-1}\,\mathrm{sr}^{-1}\,\mathrm{\mu{}m}$"
 
 
 # """

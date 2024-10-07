@@ -34,6 +34,7 @@ using SkyCoords
 using WCS
 using Reproject
 using SpectralResampling
+using VoronoiBinning
 
 # File I/O
 using Glob
@@ -69,9 +70,6 @@ const py_colors::PyObject = PyNULL()
 const py_animation::PyObject = PyNULL()
 
 const py_lineidplot::PyObject = PyNULL()
-
-# Voronoi binning
-const py_vorbin::PyObject = PyNULL()
 
 # FSPS Library
 const py_fsps::PyObject = PyNULL()
@@ -124,14 +122,6 @@ function __init__()
         Conda.pip_interop(true)
         Conda.pip("install", "lineid_plot")
         copy!(py_lineidplot, pyimport("lineid_plot"))
-    end
-    # Voronoi binning package
-    try
-        copy!(py_vorbin, pyimport("vorbin.voronoi_2d_binning"))
-    catch
-        Conda.pip_interop(true)
-        Conda.pip("install", "vorbin")
-        copy!(py_vorbin, pyimport("vorbin.voronoi_2d_binning"))
     end
     # FSPS
     try

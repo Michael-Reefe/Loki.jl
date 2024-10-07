@@ -133,7 +133,7 @@ function validate_lines_file(lines)
         "rel_amp", "rel_fwhm", "rel_voff"]
     keylist2 = ["wave", "latex", "annotate", "unit"]
 
-    keylist3 = ["voff", "fwhm", "h3", "h4", "acomp_amp", "acomp_voff", "acomp_fwhm"]
+    keylist3 = ["voff", "fwhm", "h3", "h4"]
     keylist4 = ["val", "plim", "locked"]
 
     # Loop through all the required keys that should be in the file and confirm that they are there
@@ -880,9 +880,9 @@ function parse_lines(region::SpectralRegion)
 
     cent_vals = Vector{typeof(1.0u"μm")}()    # provide all the line wavelengths in microns
     for line in keys(lines["lines"])
-        cent_unit = uparse(replace(lines["lines"][line]["unit"], 'u' => 'μ'), unit_context=UnitfulAstro)
+        cent_unit = uparse(replace(lines["lines"][line]["unit"], 'u' => 'μ'))
         cent_val = lines["lines"][line]["wave"] * cent_unit
-        if !is_valid(cent_val, 0, region)
+        if !is_valid(cent_val, 0.0*cent_unit, region)
             # remove this line from the dictionary
             delete!(lines["lines"], line)
             delete!(profiles, line)

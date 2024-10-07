@@ -15,7 +15,7 @@ function generate_psf_model!(cube::DataCube, psf_model_dir::String=""; interpola
     if psf_model_dir == ""
         psf_model_dir = joinpath(@__DIR__, "..", "templates", "psfs_stars")
     end
-    files = glob("**/*.fits", psf_model_dir)
+    files = glob(joinpath("**", "*.fits"), psf_model_dir)
     bands = Dict("SHORT" => 'A', "MEDIUM" => 'B', "LONG" => 'C')
     for file ∈ sort(files)
         m = match(Regex("(.+?)(ch$(cube.channel)[-_.]?$(cube.band))(.+?).fits?", "i"), file)
@@ -73,7 +73,7 @@ function generate_psf_model!(cube::DataCube, psf_model_dir::String=""; interpola
 
         # Shift the centroid to match the observation data
         @debug "Shifting the centroids for $objname to match the observations"
-        data_ref2d = dropdims(nansum(cube.I, dims=3), dims=3)
+        data_ref2d = dropdims(nansum(ustrip(cube.I), dims=3), dims=3)
         _, mx = findmax(data_ref2d)
         c1 = centroid_com(data_ref2d[mx[1]-5:mx[1]+5, mx[2]-5:mx[2]+5]) .+ (mx.I .- 5) .- 1
 
@@ -88,7 +88,7 @@ function generate_psf_model!(cube::DataCube, psf_model_dir::String=""; interpola
         end
 
         # Subtract the background within an annulus
-        pix_size = sqrt(cube.Ω) * 180/π * 3600
+        pix_size = uconvert(u"arcsecond", sqrt(cube.Ω))
         for i in axes(data, 3)
             r_in = 5 * cube.psf[i] / pix_size
             r_out = 10 * cube.psf[i] / pix_size
@@ -150,20 +150,20 @@ function generate_psf_model!(cube::DataCube, psf_model_dir::String=""; interpola
         for c ∈ CartesianIndices(size(psf)[1:2])
 
             # Get indices to the left/right of the 12.22 μm leak
-            lind = argmin(abs.(λ .- 11.93))
-            rind = argmin(abs.(λ .- 12.39))
+            lind = argmin(abs.(λ .- 11.93u"μm"))
+            rind = argmin(abs.(λ .- 12.39u"μm"))
             # Create widely spaced knots for the interpolation
-            Δλ = 0.1
+            Δλ = 0.1u"μm"
             knots1 = λ[2]:Δλ:λ[lind]
             knots2 = λ[rind]:Δλ:λ[end-1]
             knots = [knots1; knots2]
             # Only use the data to the left/right of the leak
             λinterp = [λ[1:lind]; λ[rind:length(λ)]]
             psfinterp = [psf[c, 1:lind]; psf[c, rind:length(λ)]]
-            interp = Spline1D(λinterp, psfinterp, knots, k=3, bc="extrapolate")
+            interp = Spline1D(ustrip(λinterp), psfinterp, ustrip(knots), k=3, bc="extrapolate")
 
             # Fill in the data in the leak region with the interpolation
-            psf[c, lind:rind] .= interp(λ[lind:rind])
+            psf[c, lind:rind] .= interp(ustrip(λ[lind:rind]))
         end
     end
 
@@ -191,7 +191,7 @@ function generate_psf_model!(obs::Observation, psf_model_dir::String=""; interpo
     # if centroid_4c_4b is true: do not trust the channel 4C centroiding
     if :C4 in keys(obs.channels) && :B4 in keys(obs.channels) && centroid_4c_4b
 
-        data2d = dropdims(nansum(obs.channels[:B4].I, dims=3), dims=3)
+        data2d = dropdims(nansum(ustrip(obs.channels[:B4].I), dims=3), dims=3)
         _, mx = findmax(data2d)
         c1 = centroid_com(data2d[mx[1]-5:mx[1]+5, mx[2]-5:mx[2]+5]) .+ (mx.I .- 5) .- 1
 
@@ -204,9 +204,7 @@ function generate_psf_model!(obs::Observation, psf_model_dir::String=""; interpo
         for i in axes(psf, 3)
             psf[:, :, i] .= fshift(psf[:, :, i], dx...)
         end
-
     end
-
 end
 
 
@@ -225,7 +223,8 @@ function splinefit_psf_model!(cube::DataCube, spline_width::Integer)
             continue
         end
         λknots = cube.λ[filt][1+spline_width:spline_width:end-spline_width]
-        cube.psf_model[c, :] .= Spline1D(cube.λ[filt], cube.psf_model[c, filt], λknots, k=3, bc="extrapolate")(cube.λ)
+        cube.psf_model[c, :] .= Spline1D(ustrip(cube.λ[filt]), cube.psf_model[c, filt], ustrip(λknots), 
+            k=3, bc="extrapolate")(ustrip(cube.λ))
     end
 
     # Renormalize
@@ -254,7 +253,7 @@ function polyfit_psf_model!(cube::DataCube, poly_order::Integer)
 
     @info "Fitting PSF model with an order $poly_order polynomial"
     for c ∈ CartesianIndices(size(cube.psf_model)[1:2])
-        cube.psf_model[c, :] .= Polynomials.fit(cube.λ, cube.psf_model[c, :], poly_order).(cube.λ)
+        cube.psf_model[c, :] .= Polynomials.fit(ustrip(cube.λ), cube.psf_model[c, :], poly_order).(ustrip(cube.λ))
     end
 
     # Renormalize
@@ -314,7 +313,7 @@ end
 
 
 """
-    generate_nuclear_template(cube, ap_r, spline_width, use_psf_model)
+    generate_nuclear_template(cube, ap_r, spline_width)
 
 Extract a point-source nuclear template from the brightest region of a DataCube with a given aperture `ap_r`, 
 where `ap_r` is in units of the PSF FWHM (thus, the aperture size increases with wavelength at the same rate 
@@ -322,9 +321,9 @@ that the PSF FWHM does). If `ap_r` is 0, then the template is just extracted fro
 `spline_width` is > 0, a cubic spline interpolation is performed with knots spaced by `spline_width` pixels.
 The 1D template is then combined with a 3D PSF model to create a full 3D nuclear template.
 """
-function generate_nuclear_template(cube::DataCube, ap_r::Real=0.; spline_width::Integer=7, use_psf_model::Bool=true,)
+function generate_nuclear_template(cube::DataCube, ap_r::Real=0.; spline_width::Integer=7) 
 
-    data2d = dropdims(nansum(cube.I, dims=3), dims=3)
+    data2d = dropdims(nansum(ustrip(cube.I), dims=3), dims=3)
     data2d[.~isfinite.(data2d)] .= 0.
     _, mx = findmax(data2d)
 
@@ -333,7 +332,7 @@ function generate_nuclear_template(cube::DataCube, ap_r::Real=0.; spline_width::
         nuc1d = cube.I[mx, :] ./ cube.psf_model[mx, :]
     else
         # Arcseconds per pixel
-        pixel_scale = sqrt(cube.Ω) * 180/π * 3600
+        pixel_scale = uconvert(u"arcsecond", sqrt(cube.Ω))
         # Prepare outputs
         nuc1d = zeros(eltype(cube.I), length(cube.λ))
         # Do aperture photometry
@@ -343,15 +342,14 @@ function generate_nuclear_template(cube::DataCube, ap_r::Real=0.; spline_width::
             ap = CircularAperture(mx.I..., ap_size)
             nuc1d[i] = photometry(ap, cube.I[:, :, i]).aperture_sum / get_area(ap)
             nuc1d[i] /= cube.psf_model[:, :, i][mx]
-            # nuc1d[i] /= photometry(ap, cube.psf_model[:, :, i]).aperture_sum
         end
     end
 
     # Do a cubic spline fit to get a good S/N and fill in holes
     if spline_width > 0
-        good = isfinite.(nuc1d) .& (abs.(nuc1d) .< 1e10)
+        good = isfinite.(nuc1d) .& (ustrip(abs.(nuc1d)) .< 1e10)
         λknots = cube.λ[good][1+spline_width:spline_width:end-spline_width]
-        nuc1d = Spline1D(cube.λ[good], nuc1d[good], λknots, k=3, bc="extrapolate")(cube.λ)
+        nuc1d = Spline1D(ustrip(cube.λ[good]), ustrip(nuc1d[good]), ustrip(λknots), k=3, bc="extrapolate")(ustrip(cube.λ))
     end
 
     [nuc1d[k] * cube.psf_model[i,j,k] for i ∈ axes(cube.psf_model, 1), j ∈ axes(cube.psf_model, 2), k ∈ axes(cube.psf_model, 3)]

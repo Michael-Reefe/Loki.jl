@@ -91,17 +91,17 @@ end
 Create an aperture using the Photometry Library.
 
 # Arguments
-- `cube::DataCube`: The DataCube struct to create the aperture for
-- `type::Symbol`: Must be one of :Circular, :Elliptical, or :Rectangular
-- `ra::Union{String,Real}`: Right ascension. If string, should be in sexagesimal hours, if real, should be decimal degrees.
-- `dec::Union{String,Real}`: Declination. If string, should be in sexagesimal degrees, if real, should be decimal degrees.
+- `cube`: The DataCube struct to create the aperture for
+- `type`: Must be one of :Circular, :Elliptical, or :Rectangular
+- `ra`: Right ascension. If string, should be in sexagesimal hours, if real, should be decimal degrees.
+- `dec`: Declination. If string, should be in sexagesimal degrees, if real, should be decimal degrees.
 - `params...`: Varying number of parameters for the aperture depending on `type`.
     For circular apertures, the only parameter is the radius in arcseconds.
     For elliptical apertures, the parameters are the semimajor and semiminor axes in arcseconds, and the position angle in degrees
     For rectangular apertures, the parameters are the width and height in arcseconds, and the position angle in degrees
-- `auto_centroid::Bool=false`: if true, adjusts the center (ra,dec) to the closest peak in brightness 
-- `scale_psf::Bool=false`: if true, creates a vector of apertures that scale up in radius at the same rate that the PSF scales up
-- `box_size::Integer=11`: if `auto_centroid` is true, this gives the box size to search for a local peak in brightness, in pixels
+- `auto_centroid`: if true, adjusts the center (ra,dec) to the closest peak in brightness 
+- `scale_psf`: if true, creates a vector of apertures that scale up in radius at the same rate that the PSF scales up
+- `box_size`: if `auto_centroid` is true, this gives the box size to search for a local peak in brightness, in pixels
 """
 function make_aperture(cube::DataCube, ap_type::Symbol, ra::Union{String,Real}, dec::Union{String,Real}, 
     params...; auto_centroid=false, scale_psf::Bool=false, box_size::Integer=11)
@@ -129,17 +129,14 @@ function make_aperture(cube::DataCube, ap_type::Symbol, ra::Union{String,Real}, 
     # If given as strings, assume ra/dec units are parsable with AstroAngles, otherwise assume decimal degrees
     ra_deg = ra isa String ? ra |> parse_hms |> hms2deg : ra
     dec_deg = dec isa String ? dec |> parse_dms |> dms2deg : dec
-    # Convert to radians
-    ra_rad = ra_deg |> deg2rad
-    dec_rad = dec_deg |> deg2rad
     # Create SkyCoords object
-    sky_center = coords(ra_rad, dec_rad)
+    sky_center = coords(ra_deg*u"°", dec_deg*u"°")
     
     # Convert the sky position to a pixel position
     x_cent, y_cent = world_to_pix(cube.wcs, [ra_deg, dec_deg, 1.0])[1:2]
 
     # Take a point directly north by 1 arcsecond and convert it to pixel coordinates to get the pixel scale
-    sky_offset = offset(sky_center, 1/3600*π/180, 0)
+    sky_offset = offset(sky_center, 1*u"arcsecond", 0)
     x_offset, y_offset = world_to_pix(cube.wcs, [sky_offset.ra |> rad2deg, sky_offset.dec |> rad2deg, 1.0])[1:2]
     dx = x_offset - x_cent
     dy = y_offset - y_cent
@@ -157,7 +154,7 @@ function make_aperture(cube::DataCube, ap_type::Symbol, ra::Union{String,Real}, 
 
     # If auto_centroid is true, readjust the center of the aperture to the peak in the local brightness
     if auto_centroid
-        data = sumdim(cube.I, 3)
+        data = sumdim(ustrip(cube.I), 3)
         mask = trues(size(data))
         p0 = round.(Int, [x_cent, y_cent])
         box_half = fld(box_size, 2)

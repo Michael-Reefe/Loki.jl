@@ -1009,32 +1009,40 @@ are also permuted such that they have the same shape as the inputs. This is usef
 in this code have the wavelength axis as the third axis.
 """
 function resample_flux_permuted3D(new_wave::AbstractVector, old_wave::AbstractVector, flux::AbstractArray,
-    err::Union{AbstractArray,Nothing}=nothing, mask::Union{AbstractArray,Nothing}=nothing)
+    err::Union{AbstractArray,Nothing}=nothing, mask::Union{AbstractArray,Nothing}=nothing) 
+
+    # remove units
+    funit = unit(flux[begin])
+    out_units = Any[funit]
 
     # permute the third axis to the first axis for each input
-    fluxp = permutedims(flux, (3,1,2))
+    new_wavep = ustrip(new_wave)
+    old_wavep = ustrip(old_wave)
+    fluxp = ustrip(permutedims(flux, (3,1,2)))
     errp = nothing
     if !isnothing(err)
-        errp = permutedims(err, (3,1,2))
+        errp = ustrip(permutedims(err, (3,1,2)))
+        push!(out_units, funit)
     end
     maskp = nothing
     if !isnothing(mask)
         maskp = permutedims(mask, (3,1,2))
+        push!(out_units, true)
     end
 
     # apply the function from SpectralResampling.jl
     if !isnothing(errp) && !isnothing(mask) 
-        out = resample_conserving_flux(new_wave, old_wave, fluxp, errp, maskp)
-        Tuple(permutedims(out[i], (2,3,1)) for i in eachindex(out))
+        out = resample_conserving_flux(new_wavep, old_wavep, fluxp, errp, maskp)
+        Tuple(permutedims(out[i], (2,3,1))*out_units[i] for i in eachindex(out))
     elseif !isnothing(errp)
-        out = resample_conserving_flux(new_wave, old_wave, fluxp, errp)
-        Tuple(permutedims(out[i], (2,3,1)) for i in eachindex(out))
+        out = resample_conserving_flux(new_wavep, old_wavep, fluxp, errp)
+        Tuple(permutedims(out[i], (2,3,1))*out_units[i] for i in eachindex(out))
     elseif !isnothing(maskp)
-        out = resample_conserving_flux(new_wave, old_wave, fluxp, maskp)
-        Tuple(permutedims(out[i], (2,3,1)) for i in eachindex(out))
+        out = resample_conserving_flux(new_wavep, old_wavep, fluxp, maskp)
+        Tuple(permutedims(out[i], (2,3,1))*out_units[i] for i in eachindex(out))
     else
-        out = resample_conserving_flux(new_wave, old_wave, fluxp)
-        permutedims(out, (2,3,1))
+        out = resample_conserving_flux(new_wavep, old_wavep, fluxp)
+        permutedims(out, (2,3,1))*out_units[1]
     end
 end
 
