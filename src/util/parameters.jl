@@ -6,6 +6,7 @@ related quantities.
 =#
 
 # aliases for convenience
+const QUnitless = typeof(NoUnits)
 const QLength = Quantity{<:Real, u"𝐋"}
 
 const Qum = typeof(1.0u"μm")
@@ -19,7 +20,8 @@ const QPerWave = Union{QPerum,QPerAng}
 const QSIntensity = Union{QPerFreq,QPerum,QPerAng}
 const QIntensity = typeof(1.0u"erg/s/cm^2/sr")
 const QFlux = typeof(1.0u"erg/s/cm^2")
-
+const QGeneralPerWave = Quantity{<:Real, u"𝐌*𝐋^-1*𝐓^-3"}
+const QGeneralPerFreq = Quantity{<:Real, u"𝐌*𝐓^-2"}
 
 # Create some type categories
 abstract type Parameter end
@@ -27,12 +29,19 @@ abstract type Parameters end
 abstract type Tie end
 abstract type Config end
 
+# A few simple enum types
 @enum WavelengthRange begin
     UVOptical
     Infrared
     UVOptIR
 end
 
+@enum Transformation begin
+    RestframeTransform
+    LogTransform
+    NormalizeTransform
+    LineNormalizeTransform
+end
 
 """
     FitParameter(value, locked, limits)
@@ -79,43 +88,59 @@ struct NonFitParameter{T<:Number} <: Parameter end
 
 # A collection of FitParameter with names 
 # Think of this like a dictionary but with a defined order (couldve just used an OrderedDict but I already wrote all of this so...)
-struct FitParameters{T<:Number} <: Parameters
-    names::Vector{String}                  # names of all the parameters
-    _parameters::Vector{FitParameter{T}}   # the internal storage of the parameter objects
+struct FitParameters <: Parameters
+    names::Vector{String}                            # names of all the parameters
+    labels::Vector{String}                           # latex-formatted labels for all the parameters
+    transformations::Vector{Vector{Transformation}}  # transformations to be applied to each parameter after fitting
+    _parameters::Vector{FitParameter{<:Number}}      # the internal storage of the parameter objects
 
-    function FitParameters(names::Vector{String}, parameters::Vector{FitParameter{T}}) where {T<:Number}
+    function FitParameters(names::Vector{String}, labels::Vector{String},
+        transformations::Vector{Vector{Transformation}}, parameters::Vector{FitParameter{<:Number}})
         @assert names == unique(names) "repeat names are not allowed!"
-        new{T}(names, parameters)
+        new(names, labels, transformations, parameters)
     end
 end
 
 # The non-fit equivalent of FitParameters
-struct NonFitParameters{T<:Number} <: Parameters
+struct NonFitParameters <: Parameters
     names::Vector{String}
-    _parameters::Vector{NonFitParameter{T}}
+    labels::Vector{String}
+    transformations::Vector{Vector{Transformation}}
+    _parameters::Vector{NonFitParameter{<:Number}}
 
-    function NonFitParameters(names::Vector{String}, parameters::Vector{NonFitParameter{T}}) where {T<:Number}
+    function NonFitParameters(names::Vector{String}, labels::Vector{String},
+        transformations::Vector{Vector{Transformation}}, parameters::Vector{NonFitParameter{<:Number}}) 
         @assert names == unique(names) "repeat names are not allowed!"
-        new{T}(names, parameters)
+        new(names, labels, transformations, parameters)
     end
 end
 
 
-struct FitProfile{T<:Number,S<:Union{Symbol,String}}
+struct FitProfile{S<:Union{Symbol,String}}
     profile::S
     fit_parameters::FitParameters
     nonfit_parameters::NonFitParameters
+
+    function FitProfile(profile::S, fit_parameters::FitParameters, nonfit_parameters::NonFitParameters) where {S<:Union{Symbol,String}}
+        new{S}(profile, fit_parameters, nonfit_parameters)
+    end
 end
 
 FitProfiles = Vector{FitProfile}
 
 
-struct FitFeatures{S}
-    names::Vector{S}                                             # PAH or emission line names
-    latex::Vector{String}                                        # latex-formatted labels
-    λ₀::Vector{<:Union{typeof(1.0u"μm"),typeof(1.0u"angstrom")}} # central wavelengths of the features
-    profiles::Vector{FitProfiles}  # first index = each feature, second index = each profile in the feature
+struct FitFeatures{S<:Union{Symbol,String},Q<:QWave}
+    names::Vector{S}                       # PAH or emission line names
+    labels::Vector{String}                 # latex-formatted labels for each feature 
+    λ₀::Vector{Q}                          # central wavelengths of the features
+    profiles::Vector{FitProfiles}          # first index = each feature, second index = each profile in the feature
+    composite::Vector{NonFitParameters}    # first index = each feature, second index = each extra composite parameter
     config::Config
+
+    function FitFeatures(names::Vector{S}, labels::Vector{String}, λ₀::Vector{Q}, profiles::Vector{FitProfiles},
+        composite::Vector{NonFitParameters}, config::Config) where {S<:Union{Symbol,String},Q<:QWave}
+        new{S,Q}(names, labels, λ₀, profiles, composite, config)
+    end
 end
 
 struct NoConfig <: Config end
@@ -129,6 +154,16 @@ struct LineConfig <: Config
     rel_voff::Bool                       #  ...voff relative
     rel_fwhm::Bool                       #  ...fwhm relative
 end
+
+
+# A big composite struct holding all the fit and non-fit parameters for a model
+struct ModelParameters
+    continuum::FitParameters
+    dust_features::FitFeatures
+    lines::FitFeatures
+    statistics::NonFitParameters
+end
+
 
 # These will define how CubeFitter objects behave
 struct SpectralRegion{T<:Union{typeof(1.0u"μm"),typeof(1.0u"angstrom")}}
@@ -171,6 +206,16 @@ function set_val!(p::FitParameter{T}, v::Number) where {T}
     p.value = vnew
 end
 
+# extend the "uconvert" function from Unitful
+function Unitful.uconvert(new_unit::Unitful.Units, p::FitParameter{<:Quantity})
+    new_val = uconvert(new_unit, p.value)
+    new_lim = (uconvert(new_unit, p.limits[1]), uconvert(new_unit, p.limits[2]))
+    FitParameter(new_val, p.locked, new_lim, p.tie)
+end
+
+# extend the "ustrip" function from Unitful
+Unitful.ustrip(p::FitParameter) = FitParameter(ustrip(p.value), p.locked, ustrip.(p.limits), p.tie)
+
 # check if everything is good
 function check_valid(p::FitParameter)
     @assert isfinite(p.value)
@@ -180,14 +225,21 @@ function check_valid(p::FitParameter)
 end
 
 
-
-"""
-    show([io,] p)
-
-Show the parameter object as a nicely formatted string
-"""
+# formatting functions
 function Base.show(io::IO, p::FitParameter)
     Base.show(io, "Parameter: value = $(p.value) | locked = $(p.locked) | limits = $(p.limits)")
+end
+function Base.show(io::IO, mp::ModelParameters)
+    nc = length(mp.continuum)
+    nd = length(get_flattened_fit_parameters(mp.dust_features))
+    nl = length(get_flattened_fit_parameters(mp.lines))
+    nn1 = length(get_flattened_nonfit_parameters(mp.dust_features))
+    nn2 = length(get_flattened_nonfit_parameters(mp.lines))
+    nn3 = length(mp.statistics)
+    Base.show(io, 
+        "ModelParameters | Continuum parameters: $(nc), PAH parameters: $(nd), Line parameters: $(nl), " * 
+        "Non-fit parameters: $(nn1+nn2+nn3)"
+    )
 end
 
 
@@ -196,13 +248,13 @@ end
 
 A constructor function for Parameter structs given a Dictionary
 """
-function parameter_from_dict(dict::Dict)
+function parameter_from_dict(dict::Dict; units::Unitful.Units=unit(1.0))
 
     # Unpack the dictionary into fields of the Parameter
-    value = dict["val"]
+    value = dict["val"] * units
     locked = dict["locked"]
     # plim: absolute upper/lower limits
-    lims = (dict["plim"]...,)
+    lims = (dict["plim"]...,) .* units
 
     FitParameter(value, locked, lims)
 end 
@@ -215,13 +267,13 @@ A constructor function for Parameter structs given a Dictionary,
 using deltas on upper/lower limits, i.e. if val = 5 and plim = [-0.1, 0.1],
 then the true limits will be 5 .+ [-0.1, 0.1] = [4.9, 5.1]
 """
-function parameter_from_dict_wave(dict::Dict)
+function parameter_from_dict_wave(dict::Dict; units::Unitful.Units=unit(1.0))
 
     # Unpack the dictionary into fields of the Parameter
-    value = dict["val"]
+    value = dict["val"] * units
     locked = dict["locked"]
     # plim: absolute upper/lower limits
-    lims = (dict["plim"].+value...,)
+    lims = (dict["plim"].*units.+value...,)
 
     FitParameter(value, locked, lims)
 end
@@ -234,10 +286,10 @@ A constructor function for Parameter structs given a Dictionary,
 using fractional values on upper/lower limits, i.e. if val = 5 and
 plim = [0.5, 2], then the true limits will be 5 .* [0.5, 2] = [2.5, 10]
 """
-function parameter_from_dict_fwhm(dict::Dict)
+function parameter_from_dict_fwhm(dict::Dict; units::Unitful.Units=unit(1.0))
 
     # Unpack the dictionary into fields of the Parameter
-    value = dict["val"]
+    value = dict["val"] * units
     locked = dict["locked"]
     # plim: absolute upper/lower limits
     lims = (dict["plim"].*value...,)
@@ -258,9 +310,11 @@ function Base.getindex(p::Parameters, names::AbstractVector{String})
 end
 
 # methods for adding to a parameter list
-function Base.push!(p::Parameters, name::String, new::Parameter)
+function Base.push!(p::Parameters, name::String, label::String, trans::Vector{Transformation}, new::Parameter)
     @assert !(name in p.names) "$name already has an entry in $(typeof(p)) object!"
     push!(p.names, name)
+    push!(p.labels, label)
+    push!(p.transformations, trans)
     push!(p._parameters, new)
 end
 function Base.append!(p::Parameters, new::Parameters) 
@@ -268,12 +322,17 @@ function Base.append!(p::Parameters, new::Parameters)
         @assert !(new_name in p.names) "$new_name has an entry in both $(typeof(p)) objects!"
     end
     append!(p.names, new.names)
+    append!(p.labels, new.labels)
+    append!(p.transformations, new.transformations)
     append!(p._parameters, new._parameters)
 end
+Base.length(p::Parameters) = length(p._parameters)
 
 # methods for deleting a parameter from the list
 function Base.deleteat!(p::Parameters, ind::Int)
     deleteat!(p.names, ind)
+    deleteat!(p.labels, ind)
+    deleteat!(p.transformations, ind)
     deleteat!(p._parameters, ind)
 end
 function Base.deleteat!(p::Parameters, name::String)
@@ -284,8 +343,8 @@ end
 # methods for obtaining the vector of parameter limits
 get_plims(p::FitParameters, ind::Int) = p[ind].limits   
 get_plims(p::FitParameters, name::String) = p[name].limits   
-function Base.getproperty(p::FitParameters, ::Val{:limits}) 
-    plims = Vector{Tuple}(undef, length(p.names))
+function _getproperty(p::FitParameters, ::Val{:limits}) 
+    plims = Vector{Tuple{Number,Number}}(undef, length(p.names))
     for (i, param) in enumerate(p._parameters)
         plims[i] = param.limits
     end
@@ -295,7 +354,7 @@ end
 # methods for obtaining the lock vector
 get_lock(p::FitParameters, ind::Int) = p[ind].locked
 get_lock(p::FitParameters, name::String) = p[name].locked
-function Base.getproperty(p::FitParameters, ::Val{:locked}) 
+function _getproperty(p::FitParameters, ::Val{:locked}) 
     locks = BitVector(undef, length(p.names))
     for (i, param) in enumerate(p._parameters)
         locks[i] = param.locked
@@ -306,8 +365,8 @@ end
 # methods for obtaining the value vector
 get_val(p::FitParameters, ind::Int) = p[ind].value
 get_val(p::FitParameters, name::String) = p[name].value
-function Base.getproperty(p::FitParameters{T}, ::Val{:values}) where {T}
-    vals = Vector{T}(undef, length(p.names))
+function _getproperty(p::FitParameters, ::Val{:values})
+    vals = Vector{Number}(undef, length(p.names))
     for (i, param) in enumerate(p._parameters)
         vals[i] = param.value
     end
@@ -317,7 +376,7 @@ end
 # methods for obtaining the tied vector (vector of symbols)
 get_tie(p::FitParameters, ind::Int) = p[ind].tie
 get_tie(p::FitParameters, name::String) = p[name].tie
-function Base.getproperty(p::FitParameters, ::Val{:ties})
+function _getproperty(p::FitParameters, ::Val{:ties})
     ties = Vector{Union{Tie,Nothing}}(undef, length(p.names))
     for (i, param) in enumerate(p._parameters)
         ties[i] = param.tie
@@ -325,13 +384,17 @@ function Base.getproperty(p::FitParameters, ::Val{:ties})
     ties
 end
 
+_getproperty(p::FitParameters, ::Val{s}) where {s} = getfield(p, s)
+Base.getproperty(p::FitParameters, s::Symbol) = _getproperty(p, Val{s}())
+
+
 # methods for obtaining the tied pair vector (vector of tuples)
 function get_tied_pairs(p::FitParameters)
     ties = p.ties
-    tie_groups = Vector{Union{Symbol,Nothing}}([tie.group for tie in ties])
+    tie_groups = Vector{Union{Symbol,Nothing}}([!isnothing(tie) ? tie.group : nothing for tie in ties])
     tie_pairs = Vector{Tuple{Int,Int,Float64}}()
     for (i, tie) in enumerate(ties)
-        if !isnothing(tie.group)
+        if !isnothing(tie) 
             j = findfirst(tie_groups .== tie.group)
             if j == i 
                 continue
@@ -399,14 +462,14 @@ end
 #  will be a COPY of the fit parameters, so modifying it
 #  wont affect the original)
 function get_flattened_fit_parameters(p::FitProfiles)
-    flat = FitParameters(String[], FitParameter[])
+    flat = FitParameters(String[], String[], Vector{Transformation}[], FitParameter[])
     for prof in p
         append!(flat, prof.fit_parameters)
     end
     flat
 end
 function get_flattened_nonfit_parameters(p::FitProfiles)
-    flat = NonFitParameters(String[], NonFitParameter[])
+    flat = NonFitParameters(String[], String[], Vector{Transformation}[], NonFitParameter[])
     for prof in p
         append!(flat, prof.nonfit_parameters)
     end
@@ -419,20 +482,36 @@ end
 #  will be a COPY of the fit parameters, so modifying it
 #  wont affect the original)
 function get_flattened_fit_parameters(p::FitFeatures)
-    flat = FitParameters(String[], FitParameter[])
+    flat = FitParameters(String[], String[], Vector{Transformation}[], FitParameter[])
     for profiles_i in p.profiles
         append!(flat, get_flattened_fit_parameters(profiles_i))
     end
     flat
 end
 function get_flattened_nonfit_parameters(p::FitFeatures)
-    flat = NonFitParameters(String[], FitParameter[])
-    for profiles_i in p.profiles
+    flat = NonFitParameters(String[], String[], Vector{Transformation}[], NonFitParameter[])
+    for (composite_i, profiles_i) in zip(p.composite, p.profiles)
         append!(flat, get_flattened_nonfit_parameters(profiles_i))
+        append!(flat, composite_i)
     end
     flat
 end
 
+# get all the fit parameters in a ModelParameters object
+function get_flattened_fit_parameters(p::ModelParameters)
+    flat = FitParameters(String[], String[], Vector{Transformation}[], FitParameter[])
+    append!(flat, p.continuum)
+    append!(flat, get_flattened_fit_parameters(p.dust_features))
+    append!(flat, get_flattened_fit_parameters(p.lines))
+    flat
+end
+function get_flattened_nonfit_parameters(p::ModelParameters)
+    flat = NonFitParameters(String[], String[], Vector{Transformation}[], NonFitParameter[])
+    append!(flat, get_flattened_nonfit_parameters(p.dust_features))
+    append!(flat, get_flattened_nonfit_parameters(p.lines))
+    append!(flat, p.statistics)
+    flat
+end
 
 # the range parameter mainly determines what to do about extinction curves
 # since calzetti and CCM are not defined past ~2-3 um
@@ -450,7 +529,7 @@ end
 # latex string representations of units 
 latex(u) = latexify(u)
 latex(::Unitful.FreeUnits{(), NoDims, nothing}) = L""
-latex(::typeof(unit(QFlux))) = L"$\mathrm{erg}\,\mathrm{s}^{-1}\,\mathrm{cm}^{-2}"
+latex(::typeof(unit(QFlux))) = L"$\mathrm{erg}\,\mathrm{s}^{-1}\,\mathrm{cm}^{-2}$"
 latex(::typeof(unit(QPerFreq))) = L"$\mathrm{erg}\,\mathrm{s}^{-1}\,\mathrm{cm}^{-2}\,\mathrm{Hz}^{-1}\,\mathrm{sr}^{-1}$"
 latex(::typeof(unit(QPerAng))) = L"$\mathrm{erg}\,\mathrm{s}^{-1}\,\mathrm{cm}^{-2}\,\mathrm{\AA}^{-1}\,\mathrm{sr}^{-1}$"
 latex(::typeof(unit(QPerum))) = L"$\mathrm{erg}\,\mathrm{s}^{-1}\,\mathrm{cm}^{-2}\,\mathrm{\mu{}m}^{-1}\,\mathrm{sr}^{-1}$"

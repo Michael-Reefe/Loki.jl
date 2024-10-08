@@ -251,11 +251,23 @@ julia> Doppler_width_λ(0, 10)
 
 
 # Function for converting between per-unit-frequency units and per-unit-wavelength units
-function fluxconvert(Iν::Quantity{<:Real, u"𝐌*𝐓^-2"}, λ::Quantity{<:Real, u"𝐋"}) 
+function fluxconvert(Iν::QGeneralPerFreq, λ::QLength)
     uconvert(unit(Iν)*u"Hz"/unit(λ), Iν * C_KMS / λ^2)
 end
-function fluxconvert(Iλ::Quantity{<:Real, u"𝐌*𝐋^-1*𝐓^-3"}, λ::Quantity{<:Real, u"𝐋"})
+function fluxconvert(Iλ::QGeneralPerWave, λ::QLength)
     uconvert(unit(Iλ)*unit(λ)/u"Hz", Iλ * λ^2 / C_KMS)
+end
+
+# Function that smartly decides whether or not to convert the units of the first argument to match 
+# the units of the second argument
+match_fluxunits(I_mod::Q, ::Q, ::QLength) where {Q<:Quantity} = I_mod
+match_fluxunits(I_mod::Q1, I_ref::Q2, ::QLength) where {Q1<:QGeneralPerWave,Q2<:QGeneralPerWave} = uconvert(unit(I_ref), I_mod)
+match_fluxunits(I_mod::Q1, I_ref::Q2, ::QLength) where {Q1<:QGeneralPerFreq,Q2<:QGeneralPerFreq} = uconvert(unit(I_ref), I_mod)
+function match_fluxunits(I_mod::Q1, I_ref::Q2, λ::QLength) where {
+    Q1<:Union{QGeneralPerWave,QGeneralPerFreq},
+    Q2<:Union{QGeneralPerWave,QGeneralPerFreq}
+    }
+    uconvert(unit(I_ref), fluxconvert(I_mod, λ))
 end
 
 
@@ -292,7 +304,7 @@ The concept for this function was based on a similar function in the pPXF python
 (Cappellari 2017, https://ui.adsabs.harvard.edu/abs/2017MNRAS.466..798C/abstract),
 however the implementation is different.
 """
-function convolveGaussian1D(flux::Vector{<:Real}, fwhm::Vector{<:Real})
+function convolveGaussian1D(flux::Vector{<:Quantity}, fwhm::Vector{<:Real})
 
     # clamp with a minimum of 0.01 so as to not cause problems with Gaussians with 0 std dev
     fwhm_clamped = clamp.(fwhm, 0.01, Inf)

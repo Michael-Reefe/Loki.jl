@@ -92,7 +92,7 @@ extinction_screen = true
 fit_stellar_continuum = true
 
 # whether or not to fit silicate emission
-fit_sil_emission = true
+fit_sil_emission = false
 
 # whether or not to fit the CH + water ice absorption features at ~7 um
 fit_ch_abs = false

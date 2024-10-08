@@ -33,8 +33,8 @@ function get_extinction_profile(λ::Vector{<:Real}, params::Vector{<:Real}, exti
             att_stars = attenuation_calzetti(λ, E_BV * E_BV_factor, Cf=Cf_dust)
             att_gas = attenuation_calzetti(λ, E_BV, Cf=Cf_dust)
         else
-            att_stars = attenuation_calzetti(λ, E_BV * E_BV_factor, δ, Cf=Cf_dust)
-            att_gas = attenuation_calzetti(λ, E_BV, δ, Cf=Cf_dust)
+            att_stars = attenuation_calzetti(λ, E_BV * E_BV_factor, δ_uv=δ, Cf=Cf_dust)
+            att_gas = attenuation_calzetti(λ, E_BV, δ_uv=δ, Cf=Cf_dust)
         end
     else
         error("Unrecognized extinctino curve $extinction_curve")

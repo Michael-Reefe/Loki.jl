@@ -682,13 +682,6 @@ val = 0.06
 plim = [0.0, 3.0]
 locked = false
 
-# extinction.frac: covering fraction for how much of the dust continuum
-# (blackbodies and power laws) is affected by the extinction
-[extinction.frac]
-val = 1.0
-plim = [0.5, 1.0]
-locked = true
- 
 # extinction.tau_ice: *not* an actual optical depth -- this is
 # a fraction of the CH optical depth that applies to the ice feature
 [extinction.tau_ice]

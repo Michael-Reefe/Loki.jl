@@ -263,6 +263,7 @@ include("core/cubefit_mir.jl")
 include("core/cubefit_opt.jl")
 
 include("util/parsing.jl")
+include("util/create_params.jl")
 include("util/math.jl")
 include("core/model_mir.jl")
 include("core/model_opt.jl")
