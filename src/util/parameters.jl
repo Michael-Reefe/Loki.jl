@@ -22,6 +22,7 @@ const QIntensity = typeof(1.0u"erg/s/cm^2/sr")
 const QFlux = typeof(1.0u"erg/s/cm^2")
 const QGeneralPerWave = Quantity{<:Real, u"𝐌*𝐋^-1*𝐓^-3"}
 const QGeneralPerFreq = Quantity{<:Real, u"𝐌*𝐓^-2"}
+const QVelocity = typeof(1.0u"km/s")
 
 # Create some type categories
 abstract type Parameter end
@@ -115,6 +116,21 @@ struct NonFitParameters <: Parameters
     end
 end
 
+# allow both fit and nonfit parameters
+struct AllParameters <: Parameters
+    names::Vector{String}
+    labels::Vector{String}
+    transformations::Vector{Vector{Transformation}}
+    _parameters::Vector{<:Union{FitParameter{<:Number},NonFitParameter{<:Number}}}
+
+    function AllParameters(names::Vector{String}, labels::Vector{String},
+        transformations::Vector{Vector{Transformation}}, 
+        parameters::Vector{Union{FitParameter{<:Number},NonFitParameter{<:Number}}}) 
+        @assert names == unique(names) "repeat names are not allowed!"
+        new(names, labels, transformations, parameters)
+    end
+end
+
 
 struct FitProfile{S<:Union{Symbol,String}}
     profile::S
@@ -170,7 +186,26 @@ struct SpectralRegion{T<:Union{typeof(1.0u"μm"),typeof(1.0u"angstrom")}}
     λlim::Tuple{T,T}
     mask::Vector{Tuple{T,T}}
     n_channels::Int
+    channel_masks::Vector{BitVector}
     wavelength_range::WavelengthRange
+end
+
+
+# A little container for stellar populations 
+struct StellarPopulations{Q1<:QWave,Q2<:Unitful.Units,Q3<:typeof(1.0u"km/s")}
+    λ::Vector{Q1}
+    templates::Vector{Spline2D}
+    units::Q2
+    vsyst::Q3
+end
+
+# A little container for iron templates
+struct FeIITemplates{Q1<:QWave,Q2<:typeof(1.0u"km/s"),C<:Complex}
+    λ::Vector{Q1}
+    npad::Int
+    na_fft::Vector{C}
+    br_fft::Vector{C}
+    vsyst::Q2
 end
 
 
@@ -394,13 +429,14 @@ function get_tied_pairs(p::FitParameters)
     tie_groups = Vector{Union{Symbol,Nothing}}([!isnothing(tie) ? tie.group : nothing for tie in ties])
     tie_pairs = Vector{Tuple{Int,Int,Float64}}()
     for (i, tie) in enumerate(ties)
-        if !isnothing(tie) 
-            j = findfirst(tie_groups .== tie.group)
-            if j == i 
-                continue
-            end
-            push!(tie_pairs, (j, i, typeof(tie) <: RatioTie ? ties[i].ratio/ties[j].ratio : 1.0))
+        if isnothing(tie) 
+            continue
         end
+        j = findfirst(tie_groups .== tie.group)
+        if j == i 
+            continue
+        end
+        push!(tie_pairs, (j, i, typeof(tie) <: RatioTie ? ties[i].ratio/ties[j].ratio : 1.0))
     end
     # Convert the paired tuples into indices for each tied parameter
     # this doesnt include the first index of each tied pair because these parameters are 
@@ -454,6 +490,15 @@ end
 # check if everything is good
 function check_valid(p::NonFitParameter)
     @assert isfinite(p)
+end
+
+# Count the total number of profiles in a FitFeatures object
+function total_num_profiles(p::FitFeatures)
+    n_prof = 0
+    for profiles_i in p.profiles
+        n_prof += length(profiles_i)
+    end
+    n_prof
 end
 
 
@@ -512,6 +557,12 @@ function get_flattened_nonfit_parameters(p::ModelParameters)
     append!(flat, p.statistics)
     flat
 end
+function get_flattened_parameters(p::ModelParameters)
+    flat = AllParameters(String[], String[], Vector{Transformation}(), Vector{Union{FitParameter,NonFitParameter}}())
+    append!(flat, get_flattened_fit_parameters(p))
+    append!(flat, get_flattened_nonfit_parameters(p))
+    flat
+end
 
 # the range parameter mainly determines what to do about extinction curves
 # since calzetti and CCM are not defined past ~2-3 um
@@ -535,95 +586,3 @@ latex(::typeof(unit(QPerAng))) = L"$\mathrm{erg}\,\mathrm{s}^{-1}\,\mathrm{cm}^{
 latex(::typeof(unit(QPerum))) = L"$\mathrm{erg}\,\mathrm{s}^{-1}\,\mathrm{cm}^{-2}\,\mathrm{\mu{}m}^{-1}\,\mathrm{sr}^{-1}$"
 # some more unconventional units too
 latex(::typeof(u"erg/s/cm^2/Hz/sr*μm")) = L"$\mathrm{erg}\,\mathrm{s}^{-1}\,\mathrm{cm}^{-2}\,\mathrm{Hz}^{-1}\,\mathrm{sr}^{-1}\,\mathrm{\mu{}m}$"
-
-
-# """
-#     TransitionLines(names, latex, annotate, λ₀, profiles, tied_amp, tied_voff, tied_fwhm,
-#         acomp_amp, voff, fwhm, h3, h4, η, combined)
-
-# A container for ancillary information and modeling parameters relating to transition lines.
-# """
-# struct TransitionLines
-
-#     # 1st axis: labels each transition line
-#     names::Vector{Symbol}
-#     latex::Vector{String}
-#     annotate::BitVector
-#     λ₀::Vector{AbstractFloat}
-#     sort_order::Vector{Int}
-    
-#     # 1st axis: labels each transition line
-#     # 2nd axis: labels the components of each line
-#     profiles::Matrix{Union{Symbol,Nothing}}
-#     tied_amp::Matrix{Union{Symbol,Nothing}}
-#     tied_voff::Matrix{Union{Symbol,Nothing}}
-#     tied_fwhm::Matrix{Union{Symbol,Nothing}}
-
-#     # Model Parameters
-#     acomp_amp::Matrix{Union{Parameter,Nothing}}
-#     voff::Matrix{Union{Parameter,Nothing}}
-#     fwhm::Matrix{Union{Parameter,Nothing}}
-#     h3::Matrix{Union{Parameter,Nothing}}
-#     h4::Matrix{Union{Parameter,Nothing}}
-#     η::Matrix{Union{Parameter,Nothing}}
-
-#     # Combined lines (for map purposes)
-#     combined::Vector{Vector{Symbol}}
-
-#     # Relative flags for additional components
-#     rel_amp::Bool
-#     rel_voff::Bool
-#     rel_fwhm::Bool
-
-# end
-
-
-# """
-#     make_single_transitionline_object(lines, i)
-
-# Takes a TransitionLine object and an index i and creates a new TransitionLine
-# object which contains only the single line at index i in the original object.
-# """
-# function make_single_transitionline_object(lines::TransitionLines, i::Integer)
-#     n_comps = size(lines.profiles, 2)
-
-#     TransitionLines(
-#         [lines.names[i]], 
-#         [lines.latex[i]], 
-#         [lines.annotate[i]],
-#         [lines.λ₀[i]], 
-#         [lines.sort_order[i]],
-#         reshape(lines.profiles[i, :], (1, n_comps)), 
-#         reshape(lines.tied_amp[i, :], (1, n_comps)),
-#         reshape(lines.tied_voff[i, :], (1, n_comps)),
-#         reshape(lines.tied_fwhm[i, :], (1, n_comps)), 
-#         reshape(lines.acomp_amp[i, :], (1, n_comps-1)), 
-#         reshape(lines.voff[i, :], (1, n_comps)), 
-#         reshape(lines.fwhm[i, :], (1, n_comps)), 
-#         reshape(lines.h3[i, :], (1, n_comps)),
-#         reshape(lines.h4[i, :], (1, n_comps)), 
-#         reshape(lines.η[i, :], (1, n_comps)),
-#         lines.combined, 
-#         lines.rel_amp,
-#         lines.rel_voff,
-#         lines.rel_fwhm
-#     )
-# end
-
-
-# """
-#     TiedKinematics(key_amp, amp, key_voff, voff, key_fwhm, fwhm)
-
-# A container for tied amplitude and kinematic parameter information.
-# """
-# struct TiedKinematics
-
-#     # Vectors of vectors, rather than Matrices, since the size of each element may be inhomogeneous 
-#     key_amp::Vector{Vector{Symbol}}
-#     amp::Vector{Vector{Dict{Symbol, <:Real}}}
-#     key_voff::Vector{Vector{Symbol}}
-#     voff::Vector{Vector{Parameter}}
-#     key_fwhm::Vector{Vector{Symbol}}
-#     fwhm::Vector{Vector{Parameter}}
-
-# end

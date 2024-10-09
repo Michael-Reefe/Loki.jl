@@ -1,5 +1,5 @@
 # optical.toml: this file contains options pertaining to fitting the
-# optical continuum of spectra, including SSPs, attenuation, and power laws
+# optical continuum of spectra, including SSPs, extinction, and power laws
 
 ########## Simple Stellar Populations (SSPs) ##########
 
@@ -71,10 +71,10 @@ locked = false
 # plim = [-6.0, 6.0]
 # locked = false
 
-########## Attenuation options ###############
+########## Extinction options ###############
 
 # E(B-V) Reddening factor for the gas
-[attenuation.E_BV]
+[extinction.E_BV]
 val = 0.1
 # val = 0.2672455997095422
 plim = [0.0, 1.0]
@@ -85,7 +85,7 @@ locked = false
 # N.b. if you are fitting continuum and lines in separate steps,
 # this *must* be locked because it is completely unconstrained
 # in the continuum fitting step.
-[attenuation.E_BV_factor]
+[extinction.E_BV_factor]
 val = 0.44
 plim = [0.0, 10.0]
 locked = true
@@ -93,13 +93,13 @@ locked = true
 # Only relevant for Calzetti extinction curves:
 
 # UV bump slope (delta), not fit unless fit_uv_bump is true
-[attenuation.uv_slope]
+[extinction.uv_slope]
 val = 0.0
 plim = [-0.8, 0.2]
 locked = false
 
 # Dust covering fraction, not fit unless fit_covering_frac is true
-[attenuation.frac]
+[extinction.frac]
 val = 0.5
 plim = [0.0, 1.0]
 locked = false

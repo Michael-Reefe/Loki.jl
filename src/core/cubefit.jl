@@ -9,384 +9,93 @@ fitting is performed with Loki.
 """
     ParamMaps{T<:Real}
 
-A basic structure for holding parameter best-fit values and errors along with the parameter names to 
+A basic structure for holding parameter best-fit values and errors along with the parameters to 
 keep track of where each parameter is located.
 
 # Fields
-- `data::Array{T,3}`: A 3D array holding the best-fit parameters for each spaxel.
-- `err_upp:Array{T,3}`: A 3D array holding the upper uncertainties for each spaxel.
-- `err_low:Array{T,3}`: A 3D array holding the lower uncertainties for each spaxel.
-- `names::Vector{String}`: The name of each fit parameter
-- `units::Vector{String}`: The units of each fit parameter
-- `labels::Vector{AbstractString}`: The labels of each fit parameter
-- `restframe_transform::Vector{Int}`: Which parameters need to be transformed back into the observed frame after fitting.
-- `log_transform::BitVector`: Which parameters need to be log transformed after fitting.
-- `normalize::BitVector`: Which parameters need to be de-normalized after fitting.
-- `line_transform::BitVector`: Which emission line parameters need special transformations after fitting.
-- `perfreq_transform::BitVector`: Which parameters need to be transformed from per-unit-wavelength to per-unit-frequency flux units.
+- `data`: A 3D array holding the best-fit parameters for each spaxel.
+- `err_upp`: A 3D array holding the upper uncertainties for each spaxel.
+- `err_low`: A 3D array holding the lower uncertainties for each spaxel.
+- `parameters`: A ModelParameters object containing the names, labels, etc. for all of the parameters
 """
 struct ParamMaps{T<:Real}
 
     data::Array{T,3}
     err_upp::Array{T,3}
     err_low::Array{T,3}
-    names::Vector{String}
-    units::Vector{String}
-    labels::Vector{AbstractString}
-
-    # 1 = flux transform (multiply for per-frequency flux, divide for per-wavelength flux)
-    # 2 = wavelength transform (always multiply), 
-    restframe_transform::Vector{Int}  
-    # Always assumed log base 10
-    log_transform::BitVector
-    # Normalization factor depends on spectral region
-    normalize::BitVector
-    # Relative line parameter transformations depend on the type
-    line_transform::BitVector
-    # Transform per-wavelength flux units to per-frequency flux units
-    perfreq_transform::BitVector
+    parameters::ModelParameters
 
 end
 
 
-"""
-    Helper functions for indexing into the ParamMaps object with strings
-"""
-function get(parammap::ParamMaps, pname::String)
-    ind = findfirst(parammap.names .== pname)
+function get_val(parammap::ParamMaps, pname::String)
+    param = get_flattened_parameters(parammap.parameters)
+    ind = findfirst(param.names .== pname)
     parammap.data[:, :, ind]
 end
-function get(parammap::ParamMaps, pnames::Vector{String})
-    inds = [findfirst(parammap.names .== pname) for pname in pnames]
+function get_val(parammap::ParamMaps, pnames::Vector{String})
+    param = get_flattened_parameters(parammap.parameters)
+    inds = [findfirst(param.names .== pname) for pname in pnames]
     parammap.data[:, :, inds]
 end
-function get(parammap::ParamMaps, index::CartesianIndex, pname::String)
-    ind = findfirst(parammap.names .== pname)
-    parammap.data[index, ind]
-end
-function get(parammap::ParamMaps, index::CartesianIndex, pnames::Vector{String})
-    inds = [findfirst(parammap.names .== pname) for pname in pnames]
-    parammap.data[index, inds]
-end
+get_val(parammap::ParamMaps, index::CartesianIndex, pname::String) = get_val(parammap, pname)[index]
+get_val(parammap::ParamMaps, index::CartesianIndex, pnames::Vector{String}) = get_val(parammap, pnames)[index]
 
 function get_err(parammap::ParamMaps, pname::String)
-    ind = findfirst(parammap.names .== pname)
+    param = get_flattened_parameters(parammap.parameters)
+    ind = findfirst(param.names .== pname)
     parammap.err_upp[:, :, ind], parammap.err_low[:, :, ind]
 end
 function get_err(parammap::ParamMaps, pnames::Vector{String})
-    inds = [findfirst(parammap.names .== pname) for pname in pnames]
+    param = get_flattened_parameters(parammap.parameters)
+    inds = [findfirst(param.names .== pname) for pname in pnames]
     parammap.err_upp[:, :, inds], parammap.err_low[:, :, inds]
 end
 function get_err(parammap::ParamMaps, index::CartesianIndex, pname::String)
-    ind = findfirst(parammap.names .== pname)
-    parammap.err_upp[index, ind], parammap.err_low[index, ind]
+    upp, low = get_err(parammap, pname)
+    upp[index], low[index]
 end
 function get_err(parammap::ParamMaps, index::CartesianIndex, pnames::Vector{String})
-    inds = [findfirst(parammap.names .== pname) for pname in pnames]
-    parammap.err_upp[index, inds], parammap.err_low[index, inds]
+    upp, low = get_err(parammap, pnames)
+    upp[index], low[index]
 end
 
 function get_label(parammap::ParamMaps, pname::String)
-    ind = findfirst(parammap.names .== pname)
-    parammap.labels[ind]
+    param = get_flattened_parameters(parammap.parameters)
+    ind = findfirst(param.names .== pname)
+    param.labels[ind]
 end
-function get_label(parammap::ParamMaps, pnames::Vector{String})
-    inds = [findfirst(parammap.names .== pname) for pname in pnames]
-    parammap.labels[inds]
+function get_label(parammap::ParamMaps, pnames::String)
+    param = get_flattened_parameters(parammap.parameters)
+    inds = [findfirst(param.names .== pname) for pname in pnames]
+    param.labels[inds]
 end
 
 
 abstract type CubeModel end
 
+abstract type Options end
 
 """
-    _get_line_names_and_transforms(cf_lines, n_lines, n_comps, flexible_wavesol)
+## Output Options ##
 
-Helper function for getting a vector of line parameter names and boolean vectors 
-to determine what transformations to apply on the final parameters.
-"""
-function _get_line_names_and_transforms(cf_lines::TransitionLines, n_lines::Integer, n_comps::Integer,
-        flexible_wavesol::Bool, lines_allow_negative::Bool; perfreq::Int=0)
-
-    line_names = String[]
-    line_units = String[]
-    line_labels = String[]
-    line_restframe = Int[]
-    line_log = Int[]
-    line_normalize = Int[]
-    line_perfreq = Int[]
-    line_names_extra = String[]
-    line_units_extra = String[]
-    line_labels_extra = String[]
-    line_extra_restframe = Int[]
-    line_extra_log = Int[]
-    line_extra_normalize = Int[]
-    line_extra_perfreq = Int[]
-
-    for i ∈ 1:n_lines
-
-        line = "lines." * string(cf_lines.names[i])
-
-        for j ∈ 1:n_comps
-            if !isnothing(cf_lines.profiles[i, j])
-
-                line_j = "lines." * string(cf_lines.names[i]) * ".$(j)"
-
-                pnames = ["amp", "voff", "fwhm"]
-                punits = [lines_allow_negative ? "erg.s-1.cm-2.Hz-1" : "log(erg.s-1.cm-2.Hz-1.sr-1)", "km/s", "km/s"]
-                plabels = [lines_allow_negative ? L"$I$ (erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1}$)" : L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$", 
-                    L"$v_{\rm off}$ (km s$^{-1}$)", L"FWHM (km s$^{-1}$)"]
-                p_rf = [1, 0, 0]
-                p_log = [lines_allow_negative ? 0 : 1, 0, 0]
-                p_norm = [1, 0, 0]
-                p_pf = [perfreq, 0, 0]
-                # Need extra voff parameter if using the flexible_wavesol keyword
-                if !isnothing(cf_lines.tied_voff[i, j]) && flexible_wavesol && isone(j)
-                    pnames = ["amp", "voff", "voff_indiv", "fwhm"]
-                    punits = [lines_allow_negative ? "erg.s-1.cm-2.Hz-1" : "log(erg.s-1.cm-2.Hz-1.sr-1)", "km/s", "km/s", "km/s"]
-                    plabels = [lines_allow_negative ? L"$I$ (erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1}$)" : L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$",
-                        L"$v_{\rm off}$ (km s$^{-1}$)", L"$v_{\rm off,indiv}$ (km s$^{-1}$)", L"FWHM (km s$^{-1}$)"]
-                    p_rf = [1, 0, 0, 0]
-                    p_log = [lines_allow_negative ? 0 : 1, 0, 0, 0]
-                    p_norm = [1, 0, 0, 0]
-                    p_pf = [perfreq, 0, 0, 0]
-                end
-                # Add 3rd and 4th order moments (skewness and kurtosis) for Gauss-Hermite profiles
-                if cf_lines.profiles[i, j] == :GaussHermite
-                    pnames = [pnames; "h3"; "h4"]
-                    punits = [punits; "-"; "-"]
-                    plabels = [plabels; L"$h_3$"; L"$h_4$"]
-                    p_rf = [p_rf; 0; 0]
-                    p_log = [p_log; 0; 0]
-                    p_norm = [p_norm; 0; 0]
-                    p_pf = [p_pf; 0; 0]
-                # Add mixing parameter for Voigt profiles, but only if NOT tying it
-                elseif cf_lines.profiles[i, j] == :Voigt
-                    pnames = [pnames; "mixing"]
-                    punits = [punits; "-"]
-                    plabels = [plabels; L"$\eta$"]
-                    p_rf = [p_rf; 0]
-                    p_log = [p_log; 0]
-                    p_norm = [p_norm; 0]
-                    p_pf = [p_pf; 0]
-                end
-                pnames_extra = ["flux"; "eqw"; "SNR"]
-                punits_extra = [lines_allow_negative ? "erg.s-1.cm-2" : "log(erg.s-1.cm-2)", "um", "-"]
-                plabels_extra = [lines_allow_negative ? L"$F$ (erg s$^{-1}$ cm$^{-2}$)" : L"$\log_{10}(F /$ erg s$^{-1}$ cm$^{-2}$)", L"$W_{\rm eq}$ ($\mu$m)", L"$S/N$"]
-                p_extra_rf = [0, 2, 0]
-                p_extra_log = [lines_allow_negative ? 0 : 1, 0, 0]
-                p_extra_norm = [0, 0, 0]
-                p_extra_pf = [0, 0, 0]
-                # Append parameters for flux, equivalent width, and signal-to-noise ratio, which are NOT fitting parameters, but are of interest
-                append!(line_names, [join([line_j, pname], ".") for pname in pnames])
-                append!(line_units, punits)
-                append!(line_labels, plabels)
-                append!(line_restframe, p_rf)
-                append!(line_log, p_log)
-                append!(line_normalize, p_norm)
-                append!(line_perfreq, p_pf)
-                append!(line_names_extra, [join([line_j, pname], ".") for pname in pnames_extra])
-                append!(line_units_extra, punits_extra)
-                append!(line_labels_extra, plabels_extra)
-                append!(line_extra_restframe, p_extra_rf)
-                append!(line_extra_log, p_extra_log)
-                append!(line_extra_normalize, p_extra_norm)
-                append!(line_extra_perfreq, p_extra_pf)
-            end
-        end
-        pnames_comp = ["n_comps", "w80", "delta_v", "vmed", "vpeak"]
-        punits_comp = ["-", "km/s", "km/s", "km/s", "km/s"]
-        plabels_comp = [L"$n_{\rm comp}$", L"$W_{80}$ (km s$^{-1}$)", L"$\Delta v$ (km s$^{-1}$)", L"$v_{\rm med}$ (km s$^{-1}$)",
-            L"$v_{\rm peak}$ (km s$^{-1}$)"]
-        p_comp_rf = [0, 0, 0, 0, 0]
-        p_comp_log = [0, 0, 0, 0, 0]
-        p_comp_norm = [0, 0, 0, 0, 0]
-        p_comp_pf = [0, 0, 0, 0, 0]
-        append!(line_names_extra, [join([line, pname], ".") for pname in pnames_comp])
-        append!(line_units_extra, punits_comp)
-        append!(line_labels_extra, plabels_comp)
-        append!(line_extra_restframe, p_comp_rf)
-        append!(line_extra_log, p_comp_log)
-        append!(line_extra_normalize, p_comp_norm)
-        append!(line_extra_perfreq, p_comp_pf)
-    end
-    @debug "line maps with keys $line_names"
-    @debug "extra line maps with keys $line_names_extra"
-
-    line_names, line_names_extra, line_units, line_units_extra, line_labels, line_labels_extra, line_restframe, line_extra_restframe, 
-        line_log, line_extra_log, line_normalize, line_extra_normalize, line_perfreq, line_extra_perfreq
-end
-
-
-"""
-    CubeFitter(cube, z, name; <keyword arguments>)
-
-This is the main structure used for fitting IFU cubes, containing all of the necessary data, metadata,
-fitting options, and associated functions for generating ParamMaps and CubeModel structures to handle the outputs 
-of all the fits.  This is essentially the "configuration object" that tells the rest of the fitting code how
-to run. The actual fitting functions (`fit_spaxel` and `fit_cube!`) require an instance of this structure.
-
-Other than `cube`, `z`, and `name`, all fields listed below will be populated by the defaults given in the 
-`config.toml`, `dust.toml`, `lines.toml`, and `optical.toml` configuration files, or by quantities derived from
-these options. For more detailed explanations on these options, please refer to the options files and the README file.
-
-# Fields {T<:Real, S<:Integer, C<:Complex}
-
-## Data
-- `cube::DataCube`: The main DataCube object containing the cube that is being fit
-- `z::Real`: The redshift of the target that is being fit
-- `name::String`: The name of the fitting run being performed.
-- `spectral_region::Symbol`: Either :MIR for mid-infrared, or :OPT for optical.
-
-## Basic configuration options
-- `user_mask::Union{Vector{<:Tuple},Nothing}`: An optional mask specifying areas of the spectrum to ignore during fitting.
-- `plot_spaxels::Symbol`: A Symbol specifying the plotting backend to be used when plotting individual spaxel fits, can
+- `plot_spaxels`: A Symbol specifying the plotting backend to be used when plotting individual spaxel fits, can
     be either `:pyplot`, `:plotly`, or `:both`
-- `plot_maps::Bool`: Whether or not to plot 2D maps of the best-fit parameters after the fitting is finished
-- `plot_range::Union{Vector{<:Tuple},Nothing}`: An optional list of spectral regions to extract zoomed-in plots from (useful for plotting
+- `plot_maps`: Whether or not to plot 2D maps of the best-fit parameters after the fitting is finished
+- `plot_range`: An optional list of spectral regions to extract zoomed-in plots from (useful for plotting
 specific emission lines of interest).
-- `parallel::Bool`: Whether or not to fit multiple spaxels in parallel using multiprocessing
-- `save_fits::Bool`: Whether or not to save the final best-fit models and parameters as FITS files
-- `save_full_model::Bool`: Whether or not to save the full 3D best-fit model as a FITS file.
-- `overwrite::Bool`: Whether or not to overwrite old fits of spaxels when rerunning
-- `track_memory::Bool`: Whether or not to save diagnostic files showing memory usage of the program
-- `track_convergence::Bool`: Whether or not to save diagnostic files showing convergence of line fitting for each spaxel
-- `make_movies::Bool`: Whether or not to save mp4 files of the final model
+- `parallel`: Whether or not to fit multiple spaxels in parallel using multiprocessing
+- `save_fits`: Whether or not to save the final best-fit models and parameters as FITS files
+- `save_full_model`: Whether or not to save the full 3D best-fit model as a FITS file.
+- `overwrite`: Whether or not to overwrite old fits of spaxels when rerunning
+- `track_memory`: Whether or not to save diagnostic files showing memory usage of the program
+- `track_convergence`: Whether or not to save diagnostic files showing convergence of line fitting for each spaxel
+- `make_movies`: Whether or not to save mp4 files of the final model
+- `map_snr_thresh`: The SNR threshold below which to mask out spaxels from parameter maps for emission lines.
+- `sort_line_components`: Defines how sorting should be done (either by flux or by fwhm) for individual line components
 
-## Basic fitting options
-- `sys_err::Real`: Optional systematic uncertainty quantified as a ratio (0-1) of the flux. I.e. to add a 10% systematic 
-    uncertainty use fσ_sys = 0.1
-- `extinction_curve::String`: The type of extinction curve being used, i.e. `"kvt"` or `"d+"`
-- `extinction_screen::Bool`: Whether or not the extinction is modeled as a screen
-- `κ_abs::Vector{Spline1D}`: Mass absorption coefficient for amorphous olivine Mg(2y)Fe(2-2y)SiO4, amorphous pyroxene Mg(x)Fe(1-x)SiO3, and 
-    crystalline forsterite Mg2SiO4 as interpolating functions over wavelength, only used if extinction_curve == "decompose"
-- `custom_ext_template::Union{Spline1D,Nothing}`: A custom dust extinction template given as a matrix of wavelengths and optical depths that is
-    converted into an interpolating function.
-- `extinction_map::Union{Array{T,3},Nothing}`: An optional map of estimated extinction values. For MIR spectra, this is interpreted 
-as tau_9.7 values, whereas for optical spectra it is interpreted as E(B-V) values. The fits will be locked to the value at the 
-corresponding spaxel.
-- `fit_stellar_continuum::Bool`: Whether or not to fit MIR stellar continuum
-- `fit_sil_emission::Bool`: Whether or not to fit MIR hot silicate dust emission
-- `fit_ch_abs::Bool`: Whether or not to fit the MIR CH absorption feature
-- `fit_temp_multexp::Bool`: Whether or not to apply and fit multiplicative exponentials to any provided templates
-- `guess_tau::Union{Vector{<:Tuple},Nothing}`: Whether or not to guess the optical depth at 9.7 microns by interpolating between 
-    PAH-free parts of the continuum at the given wavelength windows in microns (must have enough spectral coverage). 
-    The fitted value will then be constrained to be at least 80% of the inferred value.
-- `fit_opt_na_feii::Bool`: Whether or not to fit optical narrow Fe II emission
-- `fit_opt_br_feii::Bool`: Whether or not to fit optical broad Fe II emission
-- `fit_all_global::Bool`: Whether or not to fit all spaxels with a global optimizer (Differential Evolution) instead of a local optimizer (Levenberg-Marquardt).
-- `use_pah_templates::Bool`: Whether or not to fit the continuum in two steps, where the first step uses PAH templates,
-and the second step fits the PAH residuals with the PAHFIT Drude model.
-- `fit_joint::Bool`: If true, fit the continuum and lines simultaneously. If false, the lines will first be masked and the
-continuum will be fit, then the continuum is subtracted and the lines are fit to the residuals.
-- `fit_uv_bump::Bool`: Whether or not to fit the UV bump in the dust attenuation profile. Only applies if the extinction
-curve is "calzetti".
-- `fit_covering_frac::Bool`: Whether or not to fit a dust covering fraction in the attenuation profile. Only applies if the
-extinction curve is "calzetti".
-- `tie_template_amps::Bool`: If true, the template amplitudes in each channel are tied to the same value. Otherwise they may have separate
-normalizations in each channel. By default this is false.
-- `decompose_lock_column_densities::Bool`: If true and if using the "decompose" extinction profile, then the column densities for
-pyroxene and forsterite (N_pyr and N_for) will be locked to their values after the initial fit to the integrated spectrum over all 
-spaxels. These parameters are measured relative to olivine (N_oli) so this, in effect, locks the relative abundances of these three silicates
-over the full FOV of the cube.
-
-## Continuum parameters
-- `continuum::Continuum`: A Continuum structure holding information about various continuum fitting parameters.
-This object will obviously be different depending on if the spectral region is :MIR or :OPT.
-
-## MIR continuum parameters
-- `n_channels::S`: The number of subchannels covered by the spectrum
-- `channel_masks::Vector{BitVector}`: Masks that filter out each individual subchannel in the data
-- `n_dust_cont::S`: The number of dust continuum components
-- `n_power_law::S`: The number of power law continuum components
-- `n_dust_feat::S`: The number of PAH features
-- `n_abs_feat::S`: The number of absorption features
-- `n_templates::S`: The number of generic templates
-- `templates::Array{T,4}`: Each template to be used in the fit. The first 2 axes are spatial, the 3rd axis should be wavelength, 
-    and the 4th axis should iterate over each individual template. Each template will get an amplitude parameter in the fit.
-- `template_names::Vector{String}`: The names of each generic template in the fit.
-- `dust_features::Union{DustFeatures,Nothing}`: All of the fitting parameters for each PAH feature
-- `abs_features::Union{DustFeatures,Nothing}`: All of the fitting parameters for each absorption feature
-- `abs_taus::Union{Vector{Parameter},Nothing}`: A vector of amplitude parameters for the absorption features
-
-## Optical continuum parameters
-- `n_ssps::S`: The number of simple stellar population components
-- `ssp_λ::Union{Vector{T},Nothing}`: The wavelength grid for the simple stellar population templates
-- `ssp_templates::Union{Vector{Spline2D},Nothing}`: A vector of interpolating functions for the simple stellar populations
-at each point in the wavelength grid.
-- `feii_templates_fft::Union{Matrix{C},Nothing}`: A matrix of the Fourier transforms of the narrow and broad Fe II templates
-- `vres::T`: The constant velocity resolution of the wavelength grid, which assumes logarithmic spacing, in km/s/pixel.
-- `vsyst_ssp::T`: The systemic velocity offset between the input wavelength grid and the SSP template wavelength grid.
-- `vsyst_feii::T`: The systemic velocity offset between the input wavelength grid and the Fe II template wavelength grid.
-- `npad_feii::S`: The length of the Fe II templates (NOT the length of the Fourier transformed templates).
-
-## Line parameters
-- `n_lines::S`: The number of lines being fit
-- `n_acomps::S`: The summed total number of line profiles fit to all lines in the spectrum, including additional components.
-- `n_comps::S`: The maximum number of additional profiles that may be fit to any given line.
-- `relative_flags::BitVector`: Flags for whether additional line components should be parametrized relative to the primary component,
-    ordered as (amp, voff, fwhm) (global settings for all lines).
-- `lines::TransitionLines`: A TransitionLines struct containing parameters and tied information for the emission lines.
-
-## Tied Kinematics
-- `tied_kinematics::TiedKinematics`: A TiedKinematics struct containing information about which lines have tied velocities and FWHMs.
-
-## Tied voigt mixing
-- `tie_voigt_mixing::Bool`: Whether or not the Voigt mixing parameter is tied between all the lines with Voigt profiles
-- `voigt_mix_tied::Parameter`: The actual tied Voigt mixing parameter object, given `tie_voigt_mixing` is true
-
-## Number of parameters
-- `n_params_cont::S`: The total number of free fitting parameters for the continuum fit (not including emission lines)
-- `n_params_lines::S`: The total number of free fitting parameters for the emission line fit (not including the continuum)
-- `n_params_extra::S`: The total number of extra parameters calculated for each fit (includes things like line fluxes and equivalent widths)
-
-## General options
-- `cosmology::Cosmology.AbstractCosmology`: The Cosmology, used solely to create physical scale bars on the 2D parameter plots
-- `flexible_wavesol::Bool`: Whether or not to allow small variations in the velocity offsets even when tied, to account
-    for a bad wavelength solution
-- `n_bootstrap::S`: The number of bootstrapping iterations that should be performed for each fit.
-- `random_seed::S`: An optional number to use as a seed for the RNG utilized during bootstrapping, to ensure consistency between
-- `bootstrap_use::Symbol`: Determines what to output for the resulting parameter values when bootstrapping. May be :med for the 
-    median or :best for the original best-fit values.
-attempts.
-- `line_test_lines::Vector{Vector{Symbol}}`: A list of lines which should be tested for additional components. They may be grouped
-together (hence the vector-of-a-vector structure) such that lines in a group will all be given the maximum number of parameters that
-any one line passes the test for.
-- `line_test_threshold::T`: A threshold which must be met in the chi^2 ratio between a fit without an additional line profile and
-one with the additional profile, in order to include the additional profile in the final fit.
-- `plot_line_test::Bool`: Whether or not to plot the line test results.
-
-## Line masking options
-- `linemask_Δ::S`: The half-width, in pixels, to use to calculate the second derivative for the line masking algorithm.
-- `linemask_n_inc_thresh::S`: The number of times that the flux must increase to the left/right before the line masking window stops.
-- `linemask_thresh::T`: The number of sigmas that a peak in the second derivative must reach to be considered a line detection in
-    the line masking algorithm.
-- `linemask_overrides::Vector{Tuple{T,T}}`: Optional list of tuples specifying (min, max) wavelength ranges that will be forcibly 
-    added to the line mask. This is different from the `user_mask` option since it only applies to the continuum fitting step but
-    will be ignored during the line fitting step. NOTE: Using this option will disable the 'automatic' line masking algorithm and just
-    use the manually input regions in the mask.
-- `map_snr_thresh::T`: The SNR threshold below which to mask out spaxels from parameter maps for emission lines.
-
-## Best fit parameters
-- `p_init_cont::Vector{T}`: The best-fit continuum parameters for the initial fit to the sum of all spaxels.
-- `p_init_line::Vector{T}`: Same as `p_init_cont`, but for the line parameters
-- `p_init_pahtemp::Vector{T}`: Same as `p_init_cont`, but for the PAH templates amplitudes
-
-See [`ParamMaps`](@ref), [`parammaps_empta`](@ref), [`CubeModel`](@ref), [`cubemodel_empty`](@ref), 
-    [`fit_spaxel`](@ref), [`fit_cube!`](@ref)
 """
-struct CubeFitter{T<:Real,S<:Integer,C<:Complex} 
-
-    # See explanations for each field in the docstring!
-    
-    # Data
-    cube::DataCube
-    z::T
-    name::String
-    spectral_region::Symbol
-
-    # Basic fitting options
-    user_mask::Union{Vector{<:Tuple},Nothing}
+struct OutputOptions <: Options
     plot_spaxels::Symbol
     plot_maps::Bool
     plot_range::Union{Vector{<:Tuple},Nothing}
@@ -398,7 +107,69 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     track_memory::Bool
     track_convergence::Bool
     make_movies::Bool
+    map_snr_thresh::Real
+    sort_line_components::Union{Symbol,Nothing}
+end
 
+"""
+## Fitting Options ##
+
+- `parallel`: Whether or not to allow multiprocessing
+- `parallel_strategy`: Either `pmap` or `distributed`
+- `sys_err`: Optional systematic uncertainty quantified as a ratio (0-1) of the flux. I.e. to add a 10% systematic 
+    uncertainty use fσ_sys = 0.1
+- `extinction_curve`: The type of extinction curve being used, i.e. `"kvt"` or `"d+"`
+- `extinction_screen`: Whether or not the extinction is modeled as a screen
+- `κ_abs`: Mass absorption coefficient for amorphous olivine Mg(2y)Fe(2-2y)SiO4, amorphous pyroxene Mg(x)Fe(1-x)SiO3, and 
+    crystalline forsterite Mg2SiO4 as interpolating functions over wavelength, only used if extinction_curve == "decompose"
+- `custom_ext_template`: A custom dust extinction template given as a matrix of wavelengths and optical depths that is
+    converted into an interpolating function.
+- `extinction_map`: An optional map of estimated extinction values. For MIR spectra, this is interpreted 
+as tau_9.7 values, whereas for optical spectra it is interpreted as E(B-V) values. The fits will be locked to the value at the 
+corresponding spaxel.
+- `fit_stellar_continuum`: Whether or not to fit stellar continuum
+- `fit_sil_emission`: Whether or not to fit MIR hot silicate dust emission
+- `fit_ch_abs`: Whether or not to fit the MIR CH absorption feature
+- `fit_temp_multexp`: Whether or not to apply and fit multiplicative exponentials to any provided templates
+- `guess_tau`: Whether or not to guess the optical depth at 9.7 microns by interpolating between 
+    PAH-free parts of the continuum at the given wavelength windows in microns (must have enough spectral coverage). 
+    The fitted value will then be constrained to be at least 80% of the inferred value.
+- `fit_opt_na_feii`: Whether or not to fit optical narrow Fe II emission
+- `fit_opt_br_feii`: Whether or not to fit optical broad Fe II emission
+- `fit_all_global`: Whether or not to fit all spaxels with a global optimizer (Differential Evolution) instead of a local optimizer (Levenberg-Marquardt).
+- `use_pah_templates`: Whether or not to fit the continuum in two steps, where the first step uses PAH templates,
+and the second step fits the PAH residuals with the PAHFIT Drude model.
+- `fit_joint`: If true, fit the continuum and lines simultaneously. If false, the lines will first be masked and the
+continuum will be fit, then the continuum is subtracted and the lines are fit to the residuals.
+- `fit_uv_bump`: Whether or not to fit the UV bump in the dust attenuation profile. Only applies if the extinction
+curve is "calzetti".
+- `fit_covering_frac`: Whether or not to fit a dust covering fraction in the attenuation profile. Only applies if the
+extinction curve is "calzetti".
+- `tie_template_amps`: If true, the template amplitudes in each channel are tied to the same value. Otherwise they may have separate
+normalizations in each channel. By default this is false.
+- `decompose_lock_column_densities`: If true and if using the "decompose" extinction profile, then the column densities for
+pyroxene and forsterite (N_pyr and N_for) will be locked to their values after the initial fit to the integrated spectrum over all 
+spaxels. These parameters are measured relative to olivine (N_oli) so this, in effect, locks the relative abundances of these three silicates
+over the full FOV of the cube.
+- `n_bootstrap`: The number of bootstrapping iterations that should be performed for each fit.
+- `random_seed`: An optional number to use as a seed for the RNG utilized during bootstrapping, to ensure consistency between
+- `bootstrap_use`: Determines what to output for the resulting parameter values when bootstrapping. May be :med for the 
+    median or :best for the original best-fit values.
+attempts.
+- `line_test_lines`: A list of lines which should be tested for additional components. They may be grouped
+together (hence the vector-of-a-vector structure) such that lines in a group will all be given the maximum number of parameters that
+any one line passes the test for.
+- `line_test_threshold`: A threshold which must be met in the chi^2 ratio between a fit without an additional line profile and
+one with the additional profile, in order to include the additional profile in the final fit.
+- `plot_line_test`: Whether or not to plot the line test results.
+- `lines_allow_negative`: Whether or not to allow line amplitdues to go negative
+- `subtract_cubic_spline`: If true, subtract a cubic spline fit to the continuum rather than the actual fit to the continuum before
+fitting emission lines.  DO NOT USE THIS OPTION IF YOU EXPECT THERE TO BE STELLAR ABSORPTION.
+
+"""
+struct FittingOptions{T<:Real,S<:Integer} <: Options
+    parallel::Bool
+    parallel_strategy::String
     sys_err::Real
     extinction_curve::String
     extinction_screen::Bool
@@ -421,58 +192,6 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     lock_hot_dust::BitVector
     F_test_ext::BitVector
     decompose_lock_column_densities::Bool
-
-    # Continuum parameters
-    continuum::Continuum
-
-    # MIR continuum parameters
-    n_channels::S
-    channel_masks::Vector{BitVector}
-    n_dust_cont::S
-    n_power_law::S  # (also used for optical power laws)
-    n_dust_feat::S
-    n_abs_feat::S
-    n_templates::S
-    # 4D templates: first 3 axes are the template's spatial and spectral axes, while the 4th axis enumerates individual templates
-    templates::Array{T, 4}  
-    template_names::Vector{String}
-    dust_features::Union{DustFeatures,Nothing}
-    abs_features::Union{DustFeatures,Nothing}
-    abs_taus::Union{Vector{Parameter},Nothing}
-
-    # Optical continuum parameters
-    n_ssps::S
-    ssp_λ::Union{Vector{T},Nothing}
-    ssp_templates::Union{Vector{Spline2D},Nothing}
-    feii_templates_fft::Union{Matrix{C},Nothing}
-    vres::T
-    vsyst_ssp::T
-    vsyst_feii::T
-    npad_feii::S
-
-    # Line parameters
-    n_lines::S
-    n_acomps::S
-    n_comps::S
-    n_fit_comps::Dict{Symbol,Matrix{S}}
-    relative_flags::BitVector
-    lines::TransitionLines
-
-    # Tied voffs
-    tied_kinematics::TiedKinematics
-
-    # Tied voigt mixing
-    tie_voigt_mixing::Bool
-    voigt_mix_tied::Parameter
-
-    # Number of parameters
-    n_params_cont::S
-    n_params_lines::S
-    n_params_extra::S
-    
-    # General options
-    cosmology::Cosmology.AbstractCosmology
-    flexible_wavesol::Bool
     n_bootstrap::S
     random_seed::S
     bootstrap_use::Symbol
@@ -481,31 +200,155 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
     plot_line_test::Bool
     lines_allow_negative::Bool
     subtract_cubic_spline::Bool
+end
+
+
+"""
+    CubeFitter(cube, z, name; <keyword arguments>)
+
+This is the main structure used for fitting IFU cubes, containing all of the necessary data, metadata,
+fitting options, and associated functions for generating ParamMaps and CubeModel structures to handle the outputs 
+of all the fits.  This is essentially the "configuration object" that tells the rest of the fitting code how
+to run. The actual fitting functions (`fit_spaxel` and `fit_cube!`) require an instance of this structure.
+
+Other than `cube`, `z`, and `name`, all fields listed below will be populated by the defaults given in the 
+`config.toml`, `infrared.toml`, `lines.toml`, and `optical.toml` configuration files, or by quantities derived from
+these options. For more detailed explanations on these options, please refer to the options files and the README file.
+
+### Fields ###
+
+## Data ##
+
+- `cube`: The main DataCube object containing the cube that is being fit
+- `z`: The redshift of the target that is being fit
+- `name`: The name of the fitting run being performed.
+- `spectral_region`: The SpectralRegion object of the data being fit
+
+## Options ##
+
+- `output`: The output options
+- `fitting`: The fitting options
+
+## Parameters ##
+
+- `model`: The model parameters
+
+- `templates`: Each template to be used in the fit. The first 2 axes are spatial, the 3rd axis should be wavelength, 
+    and the 4th axis should iterate over each individual template. Each template will get an amplitude parameter in the fit.
+- `template_names`: The names of each generic template in the fit.
+
+- `ssps`: The Stellar Population templates object
+- `vsyst_ssp`: The systemic velocity offset between the input wavelength grid and the SSP template wavelength grid.
+
+- `feii_templates_fft`: A matrix of the Fourier transforms of the narrow and broad Fe II templates
+- `vsyst_feii`: The systemic velocity offset between the input wavelength grid and the Fe II template wavelength grid.
+- `npad_feii`: The length of the Fe II templates (NOT the length of the Fourier transformed templates).
+
+- `vres`: The constant velocity resolution of the wavelength grid, which assumes logarithmic spacing, in km/s/pixel.
+- `n_channels`: The number of subchannels covered by the spectrum
+- `channel_masks`: Masks that filter out each individual subchannel in the data
+- `n_ssps`: The number of simple stellar population components
+- `n_dust_cont`: The number of dust continuum components
+- `n_power_law`: The number of power law continuum components
+- `n_dust_feat`: The number of PAH features
+- `n_abs_feat`: The number of absorption features
+- `n_templates`: The number of generic templates
+- `n_lines`: The number of lines being fit
+- `n_acomps`: The summed total number of line profiles fit to all lines in the spectrum, including additional components.
+- `n_comps`: The maximum number of additional profiles that may be fit to any given line.
+
+- `n_params_cont`: The total number of free fitting parameters for the continuum fit (not including emission lines)
+- `n_params_dust`: The total number of free fitting parameters for the PAH fit (not including the continuum)
+- `n_params_lines`: The total number of free fitting parameters for the emission line fit (not including the continuum)
+- `n_params_extra`: The total number of extra parameters calculated for each fit (includes things like line fluxes and equivalent widths)
+
+- `cosmology`: The Cosmology, used solely to create physical scale bars on the 2D parameter plots
+
+- `linemask_overrides`: Optional list of tuples specifying (min, max) wavelength ranges that will be forcibly 
+    added to the line mask. This is different from the `user_mask` option since it only applies to the continuum fitting step but
+    will be ignored during the line fitting step. NOTE: Using this option will disable the 'automatic' line masking algorithm and just
+    use the manually input regions in the mask.
+- `linemask_width`: The width in km/s to automatically apply a line mask
+
+## Best fit parameters ##
+
+- `p_init_cont`: The best-fit continuum parameters for the initial fit to the sum of all spaxels.
+- `p_init_line`: Same as `p_init_cont`, but for the line parameters
+- `p_init_pahtemp`: Same as `p_init_cont`, but for the PAH templates amplitudes
+
+See [`ParamMaps`](@ref), [`CubeModel`](@ref), [`OutputOptions`](@ref), [`FittingOptions`](@ref), 
+    [`fit_spaxel`](@ref), [`fit_cube!`](@ref)
+"""
+struct CubeFitter{T<:Real,S<:Integer,C<:Complex,Q<:QSIntensity,Qv<:QVelocity} 
+
+    # See explanations for each field in the docstring!
+    
+    # Data
+    cube::DataCube
+    z::T
+    name::String
+    spectral_region::SpectralRegion
+
+    # Options for the output
+    output::OutputOptions
+
+    # Options for the fitting 
+    fitting::FittingOptions
+
+    # Model Parameters object
+    model::ModelParameters
+
+    # 4D templates: first 3 axes are the template's spatial and spectral axes, while the 4th axis enumerates individual templates
+    templates::Array{Q, 4}  
+    template_names::Vector{String}
+
+    # Stellar populations
+    ssps::Union{StellarPopulations,Nothing}
+    vsyst_ssp::Qv
+
+    # Fe II templates
+    feii_templates_fft::Union{Matrix{C},Nothing}
+    vsyst_feii::Qv
+    npad_feii::S
+
+    # A few parameters derived from the model parameters object
+    vres::Qv
+    n_channels::S
+    channel_masks::Vector{BitVector}
+    n_ssps::S
+    n_dust_cont::S
+    n_power_law::S  
+    n_dust_feat::S
+    n_abs_feat::S
+    n_templates::S
+    n_lines::S
+    n_acomps::S
+    n_comps::S
+
+    # Total number of parameters for the continuum, dust features, lines, and extra
+    n_params_cont::S
+    n_params_dust::S
+    n_params_lines::S
+    n_params_extra::S
+
+    # The number of actually fit line profiles in each spaxel
+    n_fit_comps::Dict{Symbol,Matrix{S}}
+    
+    # The cosmology to be used when necessary
+    cosmology::Cosmology.AbstractCosmology
 
     # Line masking and sorting options
-    linemask_Δ::S
-    linemask_n_inc_thresh::S
-    linemask_thresh::T
     linemask_overrides::Vector{Tuple{T,T}}
-    linemask_width::T
-    map_snr_thresh::T
-    sort_line_components::Union{Symbol,Nothing}
+    linemask_width::Qv
 
     # Initial parameter vectors
     p_init_cont::Vector{T}
     p_init_line::Vector{T}
     p_init_pahtemp::Vector{T}
 
-    # Initial parameter cubes
-    p_init_cube_λ::Union{Vector{T},Nothing}
-    p_init_cube_cont::Union{Array{T,3},Nothing}
-    p_init_cube_lines::Union{Array{T,3},Nothing}
-    p_init_cube_wcs::Union{WCSTransform,Nothing}
-    p_init_cube_coords::Union{Vector{Vector{T}},Nothing}
-    p_init_cube_Ω::Union{T,Nothing}
-
     # A flag that is set after fitting the nuclear spectrum
     nuc_fit_flag::BitVector
+
     # A set of template amplitudes that is relevant only if fitting a model to the nuclear template. In this case,
     # the model fits amplitudes to the PSF model which are helpful to store.
     nuc_temp_amps::Vector{T}
@@ -529,11 +372,11 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
             out[key] = kwargs[key]
         end
         # Set up and reformat some default options
-        cubefitter_add_default_options!(cube, spectral_region, out)
+        cubefitter_add_default_options!(cube, out)
         # Set up the extinction map and PAH template boolean map 
         extinction_map = cubefitter_prepare_extinction_map(out, cube)
         # Set up the output directories
-        cubefitter_prepare_output_directories(name, spectral_region, out)
+        cubefitter_prepare_output_directories(name, out)
 
         #############################################################
 
@@ -545,15 +388,10 @@ struct CubeFitter{T<:Real,S<:Integer,C<:Complex}
         # Set default values for everything that is specific to the wavelength region
         n_dust_cont = n_dust_features = n_abs_features = n_channels = n_ssps = 0
         npad_feii = vres = vsyst_ssp = vsyst_feii = 0.
-        dust_features = dust_features_0 = abs_features = abs_features_0 = abs_taus = ssp_λ = 
-            ssp_templates = feii_templates_fft = nothing
+        # dust_features = dust_features_0 = abs_features = abs_features_0 = abs_taus = ssp_λ = 
+        #     ssp_templates = feii_templates_fft = nothing
         F_test_ext = false
-        channel_masks = []
 
-        if spectral_region == :MIR
-
-            # Calculate the number of subchannels
-            n_channels, channel_masks = cubefitter_mir_get_n_channels(λ, z)
             # Collect data structures for the continuum, dust features, & absorption features
             continuum, dust_features_0, dust_features, abs_features_0, abs_features, abs_taus, 
                 n_dust_cont, n_power_law, n_dust_features, n_abs_features, F_test_ext = 
@@ -733,7 +571,7 @@ end
 
 
 # Helper function for making output directoreis when setting up the CubeFitter object
-function cubefitter_prepare_output_directories(name::String, spectral_region::Symbol, out::Dict)
+function cubefitter_prepare_output_directories(name::String, out::Dict)
 
     # Prepare output directories
     @info "Preparing output directories"
@@ -742,9 +580,11 @@ function cubefitter_prepare_output_directories(name::String, spectral_region::Sy
     if !isdir("output_$name")
         mkdir("output_$name")
     end
-    # Sub-folder for 1D plots of spaxel fits
-    if !isdir(joinpath("output_$name", "spaxel_plots"))
-        mkdir(joinpath("output_$name", "spaxel_plots"))
+    # Sub-folders 
+    for foldername in ("spaxel_plots", "spaxel_binaries", "param_maps", "logs")
+        if !isdir(joinpath("output_$name", foldername))
+            mkdir(joinpath("output_$name", foldername))
+        end
     end
     if !isdir(joinpath("output_$name", "zoomed_plots")) && !isnothing(out[:plot_range])
         mkdir(joinpath("output_$name", "zoomed_plots"))
@@ -752,33 +592,23 @@ function cubefitter_prepare_output_directories(name::String, spectral_region::Sy
     if !isdir(joinpath("output_$name", "line_tests")) && (length(out[:line_test_lines]) > 0) && out[:plot_line_test]
         mkdir(joinpath("output_$name", "line_tests"))
     end
-    # Sub-folder for data files saving the results of individual spaxel fits
-    if !isdir(joinpath("output_$name", "spaxel_binaries"))
-        mkdir(joinpath("output_$name", "spaxel_binaries"))
-    end
-    # Sub-folder for 2D parameter maps 
-    if !isdir(joinpath("output_$name", "param_maps"))
-        mkdir(joinpath("output_$name", "param_maps"))
-    end
-    # Sub-folder for log files
-    if !isdir(joinpath("output_$name", "logs"))
-        mkdir(joinpath("output_$name", "logs"))
-    end
 
 end
 
 
 # Helper function for setting up default options when creating a CubeFitter object
-function cubefitter_add_default_options!(cube::DataCube, spectral_region::Symbol, out::Dict)
+function cubefitter_add_default_options!(cube::DataCube, out::Dict)
 
     out[:line_test_lines] = [[Symbol(ln) for ln in group] for group in out[:line_test_lines]]
     out[:plot_spaxels] = Symbol(out[:plot_spaxels])
     out[:bootstrap_use] = Symbol(out[:bootstrap_use])
 
+    λunit = unit(cube.λ[1])
     if !haskey(out, :plot_range)
         out[:plot_range] = nothing
     else
-        out[:plot_range] = [tuple(out[:plot_range][i]...) for i in 1:length(out[:plot_range])]
+        punit = typeof(out[:plot_rangee][1][1]) <: Quantity{<:Real, u"𝐋"} ? 1.0 : λunit
+        out[:plot_range] = [tuple(out[:plot_range][i].*punit...) for i in 1:length(out[:plot_range])]
         for  pair in out[:plot_range]
             @assert pair[1] < pair[2] "plot_range pairs must be in ascending order!"
         end
@@ -787,36 +617,27 @@ function cubefitter_add_default_options!(cube::DataCube, spectral_region::Symbol
     if !haskey(out, :user_mask)
         out[:user_mask] = nothing
     else
-        out[:user_mask] = [tuple(out[:user_mask][i]...) for i in 1:length(out[:user_mask])]
+        punit = typeof(out[:user_mask][1][1]) <: Quantity{<:Real, u"𝐋"} ? 1.0 : λunit
+        out[:user_mask] = [tuple(out[:user_mask][i].*punit...) for i in 1:length(out[:user_mask])]
         for  pair in out[:user_mask]
             @assert pair[1] < pair[2] "user_mask pairs must be in ascending order!"
         end
     end
 
+    Itype = eltype(cube.I)
     if !haskey(out, :templates)
-        out[:templates] = Array{Float64, 4}(undef, size(cube.I)..., 0)
+        out[:templates] = Array{Itype, 4}(undef, size(cube.I)..., 0)
     elseif ndims(out[:templates]) == 3
-        t4 = Array{Float64, 4}(undef, size(cube.I)..., 1)
+        t4 = Array{Itype, 4}(undef, size(cube.I)..., 1)
         t4[:, :, :, 1] .= out[:templates]
         out[:templates] = t4
     end
+    @assert eltype(out[:templates]) == Itype "The templates must have the same intensity units as the data!"
 
     if !haskey(out, :template_names)
         out[:template_names] = String["template_$i" for i in axes(out[:templates], 4)]
     end
 
-    if !haskey(out, :linemask_delta)
-        out[:linemask_delta] = 20
-    end
-    if !haskey(out, :linemask_n_inc_thresh)
-        out[:linemask_n_inc_thresh] = 7
-    end
-    if !haskey(out, :linemask_thresh)
-        out[:linemask_thresh] = 3.
-    end
-    if !haskey(out, :map_snr_thresh)
-        out[:map_snr_thresh] = 3.
-    end
     if !haskey(out, :guess_tau)
         out[:guess_tau] = nothing
     end
@@ -831,6 +652,12 @@ function cubefitter_add_default_options!(cube::DataCube, spectral_region::Symbol
     if !haskey(out, :lock_hot_dust)
         out[:lock_hot_dust] = n_templates > 0
     end
+
+    # check for F test for extinction
+    if !haskey(out, :F_test_ext)
+        out[:F_test_ext] = false
+    end
+
 
 end
 

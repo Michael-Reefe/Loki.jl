@@ -304,7 +304,7 @@ The concept for this function was based on a similar function in the pPXF python
 (Cappellari 2017, https://ui.adsabs.harvard.edu/abs/2017MNRAS.466..798C/abstract),
 however the implementation is different.
 """
-function convolveGaussian1D(flux::Vector{<:Quantity}, fwhm::Vector{<:Real})
+function convolveGaussian1D(flux::Vector{T}, fwhm::Vector{<:Real}) where {T<:Number}
 
     # clamp with a minimum of 0.01 so as to not cause problems with Gaussians with 0 std dev
     fwhm_clamped = clamp.(fwhm, 0.01, Inf)

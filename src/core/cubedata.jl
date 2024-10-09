@@ -102,9 +102,10 @@ mutable struct DataCube{T<:Vector{<:QWave}, S<:Array{<:QSIntensity, 3}}
     # This is the constructor for the DataCube struct; see the DataCube docstring for details
     function DataCube(λ::T, I::S, σ::S, mask::Union{BitArray{3},Nothing}=nothing, psf_model::Union{Array{<:Real,3},Nothing}=nothing, 
         Ω=NaN*u"sr", α=NaN*u"°", δ=NaN*u"°", θ_sky=NaN*u"rad", psf::Union{U,Nothing}=nothing, lsf::Union{V,Nothing}=nothing, 
-        wcs::Union{WCSTransform,Nothing}=nothing, channel::String="Generic Channel", band::String="Generic Band", n_channels::Int=1,
-        user_mask::Union{Vector{Tuple{W,W}},Nothing}=nothing, rest_frame::Bool=false, masked::Bool=false, vacuum_wave::Bool=true, 
-        sky_aligned::Bool=false, voronoi_bins::Union{Matrix{<:Integer},Nothing}=nothing) where {
+        wcs::Union{WCSTransform,Nothing}=nothing, channel::String="Generic Channel", band::String="Generic Band", 
+        user_mask::Union{Vector{Tuple{W,W}},Nothing}=nothing, rest_frame::Bool=false, z::Union{Real,Nothing}=nothing, 
+        masked::Bool=false, vacuum_wave::Bool=true, sky_aligned::Bool=false, voronoi_bins::Union{Matrix{<:Integer},Nothing}=nothing, 
+        format::Symbol=:JWST, instrument_channel_edges::Union{T,Nothing}=nothing) where {
             T<:Vector{<:Quantity},S<:Array{<:Quantity,3},U<:Vector{<:Quantity},V<:Vector{<:Quantity},W<:Quantity
         }
 
@@ -149,7 +150,8 @@ mutable struct DataCube{T<:Vector{<:QWave}, S<:Array{<:QSIntensity, 3}}
         λlim = extrema(λ)
         λrange = get_λrange(λlim)
         umask = !isnothing(user_mask) ? user_mask : Vector{Tuple{eltype(λ),eltype(λ)}}()
-        spectral_region = SpectralRegion(λlim, umask, n_channels, λrange)
+        n_channels, channel_masks = get_n_channels(λ, rest_frame, z; format=format, instrument_channel_edges=instrument_channel_edges)
+        spectral_region = SpectralRegion(λlim, umask, n_channels, channel_masks, λrange)
 
         # Return a new instance of the DataCube struct
         Tnew = typeof(λ)
@@ -293,8 +295,67 @@ function from_fits_jwst(filename::String)::DataCube
         error("Please only input single-band data cubes! You can combine them into multi-channel cubes using LOKI routines.")
     end
 
-    DataCube(λ, Iν, σI, mask, psf_model, Ω, ra, dec, θ_sky, psf, lsf, wcs, channel, band, n_channels, nothing, 
-        rest_frame, masked, vacuum_wave, sky_aligned)
+    redshift = nothing
+    if haskey(hdr, "REDSHIFT")
+        redshift = hdr["REDSHIFT"]
+    end
+
+    DataCube(λ, Iν, σI, mask, psf_model, Ω, ra, dec, θ_sky, psf, lsf, wcs, channel, band, nothing, 
+        rest_frame, redshift, masked, vacuum_wave, sky_aligned, nothing, :JWST, nothing)
+end
+
+
+# Helper function for calculating the number of subchannels covered by MIRI observations
+function get_n_channels(_λ::Vector{<:QWave}, rest_frame::Bool, z::Union{Real,Nothing}; format=:JWST, 
+    instrument_channel_edges::Union{Vector{<:QWave},Nothing}=nothing)
+
+    # NOTE: do not use n_channels to count the ACTUAL number of channels/bands in an observation,
+    #  as n_channels counts the overlapping regions between channels as separate "channels" altogether
+    #  to allow them to have different normalizations
+    n_channels = 0
+    channel_masks = BitVector[]
+    if format == :JWST
+        ch_edge_sort = sort(channel_edges)
+    else
+        if isnothing(instrument_channel_edges) 
+            @warn "The DataCube format is not JWST! Please manually input the channel edges (if any), otherwise it will be assumed " *
+                  "that there is only one channel"
+            return 1, [trues(length(_λ))]
+        else
+            ch_edge_sort = sort(instrument_channel_edges)
+        end
+    end
+
+    λ = _λ
+    if rest_frame
+        @assert !isnothing(z) "Please input the redshift if the cube is already in the rest frame!"
+        λ = _λ .* (1 .+ z)
+    end
+
+    for i in 2:(length(ch_edge_sort))
+        left = ch_edge_sort[i-1]
+        right = ch_edge_sort[i]
+        ch_mask = left .< λ .< right
+        n_region = sum(ch_mask)
+
+        if n_region > 0
+            n_channels += 1
+            push!(channel_masks, ch_mask)
+        end
+    end
+    # filter out small beginning/end sections
+    if sum(channel_masks[1]) < 200
+        channel_masks[2] .|= channel_masks[1]
+        popfirst!(channel_masks)
+        n_channels -= 1
+    end
+    if sum(channel_masks[end]) < 200
+        channel_masks[end-1] .|= channel_masks[end]
+        pop!(channel_masks)
+        n_channels -= 1
+    end
+
+    n_channels, channel_masks
 end
 
 
@@ -414,7 +475,7 @@ function log_rebin!(cube::DataCube, factor::Integer=1)
 
     # rebin onto a logarithmically spaced wavelength grid
     if !log_check
-        dλ = (maximum(cube.λ) - minimum(cube.λ)) / length(cube.λ) * factor
+        dλ = (maximum(cube.λ) - minimum(cube.λ)) / (length(cube.λ)-1) * factor
         linλ = minimum(cube.λ):dλ:maximum(cube.λ)
         lnλ = get_logarithmic_λ(ustrip.(linλ)) * unit(linλ[1])
         cube.I, cube.σ, cube.mask = resample_flux_permuted3D(lnλ, cube.λ, cube.I, cube.σ, cube.mask)
@@ -1132,7 +1193,7 @@ function from_fits(filenames::Vector{String}, z::Real=0.; user_mask=nothing, for
     """
 
     bands = Dict("SHORT" => "A", "MEDIUM" => "B", "LONG" => "C")
-        
+
     # Loop through the files and call the individual DataCube method of the from_fits function
     for (i, filepath) ∈ enumerate(filenames)
         cube = from_fits(filepath; format=format)
@@ -1744,6 +1805,8 @@ Perform a number of transformations on data from different channels/subchannels 
 - `channels`: The list of channels to be rebinned. If nothing, rebin all channels.
 - `concat_type`: Should be :full for overall channels or :sub for subchannels (bands).
 - `out_id`: The dictionary key corresponding to the newly rebinned cube, defaults to 0.
+- `instrument_channel_edges`: (Optional) Pairs of wavelengths defining the left and right edges of each channel that will be 
+    in the combined cube. Not necessary to specify for MIRI/MRS cubes, but necessary for all other cubes.
 - `order`: The order of interpolation for the reprojection. 
     -1 = do not do any reprojection (all input channels must be on the same WCS grid)
     0 = nearest-neighbor
@@ -1761,9 +1824,15 @@ Perform a number of transformations on data from different channels/subchannels 
     during fitting of the output cube
 """
 function combine_channels!(obs::Observation, channels=nothing, concat_type=:full; out_id=0,
+    instrument_channel_edges::Union{Vector{<:QWave},Nothing}=nothing,
     order::Union{Integer,String}=1, adjust_wcs_headerinfo::Bool=false, min_λ::QWave=0.0*u"μm", max_λ=27.0*u"μm", 
     output_wcs_frame::Integer=1, extract_from_ap::Real=0., match_psf::Bool=false, 
     user_mask::Union{Vector{Tuple{W,W}},Nothing}=nothing) where {W<:QWave}
+
+    format = :Generic
+    if obs.instrument == "MIRI"
+        format = :JWST
+    end
 
     # Default to all 4 channels
     if (obs.instrument == "MIRI") && isnothing(channels)
@@ -1775,9 +1844,12 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
         channels = [Symbol("A" * string(channels)), Symbol("B" * string(channels)), Symbol("C" * string(channels))]
         concat_type = :sub
     end
-    # Check that channels isn't still nothing
+    # Check that channels and channel edges aren't still nothing
     if isnothing(channels)
         error("It appears that this isn't a MIRI/MRS cube. Please explicitly specify the channels to be combined.")
+    end
+    if isnothing(instrument_channel_edges) && (obs.instrument != "MIRI")
+        error("It appears that this isn't a MIRI/MRS cube. Please explicity specify the edges of each channel for this instrument.")
     end
 
     # 0. First and foremost -- adjust the WCS alignment of each channel so that they are consistent with each other
@@ -1878,8 +1950,10 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
     obs.channels[out_id] = DataCube(
         λ_out, I_out, σ_out, mask_out, psf_out, Ω_out, obs.α, obs.δ, 
         obs.channels[channels[output_wcs_frame]].θ_sky, psf_fwhm_out, 
-        lsf_fwhm_out, wcs_optimal_3d, "MULTIPLE", "MULTIPLE", n_channels,
-        user_mask, obs.rest_frame, obs.masked, obs.vacuum_wave, obs.sky_aligned
+        lsf_fwhm_out, wcs_optimal_3d, "MULTIPLE", "MULTIPLE",
+        user_mask, obs.rest_frame, obs.z, obs.masked, obs.vacuum_wave, obs.sky_aligned,
+        obs.channels[channels[output_wcs_frame]].voronoi_bins, format, 
+        instrument_channel_edges
     )
 
     @info "Done!"

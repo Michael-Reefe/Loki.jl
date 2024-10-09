@@ -20,12 +20,12 @@ end
 Checks that the parsed options file has all of the keys that it should have.
 """
 function validate_options_file(options)
-    keylist1 = ["n_bootstrap", "extinction_curve", "extinction_screen", "fit_sil_emission", "fit_opt_na_feii", "fit_opt_br_feii", 
-                "fit_all_global", "use_pah_templates", "fit_joint", "fit_uv_bump", "fit_covering_frac", "parallel", "plot_spaxels", 
-                "plot_maps", "save_fits", "overwrite", "track_memory", "track_convergence", "save_full_model", "line_test_lines", 
-                "line_test_threshold", "plot_line_test", "make_movies", "cosmology", "parallel_strategy", "bootstrap_use", 
-                "random_seed", "sys_err", "olivine_y", "pyroxene_x", "grain_size", "fit_stellar_continuum", "fit_temp_multexp", 
-                "decompose_lock_column_densities", "linemask_width"]
+    keylist1 = ["n_bootstrap", "silicate_absorption", "extinction_curve", "extinction_screen", "fit_sil_emission", "fit_opt_na_feii", 
+                "fit_opt_br_feii", "fit_all_global", "use_pah_templates", "fit_joint", "fit_uv_bump", "fit_covering_frac", "parallel", 
+                "plot_spaxels", "plot_maps", "save_fits", "overwrite", "track_memory", "track_convergence", "save_full_model", 
+                "line_test_lines", "line_test_threshold", "plot_line_test", "make_movies", "cosmology", "parallel_strategy", 
+                "bootstrap_use", "random_seed", "sys_err", "olivine_y", "pyroxene_x", "grain_size", "fit_stellar_continuum", 
+                "fit_temp_multexp", "decompose_lock_column_densities", "linemask_width", "map_snr_thresh"]
     keylist2 = ["h", "omega_m", "omega_K", "omega_r"]
 
     # Loop through the keys that should be in the file and confirm that they are there
@@ -88,7 +88,7 @@ Checks that the parsed optical file has all of the keys that it should have.
 """
 function validate_optical_file(optical::Dict)
 
-    keylist1 = ["attenuation", "stellar_population_ages", "stellar_population_metallicities", "stellar_kinematics", 
+    keylist1 = ["extinction", "stellar_population_ages", "stellar_population_metallicities", "stellar_kinematics", 
         "na_feii_kinematics", "br_feii_kinematics"]
     keylist2 = ["E_BV", "E_BV_factor", "uv_slope", "frac"]
     keylist3 = ["vel", "vdisp"]
@@ -98,7 +98,7 @@ function validate_optical_file(optical::Dict)
         @assert haskey(optical, key) "Missing option $key in optical file!"
     end
     for key ∈ keylist2
-        @assert haskey(optical["attenuation"], key) "Missing option $key in attenuation options!"
+        @assert haskey(optical["extinction"], key) "Missing option $key in extinction options!"
     end
     for key ∈ keylist3
         @assert haskey(optical["stellar_kinematics"], key) "Missing option $key in stellar_kinematics options!"
@@ -112,7 +112,7 @@ function validate_optical_file(optical::Dict)
             end
         end
         for key2 ∈ keylist2
-            @assert haskey(optical["attenuation"][key2], key4) "Missing option $key4 in $key2 options!"
+            @assert haskey(optical["extinction"][key2], key4) "Missing option $key4 in $key2 options!"
         end
         for key3 ∈ keylist3
             @assert haskey(optical["stellar_kinematics"][key3], key4) "Missing option $key4 in $key3 options!"
@@ -205,6 +205,29 @@ function parse_options()
     @debug "Options: $options"
 
     options
+end
+
+
+function parse_lines(region::SpectralRegion)
+
+    lines = TOML.parsefile(joinpath(@__DIR__, "..", "options", "lines.toml"))
+    profiles, acomp_profiles = validate_lines_file(lines)
+
+    cent_vals = Vector{QWave}()    # provide all the line wavelengths in microns
+    for line in keys(lines["lines"])
+        cent_unit = uparse(replace(lines["lines"][line]["unit"], 'u' => 'μ'))
+        cent_val = lines["lines"][line]["wave"] * cent_unit
+        if !is_valid(cent_val, 0.0*cent_unit, region)
+            # remove this line from the dictionary
+            delete!(lines["lines"], line)
+            delete!(profiles, line)
+            delete!(acomp_profiles, line)
+            continue
+        end
+        push!(cent_vals, cent_val)
+    end
+
+    lines, profiles, acomp_profiles, cent_vals
 end
 
 
@@ -379,7 +402,7 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
     z::Real, cosmo::Cosmology.AbstractCosmology, name::String)
 
     # Make sure λ is logarithmically binned
-    @assert isapprox((λ[2]/λ[1]), (λ[end]/λ[end-1]), rtol=1e-6) "Input spectrum must be logarithmically binned to fit optical data!"
+    @assert isapprox((λ[2]/λ[1]), (λ[end]/λ[end-1]), rtol=1e-6) "Input spectrum must be logarithmically binned to fit with stellar populations!"
 
     # Test to see if templates have already been generated
     if isfile(joinpath("output_$name", "stellar_templates.loki"))
@@ -405,7 +428,7 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
     mask = λleft .< ssp_λ .< λright
     ssp_λ = ssp_λ[mask]
     # Resample onto a linear wavelength grid
-    Δλ = (λright - λleft) / length(ssp_λ)
+    Δλ = (λright - λleft) / (length(ssp_λ)-1)
     ssp_λlin = collect(λleft:Δλ:λright)
     
     # LSF FWHM of the input spectrum in wavelength units, interpolated at the locations of the SSP templates
@@ -414,7 +437,7 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
     ssp_lsf = Spline1D(ustrip.(ssp_λ), abs.(ssp0.resolutions[mask]), k=1, bc="nearest")(ustrip.(ssp_λlin)) .* u"km/s"
     ssp_fwhm = ssp_lsf ./ C_KMS .* ssp_λlin .* 2√(2log(2))
     # Difference in resolutions between the input spectrum and SSP templates, in pixels
-    dfwhm = sqrt.(clamp.(inp_fwhm.^2 .- ssp_fwhm.^2, 0.0*wave_unit, Inf*wave_unit)) ./ Δλ 
+    dfwhm = sqrt.(clamp.(inp_fwhm.^2 .- ssp_fwhm.^2, 0.0*wave_unit^2, Inf*wave_unit^2)) ./ Δλ 
 
     # Logarithmically rebinned wavelengths
     logscale = log(λ[2]/λ[1])
@@ -424,25 +447,26 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
     dL = luminosity_dist(u"cm", cosmo, z)
 
     # Generate templates over a range of ages and metallicities
-    ages = exp.(range(log(0.001), log(13.7), 50)) .* u"Gyr"        # logarithmically spaced from 1 Myr to 15 Gyr
+    ages = exp.(range(log(0.001), log(13.7), 20)) .* u"Gyr"        # logarithmically spaced from 1 Myr to 15 Gyr
     logzs = range(-2.3, 0.4, 10)                                   # linearly spaced from log(Z/Zsun) = [M/H] = -2.3 to 0.4
     output_units = intensity_units*u"sr"/u"Msun"
-    ssp_templates = zeros(typeof(1.0*intensity_units), length(ages), length(logzs), length(ssp_lnλ))
+    ssp_templates = zeros(typeof(1.0*intensity_units/u"Msun"), length(ages), length(logzs), length(ssp_lnλ))
     n_temp = size(ssp_templates, 1) * size(ssp_templates, 2)
 
     @info "Generating $n_temp simple stellar population templates with FSPS with " * 
         "ages ∈ ($(minimum(ages)), $(maximum(ages))), log(Z/Zsun) ∈ ($(minimum(logzs)), $(maximum(logzs)))"
 
+    peraa = typeof(1.0*intensity_units) <: QPerWave
     prog = Progress(n_temp; showspeed=true)
     for (z_ind, logz) in enumerate(logzs)
         # Create a simple stellar population (delta function SFH) with a Salpeter IMF and no attenuation
         ssp = py_fsps.StellarPopulation(zcontinuous=1, logzsol=logz, imf_type=0, sfh=0)
         for (age_ind, age) in enumerate(ages)
             # Evaluate the stellar population at the given age
-            _, ssp_LperA = ssp.get_spectrum(tage=ustrip(age), peraa=true)
-            ssp_LperA .*= u"Lsun/Msun/angstrom"
+            _, ssp_L = ssp.get_spectrum(tage=ustrip(age), peraa=peraa)
+            ssp_L = ssp_L .* u"Lsun/Msun" ./ (peraa ? u"angstrom" : u"Hz")
             # Convert Lsun/Msun/Ang to [flux units]/Msun
-            ssp_flux = match_fluxunits.(ssp_LperA[mask] ./ (4π .* dL.^2), 1.0*output_units, ssp_λ)
+            ssp_flux = uconvert.(output_units, ssp_L[mask] ./ (4π .* dL.^2))
             # Resample onto the linear wavelength grid
             ssp_flux = Spline1D(ustrip.(ssp_λ), ustrip.(ssp_flux), k=1, bc="nearest")(ustrip.(ssp_λlin)) .* unit(ssp_flux[1])
             # Convolve with gaussian kernels to degrade the spectrum to match the input spectrum's resolution
@@ -504,7 +528,7 @@ function generate_feii_templates(λ::Vector{<:QWave}, intensity_units::Unitful.U
     wave_unit = unit(λ[1])
     feii_λ = uconvert.(wave_unit, feii_λ)
     # Linear spacing 
-    Δλ = (maximum(feii_λ) - minimum(feii_λ)) / length(feii_λ)
+    Δλ = (maximum(feii_λ) - minimum(feii_λ)) / (length(feii_λ)-1)
 
     # Cut off the templates a little bit before/after the input spectrum
     λleft, λright = minimum(λ)*0.98, maximum(λ)*1.02 
@@ -535,7 +559,7 @@ function generate_feii_templates(λ::Vector{<:QWave}, intensity_units::Unitful.U
     # FWHM resolution of the Fe II templates
     feii_fwhm = uconvert(wave_unit, 1.0u"angstrom")
     # Difference in resolutions between the input spectrum and SSP templates, in pixels
-    dfwhm = sqrt.(clamp.(inp_fwhm.^2 .- feii_fwhm.^2, 0.0*wave_unit, Inf*wave_unit)) ./ Δλ
+    dfwhm = sqrt.(clamp.(inp_fwhm.^2 .- feii_fwhm.^2, 0.0*wave_unit^2, Inf*wave_unit^2)) ./ Δλ
 
     # Convolve the templates to match the resolution of the input spectrum
     na_feii_temp = convolveGaussian1D(na_feii_temp, dfwhm)
@@ -550,8 +574,8 @@ function generate_feii_templates(λ::Vector{<:QWave}, intensity_units::Unitful.U
     # if the input flux units are not per wavelength, we need to convert the templates
     # (the templates are normalized, but in per-wavelength units, so they still need to be converted)
     if typeof(intensity_units) <: QPerFreq
-        na_feii_temp = ustrip.(fluxconvert.(na_feii_temp .* u"erg/s/cm^2/angstrom", λ))
-        br_feii_temp = ustrip.(fluxconvert.(br_feii_temp .* u"erg/s/cm^2/angstrom", λ))
+        na_feii_temp = ustrip.(fluxconvert.(na_feii_temp .* u"erg/s/cm^2/angstrom", feii_lnλ))
+        br_feii_temp = ustrip.(fluxconvert.(br_feii_temp .* u"erg/s/cm^2/angstrom", feii_lnλ))
         # (the normalization doesnt matter because it's divided out later)
     end
 

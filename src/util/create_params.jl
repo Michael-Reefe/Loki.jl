@@ -136,6 +136,10 @@ function create_dust_features(dust::Dict, λunit::Unitful.Units, Iunit::Unitful.
         end
 
         FitFeatures(u_complexes, u_feat_labels, u_cent_vals, all_fit_profiles, composite, NoConfig())
+    
+    else
+
+        FitFeatures(String[], String[], typeof(1.0*λunit)[], FitProfiles[], NonFitParameters[], NoConfig())
     end
 end
 
@@ -149,8 +153,8 @@ function construct_extinction_params!(params::Vector{FitParameter}, pnames::Vect
     prefix = "extinction."
 
     # Reddening and stellar-to-dust reddening factor
-    E_BV = parameter_from_dict(optical["attenuation"]["E_BV"])
-    E_BV_factor = parameter_from_dict(optical["attenuation"]["E_BV_factor"])
+    E_BV = parameter_from_dict(optical["extinction"]["E_BV"])
+    E_BV_factor = parameter_from_dict(optical["extinction"]["E_BV_factor"])
     msg *= "\nE(B-V) $E_BV"
     msg *= "\nE(B-V) factor $E_BV_factor"
     append!(params, [E_BV, E_BV_factor])
@@ -159,7 +163,7 @@ function construct_extinction_params!(params::Vector{FitParameter}, pnames::Vect
     append!(ptrans, [Transformation[], Transformation[]])
     # Optional UV bump slope and covering fraction
     if out[:fit_uv_bump]
-        δ_uv = parameter_from_dict(optical["attenuation"]["uv_slope"])
+        δ_uv = parameter_from_dict(optical["extinction"]["uv_slope"])
         msg *= "\nδ_uv $δ_uv"
         push!(params, δ_uv)
         push!(pnames, prefix * "delta_UV")
@@ -167,7 +171,7 @@ function construct_extinction_params!(params::Vector{FitParameter}, pnames::Vect
         push!(ptrans, Transformation[])
     end
     if out[:fit_covering_frac]
-        frac = parameter_from_dict(optical["attenuation"]["frac"])
+        frac = parameter_from_dict(optical["extinction"]["frac"])
         msg *= "\nfrac $frac"
         push!(params, frac)
         push!(pnames, prefix * "frac")
@@ -199,6 +203,14 @@ function construct_extinction_params!(params::Vector{FitParameter}, pnames::Vect
     τ_ice = parameter_from_dict(infrared["extinction"]["tau_ice"])
     msg *= "\nTau_ice $τ_ice"
     τ_ch = parameter_from_dict(infrared["extinction"]["tau_ch"])
+    if haskey(out, :fit_ch_abs)
+        if !out[:fit_ch_abs]
+            set_val!(τ_ch, 0.0)
+            lock!(τ_ch)
+        else
+            unlock!(τ_ch)
+        end
+    end
     msg *= "\nTau_CH $τ_ch"
     β = parameter_from_dict(infrared["extinction"]["beta"])
     msg *= "\nBeta $β"
@@ -777,28 +789,6 @@ function override_line_parameters!(lines::Dict, prefix::String, fit_profiles::Fi
     end
 end
 
-
-function parse_lines(region::SpectralRegion)
-
-    lines = TOML.parsefile(joinpath(@__DIR__, "..", "options", "lines.toml"))
-    profiles, acomp_profiles = validate_lines_file(lines)
-
-    cent_vals = Vector{QWave}()    # provide all the line wavelengths in microns
-    for line in keys(lines["lines"])
-        cent_unit = uparse(replace(lines["lines"][line]["unit"], 'u' => 'μ'))
-        cent_val = lines["lines"][line]["wave"] * cent_unit
-        if !is_valid(cent_val, 0.0*cent_unit, region)
-            # remove this line from the dictionary
-            delete!(lines["lines"], line)
-            delete!(profiles, line)
-            delete!(acomp_profiles, line)
-            continue
-        end
-        push!(cent_vals, cent_val)
-    end
-
-    lines, profiles, acomp_profiles, cent_vals
-end
 
 
 """

@@ -87,9 +87,9 @@ const date_format::String = "yyyy-mm-dd HH:MM:SS"
 const file_lock::ReentrantLock = ReentrantLock()
 
 # MIRI channel boundaries
-const channel_boundaries = [5.7, 6.58, 7.58, 8.72, 10.075, 11.625, 13.39, 15.49, 17.84, 20.82, 24.335]
+const channel_boundaries = [5.7, 6.58, 7.58, 8.72, 10.075, 11.625, 13.39, 15.49, 17.84, 20.82, 24.335] .* u"μm"
 const channel_edges = [4.90, 5.74, 5.66, 6.63, 6.53, 7.65, 7.51, 8.77, 8.67, 10.13, 10.02, 11.70, 11.55, 
-                       13.47, 13.34, 15.57, 15.41, 17.98, 17.70, 20.95, 20.69, 24.48, 24.40, 27.90]
+                       13.47, 13.34, 15.57, 15.41, 17.98, 17.70, 20.95, 20.69, 24.48, 24.40, 27.90] .* u"μm"
 
 
 # Have to import certain python modules within the __init__ function so that it works after precompilation,

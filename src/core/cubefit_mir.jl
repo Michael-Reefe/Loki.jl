@@ -1,64 +1,4 @@
 
-# Helper function for getting dust feature names and transformation vector for making ParamMaps objects
-function _get_dust_feature_names_and_transforms(cf_dustfeat::DustFeatures)
-
-    # Add dust features fitting parameters
-    dust_feature_names = String[]
-    dust_feature_units = String[]
-    dust_feature_labels = String[]
-    df_restframe = Int[]
-    df_log = Int[]
-    df_normalize = Int[]
-    dust_feature_names_extra = String[]
-    dust_feature_units_extra = String[]
-    dust_feature_labels_extra = String[]
-    df_extra_restframe = Int[]
-    df_extra_log = Int[]
-    df_extra_normalize = Int[]
-    for (i, n) ∈ enumerate(cf_dustfeat.names)
-        dfi = ["dust_features.$(n).amp", "dust_features.$(n).mean", "dust_features.$(n).fwhm"]
-        dfu = ["log(erg.s-1.cm-2.Hz-1.sr-1)", "um", "um"]
-        dfl = [L"$\log_{10}(I / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1})$", L"$\mu$ ($\mu$m)", L"FWHM ($\mu$m)"]
-        dfi_restframe = [1, 2, 2]
-        dfi_log = [1, 0, 0]
-        dfi_normalize = [1, 0, 0]
-        if cf_dustfeat.profiles[i] == :PearsonIV
-            append!(dfi, ["dust_features.$(n).index", "dust_features.$(n).cutoff"])
-            append!(dfu, ["-", "-"])
-            append!(dfl, [L"$m$", L"$\nu$"])
-            append!(dfi_restframe, [0, 0])
-            append!(dfi_log, [0, 0])
-            append!(dfi_normalize, [0, 0])
-        else
-            push!(dfi, "dust_features.$(n).asym")
-            push!(dfu, "-")
-            push!(dfl, L"$a$")
-            push!(dfi_restframe, 0)
-            push!(dfi_log, 0)
-            push!(dfi_normalize, 0)
-        end
-        append!(dust_feature_names, dfi)
-        append!(dust_feature_units, dfu)
-        append!(dust_feature_labels, dfl)
-        append!(df_restframe, dfi_restframe)
-        append!(df_log, dfi_log)
-        append!(df_normalize, dfi_normalize)
-
-        append!(dust_feature_names_extra, ["dust_features.$(n).flux", "dust_features.$(n).eqw", "dust_features.$(n).SNR"])
-        append!(dust_feature_units_extra, ["log(erg.s-1.cm-2)", "um", "-"])
-        append!(dust_feature_labels_extra, [L"$\log_{10}(F /$ erg s$^{-1}$ cm$^{-2}$)", L"$W_{\rm eq}$ ($\mu$m)", L"$S/N$"])
-        append!(df_extra_restframe, [0, 2, 0])
-        append!(df_extra_log, [1, 0, 0])
-        append!(df_extra_normalize, [0, 0, 0])
-    end
-    @debug "dust feature maps with keys $dust_feature_names"
-    @debug "extra dust feature maps with keys $dust_feature_names_extra"
-
-    dust_feature_names, dust_feature_units, dust_feature_labels, df_restframe, df_log, df_normalize,
-        dust_feature_names_extra, dust_feature_units_extra, dust_feature_labels_extra, df_extra_restframe, 
-        df_extra_log, df_extra_normalize 
-end
-
 
 """
     parammaps_empty(shape, n_dust_cont, n_power_law, cf_dustfeat, ab_names, n_lines, n_comps, cf_lines,
@@ -338,158 +278,71 @@ function cubemodel_empty(shape::Tuple, n_dust_cont::Integer, n_power_law::Intege
 end
 
 
-# Helper function for calculating the number of subchannels covered by MIRI observations
-function cubefitter_mir_get_n_channels(λ::Vector{<:Real}, z::Real)
-    # NOTE: do not use n_channels to count the ACTUAL number of channels/bands in an observation,
-    #  as n_channels counts the overlapping regions between channels as separate channels altogether
-    #  to allow them to have different normalizations
-    n_channels = 0
-    channel_masks = []
-    ch_edge_sort = sort(channel_edges)
-    for i in 2:(length(ch_edge_sort))
-        left = ch_edge_sort[i-1]
-        right = ch_edge_sort[i]
-        ch_mask = left .< (λ .* (1 .+ z)) .< right
-        n_region = sum(ch_mask)
-
-        if n_region > 0
-            n_channels += 1
-            push!(channel_masks, ch_mask)
-        end
-    end
-    # filter out small beginning/end sections
-    if sum(channel_masks[1]) < 200
-        channel_masks[2] .|= channel_masks[1]
-        popfirst!(channel_masks)
-        n_channels -= 1
-    end
-    if sum(channel_masks[end]) < 200
-        channel_masks[end-1] .|= channel_masks[end]
-        pop!(channel_masks)
-        n_channels -= 1
-    end
-
-    n_channels, channel_masks
-end
 
 
 # Helper function for preparing continuum and dust feature parameters for 
 # a CubeFitter object
-function cubefitter_mir_prepare_continuum(λ::Vector{<:Real}, z::Real, out::Dict, n_channels::Integer)
+function cubefitter_prepare_continuum(λ::Vector{<:QWave}, z::Real, out::Dict, λunit::Unitful.Units, 
+    Iunit::Unitful.Units, region::SpectralRegion, name::String, cube::DataCube)
 
     # Get dust options from the configuration file
-    λlim = extrema(λ)
-    continuum, dust_features = construct_parameters_mir(out, λlim, n_channels)
+    model_parameters = construct_model_parameters(out, λunit, Iunit, region)
+    vres = NaN*u"km/s"   # (vres doesnt make sense if the wavelength vector isnt logarithmic)
 
-    #### PREPARE OUTPUTS ####
-    @debug "### Model will include 1 stellar continuum component ###" *
-        "\n### at T = $(continuum.T_s.value) K ###"
+    # Count a few different parameters 
+    params = get_flattened_fit_parameters(model_parameters)
+    pnames = params.names
 
-    n_dust_cont = length(continuum.T_dc)
-    msg = "### Model will include $n_dust_cont dust continuum components ###"
-    for T_dci ∈ continuum.T_dc
-        msg *= "\n### at T = $(T_dci.value) K ###"
-    end
-    @debug msg 
-
-    n_power_law = length(continuum.α)
-    msg = "### Model will include $n_power_law power law components ###"
-    for αi ∈ continuum.α
-        msg *= "\n### with alpha = $(αi.value) ###"
-    end
-    @debug msg
-
-    # Only use PAH features within +/-0.5 um of the region being fit (to include wide tails)
-    df_filt = [((minimum(λ)-0.1) < dust_features_0.mean[i].value < (maximum(λ)+0.1)) for i ∈ 1:length(dust_features_0.mean)]
-    if !isnothing(out[:user_mask])
-        for pair in out[:user_mask]
-            df_filt .&= [~(pair[1] < dust_features_0.mean[i].value < pair[2]) for i ∈ 1:length(dust_features_0.mean)]
-        end
-    end
-    dust_features = DustFeatures(dust_features_0.names[df_filt], 
-                                dust_features_0.profiles[df_filt],
-                                dust_features_0.mean[df_filt],
-                                dust_features_0.fwhm[df_filt],
-                                dust_features_0.asym[df_filt],
-                                dust_features_0.index[df_filt],
-                                dust_features_0.cutoff[df_filt],
-                                dust_features_0.complexes[df_filt],
-                                dust_features_0._local[df_filt])
-    n_dust_features = length(dust_features.names)
-    msg = "### Model will include $n_dust_features dust feature (PAH) components ###"
-    for df_mn ∈ dust_features.mean
-        msg *= "\n### at lambda = $df_mn um ###"
-    end
-    @debug msg
-
-    # Only use absorption features within +/-0.5 um of the region being fit
-    ab_filt = [((minimum(λ)-0.1) < abs_features_0.mean[i].value < (maximum(λ)+0.1)) for i ∈ 1:length(abs_features_0.mean)]
-    if !isnothing(out[:user_mask])
-        for pair in out[:user_mask]
-            ab_filt .&= [~(pair[1] < abs_features_0.mean[i].value < pair[2]) for i ∈ 1:length(abs_features_0.mean)]
-        end
-    end
-    abs_features = DustFeatures(abs_features_0.names[ab_filt],
-                                abs_features_0.profiles[ab_filt],
-                                abs_features_0.mean[ab_filt],
-                                abs_features_0.fwhm[ab_filt],
-                                abs_features_0.asym[ab_filt],
-                                abs_features_0.index[ab_filt],
-                                abs_features_0.cutoff[ab_filt],
-                                abs_features_0.complexes[ab_filt],
-                                abs_features_0._local[ab_filt])
-    abs_taus = abs_taus_0[ab_filt]
-    n_abs_features = length(abs_features.names)
-    msg = "### Model will include $n_abs_features absorption feature components ###"
-    for ab_mn ∈ abs_features.mean
-        msg *= "\n### at lambda = $ab_mn um ###"
-    end
-    @debug msg
-
-
-    if n_templates == 0
-        # Ignore any template amplitude entries in the dust.toml options if there are no templates
-        continuum = MIRContinuum(continuum.T_s, continuum.T_dc, continuum.α, continuum.τ_97, 
-                                    continuum.N_oli, continuum.N_pyr, continuum.N_for, continuum.τ_ice,
-                                    continuum.τ_ch, continuum.β, continuum.Cf, continuum.T_hot, continuum.Cf_hot, continuum.τ_warm, 
-                                    continuum.τ_cold, continuum.sil_peak, Parameter[])
+    # Stellar populations
+    ssps = nothing
+    n_ssps = div(sum(contains.(pnames, "continuum.stellar_populations.")), 3)  # Each SSP has 3 parameters (mass, age, metallicity)
+    if n_ssps > 0
+        # Create the simple stellar population templates with FSPS
+        ssp_λ, ages, metals, ssp_templates = generate_stellar_populations(λ, Iunit, cube.lsf, z, out[:cosmology], name)
+        ssp_unit = unit(ssp_templates[1])
+        # Create a 2D linear interpolation over the ages/metallicities
+        ssp_templates = [Spline2D(ustrip.(ages), ustrip.(metals), ustrip.(ssp_templates[:, :, i]), kx=1, ky=1) for i in eachindex(ssp_λ)]
+        # Make the object
+        vsyst_ssp = log(ssp_λ[1]/λ[1]) * C_KMS
+        ssps = StellarPopulations(ssp_λ, ssp_templates, ssp_unit, vsyst_ssp)
     end
 
-    # Check for locked tau_CH parameter
-    if haskey(out, :fit_ch_abs)
-        if !out[:fit_ch_abs]
-            continuum.τ_ch.value = 0.
-            continuum.τ_ch.locked = true
-        else
-            continuum.τ_ch.locked = false
-        end
+    # Fe II templates
+    feii = nothing
+    if out[:fit_opt_na_feii] || out[:fit_opt_br_feii]
+        # Load in the Fe II templates from Veron-Cetty et al. (2004)
+        npad_feii, feii_λ, na_feii_fft, br_feii_fft = generate_feii_templates(λ, Iunit, cube.lsf)
+        # Make the object
+        vsyst_feii = log(feii_λ[1]/λ[1]) * C_KMS
+        feii = FeIITemplates(feii_λ, npad_feii, na_feii_fft, br_feii_fft, vsyst_feii)
     end
 
-    # check for F test for extinction
-    if !haskey(out, :F_test_ext)
-        F_test_ext = false
-    else
-        F_test_ext = out[:F_test_ext]
+    # Velocity resolution
+    if n_ssps > 0 || out[:fit_opt_na_feii] || out[:fit_opt_br_feii]
+        vres = log(λ[2]/λ[1]) * C_KMS
     end
 
-    continuum, dust_features_0, dust_features, abs_features_0, abs_features, abs_taus, 
-        n_dust_cont, n_power_law, n_dust_features, n_abs_features,
-        F_test_ext
+    # Power laws
+    n_power_law = div(sum(contains.(pnames, "continuum.power_law.")), 2)   # Each power law has 2 parameters (amp, slope)
+    # Dust continua
+    n_dust_cont = div(sum(contains.(pnames, "continuum.dust.")), 2)   # Each dust continuum has 2 parameters (amp, temperature)
+    # PAH features
+    n_dust_feat = total_num_profiles(model_parameters.dust_features)
+    # Templates
+    n_templates = size(out[:templates], 4)
+
+    model_parameters, ssps, feii, n_ssps, n_power_law, n_dust_cont, n_dust_feat, n_templates, vres
 end
 
 
 # Helper function for counting the total number of MIR continuum parameters
-function cubefitter_mir_count_cont_parameters(extinction_curve::String, fit_sil_emission::Bool, fit_temp_multexp::Bool, 
-    n_dust_cont::Integer, n_power_law::Integer, n_abs_features::Integer, n_templates::Integer, n_channels::Integer, 
-    dust_features::DustFeatures; split::Bool=false)
-
-    n_params_cont = (2+4) + (extinction_curve == "decompose" ? 3 : 1) + 2n_dust_cont + 2n_power_law + 
-                    4n_abs_features + (fit_sil_emission ? 6 : 0) + (fit_temp_multexp ? 8 : n_templates*n_channels)
+function count_cont_parameters(model::ModelParameters; split::Bool=false)
+    # Continuum parameters
+    n_params_cont = length(model.continuum)
+    # If the "split" option is true, keep the continuum and PAHs separate, otherwise they are combined
     if !split
-        # If split=true, return the index at which the parameters should be split (before the PAHs)
-        n_params_cont += 4 * sum(dust_features.profiles .== :Drude) + 5 * sum(dust_features.profiles .== :PearsonIV)
+        n_params_cont += length(get_flattened_fit_parameters(model.dust_features))
     end
-
     n_params_cont
 end
 
