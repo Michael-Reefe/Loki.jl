@@ -326,10 +326,16 @@ function silicate_dp()
     τ_smooth[mid_filt] = movmean(τ_smooth, 5)[mid_filt]
 
     # Normalize to value at 9.7
-    τ_98 = τ_smooth[findmin(abs.(λ_irs .- 9.8))[2]]
+    τ_98 = τ_smooth[findmin(x -> abs(x - 9.8), λ_irs)[2]]
     τ_λ = τ_smooth ./ τ_98
 
     λ_irs, τ_λ
+end
+
+
+function silicate_kvt()
+    data = readdlm(joinpath(@__DIR__, "..", "templates", "kvt.txt"), ' ', Float64, '\n')
+    data[:,1] .* u"μm", data[:,2]
 end
 
 
@@ -350,13 +356,14 @@ function silicate_ohm()
 end
 
 
-function read_dust_κ(x::Real, y::Real, a::Real)
+function read_dust_κ(x::Real, y::Real, a::QLength, λunit::Unitful.Units)
 
     # Get wavelength, x, y, and a arrays
-    λ = readdlm(joinpath(@__DIR__, "..", "templates", "dorschner_wave.txt"), ' ', Float64, '\n')[:,1]
-    ρ_oli = 3.71    # g/cm^3
-    ρ_pyr = 3.20    # g/cm^3
-    a_cm = a / 1e4  # convert a from μm to cm
+    λ = readdlm(joinpath(@__DIR__, "..", "templates", "dorschner_wave.txt"), ' ', Float64, '\n')[:,1] .* u"μm"
+    λ = uconvert.(λunit, λ)
+    ρ_oli = 3.71u"g/cm^3"
+    ρ_pyr = 3.20u"g/cm^3"
+    a_cm = uconvert(u"cm", a)  # convert a from μm to cm
 
     # Read in the Qabs/Qsca arrays
     q_abs_oli = readdlm(joinpath(@__DIR__, "..", "templates", "dorschner_qabs_oli_$(y)_$(a).txt"), ' ', Float64, '\n')[:,1]
@@ -367,17 +374,18 @@ function read_dust_κ(x::Real, y::Real, a::Real)
     κ_abs_pyr = @. 3 * q_abs_pyr / (4 * a_cm * ρ_pyr)
 
     # Create interpolating functions over wavelength
-    κ_abs_pyr = Spline1D(λ, κ_abs_pyr, k=3)
-    κ_abs_oli = Spline1D(λ, κ_abs_oli, k=3)
+    κ_abs_pyr = Spline1D(ustrip.(λ), ustrip.(κ_abs_pyr), k=3)
+    κ_abs_oli = Spline1D(ustrip.(λ), ustrip.(κ_abs_oli), k=3)
 
     # Read in the mass absorption coefficiencts for crystalline forsterite
     for_data = readdlm(joinpath(@__DIR__, "..", "templates", "tamani_crystalline_forsterite_k.txt"), ' ', Float64, '\n', comments=true)
 
     # Create interpolating function 
     # extend edges to 0
-    λ_for = [for_data[1,1]-0.2; for_data[1,1]-0.1; for_data[:, 1]; for_data[end, 1]+0.1; for_data[end, 1]+0.2]
-    κ_abs_for = [0.; 0.; for_data[:, 2]; 0.; 0.]
-    κ_abs_for = Spline1D(λ_for, κ_abs_for, k=3)
+    λ_for = [for_data[1,1]-0.2; for_data[1,1]-0.1; for_data[:, 1]; for_data[end, 1]+0.1; for_data[end, 1]+0.2] .* u"μm"
+    λ_for = uconvert.(λunit, λ_for)
+    κ_abs_for = [0.; 0.; for_data[:, 2]; 0.; 0.] .* u"cm^2/g"
+    κ_abs_for = Spline1D(ustrip.(λ_for), ustrip.(κ_abs_for), k=3)
 
     κ_abs_oli, κ_abs_pyr, κ_abs_for
 end

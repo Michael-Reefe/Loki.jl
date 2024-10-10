@@ -1,281 +1,117 @@
 
 
-"""
-    parammaps_empty(shape, n_dust_cont, n_power_law, cf_dustfeat, ab_names, n_lines, n_comps, cf_lines,
-        flexible_wavesol)
 
-A constructor function for making a default empty ParamMaps structure with all necessary fields for a given
-fit of a MIR DataCube.
+# """
+#     MIRCubeModel(model, stellar, dust_continuum, dust_features, extinction, hot_dust, lines)
 
-# Arguments {S<:Integer}
-- `cube_fitter::CubeFitter`: The CubeFitter object
-- `shape::Tuple{S,S,S}`: Tuple specifying the 3D shape of the input data cube.
-"""
-function parammaps_mir_empty(cube_fitter::CubeFitter, shape::Tuple{S,S,S})::ParamMaps where {S<:Integer}
+# A structure for holding 3D models of intensity, split up into model components, generated when fitting a cube.
+# This will be the same shape as the input data, and preferably the same datatype too (i.e., JWST files have flux
+# and error in Float32 format, so we should also output in Float32 format).  This is useful as a way to quickly
+# compare the full model, or model components, to the data.
 
-    @debug """\n
-    Creating MIRParamMaps struct with shape $shape
-    ##############################################
-    """
+# # Fields {T<:Real}
+# - `model::Array{T, 3}`: The full 3D model.
+# - `stellar::Array{T, 3}`: The stellar component of the continuum.
+# - `dust_continuum::Array{T, 4}`: The dust components of the continuum. The 4th axis runs over each individual dust component.
+# - `power_law::Array{T, 4}`: The power law components of the continuum. The 4th axis runs over each individual power law.
+# - `dust_features::Array{T, 4}`: The dust (PAH) feature profiles. The 4th axis runs over each individual dust profile.
+# - `abs_features::Array{T, 4}`: The absorption feature profiles. The 4th axis runs over each individual absorption profile.
+# - `extinction::Array{T, 3}`: The extinction profile.
+# - `abs_ice::Array{T, 3}`: The water-ice absorption feature profile.
+# - `abs_ch::Array{T, 3}`: The CH absorption feature profile.
+# - `hot_dust::Array{T, 3}`: The hot dust emission profile.
+# - `templates::Array{T, 4}`: The generic template profiles.
+# - `lines::Array{T, 4}`: The line profiles. The 4th axis runs over each individual line.
 
-    # Add stellar continuum fitting parameters
-    parameter_names = ["continuum.stellar.amp", "continuum.stellar.temp"]
-    parameter_units = ["-", "K"]
-    parameter_labels = [L"$\log_{10}(A_{*})$",  L"$T$ (K)"]
-    restframe_tf = [1, 0]
-    log_tf = [1, 0]
-    norm_tf = [0, 0]
+# See [`cubemodel_empty`](@ref) for a default constructor method.
+# """
+# struct CubeModel{T<:Real} <: CubeModel
 
-    # Add dust continuum fitting parameters
-    for i ∈ 1:cube_fitter.n_dust_cont
-        append!(parameter_names, ["continuum.dust.$(i).amp", "continuum.dust.$(i).temp"])
-        append!(parameter_units, ["-", "K"])
-        append!(parameter_labels, [L"$\log_{10}(A_{\rm dust})$", L"$T$ (K)"])
-        append!(restframe_tf, [1, 0])
-        append!(log_tf, [1, 0])
-        append!(norm_tf, [0, 0])
-    end
+    # COME BACK TO THIS AFTER SETTING UP THE MODEL 
 
-    # Add power law fitting parameters
-    for p ∈ 1:cube_fitter.n_power_law
-        append!(parameter_names, ["continuum.power_law.$(p).amp", "continuum.power_law.$(p).index"])
-        append!(parameter_units, ["log(erg.s-1.cm-2.Hz-1.sr-1)", "-"])
-        append!(parameter_labels, [L"$\log_{10}(A_{\rm pl} / $ erg s$^{-1}$ cm$^{-2}$ Hz$^{-1}$ sr$^{-1}$)",  L"$\alpha$"])
-        append!(restframe_tf, [1, 0])
-        append!(log_tf, [1, 0])
-        append!(norm_tf, [1, 0])
-    end
+    # model::Array{T, 3}
+    # unobscured_continuum::Array{T, 3}
+    # obscured_continuum::Array{T, 3}
+    # stellar::Array{T, 3}
+    # dust_continuum::Array{T, 4}
+    # power_law::Array{T, 4}
+    # dust_features::Array{T, 4}
+    # abs_features::Array{T, 4}
+    # extinction::Array{T, 4}
+    # abs_ice::Array{T, 3}
+    # abs_ch::Array{T, 3}
+    # hot_dust::Array{T, 3}
+    # templates::Array{T, 4}
+    # lines::Array{T, 4}
 
-    # Add extinction fitting parameters
-    if cube_fitter.extinction_curve == "decompose"
-        append!(parameter_names, ["extinction.N_oli", "extinction.N_pyr", "extinction.N_for"])
-        append!(parameter_units, ["log(g.cm-2)", "log(N_oli)", "log(N_oli)"])
-        append!(parameter_labels, [L"$\log_{10}(N_{\rm oli} / $ g cm$^{-2}$)", L"$\log_{10}(N_{\rm pyr} / N_{\rm oli}$)",
-            L"$\log_{10}(N_{\rm for} / N_{\rm oli}$)"])
-        append!(restframe_tf, [0, 0, 0])
-        append!(log_tf, [1, 1, 1])
-        append!(norm_tf, [0, 0, 0])
-    else
-        push!(parameter_names, "extinction.tau_9_7")
-        push!(parameter_units, "-")
-        push!(parameter_labels, L"$\tau_{9.7}$")
-        push!(restframe_tf, 0)
-        push!(log_tf, 0)
-        push!(norm_tf, 0)
-    end
-    append!(parameter_names, ["extinction.tau_ice", "extinction.tau_ch", "extinction.beta", "extinction.frac"])
-    append!(parameter_units, ["-", "-", "-", "-"])
-    append!(parameter_labels, [L"$\tau_{\rm ice}$", L"$\tau_{\rm CH}$", L"$\beta$", L"$C_f$"])
-    append!(restframe_tf, [0, 0, 0, 0])
-    append!(log_tf, [0, 0, 0, 0])
-    append!(norm_tf, [0, 0, 0, 0])
-
-    # Add absorption feature fitting parameters
-    for n ∈ cube_fitter.abs_features.names
-        append!(parameter_names, ["abs_features.$(n).tau", "abs_features.$(n).mean", "abs_features.$(n).fwhm", "abs_features.$(n).asym"])
-        append!(parameter_units, ["-", "um", "um", "-"])
-        append!(parameter_labels, [L"$\tau$", L"$\mu$ ($\mu$m)", L"FWHM ($\mu$m)", L"$a$"])
-        append!(restframe_tf, [0, 2, 2, 0])
-        append!(log_tf, [0, 0, 0, 0])
-        append!(norm_tf, [0, 0, 0, 0])
-    end
-
-    # Add hot dust fitting parameters
-    if cube_fitter.fit_sil_emission
-        append!(parameter_names, ["continuum.hot_dust.amp", "continuum.hot_dust.temp", "continuum.hot_dust.frac", 
-            "continuum.hot_dust.tau_warm", "continuum.hot_dust.tau_cold", "continuum.hot_dust.sil_peak"])
-        append!(parameter_units, ["-", "K", "-", "-", "-", "um"])
-        append!(parameter_labels, [L"$\log_{10}(A_{\rm sil})$", L"$T$ (K)", L"$C_f$", L"$\tau_{\rm warm}$", 
-            L"$\tau_{\rm cold}$", L"$\mu$ ($\mu$m)"])
-        append!(restframe_tf, [1, 0, 0, 0, 0, 0])
-        append!(log_tf, [1, 0, 0, 0, 0, 0])
-        append!(norm_tf, [0, 0, 0, 0, 0, 0])
-    end
-
-    # Add template fitting parameters
-    for (ni, n) ∈ enumerate(cube_fitter.template_names)
-        # template amplitudes are not rest-frame transformed because they are interpreted as multiplying a 
-        # spectrum which is already in the frame of interest
-        if !cube_fitter.fit_temp_multexp
-            for i ∈ 1:cube_fitter.n_channels
-                push!(parameter_names, "templates.$(n).amp_$i")
-                push!(parameter_units, "-")
-                push!(parameter_labels, L"$\log_{10}(A_{\rm template})$")
-                push!(restframe_tf, 0)
-                push!(log_tf, 1)
-                push!(norm_tf, 0)
-            end
-        else
-            if ni > 1
-                break
-            end 
-            for i ∈ 1:4
-                append!(parameter_names, ["templates.amp_$i", "templates.index_$i"])
-                append!(parameter_units, ["-", "-"])
-                append!(parameter_labels, [L"$\log_{10}(A_{\rm template})$", L"$b$"])
-                append!(restframe_tf, [0, 0])
-                append!(log_tf, [1, 0])
-                append!(norm_tf, [0, 0])
-            end
-        end
-    end
-
-    # Add dust feature fitting parameters
-    dust_feature_names, dust_feature_units, dust_feature_labels, df_restframe, df_log, df_normalize, 
-        dust_feature_names_extra, dust_feature_units_extra, dust_feature_labels_extra, df_extra_restframe, 
-        df_extra_log, df_extra_normalize = _get_dust_feature_names_and_transforms(cube_fitter.dust_features)
-
-    # Add emission line fitting parameters
-    line_names, line_names_extra, line_units, line_units_extra, line_labels, line_labels_extra, line_restframe, line_extra_restframe, 
-        line_log, line_extra_log, line_normalize, line_extra_normalize, _, _ = _get_line_names_and_transforms(
-            cube_fitter.lines, cube_fitter.n_lines, cube_fitter.n_comps, cube_fitter.flexible_wavesol, cube_fitter.lines_allow_negative, perfreq=0)
-
-    # Add statistics parameters
-    statistics_names = ["statistics.chi2", "statistics.dof"]
-    statistics_units = ["-", "-"]
-    statistics_labels = [L"$\chi^2$", "d.o.f."]
-    statistics_restframe = [0, 0]
-    statistics_log = [0, 0]
-    statistics_normalize = [0, 0]
-    @debug "chi^2 map"
-    @debug "dof map"
-
-    # Combine everything into big vectors
-    parameter_names = [parameter_names; dust_feature_names; line_names; dust_feature_names_extra; line_names_extra; statistics_names]
-    parameter_units = [parameter_units; dust_feature_units; line_units; dust_feature_units_extra; line_units_extra; statistics_units]
-    parameter_labels = [parameter_labels; dust_feature_labels; line_labels; dust_feature_labels_extra; line_labels_extra; 
-        statistics_labels]
-    restframe_tf = [restframe_tf; df_restframe; line_restframe; df_extra_restframe; line_extra_restframe; statistics_restframe]
-    log_tf = BitVector([log_tf; df_log; line_log; df_extra_log; line_extra_log; statistics_log])
-    norm_tf = BitVector([norm_tf; df_normalize; line_normalize; df_extra_normalize; line_extra_normalize; statistics_normalize])
-    line_tf = BitVector([contains(pname, "lines") for pname in parameter_names])
-
-    n_params = length(parameter_names)
-
-    # Do not perform any per-wavelength to per-frequency transformations because the MIR is already given per-frequency
-    perfreq_tf = falses(n_params)
-
-    @assert n_params == length(parameter_units) == length(parameter_labels) == length(restframe_tf) == length(log_tf) == 
-        length(norm_tf) == length(line_tf) == length(perfreq_tf)
-
-    # Initialize a default array of nans to be used as a placeholder for all the other arrays
-    # until the actual fitting parameters are obtained
-    data = ones(shape[1:2]..., n_params) .* NaN
-
-    ParamMaps{Float64}(data, copy(data), copy(data), parameter_names, parameter_units, parameter_labels, 
-        restframe_tf, log_tf, norm_tf, line_tf, perfreq_tf)
-end
+# end
 
 
-"""
-    MIRCubeModel(model, stellar, dust_continuum, dust_features, extinction, hot_dust, lines)
+# """
+#     cubemodel_empty(shape, n_dust_cont, n_power_law, df_names, ab_names, line_names[, floattype])
 
-A structure for holding 3D models of intensity, split up into model components, generated when fitting a cube.
-This will be the same shape as the input data, and preferably the same datatype too (i.e., JWST files have flux
-and error in Float32 format, so we should also output in Float32 format).  This is useful as a way to quickly
-compare the full model, or model components, to the data.
+# A constructor function for making a default empty MIRCubeModel object with all the necessary fields for a given
+# fit of a DataCube.
 
-# Fields {T<:Real}
-- `model::Array{T, 3}`: The full 3D model.
-- `stellar::Array{T, 3}`: The stellar component of the continuum.
-- `dust_continuum::Array{T, 4}`: The dust components of the continuum. The 4th axis runs over each individual dust component.
-- `power_law::Array{T, 4}`: The power law components of the continuum. The 4th axis runs over each individual power law.
-- `dust_features::Array{T, 4}`: The dust (PAH) feature profiles. The 4th axis runs over each individual dust profile.
-- `abs_features::Array{T, 4}`: The absorption feature profiles. The 4th axis runs over each individual absorption profile.
-- `extinction::Array{T, 3}`: The extinction profile.
-- `abs_ice::Array{T, 3}`: The water-ice absorption feature profile.
-- `abs_ch::Array{T, 3}`: The CH absorption feature profile.
-- `hot_dust::Array{T, 3}`: The hot dust emission profile.
-- `templates::Array{T, 4}`: The generic template profiles.
-- `lines::Array{T, 4}`: The line profiles. The 4th axis runs over each individual line.
+# # Arguments
+# - `shape::Tuple`: The dimensions of the DataCube being fit, formatted as a tuple of (nx, ny, nz)
+# - `n_dust_cont::Integer`: The number of dust continuum components in the fit (usually given by the number of temperatures 
+#     specified in the dust.toml file)
+# - `n_power_law::Integer`: The number of power law continuum components in the fit.
+# - `df_names::Vector{String}`: List of names of PAH features being fit, i.e. "PAH_12.62", ...
+# - `ab_names::Vector{String}`: List of names of absorption features being fit, i.e. "abs_HCO+_12.1", ...
+# - `temp_names::Vector{String}`: List of names of generic templates in the fit, i.e. "nuclear", ...
+# - `line_names::Vector{Symbol}`: List of names of lines being fit, i.e. "NeVI_7652", ...
+# - `floattype::DataType=Float32`: The type of float to use in the arrays. Should ideally be the same as the input data,
+#     which for JWST is Float32.
+# """
+# function cubemodel_empty(shape::Tuple, n_dust_cont::Integer, n_power_law::Integer, df_names::Vector{String}, 
+#     ab_names::Vector{String}, temp_names::Vector{String}, line_names::Vector{Symbol}, extinction_curve::String, 
+#     floattype::DataType=Float32)::MIRCubeModel
 
-See [`cubemodel_empty`](@ref) for a default constructor method.
-"""
-struct MIRCubeModel{T<:Real} <: CubeModel
+#     @debug """\n
+#     Creating MIRCubeModel struct with shape $shape
+#     ##############################################
+#     """
 
-    model::Array{T, 3}
-    unobscured_continuum::Array{T, 3}
-    obscured_continuum::Array{T, 3}
-    stellar::Array{T, 3}
-    dust_continuum::Array{T, 4}
-    power_law::Array{T, 4}
-    dust_features::Array{T, 4}
-    abs_features::Array{T, 4}
-    extinction::Array{T, 4}
-    abs_ice::Array{T, 3}
-    abs_ch::Array{T, 3}
-    hot_dust::Array{T, 3}
-    templates::Array{T, 4}
-    lines::Array{T, 4}
+#     # Make sure the floattype given is actually a type of float
+#     @assert floattype <: AbstractFloat "floattype must be a type of AbstractFloat (Float32 or Float64)!"
+#     # Swap the wavelength axis to be the FIRST axis since it is accessed most often and thus should be continuous in memory
+#     shape2 = (shape[end], shape[1:end-1]...)
 
-end
+#     # Initialize the arrays for each part of the full 3D model
+#     model = zeros(floattype, shape2...)
+#     @debug "model cube"
+#     unobscured_continuum = zeros(floattype, shape2...)
+#     @debug "unobscured continuum cube"
+#     obscured_continuum = zeros(floattype, shape2...)
+#     @debug "obscured continuum cube"
+#     stellar = zeros(floattype, shape2...)
+#     @debug "stellar continuum comp cube"
+#     dust_continuum = zeros(floattype, shape2..., n_dust_cont)
+#     @debug "dust continuum comp cubes"
+#     power_law = zeros(floattype, shape2..., n_power_law)
+#     @debug "power law comp cubes"
+#     dust_features = zeros(floattype, shape2..., length(df_names))
+#     @debug "dust features comp cubes"
+#     abs_features = zeros(floattype, shape2..., length(ab_names))
+#     @debug "absorption features comp cubes"
+#     extinction = zeros(floattype, shape2..., extinction_curve == "decompose" ? 4 : 1)
+#     @debug "extinction comp cube"
+#     abs_ice = zeros(floattype, shape2...)
+#     @debug "abs_ice comp cube"
+#     abs_ch = zeros(floattype, shape2...)
+#     @debug "abs_ch comp cube"
+#     hot_dust = zeros(floattype, shape2...)
+#     @debug "hot dust comp cube"
+#     templates = zeros(floattype, shape2..., length(temp_names))
+#     @debug "templates comp cube"
+#     lines = zeros(floattype, shape2..., length(line_names))
+#     @debug "lines comp cubes"
 
-
-"""
-    cubemodel_empty(shape, n_dust_cont, n_power_law, df_names, ab_names, line_names[, floattype])
-
-A constructor function for making a default empty MIRCubeModel object with all the necessary fields for a given
-fit of a DataCube.
-
-# Arguments
-- `shape::Tuple`: The dimensions of the DataCube being fit, formatted as a tuple of (nx, ny, nz)
-- `n_dust_cont::Integer`: The number of dust continuum components in the fit (usually given by the number of temperatures 
-    specified in the dust.toml file)
-- `n_power_law::Integer`: The number of power law continuum components in the fit.
-- `df_names::Vector{String}`: List of names of PAH features being fit, i.e. "PAH_12.62", ...
-- `ab_names::Vector{String}`: List of names of absorption features being fit, i.e. "abs_HCO+_12.1", ...
-- `temp_names::Vector{String}`: List of names of generic templates in the fit, i.e. "nuclear", ...
-- `line_names::Vector{Symbol}`: List of names of lines being fit, i.e. "NeVI_7652", ...
-- `floattype::DataType=Float32`: The type of float to use in the arrays. Should ideally be the same as the input data,
-    which for JWST is Float32.
-"""
-function cubemodel_empty(shape::Tuple, n_dust_cont::Integer, n_power_law::Integer, df_names::Vector{String}, 
-    ab_names::Vector{String}, temp_names::Vector{String}, line_names::Vector{Symbol}, extinction_curve::String, 
-    floattype::DataType=Float32)::MIRCubeModel
-
-    @debug """\n
-    Creating MIRCubeModel struct with shape $shape
-    ##############################################
-    """
-
-    # Make sure the floattype given is actually a type of float
-    @assert floattype <: AbstractFloat "floattype must be a type of AbstractFloat (Float32 or Float64)!"
-    # Swap the wavelength axis to be the FIRST axis since it is accessed most often and thus should be continuous in memory
-    shape2 = (shape[end], shape[1:end-1]...)
-
-    # Initialize the arrays for each part of the full 3D model
-    model = zeros(floattype, shape2...)
-    @debug "model cube"
-    unobscured_continuum = zeros(floattype, shape2...)
-    @debug "unobscured continuum cube"
-    obscured_continuum = zeros(floattype, shape2...)
-    @debug "obscured continuum cube"
-    stellar = zeros(floattype, shape2...)
-    @debug "stellar continuum comp cube"
-    dust_continuum = zeros(floattype, shape2..., n_dust_cont)
-    @debug "dust continuum comp cubes"
-    power_law = zeros(floattype, shape2..., n_power_law)
-    @debug "power law comp cubes"
-    dust_features = zeros(floattype, shape2..., length(df_names))
-    @debug "dust features comp cubes"
-    abs_features = zeros(floattype, shape2..., length(ab_names))
-    @debug "absorption features comp cubes"
-    extinction = zeros(floattype, shape2..., extinction_curve == "decompose" ? 4 : 1)
-    @debug "extinction comp cube"
-    abs_ice = zeros(floattype, shape2...)
-    @debug "abs_ice comp cube"
-    abs_ch = zeros(floattype, shape2...)
-    @debug "abs_ch comp cube"
-    hot_dust = zeros(floattype, shape2...)
-    @debug "hot dust comp cube"
-    templates = zeros(floattype, shape2..., length(temp_names))
-    @debug "templates comp cube"
-    lines = zeros(floattype, shape2..., length(line_names))
-    @debug "lines comp cubes"
-
-    MIRCubeModel(model, unobscured_continuum, obscured_continuum, stellar, dust_continuum, power_law, dust_features, abs_features, 
-        extinction, abs_ice, abs_ch, hot_dust, templates, lines)
-end
+#     MIRCubeModel(model, unobscured_continuum, obscured_continuum, stellar, dust_continuum, power_law, dust_features, abs_features, 
+#         extinction, abs_ice, abs_ch, hot_dust, templates, lines)
+# end
 
 
 
@@ -285,8 +121,8 @@ end
 function cubefitter_prepare_continuum(λ::Vector{<:QWave}, z::Real, out::Dict, λunit::Unitful.Units, 
     Iunit::Unitful.Units, region::SpectralRegion, name::String, cube::DataCube)
 
-    # Get dust options from the configuration file
-    model_parameters = construct_model_parameters(out, λunit, Iunit, region)
+    # Construct the ModelParameters object
+    model_parameters = construct_model_parameters(out, λunit, Iunit, region, z)
     vres = NaN*u"km/s"   # (vres doesnt make sense if the wavelength vector isnt logarithmic)
 
     # Count a few different parameters 
@@ -335,126 +171,52 @@ function cubefitter_prepare_continuum(λ::Vector{<:QWave}, z::Real, out::Dict, �
 end
 
 
+# Helper function for preparing emission line parameters for a CubeFitter object
+function cubefitter_prepare_lines(out::Dict, λunit::Unitful.Units, Iunit::Unitful.Units,
+    cube::DataCube, region::SpectralRegion)
+
+    # Construct the FitFeatures object for the lines
+    lines = construct_line_parameters(out, λunit, Iunit, region)
+
+    # Count the parameters
+    n_lines = length(lines.names)
+    n_acomps = total_num_profiles(lines)
+
+    # Buffer array for the number of fit line profiles in each spaxel
+    n_fit_comps = Dict{Symbol, Matrix{Int}}()
+    for name ∈ lines.names
+        n_fit_comps[name] = ones(Int, size(cube.I)[1:2])
+    end
+
+    # Adjust the sort_line_components option based on the relative flags in the lines object
+    relative_flags = BitVector([lines.rel_amp, lines.rel_voff, lines.rel_fwhm])
+    if !haskey(out, :sort_line_components)
+        out[:sort_line_components] = nothing
+        if all(.~relative_flags)
+            out[:sort_line_components] = :flux
+        end
+    elseif !isnothing(out[:sort_line_components])
+        out[:sort_line_components] = Symbol(out[:sort_line_components])
+    end
+
+    lines, n_lines, n_acomps, n_fit_comps
+end
+
+
 # Helper function for counting the total number of MIR continuum parameters
 function count_cont_parameters(model::ModelParameters; split::Bool=false)
     # Continuum parameters
     n_params_cont = length(model.continuum)
     # If the "split" option is true, keep the continuum and PAHs separate, otherwise they are combined
     if !split
-        n_params_cont += length(get_flattened_fit_parameters(model.dust_features))
+        n_params_cont += count_dust_parameters(model)
     end
     n_params_cont
 end
 
 
-# MIR implementation of the get_continuum_plimits function
-function get_mir_continuum_plimits(cube_fitter::CubeFitter; init::Bool=false, split::Bool=false)
-
-    dust_features = cube_fitter.dust_features
-    abs_features = cube_fitter.abs_features
-    abs_taus = cube_fitter.abs_taus
-    continuum = cube_fitter.continuum
-
-    amp_dc_plim = (0., Inf)
-    amp_df_plim = (0., clamp(1 / exp(-continuum.τ_97.limits[2]), 1., Inf))
-
-    stellar_plim = [amp_dc_plim, continuum.T_s.limits]
-    stellar_lock = [!cube_fitter.fit_stellar_continuum, continuum.T_s.locked]
-    dc_plim = vcat([[amp_dc_plim, Ti.limits] for Ti ∈ continuum.T_dc]...)
-    dc_lock = vcat([[false, Ti.locked] for Ti ∈ continuum.T_dc]...)
-    pl_plim = vcat([[amp_dc_plim, pl.limits] for pl ∈ continuum.α]...)
-    pl_lock = vcat([[false, pl.locked] for pl ∈ continuum.α]...)
-    if cube_fitter.lock_hot_dust[1] || cube_fitter.nuc_fit_flag[1]
-        dc_lock[1:2] .= true
-    end
-
-    df_plim = Tuple{Float64,Float64}[]
-    df_lock = Bool[]
-    for n in 1:length(dust_features.names)
-        append!(df_plim, [amp_df_plim, dust_features.mean[n].limits, dust_features.fwhm[n].limits])
-        append!(df_lock, [false, dust_features.mean[n].locked, dust_features.fwhm[n].locked])
-        if dust_features.profiles[n] == :PearsonIV
-            append!(df_plim, [dust_features.index[n].limits, dust_features.cutoff[n].limits])
-            append!(df_lock, [dust_features.index[n].locked, dust_features.cutoff[n].locked])
-        else
-            push!(df_plim, dust_features.asym[n].limits)
-            push!(df_lock, dust_features.asym[n].locked)
-        end
-    end
-
-    ab_plim = vcat([[tau.limits, mi.limits, fi.limits, ai.locked] for (tau, mi, fi, ai) ∈ 
-        zip(abs_taus, abs_features.mean, abs_features.fwhm, abs_features.asym)]...)
-    ab_lock = vcat([[tau.locked, mi.locked, fi.locked, ai.locked] for (tau, mi, fi, ai) ∈ 
-        zip(abs_taus, abs_features.mean, abs_features.fwhm, abs_features.asym)]...)
-
-    if cube_fitter.extinction_curve != "decompose"
-        ext_plim = [continuum.τ_97.limits, continuum.τ_ice.limits, continuum.τ_ch.limits, continuum.β.limits, continuum.Cf.limits]
-        ext_lock = [continuum.τ_97.locked, continuum.τ_ice.locked, continuum.τ_ch.locked, continuum.β.locked, continuum.Cf.locked]
-    else
-        ext_plim = [continuum.N_oli.limits, continuum.N_pyr.limits, continuum.N_for.limits, 
-                    continuum.τ_ice.limits, continuum.τ_ch.limits, continuum.β.limits, continuum.Cf.limits]
-        ext_lock = [continuum.N_oli.locked, continuum.N_pyr.locked, continuum.N_for.locked, 
-                    continuum.τ_ice.locked, continuum.τ_ch.locked, continuum.β.locked, continuum.Cf.locked]
-    end
-
-    # Lock tau_9.7 if an extinction map has been provided
-    if !isnothing(cube_fitter.extinction_map) && !init
-        if cube_fitter.extinction_curve != "decompose"
-            ext_lock[1] = true
-        else
-            ext_lock[1:3] .= true
-        end
-    end
-    # Also lock if force_noext
-    # if force_noext
-    #     ext_lock[1] = true
-    # end
-    # # Also lock if the continuum is within 1 std dev of 0
-    # if nanmedian(I) ≤ 2nanmedian(σ)
-    #     ext_lock[:] .= true
-    # end
-    # Lock N_pyr and N_for if the option is given
-    if cube_fitter.extinction_curve == "decompose" && cube_fitter.decompose_lock_column_densities && !init
-        ext_lock[2:3] .= true
-    end
-
-    hd_plim = cube_fitter.fit_sil_emission ? [amp_dc_plim, continuum.T_hot.limits, continuum.Cf_hot.limits, 
-        continuum.τ_warm.limits, continuum.τ_cold.limits, continuum.sil_peak.limits] : []
-    hd_lock = cube_fitter.fit_sil_emission ? [false, continuum.T_hot.locked, continuum.Cf_hot.locked,
-        continuum.τ_warm.locked, continuum.τ_cold.locked, continuum.sil_peak.locked] : []
-   
-    if cube_fitter.fit_temp_multexp
-        temp_plim = repeat([(0.0, Inf)], 8)
-        temp_lock = init ? BitVector([0,1,0,1,0,1,0,1]) : falses(8)
-    else
-        temp_plim = [ta.limits for ta in continuum.temp_amp]
-        temp_lock = [ta.locked for ta in continuum.temp_amp]
-    end
-    temp_ind_0 = 1 + length(stellar_lock) + length(dc_lock) + length(pl_lock) + length(ext_lock) + length(ab_lock) + length(hd_lock)
-    temp_ind_1 = temp_ind_0 + length(temp_lock) - 1 
-    if cube_fitter.tie_template_amps
-        tied_pairs = Tuple[]
-        for i in (temp_ind_0+1):temp_ind_1
-            push!(tied_pairs, (temp_ind_0, i, 1.0))
-        end
-        tied_indices = Vector{Int}(sort([tp[2] for tp in tied_pairs]))
-    else
-        tied_pairs = Tuple[]
-        tied_indices = Int[]
-    end
-
-    if !split
-        plims = Vector{Tuple}(vcat(stellar_plim, dc_plim, pl_plim, ext_plim, ab_plim, hd_plim, temp_plim, df_plim))
-        lock = BitVector(vcat(stellar_lock, dc_lock, pl_lock, ext_lock, ab_lock, hd_lock, temp_lock, df_lock))
-        plims, lock, tied_pairs, tied_indices
-    else
-        # Split up for the two different stages of continuum fitting -- with templates and then with the PAHs
-        plims_1 = Vector{Tuple}(vcat(stellar_plim, dc_plim, pl_plim, ext_plim, ab_plim, hd_plim, temp_plim, [amp_df_plim, amp_df_plim]))
-        lock_1 = BitVector(vcat(stellar_lock, dc_lock, pl_lock, ext_lock, ab_lock, hd_lock, temp_lock, [false, false]))
-        plims_2 = Vector{Tuple}(df_plim)
-        lock_2 = BitVector(df_lock)
-        plims_1, plims_2, lock_1, lock_2, tied_pairs, tied_indices
-    end
+function count_dust_parameters(model::ModelParameters)
+    length(get_flattened_fit_parameters(model.dust_features))
 end
 
 

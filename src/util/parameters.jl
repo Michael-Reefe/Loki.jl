@@ -8,6 +8,7 @@ related quantities.
 # aliases for convenience
 const QUnitless = typeof(NoUnits)
 const QLength = Quantity{<:Real, u"𝐋"}
+const QTemp = typeof(1.0u"K")
 
 const Qum = typeof(1.0u"μm")
 const QAng = typeof(1.0u"angstrom")
@@ -85,7 +86,12 @@ struct FlatTie <: Tie
 end
 
 # A parameter that is not being fit for, but is nevertheless of interest to us
-struct NonFitParameter{T<:Number} <: Parameter end
+struct NonFitParameter{T<:Number} <: Parameter 
+    _type::Type
+    function NonFitParameter{T}() where {T}
+        new{T}(T)
+    end
+end
 
 # A collection of FitParameter with names 
 # Think of this like a dictionary but with a defined order (couldve just used an OrderedDict but I already wrote all of this so...)
@@ -160,6 +166,10 @@ struct FitFeatures{S<:Union{Symbol,String},Q<:QWave}
 end
 
 struct NoConfig <: Config end
+
+struct PAHConfig <: Config 
+    all_feature_names::Vector{String}    # the names of each individual feature (ignoring complexes)
+end
 
 struct LineConfig <: Config
     annotate::BitVector                  # whether or not to annotate
@@ -332,15 +342,18 @@ function parameter_from_dict_fwhm(dict::Dict; units::Unitful.Units=unit(1.0))
     FitParameter(value, locked, lims)
 end
 
+# NOTE: this does the exact same thing as the builtin "indexin" function -- indexin(needles, haystack)
+# for arrays of strings. But this implementation is faster and allocates less memory
+fast_indexin(needles, haystack) = [findfirst(straw -> straw == needle, haystack) for needle in needles]
 
 # methods for obtaining a named parameter
 Base.getindex(p::Parameters, ind) = p._parameters[ind]
 function Base.getindex(p::Parameters, name::String)
-    ind = findfirst(p.names .== name)
+    ind = findfirst(pname -> pname == name, p.names)
     p._parameters[ind]
 end
 function Base.getindex(p::Parameters, names::AbstractVector{String})
-    inds = [findfirst(p.names .== name) for name in names]
+    inds = fast_indexin(names, p.names)
     p._parameters[inds]
 end
 
@@ -371,7 +384,7 @@ function Base.deleteat!(p::Parameters, ind::Int)
     deleteat!(p._parameters, ind)
 end
 function Base.deleteat!(p::Parameters, name::String)
-    ind = findfirst(p.names .== name)
+    ind = findfirst(pname -> pname == name, p.names)
     deleteat!(p, ind)
 end
 
@@ -432,7 +445,7 @@ function get_tied_pairs(p::FitParameters)
         if isnothing(tie) 
             continue
         end
-        j = findfirst(tie_groups .== tie.group)
+        j = findfirst(tg -> tg == tie.group, tie_groups)
         if j == i 
             continue
         end

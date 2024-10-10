@@ -11,82 +11,85 @@ const C_KMS = 299792.458*u"km/s"           # Speed of light in km/s
 const h_ERGS = 6.62607015e-27*u"erg*s"     # Planck constant in erg*s
 const kB_ERGK = 1.380649e-16*u"erg/K"      # Boltzmann constant in erg/K
 
-# First constant for Planck function, in MJy/sr/μm:
-# 2hν^3/c^2 = 2h(c/λ)^3/c^2 = (2h/c^2 erg/s/cm^2/Hz/sr) * (1e23 Jy per erg/s/cm^2/Hz) / (1e6 MJy/Jy) * (c * 1e9 μm/km)^3 / (λ μm)^3
-# const Bν_1::Float64 = 2h_ERGS/(C_KMS*1e5)^2 * 1e23 / 1e6 * (C_KMS*1e9)^3
-
-# Second constant for Planck function, in μm*K  
-# hν/kT = hc/λkT = (hc/k cm*K) * (1e4 μm/cm) / (λ μm)
-# const Bν_2::Float64 = h_ERGS*(C_KMS*1e5) / kB_ERGK * 1e4
+# Constants for the Planck function
+const Bν_1_μm = uconvert(u"erg/s/cm^2/Hz/sr*μm^3", 2h_ERGS*C_KMS)
+const Bν_2_μm = uconvert(u"μm*K", h_ERGS*C_KMS/kB_ERGK)
+const Bν_1_AA = uconvert(u"erg/s/cm^2/Hz/sr*angstrom^3", Bν_1_μm)
+const Bν_2_AA = uconvert(u"angstrom*K", Bν_2_μm)
 
 # Wein's law constant of proportionality in μm*K
-const b_Wein::Float64 = 2897.771955*u"μm*K"
+const b_Wein = 2897.771955*u"μm*K"
 
-# Saved Kemper, Vriend, & Tielens (2004) extinction profile
-const kvt_prof::Matrix{Float64} =  [8.0  0.06;
-                                    8.2  0.09;
-                                    8.4  0.16;
-                                    8.6  0.275;
-                                    8.8  0.415;
-                                    9.0  0.575;
-                                    9.2  0.755;
-                                    9.4  0.895;
-                                    9.6  0.98;
-                                    9.7  0.99;
-                                    9.75 1.00;
-                                    9.8  0.99;
-                                    10.0 0.94;
-                                    10.2 0.83;
-                                    10.4 0.745;
-                                    10.6 0.655;
-                                    10.8 0.58;
-                                    11.0 0.525;
-                                    11.2 0.43;
-                                    11.4 0.35;
-                                    11.6 0.27;
-                                    11.8 0.20;
-                                    12.0 0.13;
-                                    12.2 0.09;
-                                    12.4 0.06;
-                                    12.6 0.045;
-                                    12.7 0.04314]
+# A few other random constants
+const o_peak = 10.0178u"μm"
 
+# This is written such that we only load in the templates we need for any given fit
+_silicate_interp = nothing
+_silicate_interp_end = nothing
+_extinction_poly_1a = nothing
+_extinction_poly_1b = nothing
+_extinction_poly_2a = nothing
+_extinction_poly_2b = nothing
+_ice_interp = nothing
+_ch_interp = nothing
+_smith3_interp = nothing
+_smith4_interp = nothing
 
-# Save the Donnan et al. 2022 profile as a constant
-const DP_prof = silicate_dp()
-const DP_interp = Spline1D(DP_prof[1], DP_prof[2]; k=3, bc="nearest")
+# Load the appropriate templates that we need into the cache
+function _load_dust_templates(silicate_absorption::String, extinction_curve::String, fit_ch_abs::Bool,
+    use_pah_templates::Bool)
 
-# Save the Chiar+Tielens 2005 profile as a constant
-const CT_prof = silicate_ct()
-const CT_interp = Spline1D(CT_prof[1], CT_prof[2]; k=3, bc="nearest")
+    global _silicate_interp, _silicate_interp_end
+    if silicate_absorption == "d+"
+        # Save the Donnan et al. 2022 profile as a constant
+        DP_prof = silicate_dp()
+        _silicate_interp = Spline1D(DP_prof[1], DP_prof[2]; k=3, bc="nearest")
+    elseif silicate_absorption == "ct"
+        # Save the Chiar+Tielens 2005 profile as a constant
+        CT_prof = silicate_ct()
+        _silicate_interp = Spline1D(CT_prof[1], CT_prof[2]; k=3, bc="nearest")
+    elseif silicate_absorption == "kvt"
+        # Save the KVT profile as a constant
+        KVT_prof = silicate_kvt()
+        _silicate_interp = Spline1D(KVT_prof[1], KVT_prof[2], k=2, bc="nearest")
+        _silicate_interp_end = Spline1D([KVT_prof[1][end], KVT_prof[1][end]+2], [KVT_prof[2][end], 0.], k=1, bc="nearest")
+    elseif silicate_absorption == "ohm"
+        # Save the OHM 1992 profile as a constant
+        OHM_prof = silicate_ohm()
+        _silicate_interp = Spline1D(OHM_prof[1], OHM_prof[2]; k=3, bc="nearest")
+    end
 
-# Save the KVT profile as a constant
-const KVT_interp = Spline1D(kvt_prof[:, 1], kvt_prof[:, 2], k=2, bc="nearest")
-const KVT_interp_end = Spline1D([kvt_prof[end, 1], kvt_prof[end, 1]+2], [kvt_prof[end, 2], 0.], k=1, bc="nearest")
+    if extinction_curve == "ccm"
+        global _extinction_poly_1a, _extinction_poly_1b, _extinction_poly_2a, _extinction_poly_2b
+        # Polynomials for calculating the CCM extinction curve
+        _extinction_poly_1a = Polynomial([1.0, 0.104, -0.609, 0.701, 1.137, -1.718, -0.827, 1.647, -0.505])
+        _extinction_poly_1b = Polynomial([0.0, 1.952, 2.908, -3.989, -7.985, 11.102, 5.491, -10.805, 3.347])
+        _extinction_poly_2a = Polynomial([-1.703, -0.628, 0.137, -0.070])
+        _extinction_poly_2b = Polynomial([13.670, 4.257, -0.420, 0.374])
+    elseif extinction_curve == "calz"
+        global _extinction_poly_1a, _extinction_poly_1b
+        # Polynomials for calculating the Calzetti et al. (2000) extinction curve
+        _extinction_poly_1a = Polynomial([-1.857, 1.040])
+        _extinction_poly_1b = Polynomial([-2.156, 1.509, -0.198, 0.011])
+    end
 
-# Save the OHM 1992 profile as a constant
-const OHM_prof = silicate_ohm()
-const OHM_interp = Spline1D(OHM_prof[1], OHM_prof[2]; k=3, bc="nearest")
+    if fit_ch_abs
+        global _ice_interp, _ch_interp
+        # Save the Ice+CH optical depth template as a constant
+        IceCHTemp = read_ice_ch_temps()
+        _ice_interp = Spline1D(IceCHTemp[1], IceCHTemp[2]; k=3)
+        _ch_interp = Spline1D(IceCHTemp[3], IceCHTemp[4]; k=3)
+    end
 
-# Save the Smith+2006 PAH templates as constants
-const SmithTemps = read_smith_temps()
-const Smith3_interp = Spline1D(SmithTemps[1], SmithTemps[2]; k=3, bc="nearest")
-const Smith4_interp = Spline1D(SmithTemps[3], SmithTemps[4]; k=3, bc="nearest")
+    # Save the Smith+2006 PAH templates as constants
+    if use_pah_templates
+        global _smith3_interp, _smith4_interp
+        SmithTemps = read_smith_temps()
+        _smith3_interp = Spline1D(SmithTemps[1], SmithTemps[2]; k=3, bc="nearest")
+        _smith4_interp = Spline1D(SmithTemps[3], SmithTemps[4]; k=3, bc="nearest")
+    end
 
-# Save the Ice+CH optical depth template as a constant
-const IceCHTemp = read_ice_ch_temps()
-const Ice_interp = Spline1D(IceCHTemp[1], IceCHTemp[2]; k=3)
-const CH_interp = Spline1D(IceCHTemp[3], IceCHTemp[4]; k=3)
-
-# Polynomials for calculating the CCM extinction curve
-const CCM_optPoly_a = Polynomial([1.0, 0.104, -0.609, 0.701, 1.137, -1.718, -0.827, 1.647, -0.505])
-const CCM_optPoly_b = Polynomial([0.0, 1.952, 2.908, -3.989, -7.985, 11.102, 5.491, -10.805, 3.347])
-const CCM_fuvPoly_a = Polynomial([-1.703, -0.628, 0.137, -0.070])
-const CCM_fuvPoly_b = Polynomial([13.670, 4.257, -0.420, 0.374])
-
-# Polynomials for calculating the Calzetti et al. (2000) extinction curve
-const Calz_poly_a = Polynomial([-1.857, 1.040])
-const Calz_poly_b = Polynomial([-2.156, 1.509, -0.198, 0.011])
+end
 
 ########################################### UTILITY FUNCTIONS ###############################################
 
@@ -423,42 +426,6 @@ end
 
 
 """
-    MJysr_to_cgs(MJy, λ)
-
-Convert specific intensity in MegaJanskys per steradian to CGS units 
--> erg s^-1 cm^-2 μm^-1 sr^-1, given the wavelength `λ` in μm
-
-This converts from intensity per unit frequency to per unit wavelength (Fλ = Fν|dλ/dν| = Fν * c/λ^2)
-"""
-@inline MJysr_to_cgs(MJy, λ) = MJy * 1e6 * 1e-23 * (C_KMS * 1e9) / λ^2
-
-
-"""
-    MJy_to_cgs_err(MJy, MJy_err, λ, λ_err)
-
-Calculate the uncertainty in intensity in CGS units (erg s^-1 cm^-2 μm^-1 sr^-1)
-given the uncertainty in intensity in MJy sr^-1 and the uncertainty in wavelength in μm
-"""
-function MJysr_to_cgs_err(MJy, MJy_err, λ, λ_err)
-    if MJy == 0.
-        cgs = 0.
-        err = 1e6 * 1e-23 * (C_KMS * 1e9) / λ^2 * MJy_err
-    else
-        # Get the CGS value of the intensity
-        cgs = MJysr_to_cgs(MJy, λ)
-        # σ_cgs^2 / cgs^2 = σ_MJy^2 / MJy^2 + 4σ_λ^2 / λ^2
-        frac_err2 = (MJy_err / MJy)^2 + 4(λ_err / λ)^2
-        # rearrange to solve for σ_cgs
-        err = √(frac_err2 * cgs^2)
-    end
-    if !isfinite(err)
-        err = 0.
-    end
-    err
-end
-
-
-"""
     ln_likelihood(data, model, err)
 
 Natural log of the likelihood for a given `model`, `data`, and `err`
@@ -507,11 +474,18 @@ end
 """
     Blackbody_ν(λ, Temp)
 
-Return the Blackbody function Bν (per unit FREQUENCY) in MJy/sr,
-given a wavelength in μm and a temperature in Kelvins.
+Return the Blackbody function Bν (per unit FREQUENCY) in erg/s/cm^2/Hz/sr.
+The two methods ensure that the wavelength can be given in either μm or angstroms
+and the returned units will still be the same.
+
+This function will be called frequently inside the fitting routine, so it's
+gotta go fast.
 """
-@inline function Blackbody_ν(λ::Real, Temp::Real)
-    Bν_1/λ^3 / expm1(Bν_2/(λ*Temp))
+@inline function Blackbody_ν(λ::AbstractVector{<:Qum}, Temp::QTemp)
+    @. Bν_1_μm/λ^3 / expm1(Bν_2_μm/(λ*Temp))
+end
+@inline function Blackbody_ν(λ::AbstractVector{<:QAng}, Temp::QTemp)
+    @. Bν_1_AA/λ^3 / expm1(Bν_2_AA/(λ*Temp))
 end
 
 
@@ -521,7 +495,7 @@ end
 Return the peak wavelength (in μm) of a Blackbody spectrum at a given temperature `Temp`,
 using Wein's Displacement Law.
 """
-@inline function Wein(Temp::Real)
+@inline function Wein(Temp::QTemp)
     b_Wein / Temp
 end
 
@@ -532,8 +506,8 @@ end
 Simple power law function where the flux is proportional to the wavelength to the power alpha,
 normalized at 9.7 um.
 """
-@inline function power_law(λ::Real, α::Real, ref_λ::Real=9.7)
-    (λ/ref_λ)^α
+@inline function power_law(λ::AbstractVector{<:QWave}, α::Real, ref_λ::QWave=9.7u"μm")
+    @. ustrip(λ/ref_λ)^α
 end
 
 
@@ -543,9 +517,9 @@ end
 A hot silicate dust emission profile, i.e. Gallimore et al. (2010), with an amplitude A,
 temperature T, covering fraction Cf, and optical depths τ_warm and τ_cold.
 """
-function silicate_emission(λ, A, T, Cf, τ_warm, τ_cold, λ_peak)
-    o_peak = 10.0178
-    Δλ = o_peak - λ_peak
+function silicate_emission(λ::AbstractVector{<:QWave}, A::Real, T::QTemp, Cf::Real, τ_warm::Real, 
+    τ_cold::Real, λ_peak::QWave)
+    Δλ = uconvert(unit(λ_peak), o_peak - λ_peak)
     λshift = λ .+ Δλ
     ext_curve = τ_ohm(λshift)
 
@@ -684,7 +658,7 @@ function attenuation_calzetti(λ::Vector{<:Real}, E_BV::Real; δ_uv::Real=0., Cf
     atten = @. 10^(-0.4 * E_BV * (kprime + Dλ) * (λ / 0.55)^δ_uv)
 
     # apply covering fraction
-    @. Cf + (1 - Cf)*atten
+    @. Cf*atten + (1 - Cf)
 end
 
 
@@ -932,12 +906,10 @@ end
 
 Calculate the extinction profile based on Ossenkopf, Henning, & Mathis (1992)
 """
-function τ_ohm(λ::Vector{<:Real})
-
-    ext = OHM_interp(λ)
+function τ_ohm(λ::Vector{<:QWave})
+    ext = OHM_interp(uconvert.(u"μm", λ))
     _, wh = findmin(x -> abs(x - 9.7), OHM_prof[1])
     ext ./= OHM_prof[2][wh]
-
     ext
 end
 

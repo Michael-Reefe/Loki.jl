@@ -8,6 +8,7 @@ function create_dust_features(dust::Dict, λunit::Unitful.Units, Iunit::Unitful.
     complexes = String[]
     feat_labels = String[]
     fit_profiles = FitProfiles()
+    all_df_names = String[]
     key = do_absorption ? "absorption_features" : "dust_features"
     short_key = do_absorption ? "abs_features" : "dust_features"
 
@@ -98,6 +99,7 @@ function create_dust_features(dust::Dict, λunit::Unitful.Units, Iunit::Unitful.
             push!(fit_profiles, FitProfile(profile, fit_parameters, nonfit_parameters))
             push!(cent_vals, cent_val) 
             push!(complexes, complex)
+            push!(all_df_names, df)
 
             wl = pah_name_to_float(complex)
             push!(feat_labels, "PAH $wl " * L"${\rm \mu m}$")
@@ -108,6 +110,7 @@ function create_dust_features(dust::Dict, λunit::Unitful.Units, Iunit::Unitful.
         ss = sortperm(cent_vals)
         cent_vals = cent_vals[ss]
         complexes = complexes[ss]
+        all_df_names = all_df_names[ss]
         feat_labels = feat_labels[ss]
         fit_profiles = fit_profiles[ss]
 
@@ -119,7 +122,7 @@ function create_dust_features(dust::Dict, λunit::Unitful.Units, Iunit::Unitful.
         composite = NonFitParameters[]  # composite parameters for multi-profiled features
 
         for complex in u_complexes
-            inds = findall(complexes .== complex)
+            inds = findall(c -> c == complex, complexes)
             push!(all_fit_profiles, fit_profiles[inds])
             wl = pah_name_to_float(complex)
             push!(u_cent_vals, wl*u"μm")
@@ -135,11 +138,13 @@ function create_dust_features(dust::Dict, λunit::Unitful.Units, Iunit::Unitful.
             push!(composite, NonFitParameters(epnames, eplabels, eptrans, eparams))
         end
 
-        FitFeatures(u_complexes, u_feat_labels, u_cent_vals, all_fit_profiles, composite, NoConfig())
+        cfg = PAHConfig(all_df_names)
+
+        FitFeatures(u_complexes, u_feat_labels, u_cent_vals, all_fit_profiles, composite, cfg)
     
     else
 
-        FitFeatures(String[], String[], typeof(1.0*λunit)[], FitProfiles[], NonFitParameters[], NoConfig())
+        FitFeatures(String[], String[], typeof(1.0*λunit)[], FitProfiles[], NonFitParameters[], PAHConfig(String[]))
     end
 end
 
@@ -231,7 +236,8 @@ end
 
 
 function construct_continuum_params!(params::Vector{FitParameter}, pnames::Vector{String}, plabels::Vector{String},
-    ptrans::Vector{Vector{Transformation}}, out::Dict, optical::Dict, infrared::Dict, λunit::Unitful.Units, Iunit::Unitful.Units)
+    ptrans::Vector{Vector{Transformation}}, out::Dict, optical::Dict, infrared::Dict, λunit::Unitful.Units, Iunit::Unitful.Units,
+    redshift::Real)
 
     # Leave it up to the user on whether or not to fit stellar pops
     if out[:fit_stellar_continuum]
@@ -242,6 +248,13 @@ function construct_continuum_params!(params::Vector{FitParameter}, pnames::Vecto
             t_mass = [RestframeTransform, LogTransform, NormalizeTransform]
             msg *= "\nMass $mass"
             age = parameter_from_dict(age; units=u"Gyr")
+            age_univ = age(u"Gyr", out[:cosmology], redshift)
+            # Check the upper limit on age and make sure it's not older than the age of the universe at a given redshift
+            if age_univ < age.plim[2]
+                @warn "The age of the universe at z=$redshift is younger than the upper limit on the SSP age $(age.plim[2]). " *
+                      "The upper limit will be reduced to match the universe age."
+                set_plim!(age, (age.plim[1], age_univ))
+            end
             t_age = Transformation[]
             msg *= "\nAge $age"
             z = parameter_from_dict(metal)
@@ -375,6 +388,10 @@ function construct_template_params!(params::Vector{FitParameter}, pnames::Vector
             tname = out[:template_names][i]
             for ni in 1:nchannels(region)
                 temp_A = parameter_from_dict(contin_options["template_amps"][i])
+                # Check if it should be tied
+                if out[:tie_template_amps]
+                    tie!(temp_A, Symbol(tname, "_amp"))
+                end
                 msg *= "\n$temp_A channel $ni"
                 push!(params, temp_A)
                 push!(pnames, "templates.$(tname).amp_$ni")
@@ -407,7 +424,8 @@ end
 Reads in the optical and infrared options files and creates parameter vectors for the 
 continuum and dust features.
 """
-function construct_continuum_parameters(out::Dict, λunit::Unitful.Units, Iunit::Unitful.Units, region::SpectralRegion)
+function construct_continuum_parameters(out::Dict, λunit::Unitful.Units, Iunit::Unitful.Units, region::SpectralRegion,
+    redshift::Real)
 
     params = FitParameter[]
     pnames = String[]
@@ -432,7 +450,7 @@ function construct_continuum_parameters(out::Dict, λunit::Unitful.Units, Iunit:
 
     # Add parameters iteratively
     construct_extinction_params!(params, pnames, plabels, ptrans, out, optical, infrared, λunit, Iunit, region)
-    construct_continuum_params!(params, pnames, plabels, ptrans, out, optical, infrared, λunit, Iunit)
+    construct_continuum_params!(params, pnames, plabels, ptrans, out, optical, infrared, λunit, Iunit, redshift)
     construct_template_params!(params, pnames, plabels, ptrans, out, infrared, region)    
 
     # Make final continuum object
@@ -912,8 +930,9 @@ end
 The main function for constructing a ModelParameters object, which describes all the parameters of the model,
 including those that are being fit and those that are not being fit.
 """
-function construct_model_parameters(out::Dict, λunit::Unitful.Units, Iunit::Unitful.Units, region::SpectralRegion)
-    continuum, dust_features, statistics = construct_continuum_parameters(out, λunit, Iunit, region)
+function construct_model_parameters(out::Dict, λunit::Unitful.Units, Iunit::Unitful.Units, region::SpectralRegion,
+    redshift::Real)
+    continuum, dust_features, statistics = construct_continuum_parameters(out, λunit, Iunit, region, redshift)
     lines = construct_line_parameters(out, λunit, Iunit, region)
     ModelParameters(continuum, dust_features, lines, statistics)
 end
