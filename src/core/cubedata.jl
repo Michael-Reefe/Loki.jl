@@ -638,7 +638,7 @@ function calculate_statistical_errors!(cube::DataCube,
     λ = cube.λ
 
     if isnothing(overrides)
-        _, _, _, cent_vals = parse_lines(cube.spectral_region)
+        _, _, _, cent_vals = parse_lines(cube.spectral_region, unit(λ[1]))
         overrides = Vector{Tuple{eltype(cent_vals),eltype(cent_vals)}}()
         for λi in cent_vals
             push!(overrides, λi .* (1-mask_width/C_KMS, 1+mask_width/C_KMS))

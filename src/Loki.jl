@@ -259,14 +259,12 @@ export DataCube,   # DataCube struct
 include("util/parameters.jl")
 include("core/cubedata.jl")
 include("core/cubefit.jl")
-include("core/cubefit_mir.jl")
-include("core/cubefit_opt.jl")
+include("core/cubefit_helpers.jl")
 
 include("util/parsing.jl")
 include("util/create_params.jl")
 include("util/math.jl")
-include("core/model_mir.jl")
-include("core/model_opt.jl")
+include("core/model.jl")
 
 include("core/fitdata.jl")
 include("core/fitplot.jl")

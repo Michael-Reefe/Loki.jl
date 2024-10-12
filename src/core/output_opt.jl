@@ -84,11 +84,11 @@ function assign_outputs_opt(out_params::AbstractArray{<:Real}, out_errs::Abstrac
             end
             # Special case for the stellar pop masses
             if contains(pname, "stellar_populations") && contains(pname, "mass")
-                ssp_med = median([cube_fitter.ssp_templates[j](out_params[index, pᵢ+1], out_params[index, pᵢ+2]) 
+                ssp_max = maximum([cube_fitter.ssp_templates[j](out_params[index, pᵢ+1], out_params[index, pᵢ+2]) 
                     for j in eachindex(cube_fitter.ssp_λ)])
-                val *= Ω_med / ssp_med
-                err_upp *= Ω_med / ssp_med
-                err_low *= Ω_med / ssp_med
+                val *= Ω_med / ssp_max
+                err_upp *= Ω_med / ssp_max
+                err_low *= Ω_med / ssp_max
             end
 
             # Convert from per unit wavelength (angstrom) to per unit frequency (Hz)

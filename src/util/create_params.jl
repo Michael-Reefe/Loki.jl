@@ -66,14 +66,16 @@ function create_dust_features(dust::Dict, λunit::Unitful.Units, Iunit::Unitful.
             end
             if profile == :Drude
                 push!(names, prefix * "asym")
-                push!(labels, L"$a$")
+                push!(labels, L"$a$ (%$(latex(λunit))$^{-1}$)")
                 push!(trans, Transformation[])
                 if haskey(dust[key][df], "asym")
-                    asym = parameter_from_dict_fwhm(dust[key][df]["asym"])  # (fwhm method so that uncertainties are fractional)
+                    # units are inverse wavelength 
+                    asym = parameter_from_dict_fwhm(dust[key][df]["asym"]; units=u"μm^-1")  # (fwhm method so that uncertainties are fractional)
+                    asym = uconvert(unit(1.0/λunit), asym)
                     msg *= "\nAsym $(asym)"
                     push!(_params, asym)
                 else # only add a default asym parameter if its a Drude profile
-                    asym = FitParameter(0., true, (-0.01, 0.01))
+                    asym = FitParameter(0.0/λunit, true, (-0.01, 0.01)./λunit)
                     msg *= "\nAsym $(asym)"
                     push!(_params, asym)
                 end
@@ -175,15 +177,6 @@ function construct_extinction_params!(params::Vector{FitParameter}, pnames::Vect
         push!(plabels, L"$\delta_{\rm UV}$")
         push!(ptrans, Transformation[])
     end
-    if out[:fit_covering_frac]
-        frac = parameter_from_dict(optical["extinction"]["frac"])
-        msg *= "\nfrac $frac"
-        push!(params, frac)
-        push!(pnames, prefix * "frac")
-        push!(plabels, L"$C_f$")
-        push!(ptrans, Transformation[])
-        @debug msg
-    end
     # Silicate absorption profiles
     if out[:silicate_absorption] == "decompose"
         N_oli = parameter_from_dict(infrared["extinction"]["N_oli"]; units=u"g/cm^2")
@@ -205,25 +198,23 @@ function construct_extinction_params!(params::Vector{FitParameter}, pnames::Vect
         push!(plabels, L"$\tau_{9.7}$")
         push!(ptrans, Transformation[])
     end
-    τ_ice = parameter_from_dict(infrared["extinction"]["tau_ice"])
-    msg *= "\nTau_ice $τ_ice"
-    τ_ch = parameter_from_dict(infrared["extinction"]["tau_ch"])
-    if haskey(out, :fit_ch_abs)
-        if !out[:fit_ch_abs]
-            set_val!(τ_ch, 0.0)
-            lock!(τ_ch)
-        else
-            unlock!(τ_ch)
-        end
-    end
-    msg *= "\nTau_CH $τ_ch"
     β = parameter_from_dict(infrared["extinction"]["beta"])
     msg *= "\nBeta $β"
+    push!(params, β)
+    push!(pnames, prefix .* "beta")
+    push!(plabels, L"$\beta")
+    push!(ptrans, Transformation[])
+    if out[:fit_ch_abs]
+        τ_ice = parameter_from_dict(infrared["extinction"]["tau_ice"])
+        msg *= "\nTau_ice $τ_ice"
+        τ_ch = parameter_from_dict(infrared["extinction"]["tau_ch"])
+        msg *= "\nTau_CH $τ_ch"
+        append!(params, [τ_ice, τ_ch])
+        append!(pnames, prefix .* ["tau_ice", "tau_ch"])
+        append!(plabels, [L"$\tau_{\rm ice}$", L"$\tau_{\rm CH}$"]) 
+        append!(ptrans, [Transformation[], Transformation[]])
+    end
     @debug msg
-    append!(params, [τ_ice, τ_ch, β])
-    append!(pnames, prefix .* ["tau_ice", "tau_ch", "beta"])
-    append!(plabels, [L"$\tau_{\rm ice}$", L"$\tau_{\rm CH}$", L"$\beta$", L"$C_f$"])
-    append!(ptrans, [Transformation[], Transformation[], Transformation[], Transformation[]])
 
     # These will be automatically sorted out by the wavelength range in the region object
     abs_features = create_dust_features(infrared, λunit, Iunit, region; do_absorption=true)
@@ -232,6 +223,19 @@ function construct_extinction_params!(params::Vector{FitParameter}, pnames::Vect
         append!(params, abs_parameters._parameters)
         append!(pnames, abs_parameters.names)
     end
+
+    # Covering fraction
+    if out[:fit_covering_frac]
+        frac = parameter_from_dict(optical["extinction"]["frac"])
+        msg *= "\nfrac $frac"
+        push!(params, frac)
+        push!(pnames, prefix * "frac")
+        push!(plabels, L"$C_f$")
+        push!(ptrans, Transformation[])
+        @debug msg
+    end
+
+    abs_features
 end
 
 
@@ -449,7 +453,7 @@ function construct_continuum_parameters(out::Dict, λunit::Unitful.Units, Iunit:
     validate_ir_file(infrared)
 
     # Add parameters iteratively
-    construct_extinction_params!(params, pnames, plabels, ptrans, out, optical, infrared, λunit, Iunit, region)
+    abs_features = construct_extinction_params!(params, pnames, plabels, ptrans, out, optical, infrared, λunit, Iunit, region)
     construct_continuum_params!(params, pnames, plabels, ptrans, out, optical, infrared, λunit, Iunit, redshift)
     construct_template_params!(params, pnames, plabels, ptrans, out, infrared, region)    
 
@@ -499,7 +503,7 @@ function construct_continuum_parameters(out::Dict, λunit::Unitful.Units, Iunit:
     strans = [Transformation[], Transformation[]]
     statistics = NonFitParameters(sname, slabel, strans, sparam)
 
-    continuum, dust_features, statistics
+    continuum, abs_features, dust_features, statistics
 end
 
 
@@ -824,7 +828,7 @@ function construct_line_parameters(out::Dict, λunit::Unitful.Units, Iunit::Unit
     """
 
     # Read in the lines file
-    lines, profiles, acomp_profiles, cent_vals = parse_lines(region)
+    lines, profiles, acomp_profiles, cent_vals = parse_lines(region, λunit)
 
     # Create the kinematic groups
     #   ---> kinematic groups apply to all additional components of lines as well as the main component
@@ -932,7 +936,7 @@ including those that are being fit and those that are not being fit.
 """
 function construct_model_parameters(out::Dict, λunit::Unitful.Units, Iunit::Unitful.Units, region::SpectralRegion,
     redshift::Real)
-    continuum, dust_features, statistics = construct_continuum_parameters(out, λunit, Iunit, region, redshift)
+    continuum, abs_features, dust_features, statistics = construct_continuum_parameters(out, λunit, Iunit, region, redshift)
     lines = construct_line_parameters(out, λunit, Iunit, region)
-    ModelParameters(continuum, dust_features, lines, statistics)
+    ModelParameters(continuum, abs_features, dust_features, lines, statistics)
 end

@@ -13,6 +13,9 @@ const QTemp = typeof(1.0u"K")
 const Qum = typeof(1.0u"μm")
 const QAng = typeof(1.0u"angstrom")
 const QWave = Union{Qum,QAng}
+const QInvum = typeof(1.0/u"μm")
+const QInvAng = typeof(1.0/u"angstrom")
+const QInvWave = Union{QInvum,QInvAng}
 
 const QPerFreq = typeof(1.0u"erg/s/cm^2/Hz/sr")
 const QPerum = typeof(1.0u"erg/s/cm^2/μm/sr")
@@ -185,6 +188,7 @@ end
 # A big composite struct holding all the fit and non-fit parameters for a model
 struct ModelParameters
     continuum::FitParameters
+    abs_features::FitFeatures
     dust_features::FitFeatures
     lines::FitFeatures
     statistics::NonFitParameters
@@ -202,9 +206,9 @@ end
 
 
 # A little container for stellar populations 
-struct StellarPopulations{Q1<:QWave,Q2<:Unitful.Units,Q3<:typeof(1.0u"km/s")}
+struct StellarPopulations{Q1<:QWave,Q2<:Unitful.Units,Q3<:typeof(1.0u"km/s"),T} where {T<:Union{Vector{Spline2D},Matrix{<:Quantity}}}
     λ::Vector{Q1}
-    templates::Vector{Spline2D}
+    templates::T
     units::Q2
     vsyst::Q3
 end
@@ -344,7 +348,9 @@ end
 
 # NOTE: this does the exact same thing as the builtin "indexin" function -- indexin(needles, haystack)
 # for arrays of strings. But this implementation is faster and allocates less memory
-fast_indexin(needles, haystack) = [findfirst(straw -> straw == needle, haystack) for needle in needles]
+fast_indexin(needles::AbstractVector{<:AbstractString}, haystack::AbstractVector{<:AbstractString}) = 
+    [findfirst(straw -> straw == needle, haystack) for needle in needles]
+fast_indexin(needle::AbstractString, haystack::AbstractVector{<:AbstractString}) = findfirst(straw -> straw == needle, haystack)
 
 # methods for obtaining a named parameter
 Base.getindex(p::Parameters, ind) = p._parameters[ind]

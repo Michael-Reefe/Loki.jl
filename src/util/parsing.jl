@@ -208,16 +208,17 @@ function parse_options()
 end
 
 
-function parse_lines(region::SpectralRegion)
+function parse_lines(region::SpectralRegion, λunit::Unitful.Units)
 
     lines = TOML.parsefile(joinpath(@__DIR__, "..", "options", "lines.toml"))
     profiles, acomp_profiles = validate_lines_file(lines)
 
-    cent_vals = Vector{QWave}()    # provide all the line wavelengths in microns
+    cent_vals = Vector{typeof(1.0λunit)}()    # provide all the line wavelengths in consistent units
     for line in keys(lines["lines"])
         cent_unit = uparse(replace(lines["lines"][line]["unit"], 'u' => 'μ'))
         cent_val = lines["lines"][line]["wave"] * cent_unit
-        if !is_valid(cent_val, 0.0*cent_unit, region)
+        cent_val = uconvert(λunit, cent_val)
+        if !is_valid(cent_val, 0.0*λunit, region)
             # remove this line from the dictionary
             delete!(lines["lines"], line)
             delete!(profiles, line)
@@ -248,7 +249,7 @@ function read_smith_temps()
     temp4 = CSV.read(path4, DataFrame, delim=' ', ignorerepeated=true, stripwhitespace=true,
         header=["rest_wave", "flux"])
 
-    temp3[!, "rest_wave"], temp3[!, "flux"], temp4[!, "rest_wave"], temp4[!, "flux"]
+    temp3[!, "rest_wave"] .* u"μm", temp3[!, "flux"], temp4[!, "rest_wave"] .* u"μm", temp4[!, "flux"]
 end
 
 
@@ -268,7 +269,7 @@ function read_ice_ch_temps()
     temp2 = CSV.read(path2, DataFrame, delim=' ', comment="#", ignorerepeated=true, stripwhitespace=true,
         header=["rest_wave", "tau"])
     
-    temp1[!, "rest_wave"], temp1[!, "tau"], temp2[!, "rest_wave"], temp2[!, "tau"]
+    temp1[!, "rest_wave"] .* u"μm", temp1[!, "tau"], temp2[!, "rest_wave"] .* u"μm", temp2[!, "tau"]
 end
 
 
@@ -329,7 +330,7 @@ function silicate_dp()
     τ_98 = τ_smooth[findmin(x -> abs(x - 9.8), λ_irs)[2]]
     τ_λ = τ_smooth ./ τ_98
 
-    λ_irs, τ_λ
+    λ_irs .* u"μm", τ_λ
 end
 
 
@@ -343,7 +344,7 @@ end
 function silicate_ct()
     data = CSV.read(joinpath(@__DIR__, "..", "templates", "chiar+tielens_2005.dat"), DataFrame, skipto=15, delim=' ', 
         ignorerepeated=true, header=["wave", "a_galcen", "a_local"], select=[1, 2])
-    data[!, "wave"], data[!, "a_galcen"]
+    data[!, "wave"] .* u"μm", data[!, "a_galcen"]
 end
 
 
@@ -352,7 +353,7 @@ function silicate_ohm()
     data = CSV.read(joinpath(@__DIR__, "..", "templates", "ohmc.txt"), DataFrame, delim=' ', ignorerepeated=true,
         header=["wave", "ext"])
     data[!, "ext"] ./= 0.4
-    data[!, "wave"], data[!, "ext"]
+    data[!, "wave"] .* u"μm", data[!, "ext"]
 end
 
 
