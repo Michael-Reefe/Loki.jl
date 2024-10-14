@@ -56,6 +56,7 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 Unitful = "1986cc42-f94f-5a68-af5c-568840ba703d"
 UnitfulAstro = "6112ee07-acf9-5e0f-b108-d242c714bf9f"
 UnitfulLatexify = "45397f5d-5981-4c77-b2b3-fc36d6e9b728"
+UnitfulParsableString = "06c00241-927a-4d5b-bb5e-6b5a2ada3567"
 VoronoiBinning = "0480b74a-4474-4b41-b184-abfd81603c41"
 WCS = "15f3aee2-9e10-537f-b834-a6fb8bdb944d"
 

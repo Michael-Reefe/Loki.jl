@@ -91,8 +91,13 @@ grain_size = 0.1
 # (1 - e^-tau) / tau (false), following PAHFIT.
 extinction_screen = true
 
-# whether or not to fit the stellar continuum (MIR)
+# whether or not to fit the stellar continuum
 fit_stellar_continuum = true
+
+# whether or not to fit optical Fe II emission (obviously only applies for optical spectra)
+# separate options for narrow- and broad-line templates
+fit_opt_na_feii = false
+fit_opt_br_feii = false
 
 # whether or not to fit silicate emission
 fit_sil_emission = false
@@ -102,11 +107,6 @@ fit_ch_abs = false
 
 # whether or not to fit multiplicative exponential profiles to any provided templates
 fit_temp_multexp = false
-
-# whether or not to fit optical Fe II emission (obviously only applies for optical spectra)
-# separate options for narrow- and broad-line templates
-fit_opt_na_feii = false
-fit_opt_br_feii = false
 
 # whether or not to constrain the PAH emission using templates from Smith et al. (2007)
 use_pah_templates = true

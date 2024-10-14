@@ -8,44 +8,27 @@ end
 
 # Helper function for getting the normalized templates for a given fit
 function get_normalized_templates(λ::Vector{<:Number}, params::Vector{<:Number}, templates::Matrix{T}, 
-    N::T, channel_masks::Vector{BitVector}, fit_temp_multexp::Bool, pstart::Integer) where {T<:Number}
+    channel_masks::Vector{BitVector}, fit_temp_multexp::Bool, pstart::Integer) where {T<:Number}
 
     temp_norm = zeros(eltype(params), size(templates)...)
     # Add generic templates with a normalization parameter
     if fit_temp_multexp
         ex = multiplicative_exponentials(λ, params[pstart:pstart+7])
         for i in axes(templates, 2)
-            temp_norm[:,i] .+= sum([ex[:,j] .* templates[:,i] ./ N for j in axes(ex,2)])
+            temp_norm[:,i] .+= sum([ex[:,j] .* templates[:,i] for j in axes(ex,2)])
         end
         dp = 8
     else
         dp = 0
         for i in axes(templates, 2)
             for ch_mask in channel_masks
-                temp_norm[ch_mask,i] .+= params[pstart+dp] .* templates[ch_mask, i] ./ N
+                temp_norm[ch_mask,i] .+= params[pstart+dp] .* templates[ch_mask, i]
                 dp += 1
             end
         end
     end
 
     temp_norm, dp
-end
-
-
-# Helper function to calculate the normalized nuclear template amplitudes for a given fit
-function get_nuctempfit_templates(params::Vector{<:Number}, templates::Matrix{<:Number}, 
-    channel_masks::Vector{BitVector}, pstart::Integer)
-
-    nuc_temp_norm = zeros(eltype(params), size(templates, 1))
-    dp = 0
-    for i in axes(templates, 2)
-        for ch_mask in channel_masks
-            nuc_temp_norm[ch_mask] .= params[pstart+dp] .* templates[ch_mask, i] 
-            dp += 1
-        end
-    end
-
-    nuc_temp_norm, dp
 end
 
 
@@ -59,20 +42,17 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 (with modifications)
 
 # Arguments
-- `λ`: Wavelength vector of the spectrum to be fit
+- `s`: The spaxel object containing the wavelength data, normalization, templates, and channel masks.
 - `params`: Parameter vector. 
-- `N`: The normalization.
 - `cube_fitter`: The CubeFitter object with all of the fitting options.
-- `nuc_temp_fit::Bool`: If true, the nuclear template is being fit, meaning we are to normalize the model by the templates (which should
-    be the PSF templates here).
 - `return_components::Bool`: Whether or not to return the individual components of the fit as a dictionary, in 
     addition to the overall fit
 """
-function model_continuum(λ::Vector{<:QWave}, params::Vector{Quantity{<:Real}}, N::QSIntensity, cube_fitter::CubeFitter, 
-    nuc_temp_fit::Bool, return_components::Bool)
+function model_continuum(s::Spaxel, params::Vector{Quantity{<:Real}}, cube_fitter::CubeFitter, return_components::Bool)
 
     # Get options from the cube fitter
     fopt = fit_options(cube_fitter)
+    λ = s.λ
 
     # Prepare outputs
     out_type = typeof(ustrip(λ[1]))
@@ -84,7 +64,7 @@ function model_continuum(λ::Vector{<:QWave}, params::Vector{Quantity{<:Real}}, 
 
     # --> General dust extinction curve 
     comps["extinction_gas"], comps["extinction_stars"], dp = extinction_profiles(λ, params, pᵢ, fopt.fit_uv_bump, 
-        fopt.fit_covering_frac, fopt.extinction_curve)
+        fopt.extinction_curve)
     pᵢ += dp
     # --> Silicate absorption features
     comps["absorption_silicates"], dp, comps["absorption_oli"], comps["absorption_pyr"], comps["absorption_for"] = 
@@ -130,7 +110,7 @@ function model_continuum(λ::Vector{<:QWave}, params::Vector{Quantity{<:Real}}, 
                 temp = @view cube_fitter.ssps.templates[:,i]
             end
             # Sanity check on units
-            unit_check(unit(temp[1]), unit(N)*u"sr/Msun")
+            unit_check(unit(temp[1]), unit(s.N)*u"sr/Msun")
             ssps[:,i] = @. params[pᵢ] * temp/maximum(temp)
             pᵢ += 3
         end
@@ -177,7 +157,7 @@ function model_continuum(λ::Vector{<:QWave}, params::Vector{Quantity{<:Real}}, 
     ##### 5. THERMAL DUST CONTINUA #####
 
     for i ∈ 1:cube_fitter.n_dust_cont
-        bb = Blackbody_modified(λ, params[pᵢ+1], unit(N))
+        bb = Blackbody_modified(λ, params[pᵢ+1], unit(s.N))
         comps["dust_cont_$i"] = params[pᵢ] .* bb ./ maximum(bb)
         unit_check(comps["dust_cont_$i"][1], NoUnits)
         contin .+= comps["dust_cont_$i"] .* comps["total_extinction_gas"] 
@@ -189,7 +169,7 @@ function model_continuum(λ::Vector{<:QWave}, params::Vector{Quantity{<:Real}}, 
     if fopt.fit_sil_emission
         # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
         # Ref: Gallimore et al. 2010
-        sil_emission = silicate_emission(λ, params[pᵢ+1:pᵢ+5]..., unit(N))
+        sil_emission = silicate_emission(λ, params[pᵢ+1:pᵢ+5]..., unit(s.N))
         comps["hot_dust"] = params[pᵢ] .* sil_emission ./ maximum(sil_emission)
         unit_check(comps["hot_dust"][1], NoUnits)
         # Do NOT apply silicate absorption to this component (duh)
@@ -199,33 +179,20 @@ function model_continuum(λ::Vector{<:QWave}, params::Vector{Quantity{<:Real}}, 
 
     ##### 7. PSF TEMPLATES #####
 
-    nuc_temp_norm = nothing
-    if size(cube_fitter.templates, 2) > 0
-        if !nuc_temp_fit
-            temp_norm, dp = get_normalized_templates(λ, params, templates, N, cube_fitter.cube.spectral_region.channel_masks, 
-                fopt.fit_temp_multexp, pᵢ)
-            for i in axes(temp_norm, 2)
-                comps["templates_$i"] = temp_norm[:,i]
-            end
-            contin .+= sumdim(temp_norm, 2)
-            pᵢ += dp
-        else
-            # Fitting the nuclear spectrum - here the templates are just the PSF model, which we normalize by to make the spectrum
-            # continuous.
-            nuc_temp_norm, dp = get_nuctempfit_templates(params, templates, cube_fitter.cube.spectral_region.channel_masks, pᵢ)
-            comps["templates_1"] = nuc_temp_norm
-            pᵢ += dp
+    if haskey(s.aux, "templates") && haskey(s.aux, "channel_masks") && size(s.aux["templates"], 2) > 0
+        temp_norm, dp = get_normalized_templates(λ, params, s.aux["templates"], s.aux["channel_masks"], 
+            fopt.fit_temp_multexp, pᵢ)
+        for i in axes(temp_norm, 2)
+            comps["templates_$i"] = temp_norm[:,i]
         end
+        contin .+= sumdim(temp_norm, 2)
+        pᵢ += dp
     end
 
     ##### ------------------------ #####
 
     # Save the state of the continuum with everything except the PAH features #
-    if nuc_temp_fit
-        comps["continuum"] = contin .* comps["templates_1"]
-    else
-        comps["continuum"] = contin
-    end
+    comps["continuum"] = contin
 
     ##### ------------------------ #####
 
@@ -252,10 +219,6 @@ function model_continuum(λ::Vector{<:QWave}, params::Vector{Quantity{<:Real}}, 
         end
     end
 
-    if nuc_temp_fit
-        contin .*= comps["templates_1"]
-    end
-
     ##### ------------------------ #####
 
     # Save the state of the continuum with everything including the PAH features # 
@@ -273,11 +236,13 @@ end
 
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
-function model_continuum(λ::Vector{<:QWave}, params::Vector{Quantity{<:Real}}, N::QSIntensity, cube_fitter::CubeFitter, 
-    nuc_temp_fit::Bool)
+function model_continuum(s::Spaxel, params::Vector{Quantity{<:Real}}, cube_fitter::CubeFitter)
 
     # Get options from the cube fitter
     fopt = fit_options(cube_fitter)
+
+    # Get the wavelength data 
+    λ = s.λ
 
     # Prepare outputs
     out_type = typeof(ustrip(λ[1]))
@@ -287,7 +252,7 @@ function model_continuum(λ::Vector{<:QWave}, params::Vector{Quantity{<:Real}}, 
     ##### 1. EXTINCTION AND ABSORPTION FEATURES #####
 
     # --> General dust extinction curve 
-    ext_gas, ext_stars, dp = extinction_profiles(λ, params, pᵢ, fopt.fit_uv_bump, fopt.fit_covering_frac, fopt.extinction_curve)
+    ext_gas, ext_stars, dp = extinction_profiles(λ, params, pᵢ, fopt.fit_uv_bump, fopt.extinction_curve)
     pᵢ += dp
     # --> Silicate absorption features
     abs_sil, dp, _, _, _ = silicate_absorption(λ, params, pᵢ, fopt.κ_abs, fopt.silicate_absorption, fopt.extinction_screen)
@@ -329,7 +294,7 @@ function model_continuum(λ::Vector{<:QWave}, params::Vector{Quantity{<:Real}}, 
                 temp = @view cube_fitter.ssps.templates[:,i]
             end
             # Sanity check on units
-            unit_check(unit(temp[1]), unit(N)*u"sr/Msun")
+            unit_check(unit(temp[1]), unit(s.N)*u"sr/Msun")
             ssps[:,i] = params[pᵢ] .* temp ./ maximum(temp)
             pᵢ += 3
         end
@@ -368,7 +333,7 @@ function model_continuum(λ::Vector{<:QWave}, params::Vector{Quantity{<:Real}}, 
     ##### 5. THERMAL DUST CONTINUA #####
 
     for i ∈ 1:cube_fitter.n_dust_cont
-        bb = Blackbody_modified(λ, params[pᵢ+1], unit(N))
+        bb = Blackbody_modified(λ, params[pᵢ+1], unit(s.N))
         contin .+= params[pᵢ] .* bb./maximum(bb) .* ext_gas
         pᵢ += 2
     end
@@ -378,7 +343,7 @@ function model_continuum(λ::Vector{<:QWave}, params::Vector{Quantity{<:Real}}, 
     if fopt.fit_sil_emission
         # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
         # Ref: Gallimore et al. 2010
-        sil_emission = silicate_emission(λ, params[pᵢ+1:pᵢ+5]..., unit(N))
+        sil_emission = silicate_emission(λ, params[pᵢ+1:pᵢ+5]..., unit(s.N))
         contin .+= params[pᵢ] .* sil_emission./maximum(sil_emission) .* abs_tot
         pᵢ += 6
     end
@@ -386,18 +351,11 @@ function model_continuum(λ::Vector{<:QWave}, params::Vector{Quantity{<:Real}}, 
     ##### 7. PSF TEMPLATES #####
 
     nuc_temp_norm = nothing
-    if size(cube_fitter.templates, 2) > 0
-        if !nuc_temp_fit
-            temp_norm, dp = get_normalized_templates(λ, params, templates, N, cube_fitter.cube.spectral_region.channel_masks, 
-                fopt.fit_temp_multexp, pᵢ)
-            contin .+= sumdim(temp_norm, 2)
-            pᵢ += dp
-        else
-            # Fitting the nuclear spectrum - here the templates are just the PSF model, which we normalize by to make the spectrum
-            # continuous.
-            nuc_temp_norm, dp = get_nuctempfit_templates(params, templates, cube_fitter.cube.spectral_region.channel_masks, pᵢ)
-            pᵢ += dp
-        end
+    if haskey(s.aux, "templates") && haskey(s.aux, "channel_masks") && size(s.aux["templates"], 2) > 0
+        temp_norm, dp = get_normalized_templates(λ, params, s.aux["templates"], s.aux["channel_masks"], 
+            fopt.fit_temp_multexp, pᵢ)
+        contin .+= sumdim(temp_norm, 2)
+        pᵢ += dp
     end
 
     ##### 8. PAH EMISSION FEATURES #####
@@ -422,10 +380,6 @@ function model_continuum(λ::Vector{<:QWave}, params::Vector{Quantity{<:Real}}, 
         end
     end
 
-    if nuc_temp_fit
-        contin .*= nuc_temp_norm
-    end
-
     contin
 end
 
@@ -438,17 +392,17 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 (with modifications)
 
 # Arguments
-- `λ`: Wavelength vector of the spectrum to be fit
+- `s`: The spaxel object containing the wavelength data, normalization, templates, and channel masks.
 - `params`: Parameter vector. Parameters should be ordered as: `(amp, center, fwhm) for each PAH profile`
 - `cube_fitter`: The CubeFitter object containing the fitting options
-- `ext_curve`: The extinction curve that was fit using model_continuum
 - `template_norm`: The normalization PSF template that was fit using model_continuum
 - `nuc_temp_fit`: Whether or not to apply the PSF normalization template
 - `return_components`: Whether or not to return the individual components of the fit as a dictionary, in
     addition to the overall fit
 """
-function model_pah_residuals(λ::Vector{<:QWave}, params::Vector{Quantity{<:Real}}, cube_fitter::CubeFitter, 
-    ext_curve::Vector{<:Real}, template_norm::Union{Nothing,Vector{<:Real}}, nuc_temp_fit::Bool, return_components::Bool) 
+function model_pah_residuals(s::Spaxel, params::Vector{Quantity{<:Real}}, cube_fitter::CubeFitter, return_components::Bool) 
+
+    λ = s.λ
 
     # Prepare outputs
     out_type = typeof(ustrip(λ[1]))
@@ -466,13 +420,8 @@ function model_pah_residuals(λ::Vector{<:QWave}, params::Vector{Quantity{<:Real
                 comps["dust_feat_$(k)_$(j)"] = PearsonIV(λ, params[pᵢ:pᵢ+4]...)
                 pᵢ += 5
             end
-            contin .+= comps["dust_feat_$(k)_$(j)"] .* ext_curve
+            contin .+= comps["dust_feat_$(k)_$(j)"] .* s.aux["ext_curve"]
         end
-    end
-
-    # Apply PSF normalization
-    if nuc_temp_fit
-        contin .*= template_norm
     end
 
     # Return components, if necessary
@@ -485,8 +434,9 @@ end
 
 
 # Multiple dispatch for more efficiency
-function model_pah_residuals(λ::Vector{<:QWave}, params::Vector{Quantity{<:Real}}, cube_fitter::CubeFitter, 
-    ext_curve::Vector{<:Real}, template_norm::Union{Nothing,Vector{<:Real}}, nuc_temp_fit::Bool) 
+function model_pah_residuals(s::Spaxel, params::Vector{Quantity{<:Real}}, cube_fitter::CubeFitter) 
+
+    λ = s.λ
 
     # Prepare outputs
     out_type = typeof(ustrip(λ[1]))
@@ -497,18 +447,13 @@ function model_pah_residuals(λ::Vector{<:QWave}, params::Vector{Quantity{<:Real
         for component in dcomplex                               # <- iterates over each individual component
             profile = component.profile
             if profile == :Drude
-                contin .+= Drude(λ, params[pᵢ:pᵢ+3]...) .* ext_curve
+                contin .+= Drude(λ, params[pᵢ:pᵢ+3]...) .* s.aux["ext_curve"]
                 pᵢ += 4
             elseif profile == :PearsonIV
-                contin .+= PearsonIV(λ, params[pᵢ:pᵢ+4]...) .* ext_curve
+                contin .+= PearsonIV(λ, params[pᵢ:pᵢ+4]...) .* s.aux["ext_curve"]
                 pᵢ += 5
             end
         end
-    end
-
-    # Apply PSF normalization
-    if nuc_temp_fit
-        contin .*= template_norm
     end
 
     contin
@@ -516,8 +461,7 @@ end
 
 
 """
-    model_line_residuals(λ, params, n_lines, n_comps, lines, flexible_wavesol, ext_curve, lsf,
-        relative_flags, return_components) 
+    model_line_residuals(s, params, cube_fitter, template_norm, nuc_fit_norm, return_components) 
 
 Create a model of the emission lines at the given wavelengths `λ`, given the parameter vector `params`.
 
@@ -525,32 +469,21 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 (with modifications)
 
 # Arguments {S<:Integer}
-- `λ::Vector{<:Real}`: Wavelength vector of the spectrum to be fit
-- `params::Vector{<:Real}`: Parameter vector.
-- `n_lines::S`: Number of lines being fit
-- `n_comps::S`: Maximum number of profiles to be fit to any given line
-- `lines::TransitionLines`: Object containing information about each transition line being fit.
-- `flexible_wavesol::Bool`: Whether or not to allow small variations in tied velocity offsets, to account for a poor
-wavelength solution in the data
-- `ext_curve::Vector{<:Real}`: The extinction curve fit with model_{mir|opt}_continuum
-- `lsf::Function`: A function giving the FWHM of the line-spread function in km/s as a function of rest-frame wavelength in microns.
-- `relative_flags::BitVector`: BitVector giving flags for whether the amp, voff, and fwhm of additional line profiles should be
-    parametrized relative to the main profile or not.
-- `template_norm::Union{Nothing,Vector{<:Real}}`: The normalization PSF template that was fit using model_continuum
-- `nuc_temp_fit::Bool`: Whether or not to apply the PSF normalization template
-- `return_components::Bool=false`: Whether or not to return the individual components of the fit as a dictionary, in 
+- `s`: The spaxel object containing the wavelength data, normalization, templates, and channel masks.
+- `params`: Parameter vector.
+- `cube_fitter`: The CubeFitter object.
+- `return_components`: Whether or not to return the individual components of the fit as a dictionary, in 
 addition to the overall fit
 """
-function model_line_residuals(λ::AbstractVector{<:QWave}, params::AbstractVector{<:Number}, cube_fitter::CubeFitter,
-    ext_curve::Vector{<:Real}, lsf::Function, template_norm::Union{Nothing,Vector{<:Real}}, nuc_temp_fit::Bool, 
+function model_line_residuals(s::Spaxel, params::AbstractVector{<:Number}, lines::FitFeatures, lsf::Function, 
     return_components::Bool) 
+
+    λ = s.λ
 
     # Prepare outputs
     out_type = typeof(ustrip(λ[1]))
     comps = Dict{String, Vector{out_type}}()
     contin = zeros(out_type, length(λ))
-
-    lines = model(cube_fitter).lines
 
     pᵢ = 1
     for (k, line) in enumerate(lines.profiles)   # <- iterates over emission lines
@@ -621,11 +554,7 @@ function model_line_residuals(λ::AbstractVector{<:QWave}, params::AbstractVecto
     end
 
     # Apply extinction
-    contin .*= ext_curve
-    # Apply PSF normalization
-    if nuc_temp_fit
-        contin .*= template_norm
-    end
+    contin .*= s.aux["ext_curve"]
 
     # Return components if necessary
     if return_components
@@ -637,14 +566,13 @@ end
 
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
-function model_line_residuals(λ::AbstractVector{<:QWave}, params::AbstractVector{<:Number}, cube_fitter::CubeFitter,
-    ext_curve::Vector{<:Real}, lsf::Function, template_norm::Union{Nothing,Vector{<:Real}}, nuc_temp_fit::Bool) 
+function model_line_residuals(s::Spaxel, params::AbstractVector{<:Number}, lines::FitFeatures, lsf::Function) 
+
+    λ = s.λ
 
     # Prepare outputs
     out_type = eltype(params)
     contin = zeros(out_type, length(λ))
-
-    lines = model(cube_fitter).lines
 
     pᵢ = 1
     for (k, line) in enumerate(lines.profiles)   # <- iterates over emission lines
@@ -712,11 +640,7 @@ function model_line_residuals(λ::AbstractVector{<:QWave}, params::AbstractVecto
     end
 
     # Apply extinction
-    contin .*= ext_curve
-    # Apply PSF normalization
-    if nuc_temp_fit
-        contin .*= template_norm
-    end
+    contin .*= s.aux["ext_curve"]
 
     contin
 end
@@ -855,21 +779,21 @@ end
 
 """
     calculate_extra_parameters(λ, I, N, comps, n_channels, n_dust_cont, n_power_law, n_dust_feat, dust_profiles,
-        n_abs_feat, fit_sil_emission, n_lines, n_acomps, n_comps, lines, flexible_wavesol, lsf, popt_c,
+        n_abs_feat, fit_sil_emission, n_lines, n_acomps, n_comps, lines, flexible_wavesol, popt_c,
         popt_l, perr_c, perr_l, extinction, mask_lines, continuum, area_sr[, propagate_err])
 
 Calculate extra parameters that are not fit, but are nevertheless important to know, for a given spaxel.
 Currently this includes the integrated intensity, equivalent width, and signal to noise ratios of dust features and emission lines.
 """
-function calculate_extra_parameters(cube_fitter::CubeFitter, λ::AbstractVector{<:QWave}, I::Vector{T}, σ::Vector{T}, N::QSIntensity, 
-    comps::Dict, nuc_temp_fit::Bool, lsf::Function, popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}, 
-    ext_curve::Vector{T}, extinction::Vector{T}, templates_psfnuc::Union{Nothing,Vector{<:Real}}, mask_lines::BitVector, 
-    continuum::Vector{T}, area_sr::Vector{<:typeof(1.0u"sr")}, spaxel::CartesianIndex, propagate_err::Bool=true) where {T<:Real}
+function calculate_extra_parameters(s::Spaxel, cube_fitter::CubeFitter, comps::Dict, nuc_temp_fit::Bool, 
+    popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}, templates_psfnuc::Union{Nothing,Vector{<:Real}}, 
+    area_sr::Vector{<:typeof(1.0u"sr")}, propagate_err::Bool=true) where {T<:Real}
 
     @debug "Calculating extra parameters"
 
     # Normalization
-    @debug "Normalization: $N"
+    N = s.N; λ = s.λ; I = s.I; σ = s.σ
+    @debug "Normalization: $(N)"
 
     n_extra_df = length(get_flattened_nonfit_parameters(model(cube_fitter).dust_features))
     p_dust = Vector{Quantity{eltype(I)}}(undef, n_extra_df)
@@ -898,7 +822,6 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, λ::AbstractVector{
         total_eqw = 0.0*unit(λ[1])
         total_eqw_err = 0.0*unit(λ[1])
         total_snr = 0.0
-        total_snr_err = 0.0
 
         for component in dcomplex                               # <- iterates over each individual component 
 
@@ -958,10 +881,10 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, λ::AbstractVector{
             else
                 error("Unrecognized PAH profile: $prof")
             end
-            feature .*= ext_curve .* tnorm
+            feature .*= s.aux["ext_curve"] .* tnorm
             if propagate_err
-                feature_err[:,1] .*= ext_curve .* tnorm
-                feature_err[:,2] .*= ext_curve .* tnorm
+                feature_err[:,1] .*= s.aux["ext_curve"] .* tnorm
+                feature_err[:,2] .*= s.aux["ext_curve"] .* tnorm
             end
 
             # Calculate the flux using the utility function
@@ -1105,7 +1028,7 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, λ::AbstractVector{
             end
 
             # Broaden the FWHM by the instrumental FWHM at the location of the line
-            fwhm_inst = lsf(λ0)
+            fwhm_inst = cube_fitter.lsf(λ0)
             fwhm_err = propagate_err ? fwhm / hypot(fwhm, fwhm_inst) * fwhm_err : 0.
             fwhm = hypot(fwhm, fwhm_inst)
 
@@ -1168,10 +1091,10 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, λ::AbstractVector{
             else
                 error("Unrecognized line profile $(component.profile)")
             end
-            feature .*= extinction .* tnorm
+            feature .*= s.aux["ext_curve"] .* tnorm
             if propagate_err
-                feature_err[:,1] .*= extinction .* tnorm
-                feature_err[:,2] .*= extinction .* tnorm
+                feature_err[:,1] .*= s.aux["ext_curve"] .* tnorm
+                feature_err[:,2] .*= s.aux["ext_curve"] .* tnorm
             end
 
             # Calculate line flux using the helper function
@@ -1219,10 +1142,10 @@ function calculate_extra_parameters(cube_fitter::CubeFitter, λ::AbstractVector{
         pₒ += 3
 
         # Number of velocity components
-        p_lines[pₒ] = cube_fitter.n_fit_comps[lines.names[k]][spaxel]
+        p_lines[pₒ] = cube_fitter.n_fit_comps[lines.names[k]][s.coords]
 
         # W80 and Δv parameters
-        fwhm_inst = lsf(λ0)
+        fwhm_inst = cube_fitter.lsf(λ0)
         w80, Δv, vmed, vpeak = calculate_composite_params(λ, total_profile, λ0, fwhm_inst)
         p_lines[pₒ+1] = w80
         p_lines[pₒ+2] = Δv

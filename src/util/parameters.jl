@@ -168,6 +168,16 @@ struct FitFeatures{S<:Union{Symbol,String},Q<:QWave}
     end
 end
 
+
+function make_single_line_object(f::FitFeatures, i::Integer)
+    cfg = LineConfig(
+        BitVector([f.config.annotate[i]]), [f.config.sort_order[i]], [f.config.combined[i]], f.config.rel_amp,
+        f.config.rel_voff, f.config.rel_fwhm
+    )
+    FitFeatures([f.names[i]], [f.labels[i]], [f.λ₀[i]], [f.profiles[i]], [f.composite[i]], cfg)
+end
+
+
 struct NoConfig <: Config end
 
 struct PAHConfig <: Config 

@@ -144,18 +144,21 @@ plim = [0.0, 1.0]                    # mixing parameter for Voigt profiles: limi
 locked = true                        # the MIRI/MRS line-spread function should essentially be purely Gaussian
 
 # if rel_amp is set, this is a fraction of the main component amp
-# if not, this is a fraction of the maximum intensity in the spectrum over the maximum possible extinction
-# ( i.e. 1/exp(-max(tau_9.7)) )
+# if rel_amp is not set, the acomp_amp values are IGNORED
 [[acomp_amp]]
 val = 0.1
-plim = [0.0, inf]
+plim = [0.0, 1.0]
 locked = false
 
+# if rel_voff is set, these are velocities relative to the primary component
+# if rel_voff is not set, these are velocities relative to the rest wavelength of the line
 [[acomp_voff]]
 val = 0.0
 plim = [-800.0, 800.0]
 locked = false
 
+# if rel_fwhm is set, these are multiplicative values on the primary component FWHM
+# if rel_fwhm is not set, these are velocities just like the primary FWHM values
 [[acomp_fwhm]]
 val = 500.0
 plim = [0.0, 2000.0]

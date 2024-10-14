@@ -2,7 +2,7 @@
 
 julia_version = "1.10.5"
 manifest_format = "2.0"
-project_hash = "3f0af70cdc60e4bfb1f0d06b3bca81e2aa79dd9f"
+project_hash = "2ba3a4a47a069bf85407a18e44c392f1cda05a96"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -971,6 +971,12 @@ deps = ["Artifacts", "Libdl"]
 uuid = "c8ffd9c3-330d-5841-b78e-0817d7145fa1"
 version = "2.28.2+1"
 
+[[deps.Memoization]]
+deps = ["MacroTools"]
+git-tree-sha1 = "073f080e733bc6697411901224ed4fd15fefaffa"
+uuid = "6fafb56a-5788-4b4e-91ca-c0cea6611c73"
+version = "0.2.1"
+
 [[deps.MicroCollections]]
 deps = ["Accessors", "BangBang", "InitialValues"]
 git-tree-sha1 = "44d32db644e84c75dab479f1bc15ee76a1a3618f"
@@ -1683,6 +1689,12 @@ deps = ["LaTeXStrings", "Latexify", "Unitful"]
 git-tree-sha1 = "975c354fcd5f7e1ddcc1f1a23e6e091d99e99bc8"
 uuid = "45397f5d-5981-4c77-b2b3-fc36d6e9b728"
 version = "1.6.4"
+
+[[deps.UnitfulParsableString]]
+deps = ["Memoization", "Unitful"]
+git-tree-sha1 = "9f780daa3aad1e9e119c3976cf0d764263ba6205"
+uuid = "06c00241-927a-4d5b-bb5e-6b5a2ada3567"
+version = "0.1.7"
 
 [[deps.VectorizationBase]]
 deps = ["ArrayInterface", "CPUSummary", "HostCPUFeatures", "IfElse", "LayoutPointers", "Libdl", "LinearAlgebra", "SIMDTypes", "Static", "StaticArrayInterface"]

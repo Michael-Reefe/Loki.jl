@@ -55,7 +55,7 @@ using Dates
 using InteractiveUtils
 using ColorSchemes
 using LaTeXStrings, Latexify
-using Unitful, UnitfulAstro, UnitfulLatexify
+using Unitful, UnitfulAstro, UnitfulLatexify, UnitfulParsableString
 using ArgParse
 
 # PyCall needed for some matplotlib modules
@@ -260,6 +260,8 @@ include("util/parameters.jl")
 include("core/cubedata.jl")
 include("core/cubefit.jl")
 include("core/cubefit_helpers.jl")
+include("core/parammaps.jl")
+include("core/cubemodel.jl")
 
 include("util/parsing.jl")
 include("util/create_params.jl")
@@ -267,9 +269,10 @@ include("util/math.jl")
 include("core/model.jl")
 
 include("core/fitdata.jl")
+include("core/spaxel.jl")
+include("core/spaxelresult.jl")
 include("core/fitplot.jl")
 include("core/fitting.jl")
-include("core/fitprep.jl")
 
 include("core/output.jl")
 include("core/output_mir.jl")

@@ -241,9 +241,14 @@ end
 
 function construct_continuum_params!(params::Vector{FitParameter}, pnames::Vector{String}, plabels::Vector{String},
     ptrans::Vector{Vector{Transformation}}, out::Dict, optical::Dict, infrared::Dict, λunit::Unitful.Units, Iunit::Unitful.Units,
-    redshift::Real)
+    redshift::Real, region::SpectralRegion)
 
-    # Leave it up to the user on whether or not to fit stellar pops
+    # Check wavelength ranges to make sure fitting stellar pops is not unreasonable
+    if region.λlim[1] > 20.0u"μm" && out[:fit_stellar_continuum]
+        @warn "The minimum wavelength in the input spectrum is > 20 μm! Stellar populations will be disabled."
+        out[:fit_stellar_continuum] = false
+    end
+
     if out[:fit_stellar_continuum]
         msg = "Stellar populations:"
         for (i, (age, metal)) ∈ enumerate(zip(optical["stellar_population_ages"], optical["stellar_population_metallicities"]))
@@ -282,6 +287,14 @@ function construct_continuum_params!(params::Vector{FitParameter}, pnames::Vecto
         append!(plabels, [L"$v_*$ (km s$^{-1}$)", L"$\sigma_*$ (km s$^{-1}$)"])
         append!(ptrans, Transformation[], Transformation[])
         @debug msg
+    end
+
+    if (region.λlim[1] > 7200.0u"angstrom") || (region.λlim[2] < 3400.0u"angstrom")
+        if out[:fit_opt_na_feii] || out[:fit_opt_br_feii]
+            @warn "The input spectrum falls completely outside the range of the Fe II templates. They will be disabled"
+            out[:fit_opt_na_feii] = false
+            out[:fit_opt_br_feii] = false
+        end
     end
 
     prefix = "continuum.feii."
@@ -335,6 +348,10 @@ function construct_continuum_params!(params::Vector{FitParameter}, pnames::Vecto
 
     # Dust continua
     if haskey(infrared, "dust_continuum_temps")
+        if region.λlim[2] < 2.0u"μm"
+            @warn "The maximum wavelength in the input spectrum is < 2 μm! Thermal dust emission will be disabled."
+            infrared["dust_continuum_temps"] = []
+        end
         msg = "Dust continuum:"
         for i in eachindex(infrared["dust_continuum_temps"])
             prefix = "continuum.dust.$(i)."
@@ -348,6 +365,13 @@ function construct_continuum_params!(params::Vector{FitParameter}, pnames::Vecto
             append!(pnames, prefix .* ["amp", "temp"])
             append!(plabels, [L"$\log_{10}(A_{\rm dust})$", L"$T$ (K)"])
             append!(ptrans, [t_A, Transformation[]])
+        end
+    end
+
+    if (region.λlim[1] > 30.0u"μm") || (region.λlim[2] < 0.8u"μm")
+        if out[:fit_sil_emission]
+            @warn "The input spectrum's wavelength range is outside the expected range of hot silicate emisson. It will be disabled."
+            out[:fit_sil_emission] = false
         end
     end
 
@@ -454,7 +478,7 @@ function construct_continuum_parameters(out::Dict, λunit::Unitful.Units, Iunit:
 
     # Add parameters iteratively
     abs_features = construct_extinction_params!(params, pnames, plabels, ptrans, out, optical, infrared, λunit, Iunit, region)
-    construct_continuum_params!(params, pnames, plabels, ptrans, out, optical, infrared, λunit, Iunit, redshift)
+    construct_continuum_params!(params, pnames, plabels, ptrans, out, optical, infrared, λunit, Iunit, redshift, region)
     construct_template_params!(params, pnames, plabels, ptrans, out, infrared, region)    
 
     # Make final continuum object
@@ -922,8 +946,33 @@ function construct_line_parameters(out::Dict, λunit::Unitful.Units, Iunit::Unit
     )
     lines_out = FitFeatures(names[ss], feat_labels[ss], cent_vals[ss], all_fit_profiles[ss], all_composite[ss], cfg)
 
-    @debug "#######################################################"
+    # Go through each tied group and set the value/limits/lock to match
+    flat = get_flattened_fit_parameters(lines_out)
+    fnames = flat.names
+    tied_pairs, = get_tied_pairs(flat)
+    for tp in tied_pairs
+        n1 = fnames[tp[1]]
+        ln_name_1 = split(n1, ".")[2]
+        ln_comp_1 = Int(split(n1, ".")[3])
+        i1 = fast_indexin(ln_name_1, lines_out.names)
+        n2 = fnames[tp[2]]
+        ln_name_2 = split(n2, ".")[2]
+        ln_comp_2 = Int(split(n2, ".")[3])
+        i2 = fast_indexin(ln_name_2, lines_out.names)
+        # set plimits and locked values to match (including potential ratio)
+        set_plim!(lines_out.profiles[i2][ln_comp_2].fit_parameters[n2], 
+            lines_out.profiles[i1][ln_comp_1].fit_parameters[n1].limits .* tp[3])
+        if lines_out.profiles[i1][ln_comp_1].fit_parameters[n1].locked 
+            lock!(lines_out.profiles[i2][ln_comp_2].fit_parameters[n2])
+        else
+            unlock!(lines_out.profiles[i2][ln_comp_2].fit_parameters[n2])
+        end
+        # set initial values to match (including potential ratio)
+        set_val!(lines_out.profiles[i2][ln_comp_2].fit_parameters[n2],
+            lines_out.profiles[i1][ln_comp_1].fit_parameters[n1].value * tp[3])
+    end
 
+    @debug "#######################################################"
     lines_out
 end
 

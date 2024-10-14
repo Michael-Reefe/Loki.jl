@@ -714,7 +714,7 @@ end
 
 # Return the extinction factor for stars and gas separately
 function extinction_profiles(λ::AbstractVector{<:QWave}, params::AbstractVector{<:Number}, pstart::Integer, fit_uv_bump::Bool,
-    fit_covering_frac::Bool, extinction_curve::String)
+    extinction_curve::String)
     E_BV, E_BV_factor = params[pstart], params[pstart+1]
     δ_uv = 0.85/1.9
     dp = 2

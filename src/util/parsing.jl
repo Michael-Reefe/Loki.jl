@@ -606,101 +606,115 @@ function generate_feii_templates(λ::Vector{<:QWave}, intensity_units::Unitful.U
 end
 
 
-# """
-#     update_global_convergence_log(cube_fitter, spaxel, res)
+"""
+    update_global_convergence_log(cube_fitter, spaxel, res)
 
-# Updates the convergence log file with results from a global simulated annealing fit with Optim.
-# """
-# function update_global_convergence_log(cube_fitter::CubeFitter, spaxel::CartesianIndex, res)
-#     global file_lock
-#     # use the ReentrantLock to prevent multiple processes from trying to write to the same file at once
-#     lock(file_lock) do 
-#     open(joinpath("output_$(cube_fitter.name)", "loki.convergence.log"), "a") do conv
-#     redirect_stdout(conv) do
-#         label = isone(length(spaxel)) ? "Voronoi bin $(spaxel[1])" : "Spaxel ($(spaxel[1]),$(spaxel[2]))"
-#         println("$label on worker $(myid()):")
-#         println(res)
-#         println("-------------------------------------------------------")
-#     end
-#     end
-#     end
-# end
-
-
-# """
-#     write_memory_log(cube_fitter, fname)
-
-# Writes the log file that contains information on memory usage for a particular spaxel fit.
-# """
-# function write_memory_log(cube_fitter::CubeFitter, fname::String)
-#     open(joinpath("output_$(cube_fitter.name)", "logs", "mem.$fname.log"), "w") do f
-
-#         print(f, """
-#         ### PROCESS ID: $(getpid()) ###
-#         Memory usage stats:
-#         CubeFitter - $(Base.summarysize(cube_fitter) ÷ 10^6) MB
-#             Cube - $(Base.summarysize(cube_fitter.cube) ÷ 10^6) MB 
-#         """)
-
-#         print(f, """
-#         $(InteractiveUtils.varinfo(all=true, imported=true, recursive=true))
-#         """)
-#     end
-# end
+Updates the convergence log file with results from a global simulated annealing fit with Optim.
+"""
+function update_global_convergence_log(cube_fitter::CubeFitter, spaxel::CartesianIndex, res)
+    global file_lock
+    # use the ReentrantLock to prevent multiple processes from trying to write to the same file at once
+    lock(file_lock) do 
+    open(joinpath("output_$(cube_fitter.name)", "loki.convergence.log"), "a") do conv
+    redirect_stdout(conv) do
+        label = isone(length(spaxel)) ? "Voronoi bin $(spaxel[1])" : "Spaxel ($(spaxel[1]),$(spaxel[2]))"
+        println("$label on worker $(myid()):")
+        println(res)
+        println("-------------------------------------------------------")
+    end
+    end
+    end
+end
 
 
-# """
-#     write_fit_results_csv(cube_fitter, fname, p_out, p_err)
+"""
+    write_memory_log(cube_fitter, fname)
 
-# Writes the CSV file that contains the fit results for a particular spaxel
-# (best fit values and errors).
-# """
-# function write_fit_results_csv(cube_fitter::CubeFitter, fname::String, 
-#     p_out::Vector{<:Real}, p_err::Matrix{<:Real})
+Writes the log file that contains information on memory usage for a particular spaxel fit.
+"""
+function write_memory_log(cube_fitter::CubeFitter, fname::String)
+    open(joinpath("output_$(cube_fitter.name)", "logs", "mem.$fname.log"), "w") do f
 
-#     open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.csv"), "w") do f 
-#         writedlm(f, [p_out p_err], ',')
-#     end
+        print(f, """
+        ### PROCESS ID: $(getpid()) ###
+        Memory usage stats:
+        CubeFitter - $(Base.summarysize(cube_fitter) ÷ 10^6) MB
+            Cube - $(Base.summarysize(cube_fitter.cube) ÷ 10^6) MB 
+        """)
 
-# end
-
-
-# """
-#     read_fit_results_csv(cube_fitter, fname)
-
-# Reads the CSV file that contains the file results for a particular spaxel
-# and returns the best fit values and errors as separate vectors (errors is a 
-# 2D matrix with the lower/upper errors)
-# """
-# function read_fit_results_csv(cube_fitter::CubeFitter, fname::String)
-#     results = readdlm(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.csv"), ',', Float64, '\n')
-#     p_out = results[:, 1]
-#     p_err = results[:, 2:3]
-#     p_out, p_err
-# end
+        print(f, """
+        $(InteractiveUtils.varinfo(all=true, imported=true, recursive=true))
+        """)
+    end
+end
 
 
-# # Helper function for saving the outputs of the initial integrated fit to both the CubeFitter object
-# # and to csv files
-# function save_init_fit_outputs!(cube_fitter::CubeFitter, popt::Vector{<:Real}, pah_amp::Vector{<:Real})
-#     # Save the results to a file and to the CubeFitter object
-#     # save running best fit parameters in case the fitting is interrupted
-#     cube_fitter.p_init_cont[:] .= popt
-#     open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_cont.csv"), "w") do f
-#         writedlm(f, cube_fitter.p_init_cont, ',')
-#     end
-#     cube_fitter.p_init_pahtemp[:] .= pah_amp
-#     open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_pahtemp.csv"), "w") do f
-#         writedlm(f, cube_fitter.p_init_pahtemp, ',')
-#     end
-# end
+"""
+    write_fit_results_csv(cube_fitter, fname, result)
+
+Writes the CSV file that contains the fit results for a particular spaxel
+(best fit values and errors).
+"""
+function write_fit_results_csv(cube_fitter::CubeFitter, fname::String, result::SpaxelFitResult)
+    pretty = pretty_print_results(result.pnames, result.popt, result.perr, result.bounds[:,1], result.bounds[:,2], 
+        result.plock, result.ptie)
+    open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.csv"), "w") do f
+        write(f, pretty)
+    end
+end
 
 
-# # Alternative dispatch for the line fit (doesnt include the pah_amp argument)
-# function save_init_fit_outputs!(cube_fitter::CubeFitter, popt::Vector{<:Real})
-#     # Save results to file
-#     cube_fitter.p_init_line[:] .= copy(popt)
-#     open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_line.csv"), "w") do f
-#         writedlm(f, cube_fitter.p_init_line, ',')
-#     end
-# end
+"""
+    read_fit_results_csv(cube_fitter, fname)
+
+Reads the CSV file that contains the file results for a particular spaxel
+and returns the best fit values and errors as separate vectors (errors is a 
+2D matrix with the lower/upper errors)
+"""
+function read_fit_results_csv(cube_fitter::CubeFitter, fname::String)
+    # Read in the CSV as a DataFrame
+    df = CSV.read(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.csv"), DataFrame, delim='\t',
+        stripwhitespace=true)
+
+    # read back in the raw values
+    p_out = df[!, "best"]
+    p_err_low = df[!, "error_lower"]
+    p_err_upp = df[!, "error_upper"]
+
+    # apply the units
+    pwh = findfirst(x -> contains(x, "unit"), names(df))
+    p_unit = strip.(df[!, pwh])
+    p_unit = uparse.([u == "" ? "NoUnits" : u for u in p_unit])
+    p_out = p_out .* p_unit
+    p_err_low = p_err_low .* p_unit
+    p_err_upp = p_err_upp .* p_unit
+    p_err = [p_err_low p_err_upp]
+
+    p_out, p_err
+end
+
+
+# Helper function for saving the outputs of the initial integrated fit to both the CubeFitter object
+# and to csv files
+function save_init_fit_outputs!(cube_fitter::CubeFitter, popt::Vector{<:Real}, pah_amp::Vector{<:Real})
+    # Save the results to a file and to the CubeFitter object
+    # save running best fit parameters in case the fitting is interrupted
+    cube_fitter.p_init_cont[:] .= popt
+    open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_cont.csv"), "w") do f
+        writedlm(f, cube_fitter.p_init_cont, ',')
+    end
+    cube_fitter.p_init_pahtemp[:] .= pah_amp
+    open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_pahtemp.csv"), "w") do f
+        writedlm(f, cube_fitter.p_init_pahtemp, ',')
+    end
+end
+
+
+# Alternative dispatch for the line fit (doesnt include the pah_amp argument)
+function save_init_fit_outputs!(cube_fitter::CubeFitter, popt::Vector{<:Real})
+    # Save results to file
+    cube_fitter.p_init_line[:] .= copy(popt)
+    open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_line.csv"), "w") do f
+        writedlm(f, cube_fitter.p_init_line, ',')
+    end
+end
