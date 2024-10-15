@@ -627,6 +627,15 @@ function update_global_convergence_log(cube_fitter::CubeFitter, spaxel::Cartesia
 end
 
 
+# Create a local logger for an individual spaxel
+timestamp_logger(logger) = TransformerLogger(logger) do log
+    merge(log, (; message = "$(Dates.format(now(), date_format)) $(log.message)"))
+end
+make_spaxel_logger(name::String, fname::String) = TeeLogger(ConsoleLogger(stdout, Logging.Info), 
+    timestamp_logger(MinLevelLogger(FileLogger(joinpath("output_$(name)", "logs", "loki.$fname.log"); 
+    always_flush=true), Logging.Debug)))
+
+
 """
     write_memory_log(cube_fitter, fname)
 
@@ -656,8 +665,7 @@ Writes the CSV file that contains the fit results for a particular spaxel
 (best fit values and errors).
 """
 function write_fit_results_csv(cube_fitter::CubeFitter, fname::String, result::SpaxelFitResult)
-    pretty = pretty_print_results(result.pnames, result.popt, result.perr, result.bounds[:,1], result.bounds[:,2], 
-        result.plock, result.ptie)
+    pretty = pretty_print_results(result)
     open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.csv"), "w") do f
         write(f, pretty)
     end
@@ -671,10 +679,11 @@ Reads the CSV file that contains the file results for a particular spaxel
 and returns the best fit values and errors as separate vectors (errors is a 
 2D matrix with the lower/upper errors)
 """
-function read_fit_results_csv(cube_fitter::CubeFitter, fname::String)
+function read_fit_results_csv(cube_fitter::CubeFitter, fname::String; output_path::Union{String,Nothing}=nothing)
+
+    folder = isnothing(output_path) ? "output_$(cube_fitter.name)" : output_path
     # Read in the CSV as a DataFrame
-    df = CSV.read(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.csv"), DataFrame, delim='\t',
-        stripwhitespace=true)
+    df = CSV.read(joinpath(folder, "spaxel_binaries", "$fname.csv"), DataFrame, delim='\t', stripwhitespace=true)
 
     # read back in the raw values
     p_out = df[!, "best"]

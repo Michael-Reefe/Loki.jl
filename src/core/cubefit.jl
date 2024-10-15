@@ -83,9 +83,6 @@ spaxels. These parameters are measured relative to olivine (N_oli) so this, in e
 over the full FOV of the cube.
 - `n_bootstrap`: The number of bootstrapping iterations that should be performed for each fit.
 - `random_seed`: An optional number to use as a seed for the RNG utilized during bootstrapping, to ensure consistency between
-- `bootstrap_use`: Determines what to output for the resulting parameter values when bootstrapping. May be :med for the 
-    median or :best for the original best-fit values.
-attempts.
 - `line_test_lines`: A list of lines which should be tested for additional components. They may be grouped
 together (hence the vector-of-a-vector structure) such that lines in a group will all be given the maximum number of parameters that
 any one line passes the test for.
@@ -124,7 +121,6 @@ mutable struct FittingOptions{T<:Real,S<:Integer} <: Options
     decompose_lock_column_densities::Bool
     n_bootstrap::S
     random_seed::S
-    bootstrap_use::Symbol
     line_test_lines::Vector{Vector{Symbol}}
     line_test_threshold::T
     plot_line_test::Bool
@@ -397,7 +393,6 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity}
             out[:decompose_lock_column_densities],
             out[:n_bootstrap],
             out[:random_seed],
-            out[:bootstrap_use],
             out[:line_test_lines],
             out[:line_test_threshold],
             out[:plot_line_test],
@@ -481,7 +476,6 @@ function cubefitter_add_default_options!(cube::DataCube, out::Dict)
 
     out[:line_test_lines] = [[Symbol(ln) for ln in group] for group in out[:line_test_lines]]
     out[:plot_spaxels] = Symbol(out[:plot_spaxels])
-    out[:bootstrap_use] = Symbol(out[:bootstrap_use])
 
     λunit = unit(cube.λ[1])
     if !haskey(out, :plot_range)

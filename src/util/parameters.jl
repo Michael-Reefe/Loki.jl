@@ -211,12 +211,13 @@ struct SpectralRegion{T<:Union{typeof(1.0u"μm"),typeof(1.0u"angstrom")}}
     mask::Vector{Tuple{T,T}}
     n_channels::Int
     channel_masks::Vector{BitVector}
+    channel_bounds::Vector{T}
     wavelength_range::WavelengthRange
 end
 
 
 # A little container for stellar populations 
-struct StellarPopulations{Q1<:QWave,Q2<:Unitful.Units,Q3<:typeof(1.0u"km/s"),T} where {T<:Union{Vector{Spline2D},Matrix{<:Quantity}}}
+mutable struct StellarPopulations{Q1<:QWave,Q2<:Unitful.Units,Q3<:typeof(1.0u"km/s"),T} where {T<:Union{Vector{Spline2D},Matrix{<:Quantity}}}
     λ::Vector{Q1}
     templates::T
     units::Q2
@@ -224,7 +225,7 @@ struct StellarPopulations{Q1<:QWave,Q2<:Unitful.Units,Q3<:typeof(1.0u"km/s"),T} 
 end
 
 # A little container for iron templates
-struct FeIITemplates{Q1<:QWave,Q2<:typeof(1.0u"km/s"),C<:Complex}
+mutable struct FeIITemplates{Q1<:QWave,Q2<:typeof(1.0u"km/s"),C<:Complex}
     λ::Vector{Q1}
     npad::Int
     na_fft::Vector{C}

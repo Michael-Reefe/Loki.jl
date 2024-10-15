@@ -74,16 +74,16 @@ function model_continuum(s::Spaxel, params::Vector{Quantity{<:Real}}, cube_fitte
     abs_tot = one(out_type)
     # --> Ice+CH absorption features
     if fopt.fit_ch_abs
-        comps["abs_ice"] = extinction_factor(τ_ice(λ), params[pᵢ] * params[pᵢ+1], screen=true)
-        comps["abs_ch"] = extinction_factor(τ_ch(λ), params[pᵢ+1], screen=true) 
-        abs_tot .*= comps["abs_ice"] .* comps["abs_ch"]
+        comps["absorption_ice"] = extinction_factor(τ_ice(λ), params[pᵢ] * params[pᵢ+1], screen=true)
+        comps["absorption_ch"] = extinction_factor(τ_ch(λ), params[pᵢ+1], screen=true) 
+        abs_tot .*= comps["absorption_ice"] .* comps["absorption_ch"]
         pᵢ += 2
     end
     # --> Other absorption features
     for k ∈ 1:cube_fitter.n_abs_feat
         prof = Drude(λ, 1.0, params[pᵢ+1:pᵢ+3]...)
-        comps["abs_feat_$k"] = extinction_factor(prof, params[pᵢ], screen=true)
-        abs_tot .*= comps["abs_feat_$k"]
+        comps["absorption_feat_$k"] = extinction_factor(prof, params[pᵢ], screen=true)
+        abs_tot .*= comps["absorption_feat_$k"]
         pᵢ += 4
     end
     # --> combine everything together with optional covering fraction
@@ -115,7 +115,7 @@ function model_continuum(s::Spaxel, params::Vector{Quantity{<:Real}}, cube_fitte
             pᵢ += 3
         end
         # Convolve with a line-of-sight velocity distribution (LOSVD) according to the stellar velocity and dispersion
-        conv_ssps = convolve_losvd(ssps, fopt.vsyst_ssp, params[pᵢ], params[pᵢ+1], cube_fitter.vres, length(λ))
+        conv_ssps = convolve_losvd(ssps, fopt.vsyst_ssp, params[pᵢ], params[pᵢ+1], s.vres, length(λ))
         pᵢ += 2
         # Combine the convolved stellar templates together with the weights
         for i in 1:cube_fitter.n_ssps
@@ -128,7 +128,7 @@ function model_continuum(s::Spaxel, params::Vector{Quantity{<:Real}}, cube_fitte
 
     if fopt.fit_opt_na_feii
         conv_na_feii = convolve_losvd(cube_fitter.feii.na_fft, cube_fitter.feii.vsyst, params[pᵢ+1], params[pᵢ+2], 
-            cube_fitter.vres, length(λ), temp_fft=true, npad_in=cube_fitter.feii.npad)
+            s.vres, length(λ), temp_fft=true, npad_in=cube_fitter.feii.npad)
         comps["na_feii"] = params[pᵢ] .* conv_na_feii[:, 1] ./ maximum(conv_na_feii[:, 1])
         unit_check(comps["na_feii"][1], NoUnits)
         contin .+= comps["na_feii"] .* comps["total_extinction_gas"]
@@ -136,7 +136,7 @@ function model_continuum(s::Spaxel, params::Vector{Quantity{<:Real}}, cube_fitte
     end
     if fopt.fit_opt_br_feii
         conv_br_feii = convolve_losvd(cube_fitter.feii.br_fft, cube_fitter.feii.vsyst, params[pᵢ+1], params[pᵢ+2], 
-            cube_fitter.vres, length(λ), temp_fft=true, npad_in=cube_fitter.feii.npad)
+            s.vres, length(λ), temp_fft=true, npad_in=cube_fitter.feii.npad)
         comps["br_feii"] = params[pᵢ] .* conv_br_feii[:, 1] ./ maximum(conv_br_feii[:, 1])
         unit_check(comps["br_feii"][1], NoUnits)
         contin .+= comps["br_feii"] .* comps["total_extinction_gas"]
@@ -236,7 +236,8 @@ end
 
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
-function model_continuum(s::Spaxel, params::Vector{Quantity{<:Real}}, cube_fitter::CubeFitter)
+function model_continuum(s::Spaxel, params::Vector{Quantity{<:Real}}, cube_fitter::CubeFitter; 
+    return_extinction::Bool=false)
 
     # Get options from the cube fitter
     fopt = fit_options(cube_fitter)
@@ -299,7 +300,7 @@ function model_continuum(s::Spaxel, params::Vector{Quantity{<:Real}}, cube_fitte
             pᵢ += 3
         end
         # Convolve with a line-of-sight velocity distribution (LOSVD) according to the stellar velocity and dispersion
-        conv_ssps = convolve_losvd(ssps, fopt.vsyst_ssp, params[pᵢ], params[pᵢ+1], cube_fitter.vres, length(λ))
+        conv_ssps = convolve_losvd(ssps, fopt.vsyst_ssp, params[pᵢ], params[pᵢ+1], s.vres, length(λ))
         pᵢ += 2
         @views for i in 1:cube_fitter.n_ssps
             contin .+= conv_ssps[:, i] .* ext_stars
@@ -310,13 +311,13 @@ function model_continuum(s::Spaxel, params::Vector{Quantity{<:Real}}, cube_fitte
 
     if fopt.fit_opt_na_feii
         conv_na_feii = convolve_losvd(cube_fitter.feii.na_fft, cube_fitter.feii.vsyst, params[pᵢ+1], params[pᵢ+2], 
-            cube_fitter.vres, length(λ), temp_fft=true, npad_in=cube_fitter.feii.npad)
+            s.vres, length(λ), temp_fft=true, npad_in=cube_fitter.feii.npad)
         @views contin .+= params[pᵢ] .* conv_na_feii[:, 1]./maximum(conv_na_feii[:, 1]) .* ext_gas
         pᵢ += 3
     end
     if fopt.fit_opt_br_feii
         conv_br_feii = convolve_losvd(cube_fitter.feii.br_fft, cube_fitter.feii.vsyst, params[pᵢ+1], params[pᵢ+2], 
-            cube_fitter.vres, length(λ), temp_fft=true, npad_in=cube_fitter.feii.npad)
+            s.vres, length(λ), temp_fft=true, npad_in=cube_fitter.feii.npad)
         @views contin .+= params[pᵢ] .* conv_br_feii[:, 1]./maximum(conv_br_feii[:, 1]) .* ext_gas
         pᵢ += 3
     end
@@ -378,6 +379,10 @@ function model_continuum(s::Spaxel, params::Vector{Quantity{<:Real}}, cube_fitte
                 end
             end
         end
+    end
+
+    if return_extinction
+        return contin, ext_gas
     end
 
     contin
@@ -785,11 +790,15 @@ end
 Calculate extra parameters that are not fit, but are nevertheless important to know, for a given spaxel.
 Currently this includes the integrated intensity, equivalent width, and signal to noise ratios of dust features and emission lines.
 """
-function calculate_extra_parameters(s::Spaxel, cube_fitter::CubeFitter, comps::Dict, nuc_temp_fit::Bool, 
-    popt_c::Vector{T}, popt_l::Vector{T}, perr_c::Vector{T}, perr_l::Vector{T}, templates_psfnuc::Union{Nothing,Vector{<:Real}}, 
-    area_sr::Vector{<:typeof(1.0u"sr")}, propagate_err::Bool=true) where {T<:Real}
+function calculate_extra_parameters(s::Spaxel, cube_fitter::CubeFitter, comps::Dict, result_c::SpaxelFitResult, 
+    result_l::SpaxelFitResult, propagate_err::Bool=true)
 
     @debug "Calculating extra parameters"
+
+    popt_c = result_c.popt
+    perr_c = result_c.perr
+    popt_l = result_l.popt
+    perr_l = result_l.perr
 
     # Normalization
     N = s.N; λ = s.λ; I = s.I; σ = s.σ
@@ -841,14 +850,13 @@ function calculate_extra_parameters(s::Spaxel, cube_fitter::CubeFitter, comps::D
             cent_ind = argmin(abs.(λ .- μ))
             
             # Integrate over the solid angle
-            A_cgs = A_cgs * area_sr[cent_ind]
+            A_cgs = A_cgs * s.area_sr[cent_ind]
             if propagate_err
-                A_cgs_err = A_cgs_err * area_sr[cent_ind]
+                A_cgs_err = A_cgs_err * s.area_sr[cent_ind]
             end
 
             # Get the extinction profile at the center
             # ext = ext_curve[cent_ind] 
-            tnorm = nuc_temp_fit ? templates_psfnuc : ones(length(λ))
             # tn = tnorm[cent_ind]
 
             prof = component.profile
@@ -881,10 +889,10 @@ function calculate_extra_parameters(s::Spaxel, cube_fitter::CubeFitter, comps::D
             else
                 error("Unrecognized PAH profile: $prof")
             end
-            feature .*= s.aux["ext_curve"] .* tnorm
+            feature .*= s.aux["ext_curve"]
             if propagate_err
-                feature_err[:,1] .*= s.aux["ext_curve"] .* tnorm
-                feature_err[:,2] .*= s.aux["ext_curve"] .* tnorm
+                feature_err[:,1] .*= s.aux["ext_curve"]
+                feature_err[:,2] .*= s.aux["ext_curve"]
             end
 
             # Calculate the flux using the utility function
@@ -1052,15 +1060,13 @@ function calculate_extra_parameters(s::Spaxel, cube_fitter::CubeFitter, comps::D
             cent_ind = argmin(abs.(λ .- mean_wave))
 
             # Integrate over the solid angle
-            amp_cgs *= area_sr[cent_ind]
+            amp_cgs *= s.area_sr[cent_ind]
             if propagate_err
-                amp_cgs_err *= area_sr[cent_ind]
+                amp_cgs_err *= s.area_sr[cent_ind]
             end
 
             # Get the extinction factor at the line center
             # ext = extinction[cent_ind]
-            tnorm = nuc_temp_fit ? templates_psfnuc : ones(length(λ))
-            # tn = tnorm[cent_ind]        
             
             # Create the extincted line profile in units matching the continuum
             feature_err = nothing
@@ -1091,10 +1097,10 @@ function calculate_extra_parameters(s::Spaxel, cube_fitter::CubeFitter, comps::D
             else
                 error("Unrecognized line profile $(component.profile)")
             end
-            feature .*= s.aux["ext_curve"] .* tnorm
+            feature .*= s.aux["ext_curve"]
             if propagate_err
-                feature_err[:,1] .*= s.aux["ext_curve"] .* tnorm
-                feature_err[:,2] .*= s.aux["ext_curve"] .* tnorm
+                feature_err[:,1] .*= s.aux["ext_curve"]
+                feature_err[:,2] .*= s.aux["ext_curve"]
             end
 
             # Calculate line flux using the helper function
@@ -1168,7 +1174,16 @@ function calculate_extra_parameters(s::Spaxel, cube_fitter::CubeFitter, comps::D
         pₒ += 5
     end
 
-    p_dust, p_lines, p_dust_err, p_lines_err
+    # Make a fit result object
+    params_extra = get_flattened_nonfit_parameters(model(cube_fitter))
+    popt_extra = [p_dust; p_lines]
+    perr_extra = [p_dust_err; p_lines_err]
+    punit_extra = unit.(popt_extra)
+    result = SpaxelFitResult(params_extra.names[1:end-2], popt_extra, [perr_extra perr_extra], 
+        [repeat([-Inf], length(popt_extra)).*punit_extra repeat([Inf], length(popt_extra)).*punit_extra], 
+        falses(length(popt_extra)), Vector{Union{Tie,Nothing}}([nothing for _ in 1:length(popt_extra)]))
+
+    result
 end
 
 

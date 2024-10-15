@@ -170,27 +170,30 @@ end
 
 
 # # Helper function to get the continuum to be subtracted for the line fit
-# function get_continuum_for_line_fit(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, I_cont::Vector{<:Real},
-#     comps_cont::Dict, norm::Real, nuc_temp_fit::Bool)
-#     line_cont = copy(I_cont)
-#     if cube_fitter.subtract_cubic_spline
-#         full_cont = I ./ norm
-#         temp_cont = zeros(eltype(line_cont), length(line_cont))
-#         # subtract any templates first
-#         if !nuc_temp_fit
-#             for comp ∈ keys(comps_cont)
-#                 if contains(comp, "templates_")
-#                     temp_cont .+= comps_cont[comp]
-#                 end
-#             end
-#         end
-#         # do cubic spline fit
-#         _, notemp_cont, _ = continuum_cubic_spline(λ, full_cont .- temp_cont, zeros(eltype(line_cont), length(line_cont)), 
-#             cube_fitter.linemask_Δ, cube_fitter.linemask_n_inc_thresh, cube_fitter.linemask_thresh, cube_fitter.linemask_overrides)
-#         line_cont = temp_cont .+ notemp_cont
-#     end
-#     line_cont
-# end
+function get_continuum_for_line_fit(spaxel::Spaxel, cube_fitter::CubeFitter, I_cont::Vector{<:Real},
+    comps_cont::Dict)
+
+    fopt = fit_options(cube_fitter)
+    @assert spaxel.normalized
+
+    # default to using the actual fit continuum
+    line_cont = copy(I_cont)
+    if fopt.subtract_cubic_spline
+        temp_cont = zeros(eltype(line_cont), length(line_cont))
+        # subtract any templates first
+        for comp ∈ keys(comps_cont)
+            if contains(comp, "templates_")
+                temp_cont .+= comps_cont[comp]
+            end
+        end
+        # do cubic spline fit to the template-subtracted data
+        _, notemp_cont = continuum_cubic_spline(spaxel.λ, spaxel.I .- temp_cont, zeros(eltype(line_cont), length(line_cont)), 
+            cube_fitter.linemask_overrides; do_err=false)
+        line_cont = temp_cont .+ notemp_cont
+    end
+
+    line_cont
+end
 
 
 # Helper function for getting the total integrated intensity/error/solid angle over the whole FOV
@@ -509,55 +512,48 @@ end
 
 
 # Helper function to get the total fit results for continuum and line fits
-function collect_total_fit_results(I::Vector{<:Real}, σ::Vector{<:Real}, I_cont::Vector{<:Real}, 
-    I_line::Vector{<:Real}, comps_cont::Dict, comps_line::Dict, n_free_c::Integer, n_free_l::Integer, 
-    norm::Real, mask_chi2::BitVector, nuc_temp_fit::Bool)
+function collect_total_fit_results(spaxel::Spaxel, cube_fitter::CubeFitter, I_cont::Vector{<:Real}, 
+    I_line::Vector{<:Real}, comps_cont::Dict, comps_line::Dict, n_free_c::Integer, n_free_l::Integer)
 
     # Combine the continuum and line models
     I_model = I_cont .+ I_line
     comps = merge(comps_cont, comps_line)
 
-    # Renormalize
-    I_model .*= norm
-    for comp ∈ keys(comps)
-        if (comp == "extinction") || contains(comp, "ext_") || contains(comp, "abs_") || contains(comp, "attenuation")
-            continue
-        end
-        if nuc_temp_fit && contains(comp, "template")
-            continue
-        end
-        comps[comp] .*= norm
+    # chi^2 and reduced chi^2 of the model BEFORE renormalizing
+    mask_chi2 = copy(spaxel.mask_bad)
+    for pair in cube_fitter.spectral_region.mask
+        mask_chi2 .|= .~(pair[1] .< spaxel.λ .< pair[2])
     end
-
-    # Total free parameters
-    n_free = n_free_c + n_free_l
-    n_data = length(I)
-
+    χ2 = sum(@. (spaxel.I[.~mask_chi2] - I_model[.~mask_chi2])^2 / spaxel.σ[.~mask_chi2]^2)
     # Degrees of freedom
+    n_free = n_free_c + n_free_l
+    n_data = length(spaxel.I[.~mask_chi2])
     dof = n_data - n_free
 
-    # chi^2 and reduced chi^2 of the model
-    χ2 = sum(@. (I[.~mask_chi2] - I_model[.~mask_chi2])^2 / σ[.~mask_chi2]^2)
+    # Renormalize
+    I_model = I_model .* spaxel.N
+    for comp ∈ keys(comps)
+        if contains(comp, "extinction") || contains(comp, "absorption") 
+            continue
+        end
+        comps[comp] = comps[comp] .* spaxel.N
+    end
 
     I_model, comps, χ2, dof
 end
 
 
 # Helper function to get bootstrapped fit results 
-function collect_bootstrapped_results(cube_fitter::CubeFitter, p_boot::Matrix{<:Real}, 
-    λ::Vector{<:Real}, I::Vector{<:Real}, σ::Vector{<:Real}, I_model_boot::Matrix{<:Real}, 
-    norm::Real, split1::Integer, split2::Integer, lsf_interp_func::Function, mask_chi2::BitVector, 
-    templates::Matrix{<:Real}, nuc_temp_fit::Bool)
+function collect_bootstrapped_results(spaxel::Spaxel, cube_fitter::CubeFitter, p_boot::Matrix{Quantity{<:Real}}, 
+    I_model_boot::Matrix{<:QSIntensity}, split1::Integer, split2::Integer)
 
     # Filter out any large (>5 sigma) outliers
     p_med = dropdims(nanquantile(p_boot, 0.50, dims=2), dims=2) 
     p_mad = nanmad(p_boot, dims=2) .* 1.4826   # factor of 1.4826 to normalize the MAD it so it is interpretable as a standard deviation
     p_mask = (p_boot .< (p_med .- 5 .* p_mad)) .| (p_boot .> (p_med .+ 5 .* p_mad))
     p_boot[p_mask] .= NaN
+    p_out = p_med
 
-    if cube_fitter.bootstrap_use == :med
-        p_out = p_med
-    end
     # (if set to :best, p_out is already the best-fit values from earlier)
     p_err_lo = p_med .- dropdims(nanquantile(p_boot, 0.159, dims=2), dims=2)
     p_err_up = dropdims(nanquantile(p_boot, 0.841, dims=2), dims=2) .- p_med
@@ -567,29 +563,16 @@ function collect_bootstrapped_results(cube_fitter::CubeFitter, p_boot::Matrix{<:
     I_boot_min = dropdims(nanminimum(I_model_boot, dims=2), dims=2)
     I_boot_max = dropdims(nanmaximum(I_model_boot, dims=2), dims=2)
 
-
     # Replace the best-fit model with the 50th percentile model to be consistent with p_out
-    if cube_fitter.spectral_region == :MIR
-        I_boot_cont, comps_boot_cont = model_continuum(λ, p_out[1:split1], norm, cube_fitter.n_dust_cont, cube_fitter.n_power_law, 
-            cube_fitter.dust_features.profiles, cube_fitter.n_abs_feat, cube_fitter.extinction_curve, cube_fitter.extinction_screen, 
-            cube_fitter.κ_abs, cube_fitter.custom_ext_template, cube_fitter.fit_sil_emission, cube_fitter.fit_temp_multexp, false, 
-            templates, cube_fitter.channel_masks, nuc_temp_fit, true)
-        ext_key = "extinction"
-    else
-        I_boot_cont, comps_boot_cont = model_continuum(λ, p_out[1:split1], norm, cube_fitter.vres, cube_fitter.vsyst_ssp, 
-            cube_fitter.vsyst_feii, cube_fitter.npad_feii, cube_fitter.n_ssps, cube_fitter.ssp_λ, cube_fitter.ssp_templates,
-            cube_fitter.feii_templates_fft, cube_fitter.n_power_law, cube_fitter.fit_uv_bump, cube_fitter.fit_covering_frac, 
-            cube_fitter.fit_opt_na_feii, cube_fitter.fit_opt_br_feii, cube_fitter.extinction_curve, templates, cube_fitter.fit_temp_multexp,
-            nuc_temp_fit, true)
-        ext_key = "attenuation_gas"
-    end
-    I_boot_line, comps_boot_line = model_line_residuals(λ, p_out[split1+1:split2], cube_fitter.n_lines, cube_fitter.n_comps,
-        cube_fitter.lines, cube_fitter.flexible_wavesol, comps_boot_cont[ext_key], lsf_interp_func, cube_fitter.relative_flags,
-        nuc_temp_fit ? comps_boot_cont["templates_1"] : nothing, nuc_temp_fit, true)
+    I_boot_cont, comps_boot_cont = model_continuum(spaxel.λ, p_out[1:split1], cube_fitter, true)
+    spaxel.aux["ext_curve"] = comps_boot_cont["total_extinction_gas"]
+    I_boot_line, comps_boot_line = model_line_residuals(spaxel.λ, p_out[split1+1:split2], model(cube_fitter).lines, 
+        cube_fitter.lsf, true)
 
     # Reconstruct the full model
-    I_model, comps, χ2, _ = collect_total_fit_results(I, σ, I_boot_cont, I_boot_line, comps_boot_cont,
-        comps_boot_line, 0, 0, norm, mask_chi2, nuc_temp_fit)
+    I_model, comps, χ2, = collect_total_fit_results(spaxel, cube_fitter, I_boot_cont, I_boot_line,
+        comps_boot_cont, comps_boot_line, 0, 0)
+
     # Recalculate chi^2 based on the median model
     p_out[end-1] = χ2
 
@@ -612,7 +595,7 @@ function determine_fit_redo_with0extinction(cube_fitter::CubeFitter, λ::Vector{
         region_is_valid = sum(sil_abs_region) > 100
         # check if more than half of the pixels b/w 9-11 um, after subtracting the nuclear template, are within 3 sigma of 0.
         template_dominates = sum((abs.(I_model .- comps["templates_$s"])[sil_abs_region]) .< (σ[sil_abs_region])) > (sum(sil_abs_region)/2)
-        if ext_not_locked && region_is_valid && (template_dominates || cube_fitter.F_test_ext[1])
+        if ext_not_locked && region_is_valid && (template_dominates || fopt.F_test_ext)
             redo_fit = true
             break
         end

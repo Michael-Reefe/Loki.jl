@@ -150,8 +150,9 @@ mutable struct DataCube{T<:Vector{<:QWave}, S<:Array{<:QSIntensity, 3}}
         λlim = extrema(λ)
         λrange = get_λrange(λlim)
         umask = !isnothing(user_mask) ? user_mask : Vector{Tuple{eltype(λ),eltype(λ)}}()
-        n_channels, channel_masks = get_n_channels(λ, rest_frame, z; format=format, instrument_channel_edges=instrument_channel_edges)
-        spectral_region = SpectralRegion(λlim, umask, n_channels, channel_masks, λrange)
+        n_channels, ch_bounds, channel_masks = get_n_channels(λ, rest_frame, z; format=format, 
+            instrument_channel_edges=instrument_channel_edges)
+        spectral_region = SpectralRegion(λlim, umask, n_channels, channel_masks, ch_bounds, λrange)
 
         # Return a new instance of the DataCube struct
         Tnew = typeof(λ)
@@ -316,13 +317,18 @@ function get_n_channels(_λ::Vector{<:QWave}, rest_frame::Bool, z::Union{Real,No
     channel_masks = BitVector[]
     if format == :JWST
         ch_edge_sort = sort(channel_edges)
+        ch_bounds = channel_boundaries
     else
         if isnothing(instrument_channel_edges) 
             @warn "The DataCube format is not JWST! Please manually input the channel edges (if any), otherwise it will be assumed " *
                   "that there is only one channel"
-            return 1, [trues(length(_λ))]
+            return 1, QWave[], [trues(length(_λ))]
         else
             ch_edge_sort = sort(instrument_channel_edges)
+            ch_bounds = Vector{eltype(_λ)}()
+            for i in 2:2:(length(instrument_channel_edges)-1)
+                push!(ch_bounds, (instrument_channel_edges[i]+instrument_channel_edges[i+1])/2)
+            end
         end
     end
 
@@ -354,8 +360,9 @@ function get_n_channels(_λ::Vector{<:QWave}, rest_frame::Bool, z::Union{Real,No
         pop!(channel_masks)
         n_channels -= 1
     end
+    ch_bound_out = ch_bounds[minimum(λ) .< ch_bounds .< maximum(λ)]
 
-    n_channels, channel_masks
+    n_channels, ch_bound_out, channel_masks
 end
 
 

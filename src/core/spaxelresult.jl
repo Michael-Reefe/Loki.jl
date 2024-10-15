@@ -45,6 +45,10 @@ function pretty_print_results(result::SpaxelFitResult)
     _lb = round_to_digits.(_lb, _perr)
     _ub = round_to_digits.(_ub, _perr)
 
+    # dont print bounds if they are infinite
+    _lb = ifelse.(.~isfinite.(_lb), "", string.(_lb))
+    _ub = ifelse.(.~isfinite.(_ub), "", string.(_ub))
+
     data = DataFrame(name=result.pnames, best=_popt, error_lower=_perr[:,1], error_upper=_perr[:,2], 
         bound_lower=_lb, bound_upper=_ub, unit=_unit, locked=locked, tied=tie_groups)
     textwidths = [maximum(textwidth.(string.([data[:, i]; names(data)[i]]))) for i in axes(data, 2)]

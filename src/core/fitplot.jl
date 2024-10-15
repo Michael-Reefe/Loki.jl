@@ -1,32 +1,50 @@
 
-# Helper function for creating and formatting the figure and plotting overall data/models
-function plot_full_models_plotly(λ::Vector{<:Real}, I::Vector{<:Real}, I_model::Vector{<:Real}, comps::Dict,
-    line_wave::Vector{<:Real}, line_names::Vector{Symbol}, xlabel::AbstractString, ylabel::AbstractString, 
-    nuc_temp_fit::Bool, n_templates::Integer, χ2red::Real; spline::Union{Vector{<:Real},Nothing}=nothing)
+# Helper function to fit a plotly HTML plot of a spaxel fit
+function plot_spaxel_fit_plotly(cube_fitter::CubeFitter, spaxel::Spaxel, I_model_u::Vector{<:QSIntensity}, 
+    comps::Dict, label::String; spline::Union{Vector{<:QSIntensity},Nothing}=nothing)
+
+    # Get units
+    fopt = fit_options(cube_fitter)
+    λunit = latex(unit(spaxel.λ[1]))
+    Iunit = latex(unit(spaxel.N))
+    perfreq = typeof(spaxel.N) <: QPerFreq
+    sub = perfreq ? L"\nu" : L"\lambda"
+
+    # Remove units
+    λ = ustrip.(spaxel.λ)
+    I = ustrip.(spaxel.I .* spaxel.N)
+    I_model = ustrip.(I_model_u)
+
+    xlabel = L"$\lambda\ (%$λunit)$"
+    ylabel = L"$I_{%$sub}\ (%$Iunit)$" 
 
     # Plot the overall data / model
-    trace1 = PlotlyJS.scatter(x=λ, y=I, mode="lines", line=Dict(:color => "black", :width => 1), name="Data", showlegend=true)
-    trace2 = PlotlyJS.scatter(x=λ, y=I_model, mode="lines", line=Dict(:color => "red", :width => 1), name="Model", showlegend=true)
+    trace1 = PlotlyJS.scatter(x=λ, y=I, mode="lines", line=Dict(:color => "black", :width => 1), name="Data", yaxis="y1", showlegend=true)
+    trace2 = PlotlyJS.scatter(x=λ, y=I_model, mode="lines", line=Dict(:color => "red", :width => 1), name="Model", yaxis="y1", showlegend=true)
     traces = [trace1, trace2]
     if !isnothing(spline)
-        append!(traces, [PlotlyJS.scatter(x=λ, y=spline, mode="lines", line=Dict(:color => "red", :width => 1, :dash => "dash"), name="Cubic Spline")])
+        append!(traces, [PlotlyJS.scatter(x=λ, y=ustrip.(spline), mode="lines", line=Dict(:color => "red", :width => 1, :dash => "dash"), 
+            name="Cubic Spline", yaxis="y1")])
     end
     # Individual templates
-    if !nuc_temp_fit
-        for j in 1:n_templates
-            append!(traces, [PlotlyJS.scatter(x=λ, y=comps["templates_$j"], mode="lines", line=Dict(:color => "green", :width => 1), name="Template $j")])
-        end
+    for j in 1:cube_fitter.n_templates
+        append!(traces, [PlotlyJS.scatter(x=λ, y=ustrip.(comps["templates_$j"]), mode="lines", line=Dict(:color => "green", :width => 1), 
+            name="Template $j"), yaxis="y1"])
     end
 
     # Add vertical dashed lines for emission line rest wavelengths
-    for (lw, ln) ∈ zip(line_wave, line_names)
-        append!(traces, [PlotlyJS.scatter(x=[lw, lw], y=[0., nanmaximum(I)*1.1], mode="lines", 
+    lines = model(cube_fitter).lines
+    for (lw, ln) ∈ zip(lines.λ₀, lines.names)
+        lwi = ustrip(uconvert(unit(spaxel.λ[1]), lw))
+        append!(traces, [PlotlyJS.scatter(x=[lwi, lwi], y=[0., nanmaximum(I)*1.1], mode="lines", 
             line=Dict(:color => occursin("H2", String(ln)) ? "red" : 
                         (any(occursin.(["alpha", "beta", "gamma", "delta"], String(ln))) ? "#ff7f0e" : "rebeccapurple"), 
-                    :width => 0.5, :dash => "dash"))])
+                    :width => 0.5, :dash => "dash")), showlegend=false])
     end
 
     # axes labels / titles / fonts
+    ext_label = "Extinction"
+
     layout = PlotlyJS.Layout(
         xaxis_title=xlabel,
         yaxis_title=ylabel,
@@ -34,113 +52,74 @@ function plot_full_models_plotly(λ::Vector{<:Real}, I::Vector{<:Real}, I_model:
         xaxis_constrain="domain",
         font_family="Georgia, Times New Roman, Serif",
         template="plotly_white",
-        # annotations=[
-        #     attr(x=lw, y=nanmaximum(I)*.75, text=ll) for (lw, ll) ∈ zip(line_wave, line_latex)
-        # ]
+        yaxis2_title=ext_label,
+        yaxis2_overlaying="y",
+        yaxis2_range=[1e-5, 1.],
+        yaxis2_type="log",
+        yaxis2_side="right"
     )
-
-    traces, layout
-end
-
-# Helper function to fit a plotly HTML plot of a spaxel fit
-function plot_mir_spaxel_fit_plotly(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, I_model::Vector{<:Real}, 
-    comps::Dict, nuc_temp_norm::Vector{<:Real}, nuc_temp_fit::Bool, χ2red::Real, label::String; 
-    spline::Union{Vector{<:Real},Nothing}=nothing)
-
-    xlabel = L"$\lambda\ (\mu{\rm m})$"
-    ylabel = L"$I_{\nu}\ ({\rm MJy}\,{\rm sr}^{-1})$" 
-    traces, layout = plot_full_models_plotly(λ, I, I_model, comps, cube_fitter.lines.λ₀, cube_fitter.lines.names, 
-        xlabel, ylabel, nuc_temp_fit, cube_fitter.n_templates, χ2red; spline=spline)
     
-    abs_feat = cube_fitter.n_abs_feat ≥ 1 ? reduce(.*, [comps["abs_feat_$i"] for i ∈ 1:cube_fitter.n_abs_feat]) : ones(length(λ))
-    abs_full = comps["abs_ice"] .* comps["abs_ch"] .* abs_feat
-    ext_full = abs_full .* comps["extinction"]
+    abs_feat = cube_fitter.n_abs_feat ≥ 1 ? reduce(.*, [comps["absorption_feat_$i"] for i ∈ 1:cube_fitter.n_abs_feat]) : ones(length(λ))
+    abs_full = comps["absorption_ice"] .* comps["absorption_ch"] .* abs_feat
+    ext_gas = comps["total_extinction_gas"]
+    ext_stars = comps["total_extinction_stars"]
 
     # Loop over and plot individual model components
     for comp ∈ keys(comps)
-        if comp == "extinction"
-            append!(traces, [PlotlyJS.scatter(x=λ, y=ext_full .* maximum(I_model) .* 1.1, 
-                mode="lines", line=Dict(:color => "black", :width => 1, :dash => "dash"), name="Extinction")])
-        elseif comp == "abs_oli"
-            append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* maximum(I_model) .* 1.1, mode="lines", line=Dict(:color => "blue", :width => 1, :dash => "dash"),
-                name="Olivine Absorption")])
-        elseif comp == "abs_pyr"
-            append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* maximum(I_model) .* 1.1, mode="lines", line=Dict(:color => "red", :width => 1, :dash => "dash"),
-                name="Pyroxene Absorption")])
-        elseif comp == "abs_for"
-            append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* maximum(I_model) .* 1.1, mode="lines", line=Dict(:color => "orange", :width => 1, :dash => "dash"),
-                name="Forsterite Absorption")])
-        elseif occursin("hot_dust", comp)
-            append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* abs_full .* nuc_temp_norm, mode="lines", line=Dict(:color => "yellow", :width => 1),
-                name="Hot Dust")])
-        elseif occursin("unobscured_continuum", comp)
-            append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* nuc_temp_norm, mode="lines", line=Dict(:color => "black", :width => 0.5), 
-                name="Unobscured Continuum")])
-        elseif occursin("line", comp)
-            append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* comps["extinction"] .* nuc_temp_norm, 
-                mode="lines", line=Dict(:color => "rebeccapurple", :width => 1), name="Lines")])
-        end
-    end
-
-    # Add the summed up continuum
-    append!(traces, [PlotlyJS.scatter(x=λ, y=(abs_full .* (cube_fitter.fit_sil_emission ? comps["hot_dust"] : zeros(length(λ))) .+ 
-        comps["unobscured_continuum"] .+ comps["obscured_continuum"] .+ ((cube_fitter.n_templates > 0) && !nuc_temp_fit ? 
-        sum([comps["templates_$k"] for k ∈ 1:cube_fitter.n_templates], dims=1)[1] : zeros(length(λ)))) .* nuc_temp_norm, 
-        mode="lines", line=Dict(:color => "green", :width => 1), name="Total Continuum")])
-    # Summed up PAH features
-    append!(traces, [PlotlyJS.scatter(x=λ, y=sum([comps["dust_feat_$i"] for i ∈ 1:cube_fitter.n_dust_feat], dims=1)[1] .* 
-        comps["extinction"] .* nuc_temp_norm, mode="lines", line=Dict(:color => "blue", :width => 1), name="PAHs")])
-    # Individual PAH features
-    for i in 1:cube_fitter.n_dust_feat
-        append!(traces, [PlotlyJS.scatter(x=λ, y=comps["dust_feat_$i"] .* comps["extinction"] .* nuc_temp_norm, 
-            mode="lines", line=Dict(:color => "blue", :width => 1), name="PAHs")])
-    end
-
-    # save as HTML file
-    p = PlotlyJS.plot(traces, layout)
-    PlotlyJS.savefig(p, isnothing(label) ? joinpath("output_$(cube_fitter.name)", "spaxel_plots", "levmar_fit_spaxel.html") : 
-        joinpath("output_$(cube_fitter.name)", "spaxel_plots", "$label.html"))
-end
-
-
-function plot_opt_spaxel_fit_plotly(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, I_model::Vector{<:Real}, 
-    comps::Dict, nuc_temp_norm::Vector{<:Real}, nuc_temp_fit::Bool, χ2red::Real, label::String; 
-    spline::Union{Vector{<:Real},Nothing}=nothing)
-
-    # Plot the overall data / model
-    xlabel = L"$\lambda\ (\mathring{A})$"
-    ylabel = L"I_{\lambda}\ ({\rm erg}\,{\rm s}^{-1}\,{\rm cm}^{-2}\,{\mathring{A}}^{-1}\,{\rm sr}^{-1})"
-    traces, layout = plot_full_models_plotly(λ, I, I_model, comps, cube_fitter.lines.λ₀.*1e4, cube_fitter.lines.names, 
-        xlabel, ylabel, nuc_temp_fit, cube_fitter.n_templates, χ2red; spline=spline)
-    
-    att_stars = comps["attenuation_stars"]
-    att_gas = comps["attenuation_gas"]
-
-    # Loop over and plot individual model components
-    for comp ∈ keys(comps)
-        if comp == "attenuation_stars"
-            append!(traces, [PlotlyJS.scatter(x=λ, y=att_gas ./ median(att_gas) .* maximum(I_model) .* 1.1, 
-                mode="lines", line=Dict(:color => "black", :width => 1, :dash => "dash"), name="Extinction")])
+        if comp == "total_extinction_gas"
+            append!(traces, [PlotlyJS.scatter(x=λ, y=ext_gas, mode="lines", 
+                line=Dict(:color => "black", :width => 2, :dash => "dash"), name="Extinction", yaxis="y2")])
+        elseif comp == "absorption_oli"
+            append!(traces, [PlotlyJS.scatter(x=λ, y=ustrip.(comps[comp]), mode="lines", 
+                line=Dict(:color => "black", :width => 1, :dash => "dash"), name="Olivine Absorption", yaxis="y2")])
+        elseif comp == "absorption_pyr"
+            append!(traces, [PlotlyJS.scatter(x=λ, y=ustrip.(comps[comp]), mode="lines", 
+                line=Dict(:color => "black", :width => 1, :dash => "dash"), name="Pyroxene Absorption", yaxis="y2")])
+        elseif comp == "absorption_for"
+            append!(traces, [PlotlyJS.scatter(x=λ, y=ustrip.(comps[comp]), mode="lines", 
+                line=Dict(:color => "black", :width => 1, :dash => "dash"), name="Forsterite Absorption", yaixs="y2")])
+        elseif occursin(comp, "SSP")
+            append!(traces, [PlotlyJS.scatter(x=λ, y=ustrip.(comps[comp]) .* ext_stars, mode="lines", 
+                line=Dict(:color => "red", :width => 1), name="SSPs", yaxis="y1")])
         elseif occursin("na_feii", comp)
-            append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* att_gas .* nuc_temp_norm, mode="lines", line=Dict(:color => "yellow", :width => 1),
-                name="Narrow Fe II")])
+            append!(traces, [PlotlyJS.scatter(x=λ, y=ustrip.(comps[comp]) .* ext_gas, mode="lines", 
+                line=Dict(:color => "yellow", :width => 1), name="Narrow Fe II", yaxis="y1")])
         elseif occursin("br_feii", comp)
-            append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* att_gas .* nuc_temp_norm, mode="lines", line=Dict(:color => "yellow", :width => 2),
-                name="Broad Fe II")])
+            append!(traces, [PlotlyJS.scatter(x=λ, y=ustrip.(comps[comp]) .* ext_gas, mode="lines", 
+                line=Dict(:color => "yellow", :width => 2), name="Broad Fe II", yaxis="y1")])
+        elseif occursin("power_law", comp)
+            append!(traces, [PlotlyJS.scatter(x=λ, y=ustrip.(comps[comp]) .* ext_gas, mode="lines", 
+                line=Dict(:color => "orange", :width => 1), name="Power laws", yaxis="y1")])
+        elseif occursin("dust_cont", comp)
+            append!(traces, [PlotlyJS.scatter(x=λ, y=ustrip.(comps[comp]) .* ext_gas, mode="lines", 
+                line=Dict(:color => "orange", :width => 1), name="Dust continuum", yaxis="y1")])
+        elseif occursin("hot_dust", comp)
+            append!(traces, [PlotlyJS.scatter(x=λ, y=ustrip.(comps[comp]) .* abs_full, mode="lines", 
+                line=Dict(:color => "yellow", :width => 1), name="Hot Dust", yaxis="y1")])
         elseif occursin("line", comp)
-            append!(traces, [PlotlyJS.scatter(x=λ, y=comps[comp] .* att_gas .* nuc_temp_norm, 
-                mode="lines", line=Dict(:color => "rebeccapurple", :width => 1), name="Lines")])
+            append!(traces, [PlotlyJS.scatter(x=λ, y=ustrip.(comps[comp]) .* ext_gas,
+                mode="lines", line=Dict(:color => "rebeccapurple", :width => 1), name="Lines", yaxis="y1")])
+        elseif occursin("dust_feat", comp)
+            append!(traces, [PlotlyJS.scatter(x=λ, y=ustrip.(comps[comp]) .* ext_gas,
+                mode="lines", line=Dict(:color => "blue", :width => 1), name="PAHs", yaxis="y1")])
         end
     end
 
     # Add the summed up continuum
-    append!(traces, [PlotlyJS.scatter(x=λ, y=nuc_temp_norm .* (att_stars .* sum([comps["SSP_$i"] for i ∈ 1:cube_fitter.n_ssps], dims=1)[1] .+
-        (cube_fitter.fit_opt_na_feii ? comps["na_feii"] .* att_gas : zeros(length(λ))) .+ 
-        (cube_fitter.fit_opt_br_feii ? comps["br_feii"] .* att_gas : zeros(length(λ))) .+
-        (cube_fitter.n_power_law > 0 ? sum([comps["power_law_$j"] for j in 1:cube_fitter.n_power_law], dims=1)[1] : zeros(length(λ)))), 
-        mode="lines", line=Dict(:color => "green", :width => 1), name="Continuum")])
-    for i in 1:cube_fitter.n_ssps
-        append!(traces, [PlotlyJS.scatter(x=λ, y=att_stars .* comps["SSP_$i"] .* nuc_temp_norm, mode="lines", line=Dict(:color => "green", :width => 0.5))])
+    append!(traces, [PlotlyJS.scatter(x=λ, y=ustrip.(comps["continuum_and_pahs"]), mode="lines",
+        line=Dict(:color => "black", :width => 3), name="Total continuum", yaxis="y1")])
+    # Summed up PAH features
+    sdust = zeros(length(λ))
+    for (k, dcomplex) in enumerate(model(cube_fitter).dust_features.profiles)
+        for (j, component) in enumerate(dcomplex)
+            sdust .+= ustrip.(comps["dust_feat_$(k)_$(j)"]) .* ext_gas 
+        end
+    end
+    append!(traces, [PlotlyJS.scatter(x=λ, y=sdust, mode="lines", line=Dict(:color => "blue", :width => 3), name="Total PAHs")])
+    # Summed up SSPs
+    if cube_fitter.n_ssps > 1
+        append!(traces, [PlotlyJS.scatter(x=λ, y=sum([ustrip.(comps["SSP_$i"]) for i ∈ 1:cube_fitter.n_ssps], dims=1)[1] .* 
+            ext_stars, mode="lines", line=Dict(:color => "red", :width => 3))])
     end
 
     # save as HTML file
@@ -150,32 +129,96 @@ function plot_opt_spaxel_fit_plotly(cube_fitter::CubeFitter, λ::Vector{<:Real},
 end
 
 
-# Helper function for creating and formatting the figure and plotting overall data/models
-function plot_full_models_pyplot(λ::Vector{<:Real}, I::Vector{<:Real}, I_model::Vector{<:Real},
-    mask_lines::BitVector, mask_bad::BitVector, user_mask::Vector{<:Tuple}, range::Union{Tuple,Nothing}, 
-    factor::Vector{<:Real}, extscale_limits::Tuple, ext_label::AbstractString, I_label::Function, 
-    χ2red::Real; min_inten::Union{Real,Nothing}=nothing, spline::Union{Vector{<:Real},Nothing}=nothing, 
-    I_boot_min::Union{Vector{<:Real},Nothing}=nothing, I_boot_max::Union{Vector{<:Real},Nothing}=nothing,
-    major_tick_space::Real=2.5, minor_tick_space::Real=0.5, logy::Bool=false)
+# Helper function for plotting and annotating the emission lines
+function pyplot_annotate_emission_lines!(λ::Vector{<:QWave}, comps::Dict, lines::FitFeatures,
+    extinction::Vector{<:Real}, normalization::Vector{<:Quantity}, line_f::Vector{<:Real}, 
+    ax1, ax2, range::Union{Nothing,Tuple})
+
+    # full line profile
+    if isnothing(range)
+        s = zeros(length(λ))
+        for (k, line) in enumerate(lines.profiles)   
+            for (j, component) in enumerate(line)    
+                s .+= comps["line_$(k)_$(j)"] .* extinction .* normalization
+            end
+        end
+        ax1.plot(ustrip.(λ), s, "-", color="rebeccapurple", alpha=0.6, label="Lines")
+    else
+        for (k, line) in enumerate(lines.profiles)   
+            for (j, component) in enumerate(line)    
+                ax1.plot(ustrip.(λ), comps["line_$(k)_$(j)"] .* extinction .* normalization, 
+                    "-", color="rebeccapurple", alpha=0.6, label="Lines")
+            end
+        end
+    end
+
+    # plot vertical dashed lines for emission line wavelengths
+    line_wave = ustrip.(uconvert.(unit(λ[1]), lines.λ₀))
+    for lw ∈ line_wave
+        ax1.axvline(lw, linestyle="--", color="k", lw=0.5, alpha=0.5)
+        ax2.axvline(lw, linestyle="--", color="k", lw=0.5, alpha=0.5)
+    end
+
+    # Annotate emission lines 
+    line_λ = ustrip.(λ)
+    ak = py_lineidplot.initial_annotate_kwargs()
+    ak["verticalalignment"] = "bottom"
+    ak["horizontalalignment"] = "center"
+    pk = py_lineidplot.initial_plot_kwargs()
+    pk["lw"] = 0.5
+    pk["alpha"] = 0.5
+    fig, ax1 = py_lineidplot.plot_line_ids(line_λ, line_f, line_wave[lines.config.annotate], lines.labels[lines.config.annotate], 
+        ax=ax1, extend=false, label1_size=12, plot_kwargs=pk, annotate_kwargs=ak)
+end
+
+
+function plot_spaxel_fit_pyplot(cube_fitter::CubeFitter, spaxel::Spaxel, I_model::Vector{<:QSIntensity}, 
+    comps::Dict, range::Union{Tuple,Nothing}, χ2red::Real, label::String; spline::Union{Vector{<:QSIntensity},Nothing}=nothing, 
+    I_boot_min::Union{Vector{<:QSIntensity},Nothing}=nothing, I_boot_max::Union{Vector{<:QSIntensity},Nothing}=nothing, 
+    logy::Bool=false)
+
+    fopt = fit_options(cube_fitter)
+    λunit = unit(spaxel.λ[1])
+    Nunit = unit(spaxel.N)
+    mask_lines = spaxel.mask_lines
+    mask_bad = spaxel.mask_bad
+    λ = spaxel.λ
+    I = spaxel.I .* spaxel.N
+
+    perfreq = typeof(spaxel.N) <: QPerFreq
+    if perfreq
+        factor = uconvert(u"Hz", C_KMS ./ spaxel.λ)
+        Iunit = Nunit*u"Hz"
+        sub = L"\nu"
+    else
+        factor = spaxel.λ
+        Iunit = Nunit*λunit
+        sub = L"\lambda"
+    end
+
+    min_inten = logy ? nothing : -0.01
+    extscale_limits = (1e-5, 1.)
+    ext_label = "Extinction"
+    I_label = prefix -> L"%$(sub)$I_{%$(sub)}$ (%$(prefix) %$(latex(Iunit)))"
 
     # If max is above 10^4, normalize so the y axis labels aren't super wide
-    power = floor(Int, log10(maximum(I .* factor)))
+    power = floor(Int, log10(ustrip(maximum(I .* factor))))
     if (power ≥ 4) || (power ≤ -4)
-        norm = 10.0^power
+        norm = 10.0^power * Iunit
     else
-        norm = 1.0
+        norm = 1.0 * Iunit
     end
 
     if isnothing(min_inten)
         if !logy || !isnothing(range)
             min_inten = (sum((I ./ norm .* factor) .< -0.01) > (length(λ)/10)) ? -2nanstd(I ./ norm .* factor) : -0.01
         else
-            min_inten = 0.1nanminimum(I[I .> 0.] ./ norm .* factor)
+            min_inten = 0.1nanminimum(I[I .> 0.0*Nunit] ./ norm .* factor)
         end
     end
     if !logy || !isnothing(range)
         max_inten = isnothing(range) ? 
-                    1.3nanmaximum(I[.~mask_lines .& .~mask_bad] ./ norm .* factor[.~mask_lines .& .~mask_bad]) : 
+                    1.3nanmaximum((I ./ norm .* factor)[.~mask_lines .& .~mask_bad]) : 
                     1.1nanmaximum((I ./ norm .* factor)[range[1] .< λ .< range[2]])
     else
         max_inten = isnothing(range) ? 
@@ -184,11 +227,17 @@ function plot_full_models_pyplot(λ::Vector{<:Real}, I::Vector{<:Real}, I_model:
     end
     max_resid = 1.1maximum(((I.-I_model) ./ norm .* factor)[.~mask_lines .& .~mask_bad])
     min_resid = -max_resid
+    @assert unit(max_inten) == unit(min_inten) == unit(max_resid) == unit(min_resid) == NoUnits
     
     if (max_inten < 1) && (norm ≠ 1.0)
         norm /= 10
         max_inten *= 10
         power -= 1
+    end
+    if (power ≥ 4) || (power ≤ -4)
+        prefix = L"$10^{%$power}$ "
+    else
+        prefix = ""
     end
 
     # make color schemes: https://paletton.com/#uid=3000z0kDlkVsFuswHp7LfgmSRaH
@@ -206,25 +255,26 @@ function plot_full_models_pyplot(λ::Vector{<:Real}, I::Vector{<:Real}, I_model:
     # ax2 is the residuals plot
     ax2 = fig.add_subplot(py"$(gs)[-1, :]")
 
-    ax1.plot(λ, I ./ norm .* factor, "k-", label="Data")
+    ax1.plot(ustrip.(λ), I ./ norm .* factor, "k-", label="Data")
 
     # plot cubic spline
     if !isnothing(spline)
-        ax1.plot(λ, spline ./ norm .* factor, color="#2ca02c", linestyle="--", label="Cubic Spline")
+        ax1.plot(ustrip.(λ), spline ./ norm .* factor, color="#2ca02c", linestyle="--", label="Cubic Spline")
     end
 
-    ax1.plot(λ, I_model ./ norm .* factor, "-", color="#ff5d00", label="Model")
+    ax1.plot(ustrip.(λ), I_model ./ norm .* factor, "-", color="#ff5d00", label="Model")
     if !isnothing(I_boot_min) && !isnothing(I_boot_max)
-        ax1.fill_between(λ, I_boot_min ./ norm .* factor, I_boot_max ./ norm .* factor, color="#ff5d00", alpha=0.5, zorder=10)
+        ax1.fill_between(ustrip.(λ), I_boot_min ./ norm .* factor, I_boot_max ./ norm .* factor, color="#ff5d00", 
+            alpha=0.5, zorder=10)
     end
 
-    ax2.plot(λ, (I.-I_model) ./ norm .* factor, "k-")
+    ax2.plot(ustrip.(λ), (I.-I_model) ./ norm .* factor, "k-")
 
     χ2_str = @sprintf "%.3f" χ2red
-    ax2.plot(λ, zeros(length(λ)), "-", color="#ff5d00", label=L"$\tilde{\chi}^2 = %$χ2_str$")
+    ax2.plot(ustrip.(λ), zeros(length(λ)), "-", color="#ff5d00", label=L"$\tilde{\chi}^2 = %$χ2_str$")
     if !isnothing(I_boot_min) && !isnothing(I_boot_max)
-        ax2.fill_between(λ, (I_boot_min .- I_model) ./ norm .* factor, (I_boot_max .- I_model) ./ norm .* factor, color="#ff5d00", alpha=0.5,
-            zorder=10)
+        ax2.fill_between(ustrip.(λ), (I_boot_min .- I_model) ./ norm .* factor, (I_boot_max .- I_model) ./ norm .* factor, 
+            color="#ff5d00", alpha=0.5, zorder=10)
     end
     # ax2.fill_between(λ, (I.-I_cont.+σ)./norm./λ, (I.-I_cont.-σ)./norm./λ, color="k", alpha=0.5)
 
@@ -234,6 +284,7 @@ function plot_full_models_pyplot(λ::Vector{<:Real}, I::Vector{<:Real}, I_model:
 
     # Shade in masked regions
     user_mask_bits = falses(length(λ))
+    user_mask = cube_fitter.spectral_region.mask
     for region in user_mask
         user_mask_bits .|= region[1] .< λ .< region[2]
     end
@@ -248,33 +299,27 @@ function plot_full_models_pyplot(λ::Vector{<:Real}, I::Vector{<:Real}, I_model:
         r_edges = [r_edges; length(λ)]
     end
     for (le, re) in zip(l_edges, r_edges)
-        ax1.axvspan(λ[le], λ[re], alpha=0.5, color="k")
-        ax2.axvspan(λ[le], λ[re], alpha=0.5, color="k")
+        ax1.axvspan(ustrip.(λ)[le], ustrip.(λ)[re], alpha=0.5, color="k")
+        ax2.axvspan(ustrip.(λ)[le], ustrip.(λ)[re], alpha=0.5, color="k")
     end
 
     if isnothing(range)
-        λmin, λmax = minimum(λ), maximum(λ)
+        λmin, λmax = ustrip.(extrema(λ))
         ax1.set_xlim(λmin, λmax)
         ax2.set_xlim(λmin, λmax)
         # ax4.set_xlim(λmin * (1 + z), λmax * (1 + z))
         ax1.set_ylim(min_inten, max_inten)
     else
-        ax1.set_xlim(range[1], range[2])
-        ax2.set_xlim(range[1], range[2])
-        # ax4.set_xlim(range[1] * (1 + z), range[2] * (1 + z))
+        ax1.set_xlim(ustrip(range[1]), ustrip(range[2]))
+        ax2.set_xlim(ustrip(range[1]), ustrip(range[2]))
         ax1.set_ylim(min_inten, max_inten)
     end
     ax2.set_ylim(min_resid, max_resid)
     ax3.set_ylim(extscale_limits...)
     ax3.set_ylabel(ext_label)
-    if (power ≥ 4) || (power ≤ -4)
-        prefix = L"$10^{%$power}$ "
-    else
-        prefix = ""
-    end
     ax1.set_ylabel(I_label(prefix))
     ax2.set_ylabel(L"$O-C$")  # ---> residuals, (O)bserved - (C)alculated
-    ax2.set_xlabel(L"$\lambda_{\rm rest}$ ($\mu$m)")
+    ax2.set_xlabel(L"$\lambda_{\rm rest}$ (%$(latex(λunit)))")
     # ax4.set_xlabel(L"$\lambda_{\rm obs}$ ($\mu$m)")
     ax2.legend(loc="upper left")
 
@@ -287,6 +332,9 @@ function plot_full_models_pyplot(λ::Vector{<:Real}, I::Vector{<:Real}, I_model:
 
     # Set minor ticks as multiples of 0.1 μm for x axis and automatic for y axis
     if isnothing(range)
+        # make sensible tick marks
+        major_tick_space = ustrip(round((maximum(λ)-minimum(λ))/9, sigdigits=1))
+        minor_tick_space = ustrip(round((maximum(λ)-minimum(λ))/45, sigdigits=1))
         ax1.xaxis.set_minor_locator(py_ticker.MultipleLocator(minor_tick_space))
         ax1.xaxis.set_major_locator(py_ticker.MultipleLocator(major_tick_space))
         ax2.xaxis.set_minor_locator(py_ticker.MultipleLocator(minor_tick_space))
@@ -318,185 +366,67 @@ function plot_full_models_pyplot(λ::Vector{<:Real}, I::Vector{<:Real}, I_model:
     ax3.tick_params(which="both", axis="both", direction="in")
     # ax4.tick_params(which="both", axis="both", direction="in")
 
-    norm, max_inten, fig, ax1, ax2, ax3
-end
+    ### Plot individual components of the model ###
 
+    abs_feat = cube_fitter.n_abs_feat ≥ 1 ? reduce(.*, [comps["absorption_feat_$i"] for i ∈ 1:cube_fitter.n_abs_feat]) : ones(length(λ))
+    abs_full = comps["absorption_ice"] .* comps["absorption_ch"] .* abs_feat
+    ext_gas = comps["total_extinction_gas"]
+    ext_stars = comps["total_extinction_stars"]
+    split_ext = haskey(comps, "absorption_oli")
 
-# Helper function for plotting and annotating the emission lines
-function pyplot_annotate_emission_lines!(λ::Vector{<:Real}, comps::Dict, n_comps::Integer,
-    extinction::Vector{<:Real}, normalization::Vector{<:Real}, line_wave::Vector{<:Real}, line_annotate::BitVector, 
-    line_latex::Vector{String}, line_f::Vector{<:Real}, ax1, ax2, range::Union{Nothing,Tuple})
-
-    # full line profile
-    if isnothing(range)
-        ax1.plot(λ, sum([haskey(comps, "line_$(i)_$(j)") ? comps["line_$(i)_$(j)"] : zeros(length(λ)) 
-            for i ∈ 1:length(line_wave), j ∈ 1:n_comps], dims=(1,2))[1] .* extinction .* normalization, 
-            "-", color="rebeccapurple", alpha=0.6, label="Lines")
-    else
-        for i ∈ 1:length(line_wave), j ∈ 1:n_comps
-            if haskey(comps, "line_$(i)_$(j)")
-                ax1.plot(λ, comps["line_$(i)_$(j)"] .* extinction .* normalization, 
-                    "-", color="rebeccapurple", alpha=0.6, label="Lines")
-            end
-        end
-    end
-
-    # plot vertical dashed lines for emission line wavelengths
-    for lw ∈ line_wave
-        ax1.axvline(lw, linestyle="--", color="k", lw=0.5, alpha=0.5)
-        ax2.axvline(lw, linestyle="--", color="k", lw=0.5, alpha=0.5)
-    end
-
-    # Annotate emission lines 
-    line_λ = copy(λ)
-    ak = py_lineidplot.initial_annotate_kwargs()
-    ak["verticalalignment"] = "bottom"
-    ak["horizontalalignment"] = "center"
-    pk = py_lineidplot.initial_plot_kwargs()
-    pk["lw"] = 0.5
-    pk["alpha"] = 0.5
-    fig, ax1 = py_lineidplot.plot_line_ids(line_λ, line_f, line_wave[line_annotate], line_latex[line_annotate], ax=ax1,
-        extend=false, label1_size=12, plot_kwargs=pk, annotate_kwargs=ak)
-
-end
-
-
-function plot_mir_spaxel_fit_pyplot(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, I_model::Vector{<:Real}, 
-    mask_lines::BitVector, mask_bad::BitVector, range::Union{Tuple,Nothing}, comps::Dict, nuc_temp_norm::Vector{<:Real}, 
-    nuc_temp_fit::Bool, Cf::Real, χ2red::Real, label::String; spline::Union{Vector{<:Real},Nothing}=nothing, 
-    I_boot_min::Union{Vector{<:Real},Nothing}=nothing, I_boot_max::Union{Vector{<:Real},Nothing}=nothing, logy::Bool=false)
-
-    # MIR-specific normalizations and axis labels/limits
-    factor = 1 ./ λ 
-    min_inten = logy ? nothing : -0.01
-    extscale_limits = (1e-3, 1.)
-    ext_label = cube_fitter.extinction_screen ? L"$e^{-\tau_{\lambda}}$" : L"$(1-e^{-\tau_{\lambda}}) / \tau_{\lambda}$"
-    I_label = prefix -> L"$I_{\nu}/\lambda$ (%$(prefix)MJy sr$^{-1}$ $\mu$m$^{-1}$)"
-
-    norm, max_inten, fig, ax1, ax2, ax3 = plot_full_models_pyplot(λ, I, I_model,
-        mask_lines, mask_bad, cube_fitter.user_mask, range, factor, extscale_limits, ext_label, I_label, χ2red; 
-        min_inten=min_inten, spline=spline, I_boot_min=I_boot_min, I_boot_max=I_boot_max, minor_tick_space=0.5,
-        major_tick_space=2.5, logy=logy)
-
-    # MIR-specific quantities to plot
-    abs_feat = cube_fitter.n_abs_feat ≥ 1 ? reduce(.*, [comps["abs_feat_$i"] for i ∈ 1:cube_fitter.n_abs_feat]) : ones(length(λ))
-    abs_full = comps["abs_ice"] .* comps["abs_ch"] .* abs_feat
-    ext_full = abs_full .* comps["extinction"]
-    split_ext = haskey(comps, "abs_oli")
-
-    # full continuum
-    ax1.plot(λ, (((cube_fitter.n_templates > 0) && !nuc_temp_fit ? sum([comps["templates_$k"] for k ∈ 1:cube_fitter.n_templates], 
-        dims=1)[1] : zeros(length(λ))) .+ abs_full .* (cube_fitter.fit_sil_emission ? comps["hot_dust"] : zeros(length(λ))) .+
-        comps["obscured_continuum"] .+ comps["unobscured_continuum"]) .* nuc_temp_norm ./ norm .* factor, "k-", lw=2, alpha=0.5, label="Continuum")
+    # full continuum (no PAHs)
+    ax1.plot(ustrip.(λ), comps["continuum"] ./ norm .* factor, "k-", lw=2, alpha=0.5, label="Continuum")
     # individual continuum components
-    ax1.plot(λ, comps["stellar"] .* (Cf .* ext_full .+ (1 .- Cf)) .* nuc_temp_norm ./ norm .* factor, "m--", alpha=0.5, label="Stellar continuum")
-    for i in 1:cube_fitter.n_dust_cont
-        ax1.plot(λ, comps["dust_cont_$i"] .* (Cf .* ext_full .+ (1 .- Cf)) .* nuc_temp_norm ./ norm .* factor, "k-", alpha=0.5, label="Dust continuum")
+    for i in 1:cube_fitter.n_ssps
+        ax1.plot(ustrip.(λ), comps["SSP_$i"] .* ext_stars ./ norm .* factor, "-", color="fuchsia", alpha=0.75, label="SSPs")
+    end
+    if fopt.fit_opt_na_feii
+        ax1.plot(ustrip.(λ), comps["na_feii"] .* ext_gas ./ norm .* factor, "-", color="goldenrod", alpha=0.8, label="Narrow Fe II")
+    end
+    if fopt.fit_opt_br_feii
+        ax1.plot(ustrip.(λ), comps["br_feii"] .* ext_gas ./ norm .* factor, "--", color="goldenrod", alpha=0.8, label="Broad Fe II")
     end
     for i in 1:cube_fitter.n_power_law
-        ax1.plot(λ, comps["power_law_$i"] .* (Cf .* ext_full .+ (1 .- Cf)) .* nuc_temp_norm ./ norm .* factor, "k-", alpha=0.5, label="Power Law")
+        ax1.plot(ustrip.(λ), comps["power_law_$i"] .* ext_gas ./ norm .* factor, "k-", alpha=0.5, label="Power Law")
     end
-    # ax1.plot(λ, comps["obscured_continuum"] ./ norm .* factor, "-", color="#0b450a", alpha=0.8, label="Obscured continuum")
-    # ax1.plot(λ, comps["unobscured_continuum"] ./ norm .* factor, "--", color="#0b450a", alpha=0.8, label="Unobscured continuum")
-    # full PAH profile
-    ax1.plot(λ, sum([comps["dust_feat_$i"] for i ∈ 1:cube_fitter.n_dust_feat], dims=1)[1] .* comps["extinction"] .* nuc_temp_norm ./ norm .* factor, "-", 
-        color="#0065ff", label="PAHs")
-    # plot hot dust
-    if haskey(comps, "hot_dust")
-        ax1.plot(λ, comps["hot_dust"] .* abs_full .* nuc_temp_norm ./ norm .* factor, "-", color="#8ac800", alpha=0.8, label="Hot Dust")
+    for i in 1:cube_fitter.n_dust_cont
+        ax1.plot(ustrip.(λ), comps["dust_cont_$i"] .* ext_gas ./ norm .* factor, "k-", alpha=0.5, label="Dust continuum")
+    end
+    if fopt.fit_sil_emission
+        ax1.plot(ustrip.(λ), comps["hot_dust"] .* abs_full ./ norm .* factor, "-", color="#8ac800", alpha=0.8, label="Hot Dust")
     end
     # templates
-    if !nuc_temp_fit
-        for k ∈ 1:cube_fitter.n_templates
-            ax1.plot(λ, comps["templates_$k"] ./ norm .* factor, "-", color="#50630d", label="Template $k")
+    for k ∈ 1:cube_fitter.n_templates
+        ax1.plot(ustrip.(λ), comps["templates_$k"] ./ norm .* factor, "-", color="#50630d", label="Template $k")
+    end
+    # full PAH profile
+    sdust = zeros(length(λ))
+    for (k, dcomplex) in enumerate(model(cube_fitter).dust_features.profiles)
+        for (j, component) in enumerate(dcomplex)
+            sdust .+= comps["dust_feat_$(k)_$(j)"] .* ext_gas ./ norm .* factor 
         end
     end
-
-    # plot extinction
+    ax1.plot(ustrip.(λ), sdust, "-", color="#0065ff", label="PAHs")
+    # extinction
     if split_ext
-        ax3.plot(λ, comps["abs_oli"], "k", linestyle=(0, (3, 1, 1, 1, 1, 1)), alpha=0.5, label="Olivine Absorption")
-        ax3.plot(λ, comps["abs_pyr"], "k", linestyle="dashdot", alpha=0.5, label="Pyroxene Absorption")
-        ax3.plot(λ, comps["abs_for"], "k", linestyle="dashed", alpha=0.5, label="Forsterite Absorption")
-        ax3.plot(λ, comps["extinction"], "k", linestyle="dotted", label="Full Extinction")
+        ax3.plot(λ, comps["absorption_oli"], "k", linestyle=(0, (3, 1, 1, 1, 1, 1)), alpha=0.5, label="Olivine Absorption")
+        ax3.plot(λ, comps["absorption_pyr"], "k", linestyle="dashdot", alpha=0.5, label="Pyroxene Absorption")
+        ax3.plot(λ, comps["absorption_for"], "k", linestyle="dashed", alpha=0.5, label="Forsterite Absorption")
+        ax3.plot(λ, ext_gas, "k", linestyle="dotted", alpha=0.5, label="Full Extinction")
     else
-        ax3.plot(λ, ext_full, "k:", alpha=0.5, label="Extinction")
-    end
-    if nuc_temp_fit
-        ax3.plot(λ, nuc_temp_norm, "k", linestyle="--", alpha=0.5, label="PSF")
+        ax3.plot(λ, ext_gas, "k:", alpha=0.5, label="Extinction")
     end
 
     # mark channel boundaries 
-    ax1.plot(channel_boundaries ./ (1 .+ cube_fitter.z), ones(length(channel_boundaries)) .* max_inten .* 0.99, "v", 
-        color="#0065ff", markersize=3.0)
+    if length(cube_fitter.cube.spectral_region.channel_bounds) > 0
+        ax1.plot(cube_fitter.cube.spectral_region.channel_bounds ./ (1 .+ cube_fitter.z), 
+            ones(length(cube_fitter.cube.spectral_region.channel_bounds)) .* max_inten .* 0.99, "v", 
+            color="#0065ff", markersize=4.0)
+    end
 
     # annotate emission lines
-    pyplot_annotate_emission_lines!(λ, comps, cube_fitter.n_comps, comps["extinction"], nuc_temp_norm ./ norm .* factor,
-        cube_fitter.lines.λ₀, cube_fitter.lines.annotate, cube_fitter.lines.latex, copy(I ./ norm .* factor), ax1, ax2,
-        range)
-
-    # Output file path creation
-    out_folder = joinpath("output_$(cube_fitter.name)", isnothing(range) ? "spaxel_plots" : joinpath("zoomed_plots", split(label, "_")[end]))
-    if !isdir(out_folder)
-        mkdir(out_folder)
-    end
-    # Save figure as PDF, yay for vector graphics!
-    plt.savefig(joinpath(out_folder, isnothing(label) ? "levmar_fit_spaxel.pdf" : "$label.pdf"), dpi=300, bbox_inches="tight")
-    plt.close()
-end
-
-
-function plot_opt_spaxel_fit_pyplot(cube_fitter::CubeFitter, λ::Vector{<:Real}, I::Vector{<:Real}, I_model::Vector{<:Real},  
-    mask_lines::BitVector, mask_bad::BitVector, range::Union{Tuple,Nothing},
-    comps::Dict, nuc_temp_norm::Vector{<:Real}, nuc_temp_fit::Bool, χ2red::Real, label::String; 
-    spline::Union{Vector{<:Real},Nothing}=nothing, I_boot_min::Union{Vector{<:Real},Nothing}=nothing, 
-    I_boot_max::Union{Vector{<:Real},Nothing}=nothing, logy::Bool=false)
-
-    # Optical-specific normalizations and axis labels/limits
-    factor = ones(length(λ))
-    extscale_limits = (1e-5, 1.)
-    ext_label = L"$10^{-0.4E(B-V)_{\rm gas}k'(\lambda)}$"
-    I_label = prefix -> L"$I_{\lambda}$ (%$(prefix)erg s$^{-1}$ cm$^{-2}$ ${\rm \mathring{A}}^{-1}$ sr$^{-1}$)"
-
-    norm, max_inten, fig, ax1, ax2, ax3 = plot_full_models_pyplot(λ, I, I_model,
-        mask_lines, mask_bad, cube_fitter.user_mask, range, factor, extscale_limits, ext_label, I_label, χ2red; 
-        spline=spline, I_boot_min=I_boot_min, I_boot_max=I_boot_max, minor_tick_space=100, major_tick_space=500,
-        logy=logy)
-
-    # Optical-specific quantities to plot
-    att_stars = comps["attenuation_stars"]
-    att_gas = comps["attenuation_gas"]
-
-    # full continuum
-    ax1.plot(λ, (((cube_fitter.n_templates > 0) && !nuc_temp_fit ? sum([comps["templates_$k"] for k ∈ 1:cube_fitter.n_templates], 
-        dims=1)[1] : zeros(length(λ))) .+ att_stars .* sum([comps["SSP_$i"] for i ∈ 1:cube_fitter.n_ssps], dims=1)[1] .+
-        (cube_fitter.fit_opt_na_feii ? comps["na_feii"] .* att_gas : zeros(length(λ))) .+ 
-        (cube_fitter.fit_opt_br_feii ? comps["br_feii"] .* att_gas : zeros(length(λ))) .+
-        (cube_fitter.n_power_law > 0 ? sum([comps["power_law_$j"] for j in 1:cube_fitter.n_power_law], dims=1)[1] : 
-        zeros(length(λ)))) ./ norm .* nuc_temp_norm .* factor, "k-", lw=2, alpha=0.5, label="Continuum")
-    # individual continuum components
-    for i in 1:cube_fitter.n_ssps
-        ax1.plot(λ, comps["SSP_$i"] .* att_stars ./ norm .* nuc_temp_norm .* factor, "g-", alpha=0.75, label="SSPs")
-    end
-    for i in 1:cube_fitter.n_power_law
-        ax1.plot(λ, comps["power_law_$i"] ./ norm .* nuc_temp_norm .* factor, "k-", alpha=0.5, label="Power Law")
-    end
-    if cube_fitter.fit_opt_na_feii
-        ax1.plot(λ, comps["na_feii"] .* att_gas ./ norm .* nuc_temp_norm .* factor, "-", color="goldenrod", alpha=0.8, label="Narrow Fe II")
-    end
-    if cube_fitter.fit_opt_br_feii
-        ax1.plot(λ, comps["br_feii"] .* att_gas ./ norm .* nuc_temp_norm .* factor, "--", color="goldenrod", alpha=0.8, label="Broad Fe II")
-    end
-
-    # plot extinction
-    ax3.plot(λ, att_gas, "k:", alpha=0.5, label="Extinction")
-    if nuc_temp_fit
-        ax3.plot(λ, nuc_temp_norm, "k", linestyle="--", alpha=0.5, label="PSF")
-    end
-
-    # Annotate emission lines
-    pyplot_annotate_emission_lines!(λ, comps, cube_fitter.n_comps, att_gas, nuc_temp_norm ./ norm .* factor,
-        cube_fitter.lines.λ₀.*1e4, cube_fitter.lines.annotate, cube_fitter.lines.latex, copy(I ./ norm .* factor), ax1, ax2,
-        range)
+    pyplot_annotate_emission_lines!(λ, comps, model(cube_fitter).lines, ext_gas, factor ./ norm, copy(I ./ norm .* factor),
+        ax1, ax2, range)
 
     # Output file path creation
     out_folder = joinpath("output_$(cube_fitter.name)", isnothing(range) ? "spaxel_plots" : joinpath("zoomed_plots", split(label, "_")[end]))
@@ -517,80 +447,33 @@ end
 Plot the best fit for an individual spaxel using the given backend (`:pyplot` or `:plotly`).
 
 # Arguments {T<:Real}
-- `cube_fitter::CubeFitter`: The CubeFitter object
-- `λ_um::Vector{<:Real}`: The wavelength vector of the spaxel to be plotted, in microns
-- `I::Vector{<:Real}`: The intensity data vector of the spaxel to be plotted
-- `I_model::Vector{<:Real}`: The intensity model vector of the spaxel to be plotted
-- `mask_bad::BitVector`: The mask giving the locations of bad pixels
-- `mask_lines::BitVector`: The mask giving the locations of emission lines
-- `comps::Dict{String, Vector{T}}`: The dictionary of individual components of the model intensity
-- `nuc_temp_fit::Bool`: Whether or not one is fitting the nuclear template
-- `Cf::Real`: The dust covering fraction parameter
-- `χ2red::Real`: The reduced χ^2 value of the fit
-- `label::String`: A label for the individual spaxel being plotted, to be put in the file name
-- `backend::Symbol=:pyplot`: The backend to use to plot, may be `:pyplot`, `:plotly`, or `:both`
-- `I_boot_min::Union{Vector{<:Real},Nothing}=nothing`: Optional vector giving the minimum model out of all bootstrap iterations
-- `I_boot_max::Union{Vector{<:Real},Nothing}=nothing`: Optional vector giving the maximum model out of all bootstrap iterations
-- `range_um::Union{Tuple,Nothing}=nothing`: Optional tuple specifying min/max wavelength values to truncate the x-axis of the plot to
-- `spline::Union{Vector{<:Real},Nothing}=nothing`: Optional vector giving the cubic spline interpolation of the continuum to plot
-- `logy::Bool=false`: If true, make the y-axis logarithmic (only for pyplot backend)
+- `cube_fitter`: The CubeFitter object
+- `spaxel`: The spaxel object
+- `I_model`: The intensity model vector of the spaxel to be plotted
+- `comps`: The dictionary of individual components of the model intensity
+- `χ2red`: The reduced χ^2 value of the fit
+- `label`: A label for the individual spaxel being plotted, to be put in the file name
+- `backend`: The backend to use to plot, may be `:pyplot`, `:plotly`, or `:both`
+- `I_boot_min`: Optional vector giving the minimum model out of all bootstrap iterations
+- `I_boot_max`: Optional vector giving the maximum model out of all bootstrap iterations
+- `range`: Optional tuple specifying min/max wavelength values to truncate the x-axis of the plot to
+- `spline`: Optional vector giving the cubic spline interpolation of the continuum to plot
+- `logy`: If true, make the y-axis logarithmic (only for pyplot backend)
 """
-function plot_spaxel_fit(cube_fitter::CubeFitter, λ_um::Vector{<:Real}, I::Vector{<:Real}, I_model::Vector{<:Real}, mask_bad::BitVector, 
-    mask_lines::BitVector, comps::Dict{String, Vector{T}}, nuc_temp_fit::Bool, Cf::Real, χ2red::Real, label::String; 
-    backend::Symbol=:pyplot, I_boot_min::Union{Vector{<:Real},Nothing}=nothing, I_boot_max::Union{Vector{<:Real},Nothing}=nothing, 
-    range_um::Union{Tuple,Nothing}=nothing, spline::Union{Vector{<:Real},Nothing}=nothing, logy::Bool=false) where {T<:Real}
-
-    # Set up variables
-    range = nothing
-    if cube_fitter.spectral_region == :MIR
-        # Plot in microns for MIR data
-        λ = λ_um
-        if !isnothing(range_um)
-            range = range_um
-        end
-    else
-        # Plot in angstroms for optical data
-        λ = λ_um .* 1e4
-        if !isnothing(range_um)
-            range = range_um .* 1e4
-        end
-    end
-    nuc_temp_norm = ones(length(λ))
-    if nuc_temp_fit
-        nuc_temp_norm = comps["templates_1"]
-    end
+function plot_spaxel_fit(cube_fitter::CubeFitter, spaxel::Spaxel, I_model::Vector{<:QSIntensity},
+    comps::Dict, χ2red::Real, label::String; backend::Symbol=:pyplot, I_boot_min::Union{Vector{<:QSIntensity},Nothing}=nothing, 
+    I_boot_max::Union{Vector{<:QSIntensity},Nothing}=nothing, range::Union{Tuple,Nothing}=nothing, 
+    spline::Union{Vector{<:QSIntensity},Nothing}=nothing, logy::Bool=false) 
 
     # Plotly ---> useful interactive plots for visually inspecting data, but not publication-quality
     if (backend == :plotly || backend == :both) && isnothing(range)
-        # plot_spaxel_fit_plotly(spectral_region, λ, I, I_model, σ, comps, ext_full, abs_full, 
-        #     att_gas, att_stars, nuc_temp_norm, n_dust_features, n_power_law, fit_sil_emission, n_ssps, fit_opt_na_feii,
-        #     fit_opt_br_feii, nuc_temp_fit, n_templates, line_wave, line_names, χ2red, label, name; 
-        #     spline=spline)
-        if cube_fitter.spectral_region == :MIR
-            plot_mir_spaxel_fit_plotly(cube_fitter, λ, I, I_model, comps, nuc_temp_norm, nuc_temp_fit, χ2red, label; 
-                spline=spline)
-        else
-            plot_opt_spaxel_fit_plotly(cube_fitter, λ, I, I_model, comps, nuc_temp_norm, nuc_temp_fit, χ2red, label; 
-                spline=spline)
-        end
+        plot_spaxel_fit_plotly(cube_fitter, spaxel, I_model, comps, label; spline=spline)
     end
 
     # Pyplot --> actually publication-quality plots finely tuned to be the most useful and visually appealing that I could make them
     if backend == :pyplot || backend == :both
-        # plot_spaxel_fit_pyplot(spectral_region, λ, I, I_model, σ, mask_lines, mask_bad, range,
-        #     user_mask, comps, split_ext, ext_full, abs_full, att_gas, att_stars, nuc_temp_norm, 
-        #     n_dust_cont, n_dust_features, n_power_law, fit_sil_emission, n_ssps, fit_opt_na_feii,
-        #     fit_opt_br_feii, nuc_temp_fit, n_templates, n_comps, line_wave, line_names, line_annotate, 
-        #     line_latex, screen, Cf, z, χ2red, label, name; spline=spline, I_boot_min=I_boot_min, 
-        #     I_boot_max=I_boot_max)
-        if cube_fitter.spectral_region == :MIR
-            plot_mir_spaxel_fit_pyplot(cube_fitter, λ, I, I_model, mask_lines, mask_bad, range, comps, nuc_temp_norm, 
-                nuc_temp_fit, Cf, χ2red, label; spline=spline, I_boot_min=I_boot_min, I_boot_max=I_boot_max, logy=logy)
-        else
-            plot_opt_spaxel_fit_pyplot(cube_fitter, λ, I, I_model, mask_lines, mask_bad, range, 
-                comps, nuc_temp_norm, nuc_temp_fit, χ2red, label; spline=spline, I_boot_min=I_boot_min, 
-                I_boot_max=I_boot_max, logy=logy)
-        end
+        plot_spaxel_fit_pyplot(cube_fitter, spaxel, I_model, comps, range, χ2red, label; spline=spline, I_boot_min=I_boot_min,
+            I_boot_max=I_boot_max, logy=logy)
     end
 
 end

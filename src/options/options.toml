@@ -24,9 +24,6 @@ lines_allow_negative = false
 # is used to estimate the uncertainties on parameters given the uncertainties in the data.
 n_bootstrap = 0
 
-# bootstrap_use: "med" for median or "best" for original best-fit values
-bootstrap_use = "med"
-
 # random_seed: Set the random seed for bootstrapping
 random_seed = 123456789
 

@@ -12,23 +12,27 @@ This is necessary before taking the 50th, 16th, and 84th percentiles of the para
 different line components during different bootstrap iterations, forming bimodal distributions. This function
 sorts the parameters first to prevent this from happening.
 """
-function sort_line_components!(cube_fitter::CubeFitter, params::Vector{<:Real}; mask_zeros::Bool=true)
+function sort_line_components!(cube_fitter::CubeFitter, result::SpaxelFitResult; mask_zeros::Bool=true)
 
+    params = result.popt
+    oopt = out_options(cube_fitter)
+    lines = model(cube_fitter).lines
+    df = model(cube_fitter).dust_features
     # Do not sort
-    if isnothing(cube_fitter.sort_line_components)
+    if isnothing(oopt.sort_line_components)
         return
     end
-    if any(cube_fitter.relative_flags)
+    if lines.config.rel_amp || lines.config.rel_voff || lines.config.rel_fwhm
         return
     end
 
     pᵢ = cube_fitter.n_params_cont + 1
-    pⱼ = pᵢ + cube_fitter.n_params_lines + (cube_fitter.spectral_region == :MIR ? 3cube_fitter.n_dust_feat : 0)
+    pⱼ = pᵢ + cube_fitter.n_params_lines + length(get_flattened_nonfit_parameters(df))
 
-    for k ∈ 1:cube_fitter.n_lines
+    for (k, line) in enumerate(lines.profiles)   # <- iterates over emission lines
+
         amps = Int64[]
         voffs = Int64[]
-        voff_indivs = Int64[]
         fwhms = Int64[]
         h3s = Int64[]
         h4s = Int64[]
@@ -37,44 +41,33 @@ function sort_line_components!(cube_fitter::CubeFitter, params::Vector{<:Real}; 
         eqws = Int64[]
         snrs = Int64[]
         n_prof = 0
-        @assert all(cube_fitter.lines.profiles[k,:][.!isnothing.(cube_fitter.lines.profiles[k,:])] .== 
-            cube_fitter.lines.profiles[k,1]) "All line profiles must be the same to use sorted bootstrapping"
 
-        for j ∈ 1:cube_fitter.n_comps
-            if isnothing(cube_fitter.lines.profiles[k,j])
-                continue
-            end
+        profiles = [comp.profile for comp in line]
+        @assert all(profiles .== profiles[1]) "All line profiles must be the same to use sorted bootstrapping"
+
+        for (j, component) in enumerate(line)    # <- iterates over each velocity component in one line (for multi-component fits)
+
             n_prof += 1
-
             # set parameters to nan so they are ignored when calculating the percentiles
             mask_line = (params[pᵢ] == 0.) && (j > 1) && mask_zeros
             if mask_line
                 # amplitude is not overwritten so that the zeros downweight the final amplitude (same for flux, eqw, snr)
                 params[pᵢ+1] = NaN
+                params[pᵢ+2] = NaN
             end
-
             push!(amps, pᵢ)
             push!(voffs, pᵢ+1)
-            if !isnothing(cube_fitter.lines.tied_voff[k, j]) && cube_fitter.flexible_wavesol && isone(j)
-                error("Cannot use the flexible_wavesol option with sorted bootstrapping!")
-                # push!(voff_indivs, pᵢ+2)
-                # push!(fwhms, pᵢ+3)
-                # pᵢ += 4
-            else
-                push!(fwhms, pᵢ+2)
-                if mask_line
-                    params[pᵢ+2] = NaN
-                end
-                pᵢ += 3
-            end
-            if cube_fitter.lines.profiles[k,j] == :GaussHermite
+            push!(fwhms, pᵢ+2)
+            pᵢ += 3
+
+            if component.profile == :GaussHermite
                 push!(h3s, pᵢ)
                 push!(h4s, pᵢ+1)
                 if mask_line
                     params[pᵢ:pᵢ+1] .= NaN
                 end
                 pᵢ += 2
-            elseif cube_fitter.lines.profiles[k,j] == :Voigt
+            elseif component.profile == :Voigt
                 push!(etas, pᵢ)
                 if mask_line
                     params[pᵢ] = NaN
@@ -95,29 +88,29 @@ function sort_line_components!(cube_fitter::CubeFitter, params::Vector{<:Real}; 
         end
 
         # always sort by voff for bootstrap iterations!
-        if cube_fitter.sort_line_components == :flux
+        if oopt.sort_line_components == :flux
             sort_quantity = params[fluxes]
-        elseif cube_fitter.sort_line_components == :amp
+        elseif oopt.sort_line_components == :amp
             sort_quantity = params[amps]
-        elseif cube_fitter.sort_line_components == :fwhm
+        elseif oopt.sort_line_components == :fwhm
             sort_quantity = params[fwhms]
-        elseif cube_fitter.sort_line_components == :voff
+        elseif oopt.sort_line_components == :voff
             sort_quantity = params[voffs]
         else
-            error("Unrecognized sorting quantity: $(cube_fitter.sort_line_components)")
+            error("Unrecognized sorting quantity: $(oopt.sort_line_components)")
         end
 
         # Sort by the relevant sorting quantity (NaNs are always placed at the end)
         #  1 = sort in increasing order
         # -1 = sort in decreasing order
-        if cube_fitter.lines.sort_order[k] == 1
+        if lines.sort_order[k] == 1
             ss = sortperm(sort_quantity)
-        elseif cube_fitter.lines.sort_order[k] == -1
+        elseif lines.sort_order[k] == -1
             # Cant just reverse because then NaNs would be placed at the beginning
             n_inf = sum(.~isfinite.(sort_quantity))
             ss = [sortperm(sort_quantity, rev=true)[n_inf+1:end]; findall(.~isfinite.(sort_quantity))]
         else
-            error("Unrecognized sort order: $(cube_fitter.lines.sort_order[k]) (must be 1 or -1)")
+            error("Unrecognized sort order: $(lines.sort_order[k]) (must be 1 or -1)")
         end
 
         # Reassign the parameters in the new order

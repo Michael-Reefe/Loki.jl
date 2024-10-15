@@ -7,22 +7,26 @@ mutable struct Spaxel{Q1<:QWave}
     λ::AbstractVector{Q1}
     I::AbstractVector
     σ::AbstractVector
+    area_sr::AbstractVector
     mask_lines::BitVector
     mask_bad::BitVector
+    vres::Union{Number,Nothing}
     I_spline::Union{Nothing,AbstractVector}
     N::Number
     aux::Dict   # for storing various auxiliary data
     normalized::Bool
 
     function Spaxel(coords::CartesianIndex, λ::AbstractVector{Q1}, I::AbstractVector{Q2}, σ::AbstractVector{Q2}, 
-        mask_lines::BitVector, mask_bad::BitVector, I_spline::Union{AbstractVector{Q2},Nothing}=nothing; 
-        N::Q3=1.0, aux::Dict=Dict()) where {Q1<:QWave, Q2<:Number, Q3<:Number}
+        area_sr::AbstractVector{Q4}, mask_lines::BitVector, mask_bad::BitVector, vres::Union{Nothing,QVelocity}=nothing, 
+        I_spline::Union{AbstractVector{Q2},Nothing}=nothing; N::Q3=1.0, aux::Dict=Dict()) where {
+            Q1<:QWave, Q2<:Number, Q3<:Number, Q4<:Number
+        }
 
         @assert eltype(I) == eltype(σ)
         if !isnothing(I_spline)
             @assert eltype(I) == eltype(I_spline)
         end
-        @assert length(λ) == length(I) == length(σ) == length(mask_lines) == length(mask_bad)
+        @assert length(λ) == length(I) == length(σ) == length(area_sr) == length(mask_lines) == length(mask_bad)
         if unit(I[1]) <: NoUnits
             @assert unit(N) <: QSIntensity "I and σ are already normalized!"
             normalized = true
@@ -32,13 +36,13 @@ mutable struct Spaxel{Q1<:QWave}
             normalized = false
         end
 
-        new{Q1,Q2,Q3}(coords, λ, I, σ, mask_lines, mask_bad, I_spline, N, aux, normalized)
+        new{Q1}(coords, λ, I, σ, area_sr, mask_lines, mask_bad, vres, I_spline, N, aux, normalized)
     end
 end
 
 
 function Base.copy(s::Spaxel)
-    Spaxel(s.coords, copy(s.λ), copy(s.I), copy(s.σ), copy(s.mask_lines), copy(s.mask_bad), copy(s.I_spline);
+    Spaxel(s.coords, copy(s.λ), copy(s.I), copy(s.σ), copy(s.mask_lines), copy(s.mask_bad), s.vres, copy(s.I_spline);
         N=s.N, aux=copy(s.aux))
 end
 
@@ -237,4 +241,45 @@ end
 function calculate_statistical_errors!(s::Spaxel)
     @assert haskey(s.aux, "mask_lines") "Need to have a line mask first! Run continuum_cubic_spline! to generate it."
     calculate_statistical_errors(s.I, s.I_spline, s.aux["mask_lines"])
+end
+
+
+function make_normalized_spaxel(cube_data::NamedTuple, coords::CartesianIndex, cube_fitter::CubeFitter;
+    use_ap::Bool=false, use_vorbins::Bool=false, σ_min::Quantity=0.0*unit(cube_data.σ[1]))
+
+    fopt = fit_options(cube_fitter)
+
+    # Gather the data from the appropriate spaxel
+    λ = cube_data.λ
+    I = cube_data.I[coords, :]
+    σ = cube_data.σ[coords, :]
+    area_sr = cube_data.area_sr[coords, :]
+    templates = cube_data.templates[coords, :, :]
+
+    # Perform a cubic spline fit, also obtaining the line mask
+    mask_lines, I_spline = continuum_cubic_spline(λ, I, σ, cube_fitter.linemask_overrides; do_err=false)
+    # Bad pixel mask
+    mask_bad = (use_ap || use_vorbins) ? iszero.(I) .| iszero.(σ) : cube_fitter.cube.mask[coords, :]
+    mask = mask_lines .| mask_bad
+    # Calculate statistical errors if necessary
+    if use_ap || use_vorbins
+        σ .= calculate_statistical_errors(I, I_spline, mask)
+        # Add in quadrature with minimum uncertainty
+        σ .= sqrt.(σ.^2 .+ σ_min.^2)
+    end
+    # Add systematic error in quadrature
+    σ .= sqrt.(σ.^2 .+ (fopt.sys_err .* I).^2)
+
+    # Use a fixed normalization for the line fits so that the bootstrapped amplitudes are consistent with each other
+    norm = Float64(abs(nanmaximum(I)))
+    norm = norm ≠ 0. ? norm : 1.
+
+    vres = isapprox((λ[2]/λ[1]), (λ[end]/λ[end-1]), rtol=1e-6) ? log(λ[2]/λ[1]) * C_KMS : nothing
+
+    # Create the spaxel object and normalize it
+    aux = Dict("templates" => templates)
+    spax = Spaxel(coords, λ, I, σ, area_sr, mask_lines, mask_bad, vres, I_spline; aux=aux)
+    normalize!(spax, norm)
+
+    spax
 end
