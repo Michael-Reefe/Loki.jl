@@ -236,16 +236,18 @@ function prepare(channel::Int, cubes::Vector{String}, redshift::Float64, makepsf
 
     # Convert to the rest-frame, vacuum wavelengths, and mask out bad pixels
     correct!(obs)
-    # For optical data, logarithmically rebin the wavelength vector
-    if obs.spectral_region == :OPT
-        log_rebin!(obs)
-    end
+    to_vacuum_wavelength!(obs)
 
     if length(channels) > 1
         # Combine multiple channels into one composite data cube
         combine_channels!(obs, channels, out_id=channel, order=1, rescale_channels=nothing, adjust_wcs_headerinfo=adjust_wcs,
             extract_from_ap=extract_ap, min_λ=min_wave, max_λ=max_wave, rescale_all_psf=false, scale_psf_only=false)
     end
+
+    # rebin onto a logarithmic wavelength vector
+    log_rebin!(obs.channels[channel])
+
+    # (do a reddening correction)
 
     # Rotate the data cube to align with the sky axes
     if rotate_sky
@@ -257,7 +259,7 @@ function prepare(channel::Int, cubes::Vector{String}, redshift::Float64, makepsf
 
     # Replace errors with statistical errors
     if replace_errors
-        calculate_statistical_errors!(obs.channels[channel], 20, 5, 3.0, mask_width=mask_width)
+        calculate_statistical_errors!(obs.channels[channel], mask_width=mask_width)
     end
 
     # Save results
@@ -305,7 +307,7 @@ function fit(label::String, cube::String, parallel::Int, plot::String, aperture:
     ch = collect(keys(obs.channels))[1]
 
     # Create templates
-    templates = Array{Float64, 4}(undef, size(obs.channels[ch].I)..., 0)
+    templates = Array{eltype(obs.channels[ch].I), 4}(undef, size(obs.channels[ch].I)..., 0)
     template_names = String[]
 
     if psf

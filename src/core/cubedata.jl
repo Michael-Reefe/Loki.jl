@@ -211,10 +211,12 @@ function from_fits_jwst(filename::String)::DataCube
 
     # Wavelength vector
     λ = try
-        read(hdu["AUX"], "wave")
+        # for some reason the units arent saved correctly in the FITS table HDUs, so just set this to um for JWST
+        read(hdu["AUX"], "wave") .* u"μm"  
     catch
-        hdr["CRVAL3"] .+ hdr["CDELT3"] .* (collect(0:hdr["NAXIS3"]-1) .+ hdr["CRPIX3"] .- 1)
-    end * cunit3
+        (hdr["CRVAL3"] .+ hdr["CDELT3"] .* (collect(0:hdr["NAXIS3"]-1) .+ hdr["CRPIX3"] .- 1)) .* cunit3
+    end
+    λ = uconvert.(u"μm", λ)
     # Alternative method using the WCS directly:
     # λ = pix_to_world(wcs, Matrix(hcat(ones(nz), ones(nz), collect(1:nz))'))[3,:] ./ 1e-6
 
@@ -277,7 +279,7 @@ function from_fits_jwst(filename::String)::DataCube
     end
 
     if haskey(hdr0, "N_CHANNELS")
-        n_channels = parse(Int, hdr0["N_CHANNELS"])
+        n_channels = hdr0["N_CHANNELS"]
     end
     rest_frame = false
     if haskey(hdr0, "RESTFRAM")
@@ -684,7 +686,7 @@ function calculate_statistical_errors!(cube::DataCube,
 
         # Replace the cube's error with the statistical errors
         if median
-            σ_stat .= nanmedian(σ_stat)
+            σ_stat .= nanmedian(ustrip.(σ_stat)) .* unit(σ_stat[1])
         end
         cube.σ[spaxel, :] .= σ_stat
     end
@@ -704,8 +706,8 @@ function voronoi_rebin!(cube::DataCube, target_SN::Real)
     @info "Performing Voronoi rebinning with target S/N=$target_SN"
 
     # Get the signal and noise 
-    signal = dropdims(nanmedian(cube.I, dims=3), dims=3)
-    noise = dropdims(nanmedian(cube.σ, dims=3), dims=3)
+    signal = dropdims(nanmedian(ustrip.(cube.I), dims=3), dims=3) .* unit(cube.I[1])
+    noise = dropdims(nanmedian(ustrip.(cube.σ), dims=3), dims=3) .* unit(cube.σ[1])
     # x/y coordinate arrays
     x = [i for i in axes(signal,1), _ in axes(signal,2)]
     y = [j for _ in axes(signal,1), j in axes(signal,2)]
@@ -730,11 +732,11 @@ function voronoi_rebin!(cube::DataCube, target_SN::Real)
 end
 
 
-function get_physical_scales(data::DataCube, cosmo::Union{Cosmology.AbstractCosmology,Nothing}=nothing, 
+function get_physical_scales(shape::Tuple, Ω::typeof(1.0u"sr"), cosmo::Union{Cosmology.AbstractCosmology,Nothing}=nothing, 
     z::Union{Real,Nothing}=nothing)
 
     # Angular and physical scalebars
-    pix_as = uconvert(u"arcsecond", sqrt(data.Ω))
+    pix_as = uconvert(u"arcsecond", sqrt(Ω))
     n_pix = 1.0/ustrip(pix_as)
 
     if !isnothing(cosmo) && !isnothing(z)
@@ -742,13 +744,13 @@ function get_physical_scales(data::DataCube, cosmo::Union{Cosmology.AbstractCosm
         # Calculate in pc
         dA = angular_diameter_dist(u"pc", cosmo, z)
         # l = d * theta (") where theta is chosen as 1/5 the horizontal extent of the image
-        l = dA * ustrip(uconvert(u"rad", size(data.I, 1) * pix_as / 5))
+        l = dA * ustrip(uconvert(u"rad", shape[1] * pix_as / 5))
         # Round to a nice even number
         l = round(typeof(1u"pc"), l, sigdigits=1)
         # new angular size for this scale
         θ = l / dA * u"rad"
         θ_as = round(u"arcsecond", θ, digits=1)           # should be close to the original theta, by definition
-        n_pix = uconvert(NoUnits, 1.0/sqrt(data.Ω) * θ)   # number of pixels = (pixels per radian) * radians
+        n_pix = uconvert(NoUnits, 1.0/sqrt(Ω) * θ)   # number of pixels = (pixels per radian) * radians
         new_unit = u"pc"
         # convert to kpc if l is more than 1000 pc
         if l ≥ 1e3u"pc"
@@ -762,8 +764,8 @@ function get_physical_scales(data::DataCube, cosmo::Union{Cosmology.AbstractCosm
         l_val = Int(ustrip(l))
         scalebar_text_dist = cosmo.h ≈ 1.0 ? L"%$(l_val)$h^{-1}$ %$(new_unit)" : L"$%$(l_val)$ %$(new_unit)"
     else
-        θ_as = round(u"arcsecond", size(data.I, 1) * pix_as / 5, digits=1)
-        n_pix = 1.0/sqrt(data.Ω) * uconvert(u"sr^(1/2)", θ_as)
+        θ_as = round(u"arcsecond", shape[1] * pix_as / 5, digits=1)
+        n_pix = 1.0/sqrt(Ω) * uconvert(u"sr^(1/2)", θ_as)
         scalebar_text_dist = ""
     end
 
@@ -773,7 +775,7 @@ function get_physical_scales(data::DataCube, cosmo::Union{Cosmology.AbstractCosm
         scalebar_text_ang = L"$\ang[angle-symbol-over-decimal]{;%$(ustrip(θ_as));}$"
     end
 
-    n_pix, scalebar_text_dist, scalebar_text_ang
+    pix_as, n_pix, scalebar_text_dist, scalebar_text_ang
 end
 
 
@@ -853,7 +855,7 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
 
     # 1D, no NaNs/Infs
     pix_as = uconvert(u"arcsecond", sqrt(data.Ω)) 
-    n_pix, scalebar_text_dist, scalebar_text_ang = get_physical_scales(data, cosmo, z)
+    _, n_pix, scalebar_text_dist, scalebar_text_ang = get_physical_scales(size(data.I), data.Ω, cosmo, z)
     colormap.set_bad(color="k")
 
     fig = plt.figure(figsize=intensity && err ? (12, 6) : (12,12))

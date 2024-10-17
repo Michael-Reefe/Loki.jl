@@ -4,21 +4,21 @@
 mutable struct Spaxel{Q1<:QWave} 
 
     coords::CartesianIndex
-    λ::AbstractVector{Q1}
-    I::AbstractVector
-    σ::AbstractVector
-    area_sr::AbstractVector
+    λ::Vector{Q1}
+    I::Vector
+    σ::Vector
+    area_sr::Vector
     mask_lines::BitVector
     mask_bad::BitVector
     vres::Union{Number,Nothing}
-    I_spline::Union{Nothing,AbstractVector}
+    I_spline::Union{Nothing,Vector}
     N::Number
     aux::Dict   # for storing various auxiliary data
     normalized::Bool
 
-    function Spaxel(coords::CartesianIndex, λ::AbstractVector{Q1}, I::AbstractVector{Q2}, σ::AbstractVector{Q2}, 
-        area_sr::AbstractVector{Q4}, mask_lines::BitVector, mask_bad::BitVector, vres::Union{Nothing,QVelocity}=nothing, 
-        I_spline::Union{AbstractVector{Q2},Nothing}=nothing; N::Q3=1.0, aux::Dict=Dict()) where {
+    function Spaxel(coords::CartesianIndex, λ::Vector{Q1}, I::Vector{Q2}, σ::Vector{Q2}, 
+        area_sr::Vector{Q4}, mask_lines::BitVector, mask_bad::BitVector, vres::Union{Nothing,QVelocity}=nothing, 
+        I_spline::Union{Vector{Q2},Nothing}=nothing; N::Q3=1.0, aux::Dict=Dict()) where {
             Q1<:QWave, Q2<:Number, Q3<:Number, Q4<:Number
         }
 
@@ -27,12 +27,12 @@ mutable struct Spaxel{Q1<:QWave}
             @assert eltype(I) == eltype(I_spline)
         end
         @assert length(λ) == length(I) == length(σ) == length(area_sr) == length(mask_lines) == length(mask_bad)
-        if unit(I[1]) <: NoUnits
-            @assert unit(N) <: QSIntensity "I and σ are already normalized!"
+        if unit(I[1]) == NoUnits
+            @assert typeof(N) <: QSIntensity "I and σ are already normalized!"
             normalized = true
         end
-        if unit(I[1]) <: QSIntensity
-            @assert unit(N) <: NoUnits "I and σ are not yet normalized!" 
+        if eltype(I) <: QSIntensity
+            @assert unit(N) == NoUnits "I and σ are not yet normalized!" 
             normalized = false
         end
 
@@ -48,7 +48,7 @@ end
 
 
 # create a new normalized spaxel
-function normalize!(s::Spaxel{T1,T2,T3}, N::T3) where {T1,T2,T3}
+function normalize!(s::Spaxel, N::T) where {T}
     s.I = s.I ./ N
     s.σ = s.σ ./ N
     if !isnothing(s.I_spline)
@@ -63,9 +63,10 @@ function normalize!(s::Spaxel{T1,T2,T3}, N::T3) where {T1,T2,T3}
         unit_check(unit(s.I[1]), unit(s.I_spline[1]))
     end
     if haskey(s.aux, "templates")
-        unit_check(unit(s.I[1]), unit(s.aux["templates"]))
+        unit_check(unit(s.I[1]), unit(s.aux["templates"][1]))
     end
-    s.normalized[1] = true
+    s.normalized = true
+    s.N = N
 end
 
 
@@ -75,90 +76,42 @@ function subtract_continuum!(s::Spaxel, continuum::AbstractVector{<:Real})
 end
 
 
-"""
-    interpolate_over_lines!(s, mask_lines, scale[, only_templates])
+# """
+#     interpolate_over_lines!(s, mask_lines, scale[, only_templates])
 
-Fills in the data where the emission lines are with linear interpolation of the continuum.
-"""
-function interpolate_over_lines!(s::Spaxel, scale::Integer; only_templates::Bool=false)
+# Fills in the data where the emission lines are with linear interpolation of the continuum.
+# """
+# function interpolate_over_lines!(s::Spaxel, scale::Integer; only_templates::Bool=false)
 
-    # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
-    λknots = s.λ[.~s.mask_lines][(1+scale):scale:(length(s.λ[.~s.mask_lines])-scale)]
+#     # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
+#     λknots = s.λ[.~s.mask_lines][(1+scale):scale:(length(s.λ[.~s.mask_lines])-scale)]
 
-    # Replace the masked lines with a linear interpolation
-    if !only_templates
-        s.I[s.mask_lines] .= Spline1D(ustrip.(s.λ[.~s.mask_lines]), s.I[.~s.mask_lines], ustrip.(λknots), 
-            k=1, bc="extrapolate").(ustrip.(s.λ[s.mask_lines])) .* unit(s.I[1])
-        s.σ[s.mask_lines] .= Spline1D(ustrip.(s.λ[.~s.mask_lines]), s.σ[.~s.mask_lines], ustrip.(λknots), 
-            k=1, bc="extrapolate").(ustrip.(s.λ[s.mask_lines])) .* unit(s.σ[1])
-    end
-    # Do it for the templates
-    if haskey(s.aux, "templates")
-        for s in axes(s.aux["templates"], 2)
-            m = .~isfinite.(s.aux["templates"][:, s])
-            s.aux["templates"][s.mask_lines.|m, s] .= Spline1D(ustrip.(s.λ[.~s.mask_lines .& .~m]), 
-                ustrip.(s.aux["templates"][.~s.mask_lines .& .~m, s]), ustrip.(λknots), k=1, 
-                bc="extrapolate")(ustrip.(s.λ[s.mask_lines .| m]))
-        end
-    end
-end
+#     #### => IMPORTANT <= ####
+#     # Lines shouldnt be interpolated over in optical wavelength ranges where you might expect 
+#     # stellar absorption to be present on top of nebular emission.  Instead these regions should 
+#     # just be masked out.
 
-
-"""
-    fill_bad_pixels!(s)
-
-Helper function to fill in NaNs/Infs in a 1D intensity/error vector and 2D templates vector.
-"""
-function fill_bad_pixels!(s::Spaxel)
-
-    # Edge cases
-    if !isfinite(s.I[1])
-        s.I[1] = nanmedian(s.I)
-    end
-    if !isfinite(s.I[end])
-        s.I[end] = nanmedian(s.I)
-    end
-    if !isfinite(s.σ[1])
-        s.σ[1] = nanmedian(s.σ)
-    end
-    if !isfinite(s.σ[end])
-        s.σ[end] = nanmedian(s.σ)
-    end
-    if haskey(s.aux, "templates")
-        for s in axes(s.aux["templates"], 2)
-            if !isfinite(s.aux["templates"][1,s])
-                s.aux["templates"][1,s] = nanmedian(s.aux["templates"][:,s])
-            end
-            if !isfinite(s.aux["templates"][end,s])
-                s.aux["templates"][end,s] = nanmedian(s.aux["templates"][:,s])
-            end
-        end
-    end
-
-    bad = findall(.~isfinite.(s.I) .| .~isfinite.(s.σ))
-    # Replace with the average of the points to the left and right
-    l = length(s.I)
-    for badi in bad
-        lind = findfirst(isfinite, s.I[max(badi-1,1):-1:1])
-        rind = findfirst(isfinite, s.I[min(badi+1,l):end])
-        s.I[badi] = (s.I[max(badi-1,1):-1:1][lind] + s.I[min(badi+1,l):end][rind]) / 2
-        s.σ[badi] = (s.σ[max(badi-1,1):-1:1][lind] + s.σ[min(badi+1,l):end][rind]) / 2
-    end
-    @assert all(isfinite.(s.I) .& isfinite.(s.σ)) "Error: Non-finite values found in the summed intensity/error arrays!"
-    if haskey(s.aux, "templates")
-        for s in axes(s.aux["templates"], 2)
-            bad = findall(.~isfinite.(s.aux["templates"][:, s]))
-            l = length(s.aux["templates"][:, s])
-            for badi in bad
-                lind = findfirst(isfinite, s.aux["templates"][max(badi-1,1):-1:1, s])
-                rind = findfirst(isfinite, s.aux["templates"][min(badi+1,l):end, s])
-                s.aux["templates"][badi, s] = (s.aux["templates"][max(badi-1,1):-1:1, s][lind] + s.aux["templates"][min(badi+1,l):end, s][rind]) / 2
-            end
-        end
-        @assert all(isfinite.(s.aux["templates"])) "Error: Non-finite values found in the summed template arrays!"
-    end
-
-end
+#     # However, in the infrared, there is no stellar absorption.  But there are PAH emission features,
+#     # which sometimes may be fit with amplitudes too large if they fall on top of a masked region due
+#     # to a line. So here, it's better to interpolate over the lines.
+#     mask_ir = s.mask_lines .& s.λ .≥ 3.0u"μm"
+#     # Replace the masked lines with a linear interpolation
+#     if !only_templates
+#         s.I[mask_ir] .= Spline1D(ustrip.(s.λ[.~mask_ir]), s.I[.~mask_ir], ustrip.(λknots), 
+#             k=1, bc="extrapolate").(ustrip.(s.λ[mask_ir])) .* unit(s.I[1])
+#         s.σ[mask_ir] .= Spline1D(ustrip.(s.λ[.~mask_ir]), s.σ[.~mask_ir], ustrip.(λknots), 
+#             k=1, bc="extrapolate").(ustrip.(s.λ[mask_ir])) .* unit(s.σ[1])
+#     end
+#     # Do it for the templates
+#     if haskey(s.aux, "templates")
+#         for s in axes(s.aux["templates"], 2)
+#             m = .~isfinite.(s.aux["templates"][:, s])
+#             s.aux["templates"][mask_ir.|m, s] .= Spline1D(ustrip.(s.λ[.~mask_ir .& .~m]), 
+#                 ustrip.(s.aux["templates"][.~mask_ir .& .~m, s]), ustrip.(λknots), k=1, 
+#                 bc="extrapolate")(ustrip.(s.λ[mask_ir .| m]))
+#         end
+#     end
+# end
 
 
 function fill_bad_pixels!(s::Spaxel)
@@ -173,68 +126,33 @@ end
 
 
 """
-    mask_vectors!(s, mask_bad[, user_mask])
+    get_vector_mask(s, mask_bad[, user_mask])
 
 Apply two masks (mask_bad and user_mask) to a set of vectors (λ, I, σ, templates, channel_masks) to prepare
 them for fitting. The mask_bad is a pixel-by-pixel mask flagging bad data, while the user_mask is a set of pairs
 of wavelengths specifying entire regions to mask out.  The vectors are modified in-place.
 """
-function mask_vectors!(s::Spaxel, user_mask::Union{Nothing,Vector{<:Tuple}}=nothing) 
-
-    do_spline = !isnothing(s.I_spline)
-    do_templates = haskey(s.aux, "templates")
-    do_chmasks = haskey(s.aux, "channel_masks")
-
-    s.λ = s.λ[.~s.mask_bad]
-    s.I = s.I[.~s.mask_bad]
-    s.σ = s.σ[.~s.mask_bad]
-    if do_spline 
-        s.I_spline = s.I_spline[.~s.mask_bad]
+function get_vector_mask(s::Spaxel; lines::Bool=true, user_mask::Union{Nothing,Vector{<:Tuple}}=nothing) 
+    # bad pixels
+    mask_all = copy(s.mask_bad)
+    # optical emission lines 
+    if lines
+        mask_all .|= s.mask_lines
     end
-    if do_templates
-        s.aux["templates"] = s.aux["templates"][.~s.mask_bad, :]
-    end
-    if do_chmasks
-        s.aux["channel_masks"] = [ch_mask[.~s.mask_bad] for ch_mask in s.aux["channel_masks"]]
-    end
-
+    # user-specified regions
     if !isnothing(user_mask)
         for pair in user_mask
-            region = pair[1] .< s.λ .< pair[2]
-            s.λ = s.λ[.~region]
-            s.I = s.I[.~region]
-            s.σ = s.σ[.~region]
-            if do_spline
-                s.I_spline = s.I_spline[.~region]
-            end
-            if do_templates
-                s.aux["templates"] = s.aux["templates"][.~region, :]
-            end
-            if do_chmasks
-                s.aux["channel_masks"] = [ch_mask[.~region] for ch_mask in s.aux["channel_masks"]]
-            end
+            mask_all .|= pair[1] .< s.λ .< pair[2]
         end
     end
-
-    @assert length(s.λ) == length(s.I) == length(s.σ)
-    if do_spline
-        @assert length(s.λ) == length(s.I_spline)
-    end
-    if do_templates
-        @assert length(s.λ) == size(s.aux["templates"], 1)
-    end
-    if do_chmasks
-        for ch_mask in s.aux["channel_masks"]
-            @assert length(s.λ) == length(ch_mask)
-        end
-    end
+    mask_all
 end
 
 
 function continuum_cubic_spline!(s::Spaxel, overrides)
     mask_lines, I_spline = continuum_cubic_spline(s.λ, s.I, s.σ, overrides; do_err=false)
     s.I_spline = I_spline
-    s.aux["mask_lines"] = mask_lines
+    s.mask_lines = mask_lines
 end
 
 
@@ -276,10 +194,19 @@ function make_normalized_spaxel(cube_data::NamedTuple, coords::CartesianIndex, c
 
     vres = isapprox((λ[2]/λ[1]), (λ[end]/λ[end-1]), rtol=1e-6) ? log(λ[2]/λ[1]) * C_KMS : nothing
 
+    # Interpolate over the bad pixels in the templates 
+    λknots = λ[(1+scale):scale:(length(λ)-scale)]
+    for s in axes(templates, 2)
+        m = .~isfinite.(templates[:, s])
+        templates[m, s] .= Spline1D(ustrip.(λ[.~m]), ustrip.(templates[.~m, s]), ustrip.(λknots), k=1, 
+            bc="extrapolate")(ustrip.(s.λ[m]))
+    end
+
     # Create the spaxel object and normalize it
-    aux = Dict("templates" => templates)
+    aux = Dict("templates" => templates, "channel_masks" => cube_fitter.spectral_region.channel_masks)
     spax = Spaxel(coords, λ, I, σ, area_sr, mask_lines, mask_bad, vres, I_spline; aux=aux)
     normalize!(spax, norm)
+    fill_bad_pixels!(spax)
 
     spax
 end

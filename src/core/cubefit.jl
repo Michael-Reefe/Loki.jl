@@ -203,7 +203,7 @@ these options. For more detailed explanations on these options, please refer to 
 See [`ParamMaps`](@ref), [`CubeModel`](@ref), [`OutputOptions`](@ref), [`FittingOptions`](@ref), 
     [`fit_spaxel`](@ref), [`fit_cube!`](@ref)
 """
-struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity} 
+struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
 
     # See explanations for each field in the docstring!
     
@@ -260,7 +260,7 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity}
     cosmology::Cosmology.AbstractCosmology
 
     # Line masking and sorting options
-    linemask_overrides::Vector{Tuple{T,T}}
+    linemask_overrides::Vector{Tuple{Qw,Qw}}
     linemask_width::Qv
 
     # Initial parameter vectors
@@ -307,16 +307,16 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity}
         lines, n_lines, n_acomps, n_fit_comps = cubefitter_prepare_lines(out, λunit, Iunit, cube, spectral_region)
 
         # Count total parameters
-        n_params_cont = count_cont_parameters(model_parameters; split=out[:use_pah_templates])
+        n_params_cont = count_cont_parameters(model_parameters; split=false)
         n_params_dust = count_dust_parameters(model_parameters)
         n_params_lines = count_line_parameters(lines)
         n_params_extra = count_extra_parameters(model_parameters)
-        n_params_total = n_params_cont + (out[:ust_pah_templates] ? n_params_dust : 0) + n_params_lines + n_params_extra
+        n_params_total = n_params_cont + n_params_lines + n_params_extra
 
         # Create the line mask
         make_linemask!(out, lines, λunit)
 
-        @debug "### There are a total of $(n_params_cont) $(out[:use_pah_templates] ? "continuum" : "continuum+PAH") parameters ###"
+        @debug "### There are a total of $(n_params_cont-n_params_dust) continuum parameters ###"
         @debug "### There are a total of $(n_params_dust) PAH parameters ###"
         @debug "### There are a total of $(n_params_lines) emission line parameters ###"
         @debug "### There are a total of $(n_params_extra) extra parameters ###"
@@ -338,17 +338,17 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity}
         # If a fit has been run previously, read in the file containing the best fit parameters
         # to pick up where the fitter left off seamlessly
         if isfile(joinpath("output_$name", "spaxel_binaries", "init_fit_cont.csv")) && isfile(joinpath("output_$name", "spaxel_binaries", "init_fit_line.csv"))
-            p_init_cont = readdlm(joinpath("output_$name", "spaxel_binaries", "init_fit_cont.csv"), ',', Float64, '\n')[:, 1]
-            p_init_line = readdlm(joinpath("output_$name", "spaxel_binaries", "init_fit_line.csv"), ',', Float64, '\n')[:, 1]
-            p_init_pahtemp = readdlm(joinpath("output_$name", "spaxel_binaries", "init_fit_pahtemp.csv"), ',', Float64, '\n')[:, 1]
+            p_init_cont, = read_fit_results_csv(name, "init_fit_cont")
+            p_init_line, = read_fit_results_csv(name, "init_fit_line")
+            p_init_pahtemp, = read_fit_results_csv(name, "init_fit_pahtemp")
         end
 
         # Load templates into memory
-        _load_dust_templates(out[:silicate_absorption], out[:extinction_curve], out[:fit_ch_abs], out[:use_pah_templates], λunit, Iunit)
+        _load_dust_templates(out[:silicate_absorption], out[:fit_ch_abs], out[:use_pah_templates], λunit, Iunit)
 
         # Create the LSF interpolator
-        lsf_interp = Spline1D(cube.λ, cube.lsf, k=1)  # rest frame wavelengths
-        lsf = λi -> lsf_interp(λi)
+        lsf_interp = Spline1D(ustrip.(cube.λ), ustrip.(cube.lsf), k=1)  # rest frame wavelengths
+        lsf = λi -> lsf_interp(ustrip(uconvert(unit(cube.λ[1]), λi)))*unit(cube.lsf[1])
 
         # Create options structs
         output_options = OutputOptions(
@@ -400,7 +400,7 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity}
             out[:subtract_cubic_spline]
         )
 
-        new{typeof(z), typeof(n_params_cont), eltype(out[:templates]), typeof(vres)}(
+        new{typeof(z), typeof(n_params_cont), eltype(out[:templates]), typeof(vres), eltype(cube.λ)}(
             cube, 
             z, 
             name, 
@@ -425,8 +425,8 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity}
             n_params_dust,
             n_params_lines,
             n_params_extra,
-            lsf,
             n_params_total,
+            lsf,
             n_fit_comps,
             out[:cosmology],
             out[:linemask_overrides],
@@ -474,13 +474,13 @@ end
 # Helper function for setting up default options when creating a CubeFitter object
 function cubefitter_add_default_options!(cube::DataCube, out::Dict)
 
-    out[:line_test_lines] = [[Symbol(ln) for ln in group] for group in out[:line_test_lines]]
+    out[:line_test_lines] = Vector{Symbol}[Symbol[Symbol(ln) for ln in group] for group in out[:line_test_lines]]
     out[:plot_spaxels] = Symbol(out[:plot_spaxels])
 
     λunit = unit(cube.λ[1])
     if !haskey(out, :plot_range)
         out[:plot_range] = nothing
-    else
+    elseif length(out[:plot_range]) > 0
         punit = typeof(out[:plot_rangee][1][1]) <: Quantity{<:Real, u"𝐋"} ? 1.0 : λunit
         out[:plot_range] = [tuple(out[:plot_range][i].*punit...) for i in 1:length(out[:plot_range])]
         for  pair in out[:plot_range]
@@ -490,7 +490,7 @@ function cubefitter_add_default_options!(cube::DataCube, out::Dict)
 
     if !haskey(out, :user_mask)
         out[:user_mask] = nothing
-    else
+    elseif length(out[:user_mask]) > 0
         punit = typeof(out[:user_mask][1][1]) <: Quantity{<:Real, u"𝐋"} ? 1.0 : λunit
         out[:user_mask] = [tuple(out[:user_mask][i].*punit...) for i in 1:length(out[:user_mask])]
         for  pair in out[:user_mask]
@@ -593,7 +593,7 @@ end
 Sorts parameters into vectors containing only the free parameters and the locked parameters.
 Also sorts the step, limits, and lock vectors accordingly.
 """
-function split_parameters(pars::Vector{<:Real}, dstep::Vector{<:Real}, plims::Vector{Tuple}, plock::BitVector)
+function split_parameters(pars::Vector{<:Real}, dstep::Vector{<:Real}, plims::Vector{<:Tuple}, plock::BitVector)
 
     pfix = pars[plock]
     pfree = pars[.~plock]
@@ -617,7 +617,7 @@ Sorts parameters into vectors containing only the tied, free parameters and sepa
 locked parameters into a separate vector. Also sorts the step, limits, and lock vectors 
 accordingly.
 """
-function split_parameters(pars::Vector{<:Real}, dstep::Vector{<:Real}, plims::Vector{Tuple}, plock::BitVector,
+function split_parameters(pars::Vector{<:Real}, dstep::Vector{<:Real}, plims::Vector{<:Tuple}, plock::BitVector,
     tied_indices::Vector{<:Integer}; param_names::Union{Nothing,Vector{String}}=nothing)
 
     do_names = !isnothing(param_names)
@@ -687,7 +687,7 @@ The opposite of split_parameters.  Takes a split up parameter vector and rebuild
 all of the free+locked parameters and the tied parameters.
 """
 function rebuild_full_parameters(pfree_tied::Vector{<:Real}, pfix_tied::Vector{<:Real}, plock_tied::BitVector, 
-    tied_pairs::Vector{Tuple}, tied_indices::Vector{<:Integer}, n_tied::Integer)
+    tied_pairs::Vector{<:Tuple}, tied_indices::Vector{<:Integer}, n_tied::Integer)
     pfull = zeros(eltype(pfree_tied), n_tied)
     pfull[.~plock_tied] .= pfree_tied
     pfull[plock_tied] .= pfix_tied
@@ -702,7 +702,7 @@ function rebuild_full_parameters(pfree_tied::Vector{<:Real}, pfix_tied::Vector{<
 end
 
 
-function strip_units(params::Vector{<:Quantity}, plims::Vector{Tuple})
+function strip_units(params::Vector{<:Number}, plims::Vector{<:Tuple})
     # Get the units of the parameters and strip them off of the actual parameter vector
     punits = unit.(params)
     pars_out = ustrip.(params)
@@ -711,8 +711,8 @@ function strip_units(params::Vector{<:Quantity}, plims::Vector{Tuple})
 end
 
 
-function strip_units(params_1::Vector{<:Quantity}, params_2::Vector{<:Quantity}, 
-    plims_1::Vector{Tuple}, plims_2::Vector{Tuple})
+function strip_units(params_1::Vector{<:Number}, params_2::Vector{<:Number}, 
+    plims_1::Vector{<:Tuple}, plims_2::Vector{<:Tuple})
     pars_out_1, plims_out_1, punits_1 = strip_units(params_1, plims_1)
     pars_out_2, plims_out_2, punits_2 = strip_units(params_2, plims_2)
     pars_out_1, plims_out_1, punits_1, pars_out_2, plims_out_2, punits_2

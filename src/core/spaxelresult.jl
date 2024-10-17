@@ -35,21 +35,23 @@ function pretty_print_results(result::SpaxelFitResult)
     tie_groups = Vector{String}([!isnothing(tie) ? string(tie.group) : "" for tie in result.ptie])
 
     # make things have appropriate number of sig figs based on the errors
-    _popt = ustrip.(result.popt); _perr = ustrip.(result.perr); _lb = ustrip.(result.bounds[:,1]); _ub = ustrip.(result.bounds[:,2])
+    _popt = ustrip.(result.popt); _perr_l = ustrip.(result.perr[:,1]); _perr_u = ustrip.(result.perr[:,2])
+    _lb = ustrip.(result.bounds[:,1]); _ub = ustrip.(result.bounds[:,2])
     _unit = string.(unit.(result.popt))
     _unit = [_ui == "NoUnits" ? "" : _ui for _ui in _unit]
 
-    round_to_digits(x, y) = round(x, digits=-Int(floor(log10(y))))
-    _perr = round_to_digits.(_perr, _perr)   # rounds the errors to 1 digit
-    _popt = round_to_digits.(_popt, _perr)   # rounds the values to match the number of significant figures that the errors have
-    _lb = round_to_digits.(_lb, _perr)
-    _ub = round_to_digits.(_ub, _perr)
+    round_to_digits(x, y) = iszero(y) || !isfinite(y) ? x : round(x, digits=-Int(floor(log10(y))))
+    _perr_l = round.(_perr_l, sigdigits=1)       # rounds the errors to 1 significant figure 
+    _perr_u = round.(_perr_u, sigdigits=1)       # rounds the errors to 1 significant figure 
+    _popt = round_to_digits.(_popt, _perr_l)   # rounds the values to match the number of significant figures that the errors have
+    _lb = round_to_digits.(_lb, _perr_l)
+    _ub = round_to_digits.(_ub, _perr_u)
 
     # dont print bounds if they are infinite
     _lb = ifelse.(.~isfinite.(_lb), "", string.(_lb))
     _ub = ifelse.(.~isfinite.(_ub), "", string.(_ub))
 
-    data = DataFrame(name=result.pnames, best=_popt, error_lower=_perr[:,1], error_upper=_perr[:,2], 
+    data = DataFrame(name=result.pnames, best=_popt, error_lower=_perr_l, error_upper=_perr_u, 
         bound_lower=_lb, bound_upper=_ub, unit=_unit, locked=locked, tied=tie_groups)
     textwidths = [maximum(textwidth.(string.([data[:, i]; names(data)[i]]))) for i in axes(data, 2)]
     msg = ""

@@ -9,6 +9,7 @@ function create_dust_features(dust::Dict, λunit::Unitful.Units, Iunit::Unitful.
     feat_labels = String[]
     fit_profiles = FitProfiles()
     all_df_names = String[]
+    all_df_labels = String[]
     key = do_absorption ? "absorption_features" : "dust_features"
     short_key = do_absorption ? "abs_features" : "dust_features"
 
@@ -105,6 +106,8 @@ function create_dust_features(dust::Dict, λunit::Unitful.Units, Iunit::Unitful.
 
             wl = pah_name_to_float(complex)
             push!(feat_labels, "PAH $wl " * L"${\rm \mu m}$")
+            wl = pah_name_to_float(df)
+            push!(all_df_labels, "PAH $wl " * L"${\rm \mu m}$")
         end
         @debug msg
 
@@ -114,6 +117,7 @@ function create_dust_features(dust::Dict, λunit::Unitful.Units, Iunit::Unitful.
         complexes = complexes[ss]
         all_df_names = all_df_names[ss]
         feat_labels = feat_labels[ss]
+        all_df_labels = all_df_labels[ss]
         fit_profiles = fit_profiles[ss]
 
         # sort into vectors based on where the complex is the same
@@ -140,13 +144,13 @@ function create_dust_features(dust::Dict, λunit::Unitful.Units, Iunit::Unitful.
             push!(composite, NonFitParameters(epnames, eplabels, eptrans, eparams))
         end
 
-        cfg = PAHConfig(all_df_names)
+        cfg = PAHConfig(all_df_names, all_df_labels)
 
         FitFeatures(u_complexes, u_feat_labels, u_cent_vals, all_fit_profiles, composite, cfg)
     
     else
 
-        FitFeatures(String[], String[], typeof(1.0*λunit)[], FitProfiles[], NonFitParameters[], PAHConfig(String[]))
+        FitFeatures(String[], String[], typeof(1.0*λunit)[], FitProfiles[], NonFitParameters[], PAHConfig(String[], String[]))
     end
 end
 
@@ -251,25 +255,25 @@ function construct_continuum_params!(params::Vector{FitParameter}, pnames::Vecto
 
     if out[:fit_stellar_continuum]
         msg = "Stellar populations:"
-        for (i, (age, metal)) ∈ enumerate(zip(optical["stellar_population_ages"], optical["stellar_population_metallicities"]))
+        for (i, (age0, metal0)) ∈ enumerate(zip(optical["stellar_population_ages"], optical["stellar_population_metallicities"]))
             prefix = "continuum.stellar_populations.$(i)."
             mass = FitParameter(NaN, false, (0., Inf)) 
             t_mass = [RestframeTransform, LogTransform, NormalizeTransform]
             msg *= "\nMass $mass"
-            age = parameter_from_dict(age; units=u"Gyr")
+            age_param = parameter_from_dict(age0; units=u"Gyr")
             age_univ = age(u"Gyr", out[:cosmology], redshift)
             # Check the upper limit on age and make sure it's not older than the age of the universe at a given redshift
-            if age_univ < age.plim[2]
-                @warn "The age of the universe at z=$redshift is younger than the upper limit on the SSP age $(age.plim[2]). " *
+            if age_univ < age_param.limits[2]
+                @warn "The age of the universe at z=$redshift is younger than the upper limit on the SSP age $(age_param.limits[2]). " *
                       "The upper limit will be reduced to match the universe age."
-                set_plim!(age, (age.plim[1], age_univ))
+                set_plim!(age_param, (age_param.limits[1], age_univ))
             end
             t_age = Transformation[]
             msg *= "\nAge $age"
-            z = parameter_from_dict(metal)
+            z = parameter_from_dict(metal0)
             t_z = Transformation[]
             msg *= "\nMetallicity $z"
-            append!(params, [mass, age, z])
+            append!(params, [mass, age_param, z])
             append!(pnames, prefix .* ["mass", "age", "metallicity"])
             append!(plabels, [L"$\log_{10}(M / M_{\odot})$", L"$t_{\rm age}$ (Gyr)", L"$\log_{10}(Z/Z_\odot)$"])
             append!(ptrans, [t_mass, t_age, t_z])
@@ -725,7 +729,8 @@ function default_line_parameters(out::Dict, lines::Dict, λunit::Unitful.Units, 
         msg *= "\nAmp $amp"
         voff = parameter_from_dict(component > 1 ? lines["acomp_voff"][component-1] : lines["voff"]; units=u"km/s")
         msg *= "\nVoff $voff"
-        fwhm = parameter_from_dict(component > 1 ? lines["acomp_fwhm"][component-1] : lines["fwhm"]; units=u"km/s")
+        fwhm = parameter_from_dict(component > 1 ? lines["acomp_fwhm"][component-1] : lines["fwhm"]; 
+            units=component > 1 ? 1.0 : u"km/s")
         msg *= "\nFWHM $fwhm"
         params = [amp, voff, fwhm]
         pnames = prefix .* "$component." .* ["amp", "voff", "fwhm"]
@@ -953,11 +958,11 @@ function construct_line_parameters(out::Dict, λunit::Unitful.Units, Iunit::Unit
     for tp in tied_pairs
         n1 = fnames[tp[1]]
         ln_name_1 = split(n1, ".")[2]
-        ln_comp_1 = Int(split(n1, ".")[3])
+        ln_comp_1 = parse(Int, split(n1, ".")[3])
         i1 = fast_indexin(ln_name_1, lines_out.names)
         n2 = fnames[tp[2]]
         ln_name_2 = split(n2, ".")[2]
-        ln_comp_2 = Int(split(n2, ".")[3])
+        ln_comp_2 = parse(Int, split(n2, ".")[3])
         i2 = fast_indexin(ln_name_2, lines_out.names)
         # set plimits and locked values to match (including potential ratio)
         set_plim!(lines_out.profiles[i2][ln_comp_2].fit_parameters[n2], 

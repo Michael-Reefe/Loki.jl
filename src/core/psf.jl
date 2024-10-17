@@ -323,6 +323,7 @@ The 1D template is then combined with a 3D PSF model to create a full 3D nuclear
 """
 function generate_nuclear_template(cube::DataCube, ap_r::Real=0.; spline_width::Integer=7) 
 
+    Iunit = unit(cube.I[1])
     data2d = dropdims(nansum(ustrip(cube.I), dims=3), dims=3)
     data2d[.~isfinite.(data2d)] .= 0.
     _, mx = findmax(data2d)
@@ -349,7 +350,7 @@ function generate_nuclear_template(cube::DataCube, ap_r::Real=0.; spline_width::
     if spline_width > 0
         good = isfinite.(nuc1d) .& (ustrip(abs.(nuc1d)) .< 1e10)
         λknots = cube.λ[good][1+spline_width:spline_width:end-spline_width]
-        nuc1d = Spline1D(ustrip(cube.λ[good]), ustrip(nuc1d[good]), ustrip(λknots), k=3, bc="extrapolate")(ustrip(cube.λ))
+        nuc1d = Spline1D(ustrip(cube.λ[good]), ustrip(nuc1d[good]), ustrip(λknots), k=3, bc="extrapolate")(ustrip(cube.λ)) .* Iunit
     end
 
     [nuc1d[k] * cube.psf_model[i,j,k] for i ∈ axes(cube.psf_model, 1), j ∈ axes(cube.psf_model, 2), k ∈ axes(cube.psf_model, 3)]

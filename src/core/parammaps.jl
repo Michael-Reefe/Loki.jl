@@ -28,17 +28,9 @@ struct ParamMaps
 
         # Initialize a default array of nans to be used as a placeholder for all the other arrays
         # until the actual fitting parameters are obtained
-        data = ones(shape..., 0)
         mp = get_flattened_parameters(model)
-        for i in eachindex(mp._parameters)
-            if typeof(mp[i]) <: FitParameter
-                out_type = typeof(mp[i].value)
-            else
-                out_type = mp[i]._type
-            end
-            di = ones(out_type, shape...) .* NaN
-            data = cat(data, di, dims=3)
-        end
+        data = Array{Quantity{Float64}}(undef, shape..., length(mp))
+        data .= NaN
 
         new(data, copy(data), copy(data), mp)
 
@@ -83,7 +75,7 @@ function get_label(parammap::ParamMaps, pname::String)
     ind = findfirst(param.names .== pname)
     param.labels[ind]
 end
-function get_label(parammap::ParamMaps, pnames::String)
+function get_label(parammap::ParamMaps, pnames::Vector{String})
     param = get_flattened_parameters(parammap.parameters)
     inds = [findfirst(param.names .== pname) for pname in pnames]
     param.labels[inds]

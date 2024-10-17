@@ -18,25 +18,27 @@ Helper function to fill in NaNs/Infs in a 1D intensity/error vector and 2D templ
 function fill_bad_pixels(I::Vector{<:Number}, σ::Vector{<:Number}, templates::Union{Array{<:Number,2},Nothing})
 
     # Edge cases
+    Iunit = unit(I[1])
+    σunit = unit(σ[1])
     if !isfinite(I[1])
-        I[1] = nanmedian(I)
+        I[1] = nanmedian(ustrip.(I)) * Iunit
     end
     if !isfinite(I[end])
-        I[end] = nanmedian(I)
+        I[end] = nanmedian(ustrip.(I)) * Iunit
     end
     if !isfinite(σ[1])
-        σ[1] = nanmedian(σ)
+        σ[1] = nanmedian(ustrip.(σ)) * σunit
     end
     if !isfinite(σ[end])
-        σ[end] = nanmedian(σ)
+        σ[end] = nanmedian(ustrip.(σ)) * σunit
     end
     if !isnothing(templates)
         for s in axes(templates, 2)
             if !isfinite(templates[1,s])
-                templates[1,s] = nanmedian(templates[:,s])
+                templates[1,s] = nanmedian(ustrip.(templates[:,s])) * unit(templates[1,s])
             end
             if !isfinite(templates[end,s])
-                templates[end,s] = nanmedian(templates[:,s])
+                templates[end,s] = nanmedian(ustrip.(templates[:,s])) * unit(templates[1,s])
             end
         end
     end
@@ -113,13 +115,13 @@ function continuum_cubic_spline(λ::Vector{<:Quantity}, I::Vector{S}, σ::Vector
     @debug "Performing cubic spline continuum fit with $(length(λknots)) knots"
 
     # Do a full cubic spline interpolation of the data
-    I_spline = Spline1D(_λ[.~mask_lines], _I[.~mask_lines], λknots, k=3, bc="extrapolate").(_λ) * unit(I[1])
+    I_spline = Spline1D(_λ[.~mask_lines], _I[.~mask_lines], λknots, k=3, bc="extrapolate").(_λ) .* unit(I[1])
     # Linear interpolation over the lines
-    I_spline[mask_lines] .= Spline1D(_λ[.~mask_lines], _I[.~mask_lines], λknots, k=1, bc="extrapolate").(_λ[mask_lines]) * unit(I[1])
+    I_spline[mask_lines] .= Spline1D(_λ[.~mask_lines], _I[.~mask_lines], λknots, k=1, bc="extrapolate").(_λ[mask_lines]) .* unit(I[1])
 
     if do_err
         σ_spline = Spline1D(_λ[.~mask_lines], _σ[.~mask_lines], λknots, k=3, bc="extrapolate").(_λ) * unit(σ[1])
-        σ_spline[mask_lines] .= Spline1D(_λ[.~mask_lines], _σ[.~mask_lines], λknots, k=1, bc="extrapolate").(_λ[mask_lines]) * unit(σ[1])
+        σ_spline[mask_lines] .= Spline1D(_λ[.~mask_lines], _σ[.~mask_lines], λknots, k=1, bc="extrapolate").(_λ[mask_lines]) .* unit(σ[1])
 
         return mask_lines, I_spline, σ_spline
     end
@@ -138,7 +140,7 @@ function calculate_statistical_errors(I::Vector{S}, I_spline::Vector{S}, mask::B
 
     l_mask = sum(.~mask)
     # Statistical uncertainties based on the local RMS of the residuals with a cubic spline fit
-    σ_stat = zeros(l_mask)
+    σ_stat = zeros(eltype(I), l_mask)
     for i in 1:l_mask
         indices = sortperm(abs.((1:l_mask) .- i))[1:60]
         σ_stat[i] = std(I[.~mask][indices] .- I_spline[.~mask][indices])
@@ -158,7 +160,7 @@ end
 
 # Helper function for estimating PAH template amplitude when PAH templates are not actually
 # used during the fit.
-function estimate_pah_template_amplitude(cube_fitter::CubeFitter, λ::Vector{<:Real}, comps::Dict)
+function estimate_pah_template_amplitude(cube_fitter::CubeFitter, λ::Vector, comps::Dict)
     pahtemp = zeros(length(λ))
     for (k, dcomplex) in enumerate(model(cube_fitter).dust_features.profiles)   # <- iterates over PAH complexes
         for j in 1:length(dcomplex)                                             # <- iterates over each individual component
@@ -204,6 +206,8 @@ function get_total_integrated_intensities(cube_fitter::CubeFitter; shape::Union{
     I = sumdim(ustrip.(cube_fitter.cube.I), (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2)) .* Iunit
     σ = sqrt.(sumdim(ustrip.(cube_fitter.cube.σ).^2, (1,2))) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2)) .* Iunit
     area_sr = cube_fitter.cube.Ω .* sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+    # sometimes the mask can cause area_sr to be 0 at some points, which is bad
+    area_sr[area_sr .== 0.0u"sr"] .= minimum(area_sr[area_sr .> 0.0u"sr"])
     templates = zeros(eltype(I), size(I)..., cube_fitter.n_templates)
     for s in 1:cube_fitter.n_templates
         templates[:,s] .= sumdim(ustrip.(cube_fitter.templates), (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2)) .* Iunit
@@ -364,7 +368,8 @@ function create_cube_data_postnuctemp(cube_fitter::CubeFitter, agn_templates::Ar
 
     # Get the AGN model over the whole cube
     I_agn = nansum(ustrip.(agn_templates), dims=(1,2)) ./ nansum(.~cube.mask, dims=(1,2)) .* unit(agn_templates[1])
-    σ_agn = nanmedian(I_agn) .* ones(Float64, size(I_agn))  # errors will be overwritten by statistical errors
+    # errors will be overwritten by statistical errors
+    σ_agn = nanmedian(ustrip.(I_agn)) .* ones(Float64, size(I_agn)) .* unit(agn_templates[1])  
     templates = Array{eltype(I_agn),4}(undef, size(I_agn)..., 0)
     area_sr = cube_fitter.cube.Ω .* nansum(.~cube.mask, dims=(1,2))
 
@@ -385,7 +390,7 @@ end
 # intensity vector as a function of wavelength, and a comps dict giving individual components
 # of the final model
 function collect_cont_fit_results(res::CMPFit.Result, pfix_tied::Vector{<:Real}, plock_tied::BitVector, 
-    punits::Vector{<:Unitful.Units}, tied_pairs::Vector{Tuple}, tied_indices::Vector{<:Integer}, n_tied::Integer, 
+    punits::Vector{<:Unitful.Units}, tied_pairs::Vector{<:Tuple}, tied_indices::Vector{<:Integer}, n_tied::Integer, 
     spaxel::Spaxel, cube_fitter::CubeFitter; bootstrap_iter::Bool=false)
 
     popt = rebuild_full_parameters(res.param, pfix_tied, plock_tied, tied_pairs, tied_indices, n_tied)
@@ -399,7 +404,7 @@ function collect_cont_fit_results(res::CMPFit.Result, pfix_tied::Vector{<:Real},
     @debug "Best fit continuum parameters: \n $popt"
     @debug "Continuum parameter errors: \n $perr"
 
-    I_model, comps = model_continuum(spaxel, popt, cube_fitter, true)
+    I_model, comps, = model_continuum(spaxel, spaxel.N, ustrip.(popt), punits, cube_fitter, true)
 
     popt, perr, I_model, comps
 end
@@ -407,7 +412,7 @@ end
 
 # Alternative dispatch for the collect_fit_results function for step 2 of the multistep fitting procedure
 function collect_cont_fit_results(res_1::CMPFit.Result, p1fix_tied::Vector{<:Real}, lock_1_tied::BitVector, 
-    punit_1::Vector{<:Unitful.Units}, tied_pairs::Vector{Tuple}, tied_indices::Vector{<:Integer}, n_tied_1::Integer, 
+    punit_1::Vector{<:Unitful.Units}, tied_pairs::Vector{<:Tuple}, tied_indices::Vector{<:Integer}, n_tied_1::Integer, 
     res_2::CMPFit.Result, p2fix::Vector{<:Real}, lock_2::BitVector, punit_2::Vector{<:Unitful.Units}, n_free_1::Integer, 
     n_free_2::Integer, cube_fitter::CubeFitter, spaxel::Spaxel; bootstrap_iter::Bool=false)
 
@@ -421,8 +426,8 @@ function collect_cont_fit_results(res_1::CMPFit.Result, p1fix_tied::Vector{<:Rea
         perr_1 = rebuild_full_parameters(res_1.perror, zeros(length(p1fix_tied)), lock_1_tied, tied_pairs, tied_indices, n_tied_1)
         perr_1 = perr_1[1:end-2]
     end
-    popt_1 = popt_1 .* punit_1
-    perr_1 = perr_1 .* punit_1
+    popt_1 = popt_1 .* punit_1[1:end-2]
+    perr_1 = perr_1 .* punit_1[1:end-2]
 
     popt_2 = rebuild_full_parameters(res_2.param, p2fix, lock_2)
     perr_2 = zeros(length(lock_2))
@@ -441,7 +446,7 @@ function collect_cont_fit_results(res_1::CMPFit.Result, p1fix_tied::Vector{<:Rea
     n_free = n_free_1 + n_free_2 - 2
 
     # Create the full model, again only if not bootstrapping
-    I_model, comps = model_continuum(spaxel, popt, cube_fitter, true)
+    I_model, comps, = model_continuum(spaxel, spaxel.N, ustrip.(popt), [punit_1[1:end-2]; punit_2], cube_fitter, true)
 
     popt, perr, n_free, pahtemp, I_model, comps
 end
@@ -449,7 +454,7 @@ end
 
 # Alternative dispatch for the collect_fit_results function for the line fitting procedure
 function collect_line_fit_results(res::CMPFit.Result, pfix_tied::Vector{<:Real}, param_lock_tied::BitVector,
-    punits::Vector{<:Unitful.Units}, tied_pairs::Vector{Tuple}, tied_indices::Vector{<:Integer}, n_tied::Integer, 
+    punits::Vector{<:Unitful.Units}, tied_pairs::Vector{<:Tuple}, tied_indices::Vector{<:Integer}, n_tied::Integer, 
     spaxel::Spaxel, cube_fitter::CubeFitter; bootstrap_iter::Bool=false)
 
     # Get the results and errors
@@ -467,7 +472,8 @@ function collect_line_fit_results(res::CMPFit.Result, pfix_tied::Vector{<:Real},
     @debug "Line parameter errors: \n $perr"
 
     # Final optimized fit
-    I_model, comps = model_line_residuals(spaxel, popt, model(cube_fitter).lines, cube_fitter.lsf, true)
+    I_model, comps = model_line_residuals(spaxel, ustrip.(popt), punits, model(cube_fitter).lines, cube_fitter.lsf, 
+        spaxel.aux["ext_curve"], true)
 
     popt, perr, I_model, comps
 end
@@ -475,9 +481,9 @@ end
 
 # Alternative dispatch for the collect_fit_results function for the joint continuum+line fitting procedure
 function collect_fit_results(res::CMPFit.Result, pfix_cont_tied::Vector{<:Real}, lock_cont_tied::BitVector, 
-    punits_cont::Vector{<:Unitful.Units}, tied_pairs_cont::Vector{Tuple}, tied_indices_cont::Vector{<:Integer}, 
+    punits_cont::Vector{<:Unitful.Units}, tied_pairs_cont::Vector{<:Tuple}, tied_indices_cont::Vector{<:Integer}, 
     n_tied_cont::Integer, n_free_cont::Integer, pfix_lines_tied::Vector{<:Real}, lock_lines_tied::BitVector, 
-    punits_lines::Vector{<:Unitful.Units}, tied_pairs_lines::Vector{Tuple}, tied_indices_lines::Vector{<:Integer}, 
+    punits_lines::Vector{<:Unitful.Units}, tied_pairs_lines::Vector{<:Tuple}, tied_indices_lines::Vector{<:Integer}, 
     n_tied_lines::Integer, n_free_lines::Integer, spaxel::Spaxel, cube_fitter::CubeFitter; 
     bootstrap_iter::Bool=bootstrap_iter)
 
@@ -504,8 +510,9 @@ function collect_fit_results(res::CMPFit.Result, pfix_cont_tied::Vector{<:Real},
     @debug "Best fit line parameters: \n $popt_lines"
     @debug "Line parameter errors: \n $perr_lines"
 
-    I_cont, comps_cont = model_continuum(spaxel, popt_cont, cube_fitter, true)
-    I_lines, comps_lines = model_line_residuals(spaxel, popt_lines, model(cube_fitter).lines, cube_fitter.lsf, true)
+    I_cont, comps_cont, = model_continuum(spaxel, spaxel.N, ustrip.(popt_cont), punits_cont, cube_fitter, true)
+    I_lines, comps_lines = model_line_residuals(spaxel, ustrip.(popt_lines), punits_lines, model(cube_fitter).lines, cube_fitter.lsf, 
+        spaxel.aux["ext_curve"], true)
     
     popt_cont, perr_cont, I_cont, comps_cont, popt_lines, perr_lines, I_lines, comps_lines
 end
@@ -548,8 +555,9 @@ function collect_bootstrapped_results(spaxel::Spaxel, cube_fitter::CubeFitter, p
     I_model_boot::Matrix{<:QSIntensity}, split1::Integer, split2::Integer)
 
     # Filter out any large (>5 sigma) outliers
-    p_med = dropdims(nanquantile(p_boot, 0.50, dims=2), dims=2) 
-    p_mad = nanmad(p_boot, dims=2) .* 1.4826   # factor of 1.4826 to normalize the MAD it so it is interpretable as a standard deviation
+    p_med = dropdims(nanquantile(p_boot, 0.50, dims=2), dims=2)
+    # factor of 1.4826 to normalize the MAD it so it is interpretable as a standard deviation
+    p_mad = nanmad(p_boot, dims=2) .* 1.4826 
     p_mask = (p_boot .< (p_med .- 5 .* p_mad)) .| (p_boot .> (p_med .+ 5 .* p_mad))
     p_boot[p_mask] .= NaN
     p_out = p_med
@@ -560,14 +568,14 @@ function collect_bootstrapped_results(spaxel::Spaxel, cube_fitter::CubeFitter, p
     p_err = [p_err_lo p_err_up]
 
     # Get the minimum/maximum pointwise bootstrapped models
-    I_boot_min = dropdims(nanminimum(I_model_boot, dims=2), dims=2)
-    I_boot_max = dropdims(nanmaximum(I_model_boot, dims=2), dims=2)
+    I_boot_min = dropdims(nanminimum(ustrip.(I_model_boot), dims=2), dims=2) .* unit(I_model_boot[1])
+    I_boot_max = dropdims(nanmaximum(ustrip.(I_model_boot), dims=2), dims=2) .* unit(I_model_boot[1])
 
     # Replace the best-fit model with the 50th percentile model to be consistent with p_out
-    I_boot_cont, comps_boot_cont = model_continuum(spaxel.λ, p_out[1:split1], cube_fitter, true)
-    spaxel.aux["ext_curve"] = comps_boot_cont["total_extinction_gas"]
-    I_boot_line, comps_boot_line = model_line_residuals(spaxel.λ, p_out[split1+1:split2], model(cube_fitter).lines, 
-        cube_fitter.lsf, true)
+    I_boot_cont, comps_boot_cont, = model_continuum(spaxel, spaxel.N, ustrip.(p_out[1:split1]), unit.(p_out[1:split1]), 
+        cube_fitter, true)
+    I_boot_line, comps_boot_line = model_line_residuals(spaxel, ustrip.(p_out[split1+1:split2]), unit.(p_out[split1+1:split2]), 
+        model(cube_fitter).lines, cube_fitter.lsf, comps_boot_cont["total_extinction_gas"], true)
 
     # Reconstruct the full model
     I_model, comps, χ2, = collect_total_fit_results(spaxel, cube_fitter, I_boot_cont, I_boot_line,
@@ -582,7 +590,7 @@ end
 
 # Helper function that decides whether a fit should be redone with extinction locked to 0,
 # based on how much the templates dominate the fit
-function determine_fit_redo_with0extinction(cube_fitter::CubeFitter, λ::Vector{<:Real}, σ::Vector{<:Real}, 
+function determine_fit_redo_with0extinction(cube_fitter::CubeFitter, λ::Vector{<:QWave}, σ::Vector{<:Real}, 
     pnames::Vector{String}, popt::Vector{<:Real}, plock::BitVector, I_model::Vector{<:Real}, comps::Dict, 
     init::Bool, force_noext::Bool)
 
@@ -590,7 +598,7 @@ function determine_fit_redo_with0extinction(cube_fitter::CubeFitter, λ::Vector{
     fopt = fit_options(cube_fitter)
     for s in 1:cube_fitter.n_templates
         pₑ = fopt.silicate_absorption == "decompose" ? fast_indexin("extinction.N_oli", pnames) : fast_indexin("extinction.tau_97", pnames)
-        sil_abs_region = 9.0 .< λ .< 11.0
+        sil_abs_region = 9.0u"μm" .< λ .< 11.0u"μm"
         ext_not_locked = !plock[pₑ] && !init && !force_noext && popt[pₑ] ≠ 0
         region_is_valid = sum(sil_abs_region) > 100
         # check if more than half of the pixels b/w 9-11 um, after subtracting the nuclear template, are within 3 sigma of 0.

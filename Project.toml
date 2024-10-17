@@ -1,7 +1,7 @@
 name = "Loki"
 uuid = "6dc8f741-0729-4eeb-ae09-58704f061668"
 authors = ["Michael-Reefe <michael.reefe8@gmail.com>"]
-version = "2.0.0"
+version = "3.0.0"
 
 [deps]
 AbstractFFTs = "621f4979-c628-5d54-868e-fcf4e3e8185c"
@@ -26,11 +26,13 @@ IJulia = "7073ff75-c697-5162-941a-fcdaad2a7d2a"
 ImageFiltering = "6a3955dd-da59-5b1f-98d4-e7296123deb5"
 ImageTransformations = "02fcd773-0e25-5acc-982a-7f6622650795"
 InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
+Interpolations = "a98d9a8b-a2ab-59e6-89dd-64a1c18fca59"
 LaTeXStrings = "b964fa9f-0449-5b57-a5c2-d3ea65f4040f"
 Latexify = "23fbe1c1-3f47-55db-b15f-69d7ec21a316"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 LoggingExtras = "e6f89c97-d47a-5376-807f-9c37f3926c36"
+LoopVectorization = "bdcacae8-1622-11e9-2a5c-532679323890"
 NLsolve = "2774e3e8-f4cf-5e23-947b-6d7e65073b56"
 NaNStatistics = "b946abbf-3ea7-4610-9019-9858bfdeaf2d"
 NumericalIntegration = "e7bfaba1-d571-5449-8927-abc22e82249b"

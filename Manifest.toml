@@ -2,7 +2,7 @@
 
 julia_version = "1.10.5"
 manifest_format = "2.0"
-project_hash = "2ba3a4a47a069bf85407a18e44c392f1cda05a96"
+project_hash = "7de25ca1fd70cd3ae1d987c73ea34375f035220b"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -1040,9 +1040,9 @@ version = "1.0.2"
 
 [[deps.NaNStatistics]]
 deps = ["PrecompileTools", "Static", "StaticArrayInterface"]
-git-tree-sha1 = "643573fb1771d2ae140b775c18e4278578051c03"
+git-tree-sha1 = "d86d1c878cdab73ec06da5eb348967992879507f"
 uuid = "b946abbf-3ea7-4610-9019-9858bfdeaf2d"
-version = "0.6.41"
+version = "0.6.42"
 
 [[deps.NearestNeighbors]]
 deps = ["Distances", "StaticArrays"]
@@ -1709,7 +1709,7 @@ version = "1.3.0"
 
 [[deps.VoronoiBinning]]
 deps = ["LaTeXStrings", "LoopVectorization", "NearestNeighbors", "Printf", "PyPlot", "Statistics", "StatsBase"]
-git-tree-sha1 = "711ee50a3bd87810d954ce816267453f947b76e8"
+git-tree-sha1 = "0d5fdd1388f22cfdf46e51a2adf17a4ac9974c01"
 repo-rev = "main"
 repo-url = "https://github.com/Michael-Reefe/VoronoiBinning.jl"
 uuid = "0480b74a-4474-4b41-b184-abfd81603c41"

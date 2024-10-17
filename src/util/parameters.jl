@@ -45,7 +45,6 @@ end
     RestframeTransform
     LogTransform
     NormalizeTransform
-    LineNormalizeTransform
 end
 
 """
@@ -182,6 +181,7 @@ struct NoConfig <: Config end
 
 struct PAHConfig <: Config 
     all_feature_names::Vector{String}    # the names of each individual feature (ignoring complexes)
+    all_feature_labels::Vector{String}   # latex-formatted labels
 end
 
 struct LineConfig <: Config
@@ -217,7 +217,8 @@ end
 
 
 # A little container for stellar populations 
-mutable struct StellarPopulations{Q1<:QWave,Q2<:Unitful.Units,Q3<:typeof(1.0u"km/s"),T} where {T<:Union{Vector{Spline2D},Matrix{<:Quantity}}}
+mutable struct StellarPopulations{Q1<:QWave,Q2<:Unitful.Units,
+    Q3<:typeof(1.0u"km/s"),T<:Union{<:Interpolations.Extrapolation,Matrix{<:Quantity}}} 
     λ::Vector{Q1}
     templates::T
     units::Q2
@@ -359,9 +360,12 @@ end
 
 # NOTE: this does the exact same thing as the builtin "indexin" function -- indexin(needles, haystack)
 # for arrays of strings. But this implementation is faster and allocates less memory
-fast_indexin(needles::AbstractVector{<:AbstractString}, haystack::AbstractVector{<:AbstractString}) = 
-    [findfirst(straw -> straw == needle, haystack) for needle in needles]
-fast_indexin(needle::AbstractString, haystack::AbstractVector{<:AbstractString}) = findfirst(straw -> straw == needle, haystack)
+StringOrSymbol = Union{AbstractString,Symbol}
+fast_indexin(needles::AbstractVector{<:StringOrSymbol}, haystack::AbstractVector{<:StringOrSymbol}) = 
+    [findfirst(straw -> straw == needle, string.(haystack)) for needle in string.(needles)]
+fast_indexin(needle::StringOrSymbol, haystack::AbstractVector{<:StringOrSymbol}) = 
+    findfirst(straw -> straw == string(needle), string.(haystack))
+
 
 # methods for obtaining a named parameter
 Base.getindex(p::Parameters, ind) = p._parameters[ind]

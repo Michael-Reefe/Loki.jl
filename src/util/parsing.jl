@@ -24,7 +24,7 @@ function validate_options_file(options)
                 "fit_opt_br_feii", "fit_all_global", "use_pah_templates", "fit_joint", "fit_uv_bump", "fit_covering_frac", "parallel", 
                 "plot_spaxels", "plot_maps", "save_fits", "overwrite", "track_memory", "track_convergence", "save_full_model", 
                 "line_test_lines", "line_test_threshold", "plot_line_test", "make_movies", "cosmology", "parallel_strategy", 
-                "bootstrap_use", "random_seed", "sys_err", "olivine_y", "pyroxene_x", "grain_size", "fit_stellar_continuum", 
+                "random_seed", "sys_err", "olivine_y", "pyroxene_x", "grain_size", "fit_stellar_continuum", 
                 "fit_temp_multexp", "decompose_lock_column_densities", "linemask_width", "map_snr_thresh"]
     keylist2 = ["h", "omega_m", "omega_K", "omega_r"]
 
@@ -269,6 +269,10 @@ function read_ice_ch_temps()
     temp2 = CSV.read(path2, DataFrame, delim=' ', comment="#", ignorerepeated=true, stripwhitespace=true,
         header=["rest_wave", "tau"])
     
+    # normalize the templates
+    temp1[!, "tau"] ./= maximum(temp1[!, "tau"])
+    temp2[!, "tau"] ./= maximum(temp2[!, "tau"])
+
     temp1[!, "rest_wave"] .* u"μm", temp1[!, "tau"], temp2[!, "rest_wave"] .* u"μm", temp2[!, "tau"]
 end
 
@@ -344,6 +348,9 @@ end
 function silicate_ct()
     data = CSV.read(joinpath(@__DIR__, "..", "templates", "chiar+tielens_2005.dat"), DataFrame, skipto=15, delim=' ', 
         ignorerepeated=true, header=["wave", "a_galcen", "a_local"], select=[1, 2])
+    # normalize to the value at 9.7 um
+    _, mn = findmin(x -> abs(x - 9.7), data[!, "wave"])
+    data[!, "a_galcen"] ./= data[mn, "a_galcen"]
     data[!, "wave"] .* u"μm", data[!, "a_galcen"]
 end
 
@@ -352,7 +359,9 @@ end
 function silicate_ohm()
     data = CSV.read(joinpath(@__DIR__, "..", "templates", "ohmc.txt"), DataFrame, delim=' ', ignorerepeated=true,
         header=["wave", "ext"])
-    data[!, "ext"] ./= 0.4
+    # normalize to the value at 9.7 um
+    _, mn = findmin(x -> abs(x - 9.7), data[!, "wave"])
+    data[!, "ext"] ./= data[mn, "ext"]
     data[!, "wave"] .* u"μm", data[!, "ext"]
 end
 
@@ -438,7 +447,7 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
     ssp_λ = ssp_λ[mask]
     # Resample onto a linear wavelength grid
     Δλ = (λright - λleft) / (length(ssp_λ)-1)
-    ssp_λlin = collect(λleft:Δλ:λright)
+    ssp_λlin = λleft:Δλ:λright
     
     # LSF FWHM of the input spectrum in wavelength units, interpolated at the locations of the SSP templates
     inp_fwhm = Spline1D(ustrip.(λ), ustrip.(lsf ./ C_KMS .* λ), k=1, bc="nearest")(ustrip.(ssp_λlin)) .* wave_unit
@@ -451,6 +460,10 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
     # Logarithmically rebinned wavelengths
     logscale = log(λ[2]/λ[1])
     ssp_lnλ = get_logarithmic_λ(ustrip.(ssp_λlin), logscale) .* wave_unit
+    # pad up to the next nice product of low prime numbers
+    npad = nextprod([2,3,5], length(ssp_lnλ))
+    ssp_lnλ = ssp_lnλ[1] .* (ssp_lnλ[2]/ssp_lnλ[1]).^(0:npad-1)
+    @assert isapprox((ssp_lnλ[2]/ssp_lnλ[1]), (ssp_lnλ[end]/ssp_lnλ[end-1]), rtol=1e-6)
 
     # Calculate luminosity distance in cm in preparation to convert luminosity to flux
     dL = luminosity_dist(u"cm", cosmo, z)
@@ -459,7 +472,7 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
     ages = exp.(range(log(0.001), log(13.7), 20)) .* u"Gyr"        # logarithmically spaced from 1 Myr to 15 Gyr
     logzs = range(-2.3, 0.4, 10)                                   # linearly spaced from log(Z/Zsun) = [M/H] = -2.3 to 0.4
     output_units = intensity_units*u"sr"/u"Msun"
-    ssp_templates = zeros(typeof(1.0*intensity_units/u"Msun"), length(ages), length(logzs), length(ssp_lnλ))
+    ssp_templates = zeros(typeof(1.0*output_units), length(ages), length(logzs), length(ssp_lnλ))
     n_temp = size(ssp_templates, 1) * size(ssp_templates, 2)
 
     @info "Generating $n_temp simple stellar population templates with FSPS with " * 
@@ -557,7 +570,6 @@ function generate_feii_templates(λ::Vector{<:QWave}, intensity_units::Unitful.U
         na_feii_temp = na_feii_temp[mask]
         br_feii_temp = br_feii_temp[mask]
     end
-
     # Resample to a linear wavelength grid
     feii_λlin = collect(λleft:Δλ:λright)
     na_feii_temp = Spline1D(ustrip.(feii_λ), na_feii_temp, k=1, bc="nearest")(ustrip.(feii_λlin))
@@ -679,9 +691,9 @@ Reads the CSV file that contains the file results for a particular spaxel
 and returns the best fit values and errors as separate vectors (errors is a 
 2D matrix with the lower/upper errors)
 """
-function read_fit_results_csv(cube_fitter::CubeFitter, fname::String; output_path::Union{String,Nothing}=nothing)
+function read_fit_results_csv(name::String, fname::String; output_path::Union{String,Nothing}=nothing)
 
-    folder = isnothing(output_path) ? "output_$(cube_fitter.name)" : output_path
+    folder = isnothing(output_path) ? "output_$(name)" : output_path
     # Read in the CSV as a DataFrame
     df = CSV.read(joinpath(folder, "spaxel_binaries", "$fname.csv"), DataFrame, delim='\t', stripwhitespace=true)
 

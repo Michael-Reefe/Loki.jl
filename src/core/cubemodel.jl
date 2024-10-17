@@ -7,7 +7,7 @@ This will be the same shape as the input data.
 
 See [`cubemodel_empty`](@ref) for a default constructor method.
 """
-struct CubeModel{T<:Real,S<:QSIntensity} <: CubeModel
+struct CubeModel{T<:Real,S<:QSIntensity}
     # full model
     model::Array{S, 3}
 

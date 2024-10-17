@@ -11,7 +11,7 @@ using Distributions
 using Random
 using StatsBase, Statistics, NaNStatistics
 using NumericalIntegration
-using Dierckx
+using Dierckx, Interpolations
 using LinearAlgebra
 using FFTW
 using SpecialFunctions
@@ -190,34 +190,16 @@ export DataCube,   # DataCube struct
        adjust_wcs_alignment!, 
        reproject_channels!, 
        extract_from_aperture!,
-       rescale_channels!,
        resample_channel_wavelengths!,
        combine_channels!,
        generate_nuclear_template,
 
-       # Parameter structs
-       Parameter,
-       Continuum,
-       DustFeatures,
-       TransitionLines,
-       TiedKinematics,
-
-       # Parameter functions
-       from_dict,
-       from_dict_fwhm,
-       from_dict_wave,
-
        # ParamMaps and CubeModel structs
        ParamMaps,
        CubeModel,
-       get,
+       get_val,
        get_err,
        get_label,
-
-       # initialization functions
-       parammaps_mir_empty,
-       parammaps_opt_empty,
-       cubemodel_empty,
 
        # CubeFitter struct
        CubeFitter,
@@ -225,8 +207,6 @@ export DataCube,   # DataCube struct
        # CubeFitter-related functions
        generate_cubemodel,
        generate_parammaps,
-       mask_emission_lines,
-       continuum_cubic_spline,
        fit_spaxel,
        fit_stack!,
        fit_cube!,
@@ -236,6 +216,21 @@ export DataCube,   # DataCube struct
        make_movie,
        write_fits,
 
+       # Spaxel-related objects
+       Spaxel,
+
+       make_normalized_spaxel,
+       continuum_cubic_spline!,
+       calculate_statistical_errors!,
+       get_vector_mask,
+       fill_bad_pixels!,
+       subtract_continuum!,
+       normalize!,
+
+       SpaxelFitResult,
+       combine!,
+       pretty_print_results,
+
        # Utility functions that the user may wish to take advantage of
        get_area,
        get_patches,
@@ -243,8 +238,6 @@ export DataCube,   # DataCube struct
        make_aperture,
        frebin,
        fshift,
-       attenuation_calzetti,
-       attenuation_cardelli,  # (AKA ccm_unred)
        resample_conserving_flux,
        extend,
        sumdim,
@@ -262,6 +255,8 @@ include("core/cubefit.jl")
 include("core/cubefit_helpers.jl")
 include("core/parammaps.jl")
 include("core/cubemodel.jl")
+include("core/spaxel.jl")
+include("core/spaxelresult.jl")
 
 include("util/parsing.jl")
 include("util/create_params.jl")
@@ -269,14 +264,11 @@ include("util/math.jl")
 include("core/model.jl")
 
 include("core/fitdata.jl")
-include("core/spaxel.jl")
-include("core/spaxelresult.jl")
 include("core/fitplot.jl")
 include("core/fitting.jl")
 
+include("core/output_sorters.jl")
 include("core/output.jl")
-include("core/output_mir.jl")
-include("core/output_opt.jl")
 
 include("core/psf.jl")
 include("util/aperture_utils.jl")

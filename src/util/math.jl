@@ -16,6 +16,10 @@ const Bν_1_μm = uconvert(u"erg/s/cm^2/Hz/sr*μm^3", 2h_ERGS*C_KMS)
 const Bν_2_μm = uconvert(u"μm*K", h_ERGS*C_KMS/kB_ERGK)
 const Bν_1_AA = uconvert(u"erg/s/cm^2/Hz/sr*angstrom^3", Bν_1_μm)
 const Bν_2_AA = uconvert(u"angstrom*K", Bν_2_μm)
+const Bλ_1_μm = uconvert(u"erg/s/cm^2/μm/sr*μm^5", 2h_ERGS*C_KMS^2)
+const Bλ_2_μm = Bν_2_μm
+const Bλ_1_AA = uconvert(u"erg/s/cm^2/angstrom/sr*angstrom^5", Bλ_1_μm)
+const Bλ_2_AA = Bν_2_AA
 
 # Wein's law constant of proportionality in μm*K
 const b_Wein = 2897.771955*u"μm*K"
@@ -23,57 +27,47 @@ const b_Wein = 2897.771955*u"μm*K"
 # A few other random constants
 const o_peak = 10.0178u"μm"
 
-const dust_interpolators = Dict{String,Any}()
+const dust_profiles = Dict{String, Tuple{Vector{<:QWave},Vector{<:AbstractFloat}}}()
+const dust_interpolators = Dict{String, Spline1D}()
 
 # Load the appropriate templates that we need into the cache
-function _load_dust_templates(silicate_absorption::String, extinction_curve::String, fit_ch_abs::Bool,
-    use_pah_templates::Bool, λunit::Unitful.Units, Iunit::Unitful.Units)
+function _load_dust_templates(silicate_absorption::String, fit_ch_abs::Bool, use_pah_templates::Bool, 
+    λunit::Unitful.Units, Iunit::Unitful.Units)
 
     global dust_interpolators
 
     if silicate_absorption == "d+"
         # Save the Donnan et al. 2022 profile as a constant
-        dust_interpolators["dp_prof"] = silicate_dp()
-        dust_interpolators["dp_interp"] = Spline1D(ustrip.(uconvert.(λunit, dust_interpolators["dp_prof"][1])), 
-            dust_interpolators["dp_prof"][2]; k=3, bc="nearest")
+        dust_profiles["dp"] = silicate_dp()
+        dust_interpolators["dp"] = Spline1D(ustrip.(uconvert.(λunit, dust_profiles["dp"][1])), 
+            dust_profiles["dp"][2]; k=3, bc="nearest")
     elseif silicate_absorption == "ct"
         # Save the Chiar+Tielens 2005 profile as a constant
-        dust_interpolators["ct_prof"] = silicate_ct()
-        dust_interpolators["ct_interp"] = Spline1D(ustrip.(uconvert.(λunit, dust_interpolators["ct_prof"][1])), 
-            dust_interpolators["ct_prof"][2]; k=3, bc="nearest")
+        dust_profiles["ct"] = silicate_ct()
+        dust_interpolators["ct"] = Spline1D(ustrip.(uconvert.(λunit, dust_profiles["ct"][1])), 
+            dust_profiles["ct"][2]; k=3, bc="nearest")
     elseif silicate_absorption == "kvt"
         # Save the KVT profile as a constant
-        dust_interpolators["kvt_prof"] = silicate_kvt()
-        dust_interpolators["kvt_interp"] = Spline1D(ustrip.(uconvert.(λunit, dust_interpolators["kvt_prof"][1])), 
-            dust_interpolators["kvt_prof"][2], k=2, bc="nearest")
-        dust_interpolators["kvt_interp_end"] = Spline1D(ustrip.(uconvert.(λunit, [dust_interpolators["kvt_prof"][1][end], 
-            dust_interpolators["kvt_prof"][1][end]+2])), [dust_interpolators["kvt_prof"][2][end], 0.], k=1, bc="nearest")
-    elseif silicate_absorption == "ohm"
-        # Save the OHM 1992 profile as a constant
-        dust_interpolators["ohm_prof"] = silicate_ohm()
-        dust_interpolators["ohm_interp"] = Spline1D(ustrip.(uconvert.(λunit, dust_interpolators["ohm_prof"][1])), 
-            dust_interpolators["ohm_prof"][2]; k=3, bc="nearest")
+        dust_profiles["kvt"] = silicate_kvt()
+        dust_interpolators["kvt"] = Spline1D(ustrip.(uconvert.(λunit, dust_profiles["kvt"][1])), 
+            dust_profiles["kvt"][2], k=2, bc="nearest")
+        dust_interpolators["kvt_end"] = Spline1D(ustrip.(uconvert.(λunit, [dust_profiles["kvt"][1][end], 
+            dust_profiles["kvt"][1][end]+2u"μm"])), [dust_profiles["kvt"][2][end], 0.], k=1, bc="nearest")
     end
-
-    if extinction_curve == "ccm"
-        # Polynomials for calculating the CCM extinction curve
-        dust_interpolators["CCM_poly1a"] = Polynomial([1.0, 0.104, -0.609, 0.701, 1.137, -1.718, -0.827, 1.647, -0.505])
-        dust_interpolators["CCM_poly1b"] = Polynomial([0.0, 1.952, 2.908, -3.989, -7.985, 11.102, 5.491, -10.805, 3.347])
-        dust_interpolators["CCM_poly2a"] = Polynomial([-1.703, -0.628, 0.137, -0.070])
-        dust_interpolators["CCM_poly2b"] = Polynomial([13.670, 4.257, -0.420, 0.374])
-    elseif extinction_curve == "calz"
-        # Polynomials for calculating the Calzetti et al. (2000) extinction curve
-        dust_interpolators["calz_poly1"] = Polynomial([-1.857, 1.040])
-        dust_interpolators["calz_poly2"] = Polynomial([-2.156, 1.509, -0.198, 0.011])
-    end
+    # Save the OHM 1992 profile as a constant
+    dust_profiles["ohm"] = silicate_ohm()
+    dust_interpolators["ohm"] = Spline1D(ustrip.(uconvert.(λunit, dust_profiles["ohm"][1])), 
+        dust_profiles["ohm"][2]; k=3, bc="nearest")
 
     if fit_ch_abs
         # Save the Ice+CH optical depth template as a constant
-        dust_interpolators["icech_prof"] = read_ice_ch_temps()
-        dust_interpolators["ice_interp"] = Spline1D(ustrip.(uconvert.(λunit, dust_interpolators["icech_prof"][1])), 
-            dust_interpolators["icech_prof"][2]; k=3)
-        dust_interpolators["ch_interp"] = Spline1D(ustrip.(uconvert.(λunit, dust_interpolators["icech_prof"][3])), 
-            dust_interpolators["icech_prof"][4]; k=3)
+        ice_wave, ice_prof, ch_wave, ch_prof = read_ice_ch_temps()
+        dust_profiles["ice"] = (ice_wave, ice_prof)
+        dust_profiles["ch"] = (ch_wave, ch_prof)
+        dust_interpolators["ice"] = Spline1D(ustrip.(uconvert.(λunit, dust_profiles["ice"][1])), 
+            dust_profiles["ice"][2]; k=3)
+        dust_interpolators["ch"] = Spline1D(ustrip.(uconvert.(λunit, dust_profiles["ch"][1])), 
+            dust_profiles["ch"][2]; k=3)
     end
 
     # Save the Smith+2006 PAH templates as constants
@@ -88,7 +82,7 @@ function _load_dust_templates(silicate_absorption::String, extinction_curve::Str
         dust_interpolators["smith4"] = Spline1D(ustrip.(uconvert.(λunit, SmithTemps[3])), ST4; k=3, bc="nearest")
     end
 
-    return dust_interpolators
+    return dust_profiles, dust_interpolators
 end
 
 ########################################### UTILITY FUNCTIONS ###############################################
@@ -263,9 +257,9 @@ end
 
 # Function that smartly decides whether or not to convert the units of the first argument to match 
 # the units of the second argument
-match_fluxunits(I_mod::Q, ::Q, ::QLength) where {Q<:Quantity} = I_mod
-match_fluxunits(I_mod::Q1, I_ref::Q2, ::QLength) where {Q1<:QGeneralPerWave,Q2<:QGeneralPerWave} = uconvert(unit(I_ref), I_mod)
-match_fluxunits(I_mod::Q1, I_ref::Q2, ::QLength) where {Q1<:QGeneralPerFreq,Q2<:QGeneralPerFreq} = uconvert(unit(I_ref), I_mod)
+match_fluxunits(I_mod::Q1, I_ref::Q2, ::QLength) where {Q1<:QPerAng,Q2<:QPerum} = uconvert(unit(I_ref), I_mod)
+match_fluxunits(I_mod::Q1, I_ref::Q2, ::QLength) where {Q1<:QPerum,Q2<:QPerAng} = uconvert(unit(I_ref), I_mod)
+match_fluxunits(I_mod::Q, ::Q, ::QLength) where {Q<:QGeneralPerFreq} = I_mod
 function match_fluxunits(I_mod::Q1, I_ref::Q2, λ::QLength) where {
     Q1<:Union{QGeneralPerWave,QGeneralPerFreq},
     Q2<:Union{QGeneralPerWave,QGeneralPerFreq}
@@ -457,7 +451,7 @@ julia> hermite(2., 3)
 40.0
 ```
 """
-function hermite(x::AbstractVector{T}, n::Integer) where {T<:Number}
+function hermite(x::Vector{T}, n::Integer) where {T<:Number}
     if iszero(n)
         ones(T, length(x))
     elseif isone(n)
@@ -481,19 +475,28 @@ and the returned units will still be the same.
 This function will be called frequently inside the fitting routine, so it's
 gotta go fast.
 """
-@inline function Blackbody_ν(λ::AbstractVector{<:Qum}, Temp::QTemp)
-    @. Bν_1_μm/λ^3 / expm1(Bν_2_μm/(λ*Temp))
+@inline function Blackbody_ν(λ::Qum, Temp::QTemp)
+    Bν_1_μm/λ^3 / expm1(Bν_2_μm/(λ*Temp))
 end
-@inline function Blackbody_ν(λ::AbstractVector{<:QAng}, Temp::QTemp)
-    @. Bν_1_AA/λ^3 / expm1(Bν_2_AA/(λ*Temp))
+@inline function Blackbody_ν(λ::QAng, Temp::QTemp)
+    Bν_1_AA/λ^3 / expm1(Bν_2_AA/(λ*Temp))
 end
-@inline function Blackbody(λ::AbstractVector{<:QWave}, Temp::QTemp, Iunit::Unitful.Units)
-    match_fluxunits.(Blackbody_ν(λ, Temp), 1.0Iunit, λ)
+@inline function Blackbody_λ(λ::Qum, Temp::QTemp)
+    Bλ_1_μm/λ^5 / expm1(Bλ_2_μm/(λ*Temp))
+end
+@inline function Blackbody_λ(λ::QAng, Temp::QTemp)
+    Bλ_1_AA/λ^5 / expm1(Bλ_2_AA/(λ*Temp))
+end
+@inline function Blackbody(λ::QWave, Temp::QTemp, ::QGeneralPerFreq)
+    Blackbody_ν(λ, Temp)
+end
+@inline function Blackbody(λ::QWave, Temp::QTemp, ::QGeneralPerWave)
+    Blackbody_λ(λ, Temp)
 end
 
 # modified blackbody with a dust emissivity proportional to 1/λ^2
-@inline function Blackbody_modified(λ::AbstractVector{<:QWave}, Temp::QTemp, Iunit::Unitful.Units)
-    Blackbody(λ, Temp, Iunit) .* uconvert(NoUnits, 9.7u"μm"./λ).^2
+@inline function Blackbody_modified(λ::QWave, Temp::QTemp, Iunit::QSIntensity)
+    Blackbody(λ, Temp, Iunit) * uconvert(NoUnits, 9.7u"μm"/λ)^2
 end
 
 
@@ -514,7 +517,7 @@ end
 Simple power law function where the flux is proportional to the wavelength to the power alpha,
 normalized at 9.7 um.
 """
-@inline function power_law(λ::AbstractVector{T}, α::Real, ref_λ::T) where {T<:Number}
+@inline function power_law(λ::Vector{T}, α::Real, ref_λ::T) where {T<:Number}
     uconvert.(NoUnits, λ./ref_λ).^α
 end
 
@@ -525,13 +528,13 @@ end
 A hot silicate dust emission profile, i.e. Gallimore et al. (2010), with an amplitude A,
 temperature T, covering fraction Cf, and optical depths τ_warm and τ_cold.
 """
-function silicate_emission(λ::AbstractVector{S}, T::QTemp, Cf::Real, τ_warm::Real, 
-    τ_cold::Real, λ_peak::S, Iunit::Unitful.Units) where {S<:Number}
-    Δλ = uconvert(unit(λ_peak), o_peak - λ_peak)
-    λshift = λ .+ Δλ
-    ext_curve = τ_ohm(λshift)
-    bb = Blackbody(λ, T, Iunit) .* (1 .- extinction_factor(ext_curve, τ_warm, screen=true))
-    bb .* (1 .- Cf) .+ bb .* Cf .* extinction_factor(ext_curve, τ_cold, screen=true)
+function silicate_emission(λ::Vector{S}, T::QTemp, Cf::Real, τ_warm::Real, 
+    τ_cold::Real, λ_peak::S, Iunit::QSIntensity) where {S<:QWave}
+    # Δλ = uconvert(unit(λ_peak), o_peak - λ_peak)
+    # λshift = λ .+ Δλ
+    ext_curve = τ_ohm(λ)
+    bb = Blackbody.(λ, T, Iunit) .* (1 .- extinction_factor.(ext_curve, τ_warm, screen=true))
+    bb .* (1 .- Cf) .+ bb .* Cf .* extinction_factor.(ext_curve, τ_cold, screen=true)
 end
 
 ################################################# PAH PROFILES ################################################
@@ -543,9 +546,9 @@ end
 Calculate a Drude profile at location `x`, with amplitude `A`, central value `μ`, and full-width at half-max `FWHM`
 Optional asymmetry parameter `asym`
 """
-@inline function Drude(x::AbstractVector{T}, A::Number, μ::T, FWHM::T, asym::S) where {T<:Number,S<:Number}
-    γ = @. 2FWHM / (1 + exp(asym*(x-μ)))
-    @. A * (γ/μ)^2 / ((x/μ - μ/x)^2 + (γ/μ)^2)
+@inline function Drude(x, A, μ, FWHM, asym) 
+    γ = 2FWHM / (1 + exp(ustrip(asym*(x-μ))))
+    A * (γ/μ)^2 / ((x/μ - μ/x)^2 + (γ/μ)^2)
 end
 
 
@@ -557,7 +560,7 @@ parameter `a`, index `m`, and exponential cutoff `ν`.
 
 See Pearson (1895), and https://iopscience.iop.org/article/10.3847/1538-4365/ac4989/pdf
 """
-function PearsonIV(x::AbstractVector{T}, A::Number, μ::T, a::T, m::Number, ν::Number) where {T<:Number}
+function PearsonIV(x::T, A::Number, μ::T, a::T, m::Number, ν::Number) where {T<:Number}
     n = (1 + (-ν/(2m))^2)^-m * exp(-ν * atan(-ν/(2m)))
     A/n * (1 + ((x - μ)/a)^2)^-m * exp(-ν * atan((x - μ)/a))
 end
@@ -584,10 +587,9 @@ function convolve_losvd(_templates::AbstractArray{T}, vsyst::S, v::S, σ::S, vre
         @assert npad_in > 0 "npad_in must be specified for inputs that are already FFT'ed!"
     end
 
+    templates = _templates
     if ndims(_templates) == 1
-        templates = reshape(_templates, (length(templates), 1))
-    else
-        templates = _templates
+        templates = reshape(_templates, (length(_templates), 1))
     end
 
     # Check if the templates are already FFT'ed
@@ -595,9 +597,13 @@ function convolve_losvd(_templates::AbstractArray{T}, vsyst::S, v::S, σ::S, vre
         # Pad with 0s up to a factor of small primes to increase efficiency 
         s = size(templates)
         npad = nextprod([2,3,5], s[1])
-        temps = zeros(eltype(templates), npad, s[2])
-        for j in axes(templates, 2)
-            temps[1:s[1], j] = templates[:, j]
+        if npad > s[1]
+            temps = zeros(eltype(templates), npad, s[2])
+            for j in axes(templates, 2)
+                temps[1:s[1], j] .= templates[:, j]
+            end
+        else
+            temps = templates
         end
         # Calculate the Fourier transform of the templates
         # Note: in general we cannot calculate this a priori because the templates may be different for each iteration of the fit
@@ -617,14 +623,12 @@ function convolve_losvd(_templates::AbstractArray{T}, vsyst::S, v::S, σ::S, vre
     ω = range(0, π, n_ft)
 
     # Calculate the analytic Fourier transform of the LOSVD: See Cappellari (2017) eq. (38)
-    ft_losvd = conj.(exp.(1im .* ω .* V .- Σ.^2 .* ω.^2 ./ 2))
-
-    # Calculate the inverse Fourier transform of the resultant distribution to get the convolution
+    # and then get the inverse Fourier transform of the resultant distribution to get the convolution
     # see, i.e. https://en.wikipedia.org/wiki/Convolution_theorem
-    template_convolved = irfft(temp_rfft .* ft_losvd, npad, 1)
+    template_convolved = irfft(temp_rfft .* conj.(exp.(1im .* ω .* V .- Σ.^2 .* ω.^2 ./ 2)), npad, 1)
 
     # Take only enough pixels to match the length of the input spectrum
-    template_convolved[1:npix, :]
+    @view template_convolved[1:npix, :]
 end
 
 
@@ -637,10 +641,10 @@ end
 Evaluate a Gaussian profile at `x`, parameterized by the amplitude `A`, mean value `μ`, and 
 full-width at half-maximum `FWHM`
 """
-@inline function Gaussian(x::AbstractVector{T}, A::Number, μ::T, FWHM::T) where {T<:Number}
+@inline function Gaussian(x, A, μ, FWHM) 
     # Reparametrize FWHM as dispersion σ
     σ = FWHM / (2√(2log(2)))
-    @. A * exp(-(x-μ)^2 / (2σ^2))
+    A * exp(-(x-μ)^2 / (2σ^2))
 end
 
 
@@ -652,28 +656,28 @@ full-width at half-maximum `FWHM`, 3rd moment / skewness `h₃`, and 4th moment 
 
 See Riffel et al. (2010)
 """
-function GaussHermite(x::AbstractVector{T}, A::Number, μ::T, FWHM::T, h₃::Real, h₄::Real) where {T<:Number}
+function GaussHermite(x, A, μ, FWHM, h₃, h₄) 
 
     h = [h₃, h₄]
     # Reparametrize FWHM as dispersion σ
     σ = FWHM / (2√(2log(2)))
     # Gaussian exponential argument w
-    w = @. (x - μ) / σ
+    w = (x - μ) / σ
     # Normalized Gaussian
-    α = @. exp(-w^2 / 2)
+    α = exp(-w^2 / 2)
 
     # Calculate coefficients for the Hermite basis
     n = 3:(length(h)+2)
-    norm = @. √(factorial(n) * 2^n)
+    norm = .√(factorial.(n) .* 2 .^ n)
     coeff = vcat([1, 0, 0], h./norm)
     # Calculate hermite basis
-    Herm = sum([coeff[nᵢ] .* hermite(w, nᵢ-1) for nᵢ ∈ eachindex(coeff)])
+    Herm = sum([coeff[nᵢ] * hermite(w, nᵢ-1) for nᵢ ∈ eachindex(coeff)])
 
     # Calculate peak height (i.e. value of function at w=0)
-    Herm0 = sum([coeff[nᵢ] .* hermite(zeros(eltype(w), length(x)), nᵢ-1) for nᵢ ∈ eachindex(coeff)])
+    Herm0 = sum([coeff[nᵢ] * hermite(0., nᵢ-1) for nᵢ ∈ eachindex(coeff)])
 
     # Combine the Gaussian and Hermite profiles
-    @. A * α * Herm / Herm0
+    A * α * Herm / Herm0
 end
 
 
@@ -683,8 +687,8 @@ end
 Evaluate a Lorentzian profile at `x`, parametrized by the amplitude `A`, mean value `μ`,
 and full-width at half-maximum `FWHM`
 """
-@inline function Lorentzian(x::AbstractVector{T}, A::Number, μ::T, FWHM::T) where {T<:Number}
-    @. A * (FWHM/2)^2 / ((x-μ)^2 + (FWHM/2)^2)
+@inline function Lorentzian(x, A, μ, FWHM) 
+    A * (FWHM/2)^2 / ((x-μ)^2 + (FWHM/2)^2)
 end
 
 
@@ -696,16 +700,20 @@ full-width at half-maximum `FWHM`, and mixing ratio `η`
 
 https://docs.mantidproject.org/nightly/fitting/fitfunctions/PseudoVoigt.html
 """
-function Voigt(x::AbstractVector{T}, A::Number, μ::T, FWHM::T, η::Real) where {T<:Number}
+function Voigt(x, A, μ, FWHM, η)
+
+    # Reparametrize FWHM as dispersion σ
+    σ = FWHM / (2√(2log(2))) 
+    # Normalized Gaussian
+    G = 1/√(2π * σ^2) * exp(-(x-μ)^2 / (2σ^2))
+    # Normalized Lorentzian
+    L = 1/π * (FWHM/2) / ((x-μ)^2 + (FWHM/2)^2)
 
     # Normalize the function so that the integral is given by this
     I = ∫Voigt(A, FWHM, η)
-    # Reparametrize FWHM as dispersion σ
-    σ = FWHM / (2√(2log(2))) 
 
-    # Mix of a normalized gaussian and a normalized lorentzian
-    @. I * (η * (1/√(2π * σ^2) * exp(-(x-μ)^2 / (2σ^2))) + 
-            (1 - η) * (1/π * (FWHM/2) / ((x-μ)^2 + (FWHM/2)^2)))
+    # Mix the two distributions with the mixing parameter η
+    I * (η * G + (1 - η) * L)
 end
 
 
@@ -713,8 +721,9 @@ end
 
 
 # Return the extinction factor for stars and gas separately
-function extinction_profiles(λ::AbstractVector{<:QWave}, params::AbstractVector{<:Number}, pstart::Integer, fit_uv_bump::Bool,
+function extinction_profiles(λ::Vector{<:QWave}, params::Vector{<:Real}, pstart::Integer, fit_uv_bump::Bool,
     extinction_curve::String)
+
     E_BV, E_BV_factor = params[pstart], params[pstart+1]
     δ_uv = 0.85/1.9
     dp = 2
@@ -722,15 +731,20 @@ function extinction_profiles(λ::AbstractVector{<:QWave}, params::AbstractVector
         δ_uv = params[pstart+2]
         dp += 1
     end
+
     if extinction_curve == "calz"
-        att_gas = extinction_calzetti(λ, E_BV; δ_uv=δ_uv)
-        att_stars = extinction_calzetti(λ, E_BV*E_BV_factor; δ_uv=δ_uv)
+        if fit_uv_bump
+            att_gas = extinction_calzetti.(λ, E_BV, δ_uv)
+        else
+            att_gas = extinction_calzetti.(λ, E_BV)
+        end
     elseif extinction_curve == "ccm"
-        att_gas = extinction_cardelli(λ, E_BV)
-        att_stars = extinction_cardelli(λ, E_BV*E_BV_factor)
+        att_gas = extinction_cardelli.(λ, E_BV)
     else
         error("Unrecognized extinction curve: $(extinction_curve)")
     end
+    att_stars = att_gas.^E_BV_factor
+
     att_gas, att_stars, dp
 end
 
@@ -751,29 +765,40 @@ for more complitcated geometries.
 This idea for this function was based on a similar function from pPXF (Cappellari 2017), but
 the implementation is different.
 """
-function extinction_calzetti(λ::AbstractVector{<:QWave}, E_BV::Real; δ_uv::Real=0.85/1.9, Rv::Real=4.05)
+function extinction_calzetti(λ::QWave, E_BV::Real; Rv::Real=4.05)
+    # eq. (4) from Calzetti et al. (2000)
+    10^(-0.4 * E_BV * _calzetti_kprime_curve(ustrip(uconvert(u"μm", λ)), Rv))
+end
+
+function extinction_calzetti(λ::QWave, E_BV::Real, δ_uv::Real; Rv::Real=4.05)
 
     # eq. (4) from Calzetti et al. (2000)
-    kprime = zeros(eltype(E_BV), length(λ))     # selective extinction A(λ)/E(B-V)
-    λ_um = uconvert.(u"μm", λ)
-
-    good = λ .≥ 0.63u"μm"
-    # curve from 6300 A down to 900 A
-    kprime[good] .= @. 2.659 * dust_interpolators["calz_poly1"](ustrip(1 / λ_um[good])) + Rv
-    # curve from 6300 A up to 2.2 um
-    kprime[.~good] .= @. 2.659 * dust_interpolators["calz_poly2"](ustrip(1 / λ_um[.~good])) + Rv
-    # allow extrapolation until the curve goes to 0 
-    kprime[kprime .< 0] .= 0.
+    λ_um = uconvert(u"μm", λ)
+    kprime = _calzetti_kprime_curve(ustrip(λ_um), Rv)
 
     # Calculate the UV bump 
     # Kriek & Conroy (2013) eq. (3): relation between UV bump amplitude Eb and slope δ_uv
     Eb = 0.85 - 1.9*δ_uv
     # Drude profile parametrizes the UV bump (Kriek & Conroy 2013, eq. (2))
-    Dλ = Drude(λ_um, Eb, 0.2175u"μm", 0.035u"μm", 0.0/u"μm")
+    kprime += Drude(λ_um, Eb, 0.2175u"μm", 0.035u"μm", 0.0/u"μm")
 
     # Kriek & Conroy (2013) eq. (1) 
-    @. 10^(-0.4 * E_BV * (kprime + Dλ) * (λ_um / 0.55u"μm")^δ_uv)
+    10^(-0.4 * E_BV * kprime * (λ_um / 0.55u"μm")^δ_uv)
 end
+
+function _calzetti_kprime_curve(λ::Real, Rv::Real)
+
+    # eq. (4) from Calzetti et al. (2000)
+    x = 1/λ
+    if λ ≥ 0.63
+        kprime = 2.659 * (-1.857 + 1.040x) + Rv
+    else
+        kprime = 2.659 * (-2.156 + 1.509x - 0.198x^2 + 0.011x^3) + Rv
+    end
+
+    kprime
+end
+
 
 
 """
@@ -787,12 +812,12 @@ This function has been adapted from BADASS (Sexton et al. 2021), which
 in turn has been adapted from the IDL Astrolib library.
 
 # Arguments
-- `λ::Vector{<:Real}`: The wavelength vector in microns
-- `E_BV::Real`: The color excess E(B-V) in magnitudes
-- `Rv::Real=3.1`: The ratio of total selective extinction R(V) = A(V)/E(B-V)
+- `λ`: The wavelength vector in microns
+- `E_BV`: The color excess E(B-V) in magnitudes
+- `Rv`: The ratio of total selective extinction R(V) = A(V)/E(B-V)
 
 # Returns
-- `Vector{<:Real}`: The extinction factor, 10^(-0.4*A(V)*(a(λ)+b(λ)/R(V)))
+- The extinction factor, 10^(-0.4*A(V)*(a(λ)+b(λ)/R(V)))
 
 Notes from the original function (Copyright (c) 2014, Wayne Landsman)
 have been pasted below:
@@ -817,87 +842,81 @@ have been pasted below:
 7. For the optical/NIR transformation, the coefficients from 
    O'Donnell (1994) are used
 """
-function extinction_cardelli(λ::AbstractVector{<:QWave}, E_BV::Real; Rv::Real=3.10)
+function extinction_cardelli(λ::QWave, E_BV::Real; Rv::Real=3.10)
 
     # inverse wavelength (microns)
-    x = ustrip.(1.0 ./ uconvert.(u"μm", λ))
+    x = ustrip(1.0/uconvert(u"μm", λ))
 
     # Correction invalid for any x > 11
-    if any(x .> 11.0)
+    if x > 11.0
         @warn "Input wavelength vector has values outside the allowable range of 1/λ < 11. Returning ones."
-        return ones(length(x))
+        return one(typeof(ustrip(λ)))
     end
-
-    a = zeros(length(x))
-    b = zeros(length(x))
+    a = zero(typeof(ustrip(λ)))
+    b = zero(typeof(ustrip(λ)))
 
     # Infrared
-    good = 0.3 .< x .< 1.1
-    a[good] = @. 0.574x[good]^1.61
-    b[good] = @. -0.527x[good]^1.61
-
+    if 0.3 < x < 1.1
+        a = 0.574x^1.61
+        b = -0.527x^1.61
     # Optical/NIR
-    good = 1.1 .≤ x .< 3.3
-    y = x .- 1.82
-    a[good] = dust_interpolators["CCM_poly1a"].(y[good])
-    b[good] = dust_interpolators["CCM_poly1b"].(y[good])
-
+    elseif 1.1 ≤ x < 3.3
+        y = x - 1.82
+        a = 1.0 + 0.104y - 0.609x^2 + 0.701x^3 + 1.137x^4 - 1.718x^5 - 0.827x^6 + 1.647x^7 - 0.505x^8
+        b = 1.952x + 2.908x^2 - 3.989x^3 - 7.985x^4 + 11.102x^5 + 5.491x^6 - 10.805x^7 + 3.347x^8
     # Mid-UV
-    good = 3.3 .≤ x .< 8.0
-    y = x[good]
-    Fa = zeros(sum(good))
-    Fb = zeros(sum(good))
-
-    good1 = y .> 5.9
-    if sum(good1) > 0
-        Fa[good1] = @. -0.04473y[good1]^2 - 0.009779y[good1]^3
-        Fb[good1] = @. 0.2130y[good1]^2 + 0.1207y[good1]^3
+    elseif 3.3 ≤ x < 8.0
+        y = x
+        Fa = zero(typeof(ustrip(λ)))
+        Fb = zero(typeof(ustrip(λ)))
+        if y > 5.9
+            Fa = -0.04473y^2 - 0.009779y^3
+            Fb = 0.2130y^2 + 0.1207y^3
+        end
+        a = 1.752 - 0.316x - 0.104/((x - 4.67)^2 + 0.341) + Fa
+        b = -3.090 + 1.825x + 1.206/((x - 4.62)^2 + 0.263) + Fb
+    # Far-UV
+    elseif 8.0 ≤ x ≤ 11.0
+        y = x - 8.0
+        a = -1.703 - 0.628y + 0.137y^2 - 0.07y^3
+        b = 13.67 + 4.257y - 0.42y^2 + 0.347y^3
     end
 
-    a[good] = @. 1.752 - 0.316x[good] - 0.104/((x[good] - 4.67)^2 + 0.341) + Fa
-    b[good] = @. -3.090 + 1.825x[good] + 1.206/((x[good] - 4.62)^2 + 0.263) + Fb
-
-    # Far-UV
-    good = 8.0 .≤ x .≤ 11.0
-    y = x .- 8.0
-    a[good] = dust_interpolators["CCM_poly2a"].(y[good])
-    b[good] = dust_interpolators["CCM_poly2b"].(y[good])
-
     # Calculate the extintion
-    Av = Rv .* E_BV
-    aλ = Av .* (a .+ b./Rv)
-    @. 10^(-0.4 * aλ)
+    Av = Rv * E_BV
+    aλ = Av * (a + b/Rv)
+    10^(-0.4 * aλ)
 end
 
 
-function silicate_absorption(λ::Vector{<:QWave}, params::AbstractVector{<:Number}, pstart::Integer, 
-    κ_abs, absorption_type::String, screen::Bool)
+function silicate_absorption(λ::Vector{<:QWave}, params::Vector{<:Real}, pstart::Integer, 
+    κ_abs::Union{Nothing,Spline1D}, absorption_type::String, screen::Bool)
     τ_97 = params[pstart]
     dp = 2
     ext_oli = ext_pyr = ext_for = nothing
     # First retrieve the normalized absorption profile
     if absorption_type == "kvt"
         β = params[pstart+1]
-        τ_norm = τ_kvt(λ, β)
+        ext = extinction_factor.(τ_kvt(λ, β), τ_97, screen=screen)
     elseif absorption_type == "ct"
-        τ_norm = τ_ct(λ)
+        ext = extinction_factor.(τ_ct(λ), τ_97, screen=screen)
     elseif absorption_type == "ohm"
-        τ_norm = τ_ohm(λ)
+        ext = extinction_factor.(τ_ohm(λ), τ_97, screen=screen)
     elseif absorption_type == "d+"
         β = params[pstart+1]
-        τ_norm = τ_dp(λ, β)
+        ext = extinction_factor.(τ_dp(λ, β), τ_97, screen=screen)
     elseif absorption_type == "decompose"
         τ_norm, τ_oli, τ_pyr, τ_for = τ_decompose(λ, params[pstart:pstart+3], κ_abs)
         τ_97 = 1.0
-        ext_oli = extinction_factor(τ_oli, τ_97, screen=screen)
-        ext_pyr = extinction_factor(τ_pyr, τ_97, screen=screen)
-        ext_for = extinction_factor(τ_for, τ_97, screen=screen)
+        ext_oli = extinction_factor.(τ_oli, τ_97, screen=screen)
+        ext_pyr = extinction_factor.(τ_pyr, τ_97, screen=screen)
+        ext_for = extinction_factor.(τ_for, τ_97, screen=screen)
+        ext = extinction_factor.(τ_norm, τ_97, screen=screen)
         dp = 4
     else
         error("Unrecognized absorption type: $(absorption_type)")
     end
     # Then apply it at the appropriate level of 9.7um optical depth
-    ext = extinction_factor(τ_norm, τ_97, screen=screen)
     ext, dp, ext_oli, ext_pyr, ext_for
 end
 
@@ -913,27 +932,26 @@ Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.uto
 function τ_kvt(λ::Vector{<:QWave}, β::Real)
 
     # Get limits of the values that we have datapoints for via the kvt_prof constant
-    mx, mn = argmax(dust_interpolators["kvt_prof"][1]), argmin(dust_interpolators["kvt_prof"][1])
-    λ_mx, λ_mn = dust_interpolators["kvt_prof"][1][mx], dust_interpolators["kvt_prof"][1][mn]
+    λ_mx, λ_mn = dust_profiles["kvt"][1][1], dust_profiles["kvt"][1][end]
 
     # Interpolate based on the region of data 
     ext = zeros(typeof(β), length(λ))
     r1 = λ .≤ λ_mn
     if sum(r1) > 0
-        ext[r1] .= @. dust_interpolators["kvt_prof"][2][mn] * exp(2.03 * ustrip(uconvert(u"μm", λ[r1] - λ_mn)))
+        ext[r1] .= @. dust_profiles["kvt"][2][1] * exp(2.03 * ustrip(uconvert(u"μm", λ[r1] - λ_mn)))
     end
     r2 = λ_mn .< λ .< λ_mx
     if sum(r2) > 0
-        ext[r2] .= dust_interpolators["kvt_interp"](ustrip.(λ[r2]))
+        ext[r2] .= dust_interpolators["kvt"](ustrip.(λ[r2]))
     end
-    r3 = λ_mx .< λ .< λ_mx+2
+    r3 = λ_mx .< λ .< λ_mx+2u"μm"
     if sum(r3) > 0
-        ext[r3] .= dust_interpolators["kvt_interp_end"](ustrip.(λ[r3]))
+        ext[r3] .= dust_interpolators["kvt_end"](ustrip.(λ[r3]))
     end
     ext[ext .< 0] .= 0.
 
     # Add a drude profile around 18 microns
-    ext .+= Drude.(λ, 0.4, 18., 4.446, 0.)
+    ext .+= Drude.(λ, 0.4, 18.0u"μm", 4.446u"μm", 0.0/u"μm")
 
     @. (1 - β) * ext + β * (9.7u"μm"/λ)^1.7
 end
@@ -946,15 +964,12 @@ Calculate the extinction profile based on Chiar & Tielens (2005)
 """
 function τ_ct(λ::Vector{<:QWave})
 
-    mx = argmax(dust_interpolators["ct_prof"][1])
-    λ_mx = dust_interpolators["ct_prof"][1][mx]
+    mx = argmax(dust_profiles["ct"][1])
+    λ_mx = dust_profiles["ct"][1][mx]
 
-    ext = dust_interpolators["ct_interp"](ustrip.(λ))
+    ext = dust_interpolators["ct"](ustrip.(λ))
     w_mx = findall(λ .> λ_mx)
-    ext[w_mx] .= dust_interpolators["ct_prof"][2][mx] .* (λ_mx./λ[w_mx]).^1.7
-
-    wh = argmin(x -> abs(x - 9.7u"μm"), dust_interpolators["ct_prof"][1])
-    ext ./= dust_interpolators["ct_prof"][2][wh]
+    ext[w_mx] .= dust_profiles["ct"][2][mx] .* (λ_mx./λ[w_mx]).^1.7
 
     ext
 end
@@ -966,10 +981,7 @@ end
 Calculate the extinction profile based on Ossenkopf, Henning, & Mathis (1992)
 """
 function τ_ohm(λ::Vector{<:QWave})
-    ext = dust_interpolators["ohm_interp"](ustrip.(λ))
-    _, wh = findmin(x -> abs(x - 9.7u"μm"), dust_interpolators["ohm_prof"][1])
-    ext ./= dust_interpolators["ohm_prof"][2][wh]
-    ext
+    dust_interpolators["ohm"](ustrip.(λ))
 end
 
 
@@ -978,11 +990,9 @@ end
 
 Calculate the mixed silicate extinction profile based on Donnan et al. (2022)
 """
-function τ_dp(λ::Vector{<:Real}, β::Real)
-    # Simple cubic spline interpolation
-    ext = dust_interpolators["dp_interp"](ustrip.(λ))
+function τ_dp(λ::Vector{<:QWave}, β::Real)
     # Add 1.7 power law, as in PAHFIT
-    @. (1 - β) * ext + β * (9.8/λ)^1.7
+    (1 .- β) .* dust_interpolators["dp"](ustrip.(λ)) .+ β .* (9.8u"μm"./λ).^1.7
 end
 
 
@@ -997,7 +1007,7 @@ function τ_decompose(λ::Vector{<:QWave}, params::Vector{<:Number}, κ_abs::Vec
     τ_pyr = Ncol[1] .* Ncol[2] .* κ_abs[2](ustrip.(λ))
     τ_for = Ncol[1] .* Ncol[3] .* κ_abs[3](ustrip.(λ))
     τ_tot = @. τ_oli + τ_pyr + τ_for
-    ind = argmin(x -> abs(x - 9.7u"μm"), λ)
+    ind = argmin(abs.(λ .- 9.7u"μm"))
     τ_97 = τ_tot[ind] 
     ext = @. (1 - β) * τ_tot + β * τ_97 * (9.7/λ)^1.7
     ext, τ_oli, τ_pyr, τ_for
@@ -1009,11 +1019,9 @@ end
 
 Calculate the ice extinction profiles
 """
-function τ_ice(λ::Vector{<:Real})
+function τ_ice(λ::Vector{<:QWave})
     # Simple cubic spline interpolation
-    ext = dust_interpolators["ice_interp"](ustrip.(λ))
-    ext ./= maximum(dust_interpolators["icech_prof"][2])
-    ext
+    dust_interpolators["ice"](ustrip.(λ))
 end
 
 
@@ -1022,11 +1030,9 @@ end
 
 Calculate the CH extinction profiles
 """
-function τ_ch(λ::Vector{<:Real})
+function τ_ch(λ::Vector{<:QWave})
     # Simple cubic spline interpolation
-    ext = dust_interpolators["ch_interp"](ustrip.(λ))
-    ext ./= maximum(dust_interpolators["icech_prof"][4])
-    ext
+    dust_interpolators["ch"](ustrip.(λ))
 end
 
 
@@ -1036,11 +1042,11 @@ end
 Calculate the extinction factor given the silicate absorption curve `ext` and the optical depth
 at 9.7 microns, `τ_97`, either assuming a screen or mixed geometry.
 """
-function extinction_factor(ext::AbstractVector{T}, τ_97::T; screen::Bool=false) where {T<:Number}
+function extinction_factor(ext::Real, τ_97::Real; screen::Bool=false)
     if screen
-        @. exp(-τ_97*ext)
+        exp(-τ_97*ext)
     else
-        ifelse.(iszero.(τ_97), 1., (1 .- exp.(.-τ_97.*ext)) ./ (τ_97.*ext))
+        iszero(τ_97) ? 1. : (1 - exp(-τ_97*ext)) / (τ_97*ext)
     end
 end
 
@@ -1092,7 +1098,7 @@ function resample_flux_permuted3D(new_wave::AbstractVector, old_wave::AbstractVe
 end
 
 
-function multiplicative_exponentials(λ::AbstractVector{<:Number}, p::AbstractVector{<:Number})
+function multiplicative_exponentials(λ::Vector{<:Number}, p::Vector{<:Number})
     λmin, λmax = extrema(λ)
     λ̄ = @. (λ - λmin) / (λmax - λmin)
     # Equation 2 of Rupke et al. (2017): https://arxiv.org/pdf/1708.05139.pdf
@@ -1117,7 +1123,7 @@ processing is done to remove outliers (convolution) and any linear trends in the
 - `λ::Vector{T}`: The wavelength vector
 - `I::vector{T}`: The intensity vector
 """
-function test_line_snr(λ0::T, half_window_size::T, λ::AbstractVector{T}, I::AbstractVector{<:Number}) where {T<:QWave}
+function test_line_snr(λ0::T, half_window_size::T, λ::Vector{T}, I::Vector{<:Number}) where {T<:QWave}
 
     # Line testing region
     region = (λ0 - half_window_size) .< λ .< (λ0 + half_window_size)

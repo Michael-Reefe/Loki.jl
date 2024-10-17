@@ -29,7 +29,7 @@ function plot_spaxel_fit_plotly(cube_fitter::CubeFitter, spaxel::Spaxel, I_model
     # Individual templates
     for j in 1:cube_fitter.n_templates
         append!(traces, [PlotlyJS.scatter(x=λ, y=ustrip.(comps["templates_$j"]), mode="lines", line=Dict(:color => "green", :width => 1), 
-            name="Template $j"), yaxis="y1"])
+            name="Template $j", yaxis="y1")])
     end
 
     # Add vertical dashed lines for emission line rest wavelengths
@@ -39,7 +39,7 @@ function plot_spaxel_fit_plotly(cube_fitter::CubeFitter, spaxel::Spaxel, I_model
         append!(traces, [PlotlyJS.scatter(x=[lwi, lwi], y=[0., nanmaximum(I)*1.1], mode="lines", 
             line=Dict(:color => occursin("H2", String(ln)) ? "red" : 
                         (any(occursin.(["alpha", "beta", "gamma", "delta"], String(ln))) ? "#ff7f0e" : "rebeccapurple"), 
-                    :width => 0.5, :dash => "dash")), showlegend=false])
+                    :width => 0.5, :dash => "dash"), showlegend=false)])
     end
 
     # axes labels / titles / fonts
@@ -509,7 +509,7 @@ they will be determined automatically from the data.
 - `custom_bunit::Union{LaTeXString,Nothing}=nothing`: If provided, overwrites the colorbar axis label. Otherwise the label is determined
 automtically using the `name_i` parameter.
 """
-function plot_parameter_map(data::Matrix{Float64}, name_i::String, bunit::AbstractString, save_path::String, Ω::Float64, z::Float64, 
+function plot_parameter_map(data::Matrix{Float64}, name_i::String, bunit::AbstractString, save_path::String, Ω::typeof(1.0u"sr"), z::Float64, 
     psf_fwhm::Float64, cosmo::Cosmology.AbstractCosmology, wcs::Union{WCSTransform,Nothing}; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, 
     snr_thresh::Float64=3., abs_thresh::Union{Float64,Nothing}=nothing, cmap=py_colormap.cubehelix, line_latex::Union{String,Nothing}=nothing, 
     marker::Union{Vector{<:Real},Nothing}=nothing, disable_axes::Bool=true, disable_colorbar::Bool=false, modify_ax=nothing, colorscale_limits=nothing, 
@@ -622,51 +622,18 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, bunit::Abstra
         ax.axis(:off)
     end
 
-    # Angular and physical scalebars
-    pix_as = sqrt(Ω) * 180/π * 3600
-    n_pix = 1/pix_as
-    @debug "Using angular diameter distance $(angular_diameter_dist(cosmo, z))"
-    # Calculate in Mpc
-    dA = angular_diameter_dist(u"pc", cosmo, z)
-    # Remove units
-    dA = uconvert(NoUnits, dA/u"pc")
-    # l = d * theta (") where theta is chosen as 1/5 the horizontal extent of the image
-    l = dA * (size(data, 1) * pix_as / 5) * π/180 / 3600  
-    # Round to a nice even number
-    l = Int(round(l, sigdigits=1))
-     # new angular size for this scale
-    θ = l / dA
-    θ_as = round(θ * 180/π * 3600, digits=1)  # should be close to the original theta, by definition
-    n_pix = 1/sqrt(Ω) * θ   # number of pixels = (pixels per radian) * radians
-    unit = "pc"
-    # convert to kpc if l is more than 1000 pc
-    if l ≥ 10^3
-        l = Int(l / 10^3)
-        unit = "kpc"
-    elseif l ≥ 10^6
-        l = Int(l / 10^6)
-        unit = "Mpc"
-    elseif l ≥ 10^9
-        l = Int(l / 10^9)
-        unit = "Gpc"
-    end
-    scalebar_text = cosmo.h ≈ 1.0 ? L"%$l$h^{-1}$ %$unit" : L"$%$l$ %$unit"
-    scalebar_1 = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, scalebar_text, "upper center", pad=0, borderpad=0, 
+    pix_as, n_pix, scalebar_text_dist, scalebar_text_ang = get_physical_scales(size(data), Ω, cosmo, z)
+    scalebar_1 = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, scalebar_text_dist, "upper center", pad=0, borderpad=0, 
         color=text_color, frameon=false, size_vertical=0.1, label_top=false, bbox_to_anchor=(0.17, 0.1), bbox_transform=ax.transAxes)
     ax.add_artist(scalebar_1)
     if disable_axes
-        scalebar_text = L"$\ang[angle-symbol-over-decimal]{;;%$θ_as}$"
-        if θ_as > 60
-            θ_as = round(θ_as/60, digits=1)  # convert to arcminutes
-            scalebar_text = L"$\ang[angle-symbol-over-decimal]{;%$θ_as;}$"
-        end
-        scalebar_2 = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, scalebar_text, "lower center", pad=0, borderpad=0, 
+        scalebar_2 = py_anchored_artists.AnchoredSizeBar(ax.transData, n_pix, scalebar_text_ang, "lower center", pad=0, borderpad=0, 
             color=text_color, frameon=false, size_vertical=0.1, label_top=true, bbox_to_anchor=(0.17, 0.1), bbox_transform=ax.transAxes)
         ax.add_artist(scalebar_2)
     end
 
     # Add circle for the PSF FWHM
-    r = psf_fwhm / pix_as / 2
+    r = psf_fwhm / ustrip(pix_as) / 2
     psf = plt.Circle(size(data) .* (0.93, 0.05) .+ (-r, r), r, color=text_color)
     ax.add_patch(psf)
     ax.annotate("PSF", size(data) .* (0.93, 0.05) .+ (-r, 2.5r + 1.75), ha=:center, va=:center, color=text_color)
