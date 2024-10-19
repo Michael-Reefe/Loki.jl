@@ -49,17 +49,7 @@ kinematic_group_lo = [
     "FeII_",
     "OII_",
     "SII_",
-    "ClII_",
-    "NiII_"
-]
-acomp_1_kinematic_group_lo = [
-    "HI_",
-    "HeI_",
-    "ArII_",
-    "NeII_",
-    "FeII_",
-    "OII_",
-    "SII_",
+    "SIII_",
     "ClII_",
     "NiII_"
 ]
@@ -74,27 +64,8 @@ kinematic_group_med = [
     "HeII_",
     "NaIII_"
 ]
-acomp_1_kinematic_group_med = [
-    "ArIII_",
-    "SIV_",
-    "MgIV_",
-    "ArVI_",
-    "OIII_",
-    "NeIII_",
-    "HeII_",
-    "NaIII_"
-]
 
 kinematic_group_hi = [
-    "NeV_",
-    "NeVI_",
-    "MgV_",
-    "MgVII_",
-    "FeVII_",
-    "FeVIII_",
-    "SiIX_",
-]
-acomp_1_kinematic_group_hi = [
     "NeV_",
     "NeVI_",
     "MgV_",
@@ -1102,6 +1073,10 @@ default = "Voigt"
 # of profile it should be. Can add an arbitrary number of additional components.
 [acomps]
 
+lo = ["Voigt"]
+med = ["Voigt"]
+hi = ["Voigt"]
+
 ### Optical lines ###
 
 # NeV_03426 = ["Voigt"]
@@ -1156,10 +1131,14 @@ default = "Voigt"
 # FeVII_9527 = ["Voigt"]
 # SIV_10511 = ["Voigt"]
 
-# NeII_12813 = ["Voigt"]
+# ArII_6985m = ["Voigt"]
+# NeII_12813m = ["Voigt"]
+# SIII_18713m = ["Voigt"]
+
+# NeIII_15555m = ["Voigt"]
+
 # NeV_14322 = ["Voigt"]
 
-# NeIII_15555 = ["Voigt"]
 
 # optional: add [parameters] keywords to specify individual line priors that 
 # are different from the defaults

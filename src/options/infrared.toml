@@ -6,13 +6,6 @@
 # "locked" specifies whether the parameter should be fixed or allowed
 # to vary during the fit.
 
-# stellar_continuum_temp: the blackbody temperature of the stellar
-# continuum component of the model. Default: 5000 K.
-[stellar_continuum_temp]
-val = 5000.0
-plim = [4999.9, 5000.1]
-locked = true
-
 # dust_continuum_temps: the blackbody temperatures of the dust
 # continuum components of the model. 
 [[dust_continuum_temps]]
@@ -34,8 +27,8 @@ locked = false
 
 # PAHFIT Model: A series of profiles at fixed temperatures b/w 35-500 K
 # [[dust_continuum_temps]]
-# val = 500.0
-# plim = [499.9, 500.1]
+# val = 400.0
+# plim = [399.9, 400.1]
 # locked = true
 # [[dust_continuum_temps]]
 # val = 300.0
@@ -632,20 +625,17 @@ locked = false
 
 # Spectral leak artifact of the JWST pipeline at ~12.22 microns
 
-# [absorption_features."abs_leak_12.22"]
-# local = true
-
-# [absorption_features."abs_leak_12.22".tau]
+# [absorption_features."abs_leak_1222".tau]
 # val = 0.1
 # plim = [0.0, 0.2]
 # locked = false
 
-# [absorption_features."abs_leak_12.22".wave]
+# [absorption_features."abs_leak_1222".wave]
 # val = 12.22
 # plim = [-0.1, 0.1]
 # locked = true
 
-# [absorption_features."abs_leak_12.22".fwhm]
+# [absorption_features."abs_leak_1222".fwhm]
 # val = 0.133
 # plim = [0.9, 1.1]
 # locked = true

@@ -2,6 +2,9 @@ module Loki
 
 # Importing all of the dependencies
 
+# Debugging
+using Infiltrator
+
 # Parallel computing packages
 using Distributed
 using SharedArrays
@@ -15,7 +18,6 @@ using Dierckx, Interpolations
 using LinearAlgebra
 using FFTW
 using SpecialFunctions
-using Polynomials
 using NLsolve
 using ImageFiltering
 using ImageTransformations
@@ -186,7 +188,6 @@ export DataCube,   # DataCube struct
        save_fits,
        generate_psf_model!,
        splinefit_psf_model!,
-       polyfit_psf_model!,
        adjust_wcs_alignment!, 
        reproject_channels!, 
        extract_from_aperture!,

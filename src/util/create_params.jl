@@ -617,12 +617,12 @@ end
 
 
 # Same as above but for the additional components
-function check_acomp_tied_kinematics!(lines::Dict, prefix::String, line::String, acomp_kinematic_groups::Vector, 
+function check_acomp_tied_kinematics!(lines::Dict, prefix::String, line::String, kinematic_groups::Vector, 
     fit_profiles::FitProfiles)
 
     for j ∈ 1:(length(fit_profiles)-1)
-        for group ∈ acomp_kinematic_groups[j]
-            for groupmember ∈ lines["acomp_$(j)_kinematic_group_" * group]
+        for group ∈ kinematic_groups
+            for groupmember ∈ lines["kinematic_group_" * group]
                 if occursin(groupmember, line)
 
                     params = []
@@ -645,8 +645,9 @@ function check_acomp_tied_kinematics!(lines::Dict, prefix::String, line::String,
 
                     for param in params
                         ind = prefix * "$(j+1)." * param
-                        @assert isnothing(fit_profiles[j+1].fit_parameters[ind].tied) "$(line) acomp $(j) fulfills criteria" * 
+                        @assert isnothing(fit_profiles[j+1].fit_parameters[ind].tie) "$(line) acomp $(j) fulfills criteria" * 
                             " to be in multiple kinematic groups! Please amend your kinematic group filters."
+
                         @debug "Tying $param for $line acomp $j to the group: $group"
                         # Use the group label
                         groupname = join([group, "$(j+1)", param], "_") |> Symbol
@@ -730,7 +731,7 @@ function default_line_parameters(out::Dict, lines::Dict, λunit::Unitful.Units, 
         voff = parameter_from_dict(component > 1 ? lines["acomp_voff"][component-1] : lines["voff"]; units=u"km/s")
         msg *= "\nVoff $voff"
         fwhm = parameter_from_dict(component > 1 ? lines["acomp_fwhm"][component-1] : lines["fwhm"]; 
-            units=component > 1 ? 1.0 : u"km/s")
+            units=component > 1 && lines["rel_fwhm"] ? NoUnits : u"km/s")
         msg *= "\nFWHM $fwhm"
         params = [amp, voff, fwhm]
         pnames = prefix .* "$component." .* ["amp", "voff", "fwhm"]
@@ -857,7 +858,7 @@ function construct_line_parameters(out::Dict, λunit::Unitful.Units, Iunit::Unit
     """
 
     # Read in the lines file
-    lines, profiles, acomp_profiles, cent_vals = parse_lines(region, λunit)
+    lines, cent_vals = parse_lines(region, λunit)
 
     # Create the kinematic groups
     #   ---> kinematic groups apply to all additional components of lines as well as the main component
@@ -869,15 +870,39 @@ function construct_line_parameters(out::Dict, λunit::Unitful.Units, Iunit::Unit
             append!(kinematic_groups, [replace(key, "kinematic_group_" => "")])
         end
     end
-    acomp_kinematic_groups = []
-    for j ∈ 1:lines["n_acomps"]
-        acomp_kinematic_group_j = []
-        for key ∈ keys(lines)
-            if occursin("acomp_$(j)_kinematic_group_", key)
-                append!(acomp_kinematic_group_j, [replace(key, "acomp_$(j)_kinematic_group_" => "")])
+
+    # Get the profile types of each line
+    profiles = Dict(ln => Symbol(lines["profiles"]["default"]) for ln ∈ keys(lines["lines"]))
+    for line ∈ keys(lines["lines"])
+        if haskey(lines["profiles"], line)
+            profiles[line] = Symbol(lines["profiles"][line])
+        end
+    end
+
+    # Keep in mind that a line can have multiple acomp profiles
+    acomp_profiles = Dict{String, Vector{Union{Symbol,Nothing}}}()
+    for line ∈ keys(lines["lines"])
+        acomp_profiles[line] = Vector{Union{Symbol,Nothing}}(nothing, lines["n_acomps"])
+        # check if the line is in a kinematic group
+        group_name = nothing
+        for group ∈ kinematic_groups
+            for groupmember ∈ lines["kinematic_group_" * group]
+                if occursin(groupmember, line) 
+                    group_name = group
+                end
             end
         end
-        append!(acomp_kinematic_groups, [acomp_kinematic_group_j])
+        if !isnothing(group_name) && haskey(lines, "acomps")
+            # if it's in a group, make sure individual profiles aren't being set
+            if haskey(lines["acomps"], line) 
+                error("Parsing error: $(line) is tied to the kinematic group $group_name, so you cannot add additional " *
+                    "line profiles to this line individually.  Instead, add them to the group $group_name by setting " *
+                    "\"$group_name = [ <profile types> ]\".")
+            end
+            if haskey(lines["acomps"], group_name)
+                acomp_profiles[line] = vcat(Symbol.(lines["acomps"][group_name]), [nothing for _ in 1:(lines["n_acomps"]-length(lines["acomps"][group_name]))])
+            end
+        end
     end
 
     # Create buffers
@@ -918,7 +943,7 @@ function construct_line_parameters(out::Dict, λunit::Unitful.Units, Iunit::Unit
         # Check if any of the amplitudes/voffs/fwhms should be tied to kinematic groups
         check_tied_kinematics!(lines, prefix, line, kinematic_groups, fit_profiles)
         # Repeat for the acomps
-        check_acomp_tied_kinematics!(lines, prefix, line, acomp_kinematic_groups, fit_profiles)
+        check_acomp_tied_kinematics!(lines, prefix, line, kinematic_groups, fit_profiles)
         # Check the voigt mixing parameter
         check_tied_voigt_mixing!(lines, prefix, line, fit_profiles)
 

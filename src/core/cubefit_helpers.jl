@@ -197,6 +197,15 @@ function get_continuum_parameter_limits(cube_fitter::CubeFitter, I::Vector{<:Rea
         inds = fast_indexin(pwhere, pnames)
         plock[inds] .= true
     end
+    # Lock template amplitudes during the initial fit
+    if !fopt.fit_temp_multexp && init
+        for tname in cube_fitter.template_names
+            for n in 1:nchannels(cube_fitter.spectral_region)
+                ind = fast_indexin("templates.$(tname).amp_$n", pnames)
+                plock[ind] = true
+            end
+        end
+    end
 
     # Get the tied pairs/indices
     tied_pairs, tied_indices = get_tied_pairs(continuum)
@@ -273,7 +282,7 @@ function get_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, �
             indmax = argmax(ssp_i)
             # estimate the initial reddening and apply it inversely
             _, att_star_i, _ = extinction_profiles([λ[indmax]], ustrip.(p₀), 1, fopt.fit_uv_bump, fopt.extinction_curve)
-            m_i = nanmean(I[max(indmax-5,1):min(indmax+5,length(I))]) / att_star_i[1]
+            m_i = nanmedian(I[max(indmax-5,1):min(indmax+5,length(I))]) / att_star_i[1]
             # adjust based on if there are other continuum components expected to be overlapping 
             if cube_fitter.n_power_law > 0
                 m_i *= 0.5
@@ -303,10 +312,10 @@ function get_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, �
         inds = fast_indexin("continuum.power_law.$(j)." .* ["amp", "index"], pnames)
         if p₀[inds[2]] > 0   # index > 0 means it gets brighter at longer wavelengths
             atten_j, _, _ = extinction_profiles([λlim[2]], ustrip.(p₀), 1, fopt.fit_uv_bump, fopt.extinction_curve)
-            A_i = 0.5 * nanmean(I[end-10:end]) / atten_j[1] / cube_fitter.n_power_law
+            A_i = 0.5 * nanmedian(I[end-10:end]) / atten_j[1] / cube_fitter.n_power_law
         else                 # index < 0 means it gets brighter at shorter wavelengths
             atten_j, _, _ = extinction_profiles([λlim[1]], ustrip.(p₀), 1, fopt.fit_uv_bump, fopt.extinction_curve)
-            A_i = 0.5 * nanmean(I[1:10]) / atten_j[1] / cube_fitter.n_power_law
+            A_i = 0.5 * nanmedian(I[1:10]) / atten_j[1] / cube_fitter.n_power_law
         end
         if cube_fitter.n_templates > 0
             A_i *= 0.5
@@ -317,18 +326,18 @@ function get_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, �
     # Dust continuum amplitudes
     for k ∈ 1:cube_fitter.n_dust_cont
         inds = fast_indexin("continuum.dust.$(k)." .* ["amp", "temp"], pnames)
-        if fopt.lock_hot_dust
+        if fopt.lock_hot_dust && isone(k)
             p₀[inds[1]] = 0.
             continue
         end
         T_dc = p₀[inds[2]]
         λ_dc = clamp(Wein(T_dc), λlim...)
         i_dc = argmin(abs.(λ .- λ_dc))
-        A_i = nanmean(I[max(i_dc-5,1):min(i_dc+5,length(I))]) / cube_fitter.n_dust_cont
-        if cube_fitter.n_templates > 0
+        A_i = nanmedian(I[max(i_dc-5,1):min(i_dc+5,length(I))]) / cube_fitter.n_dust_cont
+        if cube_fitter.n_templates > 0 && T_dc > 100u"K"
             A_i *= 0.5
         end
-        if fopt.fit_sil_emission && T_dc > 500 
+        if fopt.fit_sil_emission && T_dc > 500u"K"
             A_i *= 0.8
         end
         p₀[inds[1]] = clamp(A_i, 0., Inf)
@@ -338,9 +347,9 @@ function get_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, �
     if fopt.fit_sil_emission
         inds = fast_indexin("continuum.hot_dust." .* ["amp", "temp", "frac", "tau_warm", "tau_cold", "sil_peak"], pnames)
         T_hd, Cf, τw, τc, peak = p₀[inds[2:end]]
-        hd = silicate_emission(λ, T_hd, Cf, τw, τc, peak, unit(N))
+        hd = silicate_emission(λ, T_hd, Cf, τw, τc, peak, N)
         mhd = argmax(hd)
-        A_hd = 0.2 * nanmean(I[max(mhd-5,1):min(mhd+5,length(I))])
+        A_hd = 0.2 * nanmedian(I[max(mhd-5,1):min(mhd+5,length(I))])
         p₀[inds[1]] = clamp(A_hd, 0., Inf)
     end
 
@@ -351,30 +360,28 @@ function get_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, �
     end
 
     # Dust features
+    # do a quick and dirty check around 7.7um or 11.3um to see if the PAHs are strong
+    checks = [7.7, 7.7, 11.3, 11.3, 12.7, 12.7] .* u"μm"
+    refs = [7.0, 10.0, 10.0, 12.0, 12.0, 13.2] .* u"μm"
+    diffs = Float64[]
+    for (ref, check) in zip(refs, checks)
+        if (λlim[1] < check < λlim[2]) && (λlim[1] < ref < λlim[2])
+            icheck = argmin(abs.(λ .- check))
+            iref = argmin(abs.(λ .- ref))
+            Icheck = nanmedian(I[max(icheck-5,1):min(icheck+5,length(I))])
+            Iref = nanmedian(I[max(iref-5,1):min(iref+5,length(I))])
+            push!(diffs, clamp(Icheck - Iref, 0., Inf))
+        end
+    end
+    df_amp = length(diffs) > 0 ? nanmedian(diffs) : I_med/4
+
     for df ∈ df_feature_names
         ind = fast_indexin("dust_features.$(df).amp", df_names)
-        # do a quick and dirty check around 7.7um or 11.3um to see if the PAHs are strong
-        checks = [7.7, 7.7, 11.3, 11.3, 12.7, 12.7] .* u"μm"
-        refs = [7.0, 10.0, 10.0, 12.0, 12.0, 13.2] .* u"μm"
-        diffs = Float64[]
-        for (ref, check) in zip(refs, checks)
-            if (λlim[1] < check < λlim[2]) && (λlim[1] < ref < λlim[2])
-                icheck = argmin(abs.(λ .- check))
-                iref = argmin(abs.(λ .- ref))
-                Icheck = nanmean(I[max(icheck-5,1):min(icheck+5,length(I))])
-                Iref = nanmean(I[max(iref-5,1):min(iref+5,length(I))])
-                push!(diffs, clamp(Icheck - Iref, 0., Inf))
-            end
-        end
-        if length(diffs) > 0
-            df_p₀[ind] = nanmean(diffs)
-        else
-            df_p₀[ind] = clamp(I_med/4, 0., Inf)
-        end
+        df_p₀[ind] = clamp(df_amp, 0., Inf)
     end
 
     # For the PAH templates
-    pah_frac = repeat([clamp(nanmedian(I)/4, 0., Inf)], 2)
+    pah_frac = repeat([clamp(df_amp, 0., Inf)], 2)
     append!(p₀, df_p₀)
 
     p₀, pah_frac
@@ -391,15 +398,15 @@ function get_continuum_initial_values_from_previous(cube_fitter::CubeFitter, spa
     ab_feature_names = model(cube_fitter).abs_features.config.all_feature_names
 
     # Set the parameters to the best parameters
-    p₀ = cube_fitter.p_init_cont .* unit.(continuum.values)
-    pah_frac = Vector{Quantity{Float64}}(cube_fitter.p_init_pahtemp)
+    p₀ = copy(cube_fitter.p_init_cont)
+    pah_frac = copy(cube_fitter.p_init_pahtemp)
 
     # scale all flux amplitudes by the difference in medians between the spaxel and the summed spaxels
-    Iunit = unit(cube_fitter.cube.I)
+    Iunit = unit(cube_fitter.cube.I[1])
     I_init = sumdim(ustrip.(cube_fitter.cube.I), (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2)) .* Iunit
     N0 = Float64(abs(maximum(I_init[isfinite.(I_init)])))
     N0 = N0 ≠ 0.0Iunit ? N0 : 1.0Iunit
-    scale = max(nanmedian(I), 1e-10) * N0 / nanmedian(ustrip.(I_init))   # (should be close to 1)
+    scale = max(nanmedian(I), 1e-10) * N0 / nanmedian(I_init)   # (should be close to 1)
     @assert unit(scale) == NoUnits 
 
     atten_gas_0, atten_star_0, _  = extinction_profiles([median(λ)], ustrip.(p₀), 1, fopt.fit_uv_bump, fopt.extinction_curve)
@@ -691,7 +698,7 @@ end
 
 
 function get_line_initial_values_limits_locks_from_estimation(cube_fitter::CubeFitter, λ::Vector{<:QWave}, 
-    ext_curve::Union{Nothing,Vector{<:Real}}=nothing)
+    I::Vector{<:Real}, ext_curve::Union{Nothing,Vector{<:Real}}=nothing; init::Bool=false)
 
     fopt = fit_options(cube_fitter)
 
@@ -705,7 +712,7 @@ function get_line_initial_values_limits_locks_from_estimation(cube_fitter::CubeF
     pnames = params.names
     plims = params.limits
     plock = params.locked
-    p₀ = params.values
+    p₀ = init ? params.values : copy(cube_fitter.p_init_line)
 
     if !isnothing(ext_curve)
         max_amp = clamp(1 / minimum(ext_curve), 1., 1e100)
@@ -714,7 +721,7 @@ function get_line_initial_values_limits_locks_from_estimation(cube_fitter::CubeF
         atten, _, _ = extinction_profiles(λ, ustrip.(p0_contin), 1, fopt.fit_uv_bump, fopt.extinction_curve)
         inv_atten = 1 / minimum(atten)
         pstart = fast_indexin(fopt.silicate_absorption == "decompose" ? "extinction.N_oli" : "extinction.tau_97", pnames_contin)
-        silab, = silicate_absorption(λ, ustrip.(p0_contin), pstart, fopt.κ_abs, fopt.silicate_absorption, fopt.extinction_screen)
+        silab, = silicate_absorption(λ, ustrip.(p0_contin), pstart, cube_fitter)
         inv_abs = 1 / minimum(silab)
         max_amp = max(inv_atten, inv_abs)
     end
@@ -723,30 +730,81 @@ function get_line_initial_values_limits_locks_from_estimation(cube_fitter::CubeF
     else
         amp_plim = (0., max_amp)
     end
-    A_ln = 0.33 * max_amp
 
-    tied_pairs, tied_indices = get_tied_pairs(params)
-
+    # A_ln = 0.33 * max_amp
     for (k, line) in enumerate(lines.profiles)   # <- iterates over emission lines
         ln_name = lines.names[k]
+        λ₀ = lines.λ₀[k]
         for (j, component) in enumerate(line)    # <- iterates over individual velocity components
-            ind = fast_indexin("lines.$(ln_name).$(j).amp", pnames)
+            ind_amp = fast_indexin("lines.$(ln_name).$(j).amp", pnames)
             # only set the amplitude limits for the FIRST component
             # or, set it for the other components, but only if rel_amp is not set
             if isone(j) || !lines.config.rel_amp
-                p₀[ind] = A_ln
-                plims[ind] = amp_plim
-                plock[ind] = false
+                plims[ind_amp] = amp_plim
+                plock[ind_amp] = false
+            end
+            # If this is the initial fit, we want to make some educated guesses on the initial values for the parameters,
+            # just like for the continuum fit
+            if init
+                # make a velocity vector
+                vel = Doppler_width_v.(λ .- λ₀, λ₀)
+                # choose a window size equal to the linemask width
+                region = abs.(vel) .< cube_fitter.linemask_width
+                I_max, mx = findmax(I[region])
+                I_min = minimum(I[region])
+                # amplitude is ~the max - the min within the window
+                if isone(j)
+                    p₀[ind_amp] = clamp(I_max-I_min, amp_plim...)
+                elseif !lines.config.rel_amp
+                    # make a somewhat random guess that the secondary component is ~20% of the total amplitude
+                    p₀[ind_amp] = clamp(0.2*(I_max-I_min), amp_plim...)
+                    # readjust the first component down a bit
+                    ind_amp1 = fast_indexin("lines.$(ln_name).1.amp", pnames)
+                    p₀[ind_amp1] = clamp(0.8p₀[ind_amp1], amp_plim...)
+                else
+                    p₀[ind_amp] = 0.2
+                end
+                # velocity is ~the velocity at the max ind
+                ind_vel = fast_indexin("lines.$(ln_name).$(j).voff", pnames)
+                if isone(j) || !lines.config.rel_voff
+                    p₀[ind_vel] = clamp(vel[region][mx], plims[ind_vel]...)
+                else
+                    p₀[ind_vel] = clamp(0.0u"km/s", plims[ind_vel]...)
+                end
+                # fwhm is ~the intensity-weighted average of the velocities
+                ind_fwhm = fast_indexin("lines.$(ln_name).$(j).fwhm", pnames)
+                fwhm_full = 2.355*sqrt(clamp(sum(I[region].*vel[region].^2) / sum(I[region]), 0.0u"km^2/s^2", Inf*u"km^2/s^2"))
+                fwhm_intr2 = clamp(fwhm_full^2 - cube_fitter.lsf(λ[region][mx])^2, 0.0u"km^2/s^2", Inf*u"km^2/s^2")
+                if isone(j) || !lines.config.rel_fwhm
+                    p₀[ind_fwhm] = clamp(sqrt(fwhm_intr2), plims[ind_fwhm]...)
+                else
+                    p₀[ind_fwhm] = clamp(1.0, plims[ind_fwhm]...)
+                end
             end
         end
     end
-    # We need to make sure the tied relationships still hold
+
+    # We need to make sure the tied relationships still hold -- if we're doing the initial estimation,
+    # the tied velocities and fwhms should be a median of the estimations we did for each individual line
+    tie_vec = params.ties
+    if init
+        tie_vec_groups = [isnothing(tv) ? nothing : tv.group for tv in tie_vec]
+        tvu = unique(tie_vec[.~isnothing.(tie_vec)])  # all of the tied groups
+        for tvui in tvu
+            if contains(string(tvui), "voff") || contains(string(tvui), "fwhm")
+                wh = tie_vec_groups .== tvui.group
+                p₀[wh] .= median(p₀[wh])
+            end
+            # amplitudes are more tricky...but they should work themselves out in the next step below
+        end
+    end
+
+    tied_pairs, tied_indices = get_tied_pairs(params)
     for tp in tied_pairs
         p₀[tp[2]] = p₀[tp[1]] * tp[3]
         plims[tp[2]] = plims[tp[1]] .* tp[3]
         plock[tp[2]] = plock[tp[1]]
     end
-    tie_vec = lines.ties
 
     p₀, plims, plock, pnames, tied_pairs, tied_indices, tie_vec
 end
@@ -782,20 +840,16 @@ end
 Get the vector of starting values and relative step sizes for the line fit for a given CubeFitter object.
 """
 function get_line_initial_values_limits_locked(cube_fitter::CubeFitter, λ::Vector{<:QWave}, 
-    ext_curve::Union{Nothing,Vector{<:Real}}=nothing; init::Bool=false)
+    I::Vector{<:Real}, ext_curve::Union{Nothing,Vector{<:Real}}=nothing; init::Bool=false)
 
-    ln_pars, plims, plock, pnames, tied_pairs, tied_indices = get_line_initial_values_limits_locks_from_estimation(
-        cube_fitter, λ, ext_curve)
-    # Check if cube fitter has initial cube
-    if !init
-        @debug "Using initial best fit line parameters..."
-        # If so, set the parameters to the previous ones
-        ln_pars = Vector{Quantity{Float64}}(cube_fitter.p_init_line)
-    end
+    # Get initial values, locks, etc.
+    ln_pars, plims, plock, pnames, tied_pairs, tied_indices, tie_vec = 
+        get_line_initial_values_limits_locks_from_estimation(cube_fitter, λ, I, ext_curve; init=init)
+
     # Get step sizes for each parameter
     ln_astep = get_line_step_sizes(cube_fitter, ln_pars, init)
 
-    ln_pars, plims, plock, pnames, ln_astep, tied_pairs, tied_indices
+    ln_pars, plims, plock, pnames, ln_astep, tied_pairs, tied_indices, tie_vec
 end
 
 
@@ -831,10 +885,10 @@ end
     clean_line_parameters(cube_fitter, popt, lower_bounds, upper_bounds)
 
 Takes the results of an initial global line fit and prepares the parameters for individual spaxel
-fits by sorting the line components, fixing the voffs/FWHMs for lines that are not detected, and 
+fits by sorting the line components, adjusting the voffs/FWHMs for lines that are not detected, and 
 various other small adjustments.
 """
-function clean_line_parameters(cube_fitter::CubeFitter, popt::Vector{<:Real}, lower_bounds::Vector{<:Real}, upper_bounds::Vector{<:Real})
+function clean_line_parameters(cube_fitter::CubeFitter, popt::Vector{<:Number}, lower_bounds::Vector{<:Real}, upper_bounds::Vector{<:Real})
 
     lines = model(cube_fitter).lines
     params = get_flattened_fit_parameters(lines)
@@ -857,14 +911,14 @@ function clean_line_parameters(cube_fitter::CubeFitter, popt::Vector{<:Real}, lo
             if replace_line
                 if j > 1
                     popt[pᵢ] = lines.config.rel_amp ? 0.1 * 1/(n_prof-1) : 0.1 * 1/(n_prof-1) * amp_main
-                    popt[pᵢ+1] = lines.config.rel_voff ? 0.0 : voff_main
+                    popt[pᵢ+1] = lines.config.rel_voff ? 0.0u"km/s" : voff_main
                     popt[pᵢ+2] = lines.config.rel_fwhm ? 1.0 : fwhm_main
                 else
                     if isnothing(params[pᵢ+1].tie)
-                        popt[pᵢ+1] = voff_main = 0. # voff
+                        popt[pᵢ+1] = voff_main = 0.0u"km/s" # voff
                     end
                     if isnothing(params[pᵢ+2].tie)
-                        popt[pᵢ+2] = fwhm_main = (lower_bounds[pᵢ+2]+upper_bounds[pᵢ+2])/2 # fwhm
+                        popt[pᵢ+2] = fwhm_main = (lower_bounds[pᵢ+2]+upper_bounds[pᵢ+2])/2*u"km/s" # fwhm
                     end
                 end
             end

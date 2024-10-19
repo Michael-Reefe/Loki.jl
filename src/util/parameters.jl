@@ -168,12 +168,12 @@ struct FitFeatures{S<:Union{Symbol,String},Q<:QWave}
 end
 
 
-function make_single_line_object(f::FitFeatures, i::Integer)
+function make_single_line_object(f::FitFeatures, i::Integer, n_prof::Integer)
     cfg = LineConfig(
-        BitVector([f.config.annotate[i]]), [f.config.sort_order[i]], [f.config.combined[i]], f.config.rel_amp,
+        BitVector([f.config.annotate[i]]), [f.config.sort_order[i]], f.config.combined, f.config.rel_amp,
         f.config.rel_voff, f.config.rel_fwhm
     )
-    FitFeatures([f.names[i]], [f.labels[i]], [f.λ₀[i]], [f.profiles[i]], [f.composite[i]], cfg)
+    FitFeatures([f.names[i]], [f.labels[i]], [f.λ₀[i]], [f.profiles[i][1:n_prof]], [f.composite[i]], cfg)
 end
 
 
@@ -274,8 +274,10 @@ function Unitful.uconvert(new_unit::Unitful.Units, p::FitParameter{<:Quantity})
     FitParameter(new_val, p.locked, new_lim, p.tie)
 end
 
-# extend the "ustrip" function from Unitful
+# extend some unitful functions
 Unitful.ustrip(p::FitParameter) = FitParameter(ustrip(p.value), p.locked, ustrip.(p.limits), p.tie)
+Unitful.unit(p::FitParameter) = unit(p.value)
+Unitful.unit(p::NonFitParameter) = unit(p._type)
 
 # check if everything is good
 function check_valid(p::FitParameter)
@@ -331,10 +333,15 @@ then the true limits will be 5 .+ [-0.1, 0.1] = [4.9, 5.1]
 function parameter_from_dict_wave(dict::Dict; units::Unitful.Units=unit(1.0))
 
     # Unpack the dictionary into fields of the Parameter
-    value = dict["val"] * units
+    value = dict["val"]
     locked = dict["locked"]
     # plim: absolute upper/lower limits
-    lims = (dict["plim"].*units.+value...,)
+    lims = (dict["plim"].+value...,)
+    # hopefully removes floating-point rounding errors
+    lims = round.(lims, digits=4)
+
+    value = value * units
+    lims = lims .* units
 
     FitParameter(value, locked, lims)
 end
@@ -350,10 +357,15 @@ plim = [0.5, 2], then the true limits will be 5 .* [0.5, 2] = [2.5, 10]
 function parameter_from_dict_fwhm(dict::Dict; units::Unitful.Units=unit(1.0))
 
     # Unpack the dictionary into fields of the Parameter
-    value = dict["val"] * units
+    value = dict["val"]
     locked = dict["locked"]
     # plim: absolute upper/lower limits
     lims = (dict["plim"].*value...,)
+    # hopefully removes floating-point rounding errors
+    lims = round.(lims, digits=4)
+
+    value = value * units
+    lims = lims .* units
 
     FitParameter(value, locked, lims)
 end
@@ -452,6 +464,10 @@ function _getproperty(p::FitParameters, ::Val{:ties})
     end
     ties
 end
+
+get_units(p::Parameters, ind::Int) = unit(p[ind])
+get_units(p::Parameters, name::String) = unit(p[name])
+get_units(p::Parameters) = unit.(p._parameters)
 
 _getproperty(p::FitParameters, ::Val{s}) where {s} = getfield(p, s)
 Base.getproperty(p::FitParameters, s::Symbol) = _getproperty(p, Val{s}())
@@ -592,7 +608,7 @@ function get_flattened_nonfit_parameters(p::ModelParameters)
     flat
 end
 function get_flattened_parameters(p::ModelParameters)
-    flat = AllParameters(String[], String[], Vector{Transformation}(), Vector{Union{FitParameter,NonFitParameter}}())
+    flat = AllParameters(String[], String[], Vector{Transformation}[], Vector{Union{FitParameter,NonFitParameter}}())
     append!(flat, get_flattened_fit_parameters(p))
     append!(flat, get_flattened_nonfit_parameters(p))
     flat
@@ -620,3 +636,4 @@ latex(::typeof(unit(QPerAng))) = L"$\mathrm{erg}\,\mathrm{s}^{-1}\,\mathrm{cm}^{
 latex(::typeof(unit(QPerum))) = L"$\mathrm{erg}\,\mathrm{s}^{-1}\,\mathrm{cm}^{-2}\,\mathrm{\mu{}m}^{-1}\,\mathrm{sr}^{-1}$"
 # some more unconventional units too
 latex(::typeof(u"erg/s/cm^2/Hz/sr*μm")) = L"$\mathrm{erg}\,\mathrm{s}^{-1}\,\mathrm{cm}^{-2}\,\mathrm{Hz}^{-1}\,\mathrm{sr}^{-1}\,\mathrm{\mu{}m}$"
+latex(::typeof(u"erg/s/cm^2/sr")) = L"$\mathrm{erg}\,\mathrm{s}^{-1}\,\mathrm{cm}^{-2}\,\mathrm{sr}^{-1}$"

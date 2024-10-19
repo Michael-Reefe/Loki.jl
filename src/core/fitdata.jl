@@ -18,27 +18,31 @@ Helper function to fill in NaNs/Infs in a 1D intensity/error vector and 2D templ
 function fill_bad_pixels(I::Vector{<:Number}, σ::Vector{<:Number}, templates::Union{Array{<:Number,2},Nothing})
 
     # Edge cases
-    Iunit = unit(I[1])
-    σunit = unit(σ[1])
     if !isfinite(I[1])
-        I[1] = nanmedian(ustrip.(I)) * Iunit
+        i = findfirst(isfinite, I)
+        I[1] = I[i]
     end
     if !isfinite(I[end])
-        I[end] = nanmedian(ustrip.(I)) * Iunit
+        i = findfirst(isfinite, I[end:-1:1])
+        I[end] = I[i]
     end
     if !isfinite(σ[1])
-        σ[1] = nanmedian(ustrip.(σ)) * σunit
+        i = findfirst(isfinite, σ)
+        σ[1] = σ[i]
     end
     if !isfinite(σ[end])
-        σ[end] = nanmedian(ustrip.(σ)) * σunit
+        i = findfirst(isfinite, σ[end:-1:1])
+        σ[end] = σ[i]
     end
     if !isnothing(templates)
         for s in axes(templates, 2)
             if !isfinite(templates[1,s])
-                templates[1,s] = nanmedian(ustrip.(templates[:,s])) * unit(templates[1,s])
+                i = findfirst(isfinite, templates[:,s])
+                templates[1,s] = templates[i,s]
             end
             if !isfinite(templates[end,s])
-                templates[end,s] = nanmedian(ustrip.(templates[:,s])) * unit(templates[1,s])
+                i = findfirst(isfinite, templates[end:-1:1,s])
+                templates[end,s] = templates[i,s]
             end
         end
     end
@@ -207,7 +211,7 @@ function get_total_integrated_intensities(cube_fitter::CubeFitter; shape::Union{
     σ = sqrt.(sumdim(ustrip.(cube_fitter.cube.σ).^2, (1,2))) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2)) .* Iunit
     area_sr = cube_fitter.cube.Ω .* sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
     # sometimes the mask can cause area_sr to be 0 at some points, which is bad
-    area_sr[area_sr .== 0.0u"sr"] .= minimum(area_sr[area_sr .> 0.0u"sr"])
+    area_sr[area_sr .== 0.0u"sr"] .= median(area_sr[area_sr .> 0.0u"sr"])
     templates = zeros(eltype(I), size(I)..., cube_fitter.n_templates)
     for s in 1:cube_fitter.n_templates
         templates[:,s] .= sumdim(ustrip.(cube_fitter.templates), (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2)) .* Iunit
@@ -393,6 +397,7 @@ function collect_cont_fit_results(res::CMPFit.Result, pfix_tied::Vector{<:Real},
     punits::Vector{<:Unitful.Units}, tied_pairs::Vector{<:Tuple}, tied_indices::Vector{<:Integer}, n_tied::Integer, 
     spaxel::Spaxel, cube_fitter::CubeFitter; bootstrap_iter::Bool=false)
 
+    fopt = fit_options(cube_fitter)
     popt = rebuild_full_parameters(res.param, pfix_tied, plock_tied, tied_pairs, tied_indices, n_tied)
     perr = zeros(Float64, length(popt))
     if !bootstrap_iter
@@ -404,7 +409,7 @@ function collect_cont_fit_results(res::CMPFit.Result, pfix_tied::Vector{<:Real},
     @debug "Best fit continuum parameters: \n $popt"
     @debug "Continuum parameter errors: \n $perr"
 
-    I_model, comps, = model_continuum(spaxel, spaxel.N, ustrip.(popt), punits, cube_fitter, true)
+    I_model, comps, = model_continuum(spaxel, spaxel.N, ustrip.(popt), punits, cube_fitter, fopt.use_pah_templates, true)
 
     popt, perr, I_model, comps
 end
@@ -446,7 +451,7 @@ function collect_cont_fit_results(res_1::CMPFit.Result, p1fix_tied::Vector{<:Rea
     n_free = n_free_1 + n_free_2 - 2
 
     # Create the full model, again only if not bootstrapping
-    I_model, comps, = model_continuum(spaxel, spaxel.N, ustrip.(popt), [punit_1[1:end-2]; punit_2], cube_fitter, true)
+    I_model, comps, = model_continuum(spaxel, spaxel.N, ustrip.(popt), [punit_1[1:end-2]; punit_2], cube_fitter, false, true)
 
     popt, perr, n_free, pahtemp, I_model, comps
 end
@@ -455,7 +460,7 @@ end
 # Alternative dispatch for the collect_fit_results function for the line fitting procedure
 function collect_line_fit_results(res::CMPFit.Result, pfix_tied::Vector{<:Real}, param_lock_tied::BitVector,
     punits::Vector{<:Unitful.Units}, tied_pairs::Vector{<:Tuple}, tied_indices::Vector{<:Integer}, n_tied::Integer, 
-    spaxel::Spaxel, cube_fitter::CubeFitter; bootstrap_iter::Bool=false)
+    spaxel::Spaxel, extinction_curve::Vector{<:Real}, cube_fitter::CubeFitter; bootstrap_iter::Bool=false)
 
     # Get the results and errors
     popt = rebuild_full_parameters(res.param, pfix_tied, param_lock_tied, tied_pairs, tied_indices, n_tied)
@@ -473,7 +478,7 @@ function collect_line_fit_results(res::CMPFit.Result, pfix_tied::Vector{<:Real},
 
     # Final optimized fit
     I_model, comps = model_line_residuals(spaxel, ustrip.(popt), punits, model(cube_fitter).lines, cube_fitter.lsf, 
-        spaxel.aux["ext_curve"], true)
+        extinction_curve, true)
 
     popt, perr, I_model, comps
 end
@@ -487,6 +492,7 @@ function collect_fit_results(res::CMPFit.Result, pfix_cont_tied::Vector{<:Real},
     n_tied_lines::Integer, n_free_lines::Integer, spaxel::Spaxel, cube_fitter::CubeFitter; 
     bootstrap_iter::Bool=bootstrap_iter)
 
+    fopt = fit_options(cube_fitter)
     popt_cont = rebuild_full_parameters(res.param[1:n_free_cont], pfix_cont_tied, lock_cont_tied, tied_pairs_cont, tied_indices_cont, n_tied_cont)
     perr_cont = zeros(length(popt_cont))
     if !bootstrap_iter
@@ -510,9 +516,9 @@ function collect_fit_results(res::CMPFit.Result, pfix_cont_tied::Vector{<:Real},
     @debug "Best fit line parameters: \n $popt_lines"
     @debug "Line parameter errors: \n $perr_lines"
 
-    I_cont, comps_cont, = model_continuum(spaxel, spaxel.N, ustrip.(popt_cont), punits_cont, cube_fitter, true)
+    I_cont, comps_cont, = model_continuum(spaxel, spaxel.N, ustrip.(popt_cont), punits_cont, cube_fitter, fopt.use_pah_templates, true)
     I_lines, comps_lines = model_line_residuals(spaxel, ustrip.(popt_lines), punits_lines, model(cube_fitter).lines, cube_fitter.lsf, 
-        spaxel.aux["ext_curve"], true)
+        comps_cont["total_extinction_gas"], true)
     
     popt_cont, perr_cont, I_cont, comps_cont, popt_lines, perr_lines, I_lines, comps_lines
 end
@@ -529,9 +535,9 @@ function collect_total_fit_results(spaxel::Spaxel, cube_fitter::CubeFitter, I_co
     # chi^2 and reduced chi^2 of the model BEFORE renormalizing
     mask_chi2 = copy(spaxel.mask_bad)
     for pair in cube_fitter.spectral_region.mask
-        mask_chi2 .|= .~(pair[1] .< spaxel.λ .< pair[2])
+        mask_chi2 .|= pair[1] .< spaxel.λ .< pair[2]
     end
-    χ2 = sum(@. (spaxel.I[.~mask_chi2] - I_model[.~mask_chi2])^2 / spaxel.σ[.~mask_chi2]^2)
+    χ2 = sum((spaxel.I[.~mask_chi2] .- I_model[.~mask_chi2]).^2 ./ spaxel.σ[.~mask_chi2].^2)
     # Degrees of freedom
     n_free = n_free_c + n_free_l
     n_data = length(spaxel.I[.~mask_chi2])
@@ -573,7 +579,7 @@ function collect_bootstrapped_results(spaxel::Spaxel, cube_fitter::CubeFitter, p
 
     # Replace the best-fit model with the 50th percentile model to be consistent with p_out
     I_boot_cont, comps_boot_cont, = model_continuum(spaxel, spaxel.N, ustrip.(p_out[1:split1]), unit.(p_out[1:split1]), 
-        cube_fitter, true)
+        cube_fitter, false, true)
     I_boot_line, comps_boot_line = model_line_residuals(spaxel, ustrip.(p_out[split1+1:split2]), unit.(p_out[split1+1:split2]), 
         model(cube_fitter).lines, cube_fitter.lsf, comps_boot_cont["total_extinction_gas"], true)
 

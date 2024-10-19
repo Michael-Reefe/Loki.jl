@@ -252,6 +252,8 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
 
     # Line spread function interpolator
     lsf::Function
+    dust_profiles::Dict{String, Tuple{Vector{<:QWave},Vector{<:AbstractFloat}}}
+    dust_interpolators::Dict{String, Spline1D}
 
     # The number of actually fit line profiles in each spaxel
     n_fit_comps::Dict{Symbol,Matrix{S}}
@@ -264,9 +266,9 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
     linemask_width::Qv
 
     # Initial parameter vectors
-    p_init_cont::Vector{T}
-    p_init_line::Vector{T}
-    p_init_pahtemp::Vector{T}
+    p_init_cont::Vector{Number}
+    p_init_line::Vector{Number}
+    p_init_pahtemp::Vector{Number}
 
     #= Constructor function --> the default inputs are all taken from the configuration files, but may be overwritten
     by the kwargs object using the same syntax as any keyword argument. The rest of the fields are generated in the function 
@@ -293,6 +295,10 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
         ebv_map, sil_abs_map = cubefitter_prepare_extinction_maps(out, cube)
         # Set up the output directories
         cubefitter_prepare_output_directories(name, out)
+        # add the user mask, if given
+        if !isnothing(out[:user_mask])
+            append!(spectral_region.mask, out[:user_mask])
+        end
 
         #############################################################
 
@@ -344,7 +350,8 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
         end
 
         # Load templates into memory
-        _load_dust_templates(out[:silicate_absorption], out[:fit_ch_abs], out[:use_pah_templates], λunit, Iunit)
+        dust_profiles, dust_interpolators = _load_dust_templates(out[:silicate_absorption], out[:fit_ch_abs], out[:use_pah_templates], 
+            λunit, Iunit)
 
         # Create the LSF interpolator
         lsf_interp = Spline1D(ustrip.(cube.λ), ustrip.(cube.lsf), k=1)  # rest frame wavelengths
@@ -427,6 +434,8 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
             n_params_extra,
             n_params_total,
             lsf,
+            dust_profiles,
+            dust_interpolators,
             n_fit_comps,
             out[:cosmology],
             out[:linemask_overrides],
@@ -481,7 +490,7 @@ function cubefitter_add_default_options!(cube::DataCube, out::Dict)
     if !haskey(out, :plot_range)
         out[:plot_range] = nothing
     elseif length(out[:plot_range]) > 0
-        punit = typeof(out[:plot_rangee][1][1]) <: Quantity{<:Real, u"𝐋"} ? 1.0 : λunit
+        punit = typeof(out[:plot_range][1][1]) <: Quantity{<:Real, u"𝐋"} ? 1.0 : λunit
         out[:plot_range] = [tuple(out[:plot_range][i].*punit...) for i in 1:length(out[:plot_range])]
         for  pair in out[:plot_range]
             @assert pair[1] < pair[2] "plot_range pairs must be in ascending order!"

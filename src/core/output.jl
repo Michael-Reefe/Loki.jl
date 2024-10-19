@@ -37,7 +37,7 @@ function assign_outputs(out_params::AbstractArray{<:Real}, out_errs::AbstractArr
             use_vorbins=!isnothing(cube_fitter.cube.voronoi_bins))
 
         I_cont, comps_c, norms = model_continuum(spax, spax.N, ustrip.(out_params[index, 1:pc-1]), unit.(out_params[index, 1:pc-1]),
-            cube_fitter, true)
+            cube_fitter, false, true)
 
         # Loop through parameters and save them in the parammaps data structure 
         for (pᵢ, pname) in enumerate(param_maps.parameters.names)

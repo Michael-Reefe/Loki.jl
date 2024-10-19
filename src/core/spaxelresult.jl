@@ -27,7 +27,13 @@ function combine!(s1::SpaxelFitResult, s2::SpaxelFitResult)
     s1
 end
 
+# Make a copy of a SpaxelFitResult object
+function Base.copy(s::SpaxelFitResult)
+    SpaxelFitResult(copy(s.pnames), copy(s.popt), copy(s.perr), copy(s.bounds), copy(s.plock), copy(s.ptie))
+end
 
+
+# Function for nicely printing out results
 function pretty_print_results(result::SpaxelFitResult)
 
     # prettify locked and tied vectors
@@ -40,12 +46,26 @@ function pretty_print_results(result::SpaxelFitResult)
     _unit = string.(unit.(result.popt))
     _unit = [_ui == "NoUnits" ? "" : _ui for _ui in _unit]
 
-    round_to_digits(x, y) = iszero(y) || !isfinite(y) ? x : round(x, digits=-Int(floor(log10(y))))
+    round_to_digits(x, y) = y ≤ 0. || !isfinite(y) ? x : round(x, digits=-Int(floor(log10(y))))
+
     _perr_l = round.(_perr_l, sigdigits=1)       # rounds the errors to 1 significant figure 
     _perr_u = round.(_perr_u, sigdigits=1)       # rounds the errors to 1 significant figure 
-    _popt = round_to_digits.(_popt, _perr_l)   # rounds the values to match the number of significant figures that the errors have
-    _lb = round_to_digits.(_lb, _perr_l)
-    _ub = round_to_digits.(_ub, _perr_u)
+    _popt_temp = round_to_digits.(_popt, _perr_l)     # rounds the values to match the number of significant figures that the errors have
+    # dont overwrite if rounding would cause it to go to 0 (can happen if errors blow up b/w degenerate parameters)
+    _popt .= ifelse.(iszero.(_popt_temp), _popt, _popt_temp)
+    # safeguard - MAXIMUM number of sig figs to prevent really long and ugly floats from getting in there
+    mask = (_perr_l .≤ 0.) .| .~isfinite.(_perr_l) .| iszero.(_popt_temp)
+    _popt[mask] .= round.(_popt[mask], sigdigits=6)
+
+    # repeat for lower/upper bounds
+    _lb_temp = round_to_digits.(_lb, _perr_l)
+    _lb .= ifelse.(iszero.(_lb_temp), _lb, _lb_temp)
+    mask = (_perr_l .≤ 0.) .| .~isfinite.(_perr_l) .| iszero.(_lb_temp)
+    _lb[mask] .= round.(_lb[mask], sigdigits=6)
+    _ub_temp = round_to_digits.(_ub, _perr_l)
+    _ub .= ifelse.(iszero.(_ub_temp), _ub, _ub_temp)
+    mask = (_perr_l .≤ 0.) .| .~isfinite.(_perr_l) .| iszero.(_ub_temp)
+    _ub[mask] .= round.(_ub[mask], sigdigits=6)
 
     # dont print bounds if they are infinite
     _lb = ifelse.(.~isfinite.(_lb), "", string.(_lb))

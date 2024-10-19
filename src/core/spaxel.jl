@@ -42,8 +42,12 @@ end
 
 
 function Base.copy(s::Spaxel)
-    Spaxel(s.coords, copy(s.λ), copy(s.I), copy(s.σ), copy(s.mask_lines), copy(s.mask_bad), s.vres, copy(s.I_spline);
-        N=s.N, aux=copy(s.aux))
+    aux = Dict()
+    for key in keys(s.aux)
+        aux[key] = copy(s.aux[key])
+    end
+    Spaxel(s.coords, copy(s.λ), copy(s.I), copy(s.σ), copy(s.area_sr), copy(s.mask_lines), copy(s.mask_bad), 
+        s.vres, copy(s.I_spline); N=s.N, aux=aux)
 end
 
 
@@ -76,42 +80,44 @@ function subtract_continuum!(s::Spaxel, continuum::AbstractVector{<:Real})
 end
 
 
-# """
-#     interpolate_over_lines!(s, mask_lines, scale[, only_templates])
+"""
+    interpolate_over_lines!(s, mask_lines, scale[, only_templates])
 
-# Fills in the data where the emission lines are with linear interpolation of the continuum.
-# """
-# function interpolate_over_lines!(s::Spaxel, scale::Integer; only_templates::Bool=false)
+Fills in the data where the emission lines are with linear interpolation of the continuum.
+"""
+function interpolate_over_lines!(s::Spaxel, scale::Integer)
 
-#     # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
-#     λknots = s.λ[.~s.mask_lines][(1+scale):scale:(length(s.λ[.~s.mask_lines])-scale)]
+    # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
+    λknots = s.λ[.~s.mask_lines][(1+scale):scale:(length(s.λ[.~s.mask_lines])-scale)]
 
-#     #### => IMPORTANT <= ####
-#     # Lines shouldnt be interpolated over in optical wavelength ranges where you might expect 
-#     # stellar absorption to be present on top of nebular emission.  Instead these regions should 
-#     # just be masked out.
+    #### => IMPORTANT <= ####
+    # Lines shouldnt be interpolated over in optical wavelength ranges where you might expect 
+    # stellar absorption to be present on top of nebular emission.  Instead these regions should 
+    # just be masked out.
 
-#     # However, in the infrared, there is no stellar absorption.  But there are PAH emission features,
-#     # which sometimes may be fit with amplitudes too large if they fall on top of a masked region due
-#     # to a line. So here, it's better to interpolate over the lines.
-#     mask_ir = s.mask_lines .& s.λ .≥ 3.0u"μm"
-#     # Replace the masked lines with a linear interpolation
-#     if !only_templates
-#         s.I[mask_ir] .= Spline1D(ustrip.(s.λ[.~mask_ir]), s.I[.~mask_ir], ustrip.(λknots), 
-#             k=1, bc="extrapolate").(ustrip.(s.λ[mask_ir])) .* unit(s.I[1])
-#         s.σ[mask_ir] .= Spline1D(ustrip.(s.λ[.~mask_ir]), s.σ[.~mask_ir], ustrip.(λknots), 
-#             k=1, bc="extrapolate").(ustrip.(s.λ[mask_ir])) .* unit(s.σ[1])
-#     end
-#     # Do it for the templates
-#     if haskey(s.aux, "templates")
-#         for s in axes(s.aux["templates"], 2)
-#             m = .~isfinite.(s.aux["templates"][:, s])
-#             s.aux["templates"][mask_ir.|m, s] .= Spline1D(ustrip.(s.λ[.~mask_ir .& .~m]), 
-#                 ustrip.(s.aux["templates"][.~mask_ir .& .~m, s]), ustrip.(λknots), k=1, 
-#                 bc="extrapolate")(ustrip.(s.λ[mask_ir .| m]))
-#         end
-#     end
-# end
+    # However, in the infrared, there is no stellar absorption.  But there are PAH emission features,
+    # which sometimes may be fit with amplitudes too large if they fall on top of a masked region due
+    # to a line. So here, it's better to interpolate over the lines.
+    mask_ir = s.mask_lines .& (s.λ .≥ 3.0u"μm")
+
+    # Replace the masked lines with a linear interpolation
+    s.I[mask_ir] .= Spline1D(ustrip.(s.λ[.~mask_ir]), s.I[.~mask_ir], ustrip.(λknots), 
+        k=1, bc="extrapolate").(ustrip.(s.λ[mask_ir])) .* unit(s.I[1])
+    s.σ[mask_ir] .= Spline1D(ustrip.(s.λ[.~mask_ir]), s.σ[.~mask_ir], ustrip.(λknots), 
+        k=1, bc="extrapolate").(ustrip.(s.λ[mask_ir])) .* unit(s.σ[1])
+
+    # Do it for the templates => THIS IS IMPORTANT 
+    # because the templates have the lines built-in, and if interpolate over the lines in the data then we
+    # need to also do it in the templates
+    if haskey(s.aux, "templates")
+        for si in axes(s.aux["templates"], 2)
+            m = .~isfinite.(s.aux["templates"][:, si])
+            s.aux["templates"][mask_ir.|m, si] .= Spline1D(ustrip.(s.λ[.~mask_ir .& .~m]), 
+                ustrip.(s.aux["templates"][.~mask_ir .& .~m, si]), ustrip.(λknots), k=1, 
+                bc="extrapolate")(ustrip.(s.λ[mask_ir .| m]))
+        end
+    end
+end
 
 
 function fill_bad_pixels!(s::Spaxel)
@@ -135,9 +141,9 @@ of wavelengths specifying entire regions to mask out.  The vectors are modified 
 function get_vector_mask(s::Spaxel; lines::Bool=true, user_mask::Union{Nothing,Vector{<:Tuple}}=nothing) 
     # bad pixels
     mask_all = copy(s.mask_bad)
-    # optical emission lines 
+    # OPTICAL-NIR emission lines ONLY
     if lines
-        mask_all .|= s.mask_lines
+        mask_all .|= (s.mask_lines .& (s.λ .< 3.0u"μm"))
     end
     # user-specified regions
     if !isnothing(user_mask)
@@ -189,17 +195,20 @@ function make_normalized_spaxel(cube_data::NamedTuple, coords::CartesianIndex, c
     σ .= sqrt.(σ.^2 .+ (fopt.sys_err .* I).^2)
 
     # Use a fixed normalization for the line fits so that the bootstrapped amplitudes are consistent with each other
-    norm = Float64(abs(nanmaximum(I)))
+    norm = Float64(abs(nanmaximum(ustrip.(I)))) * unit(I[1])
     norm = norm ≠ 0. ? norm : 1.
 
     vres = isapprox((λ[2]/λ[1]), (λ[end]/λ[end-1]), rtol=1e-6) ? log(λ[2]/λ[1]) * C_KMS : nothing
 
     # Interpolate over the bad pixels in the templates 
-    λknots = λ[(1+scale):scale:(length(λ)-scale)]
-    for s in axes(templates, 2)
-        m = .~isfinite.(templates[:, s])
-        templates[m, s] .= Spline1D(ustrip.(λ[.~m]), ustrip.(templates[.~m, s]), ustrip.(λknots), k=1, 
-            bc="extrapolate")(ustrip.(s.λ[m]))
+    scale = 7
+    for si in axes(templates, 2)
+        m = .~isfinite.(templates[:, si])
+        if sum(m) > 0
+            λknots = λ[.~m][(1+scale):scale:(length(λ[.~m])-scale)]
+            templates[m, si] .= Spline1D(ustrip.(λ[.~m]), ustrip.(templates[.~m, si]), ustrip.(λknots), k=1, 
+                bc="extrapolate")(ustrip.(λ[m]))
+        end
     end
 
     # Create the spaxel object and normalize it

@@ -242,36 +242,6 @@ function splinefit_psf_model!(obs::Observation, spline_width::Integer)
     end
 end
 
-
-"""
-    polyfit_psf_model!(cube, poly_order)
-
-Fit a PSF model with a polynomial of order `poly_order`.
-"""
-function polyfit_psf_model!(cube::DataCube, poly_order::Integer)
-    @assert !isnothing(cube.psf_model) "Please input a DataCube that already has a PSF model!"
-
-    @info "Fitting PSF model with an order $poly_order polynomial"
-    for c ∈ CartesianIndices(size(cube.psf_model)[1:2])
-        cube.psf_model[c, :] .= Polynomials.fit(ustrip(cube.λ), cube.psf_model[c, :], poly_order).(ustrip(cube.λ))
-    end
-
-    # Renormalize
-    cube.psf_model[cube.psf_model .< 0] .= 0.
-    for k ∈ axes(cube.psf_model, 3)
-        cube.psf_model[:, :, k] ./= nansum(cube.psf_model[:, :, k])
-    end
-end
-
-
-# Method that applies `polyfit_psf_model!` to each channel in an Observation object
-function polyfit_psf_model!(obs::Observation, poly_order::Integer)
-    for ch in keys(obs.channels)
-        polyfit_psf_model!(obs.channels[ch], poly_order)
-    end
-end
-
-
 # function shift_psf_model!(cube::DataCube, z::Real)
 
 #     for i in 1:(length(channel_boundaries)+1)

@@ -27,14 +27,13 @@ const b_Wein = 2897.771955*u"μm*K"
 # A few other random constants
 const o_peak = 10.0178u"μm"
 
-const dust_profiles = Dict{String, Tuple{Vector{<:QWave},Vector{<:AbstractFloat}}}()
-const dust_interpolators = Dict{String, Spline1D}()
 
 # Load the appropriate templates that we need into the cache
 function _load_dust_templates(silicate_absorption::String, fit_ch_abs::Bool, use_pah_templates::Bool, 
     λunit::Unitful.Units, Iunit::Unitful.Units)
 
-    global dust_interpolators
+    dust_profiles = Dict{String, Tuple{Vector{<:QWave},Vector{<:AbstractFloat}}}()
+    dust_interpolators = Dict{String, Spline1D}()
 
     if silicate_absorption == "d+"
         # Save the Donnan et al. 2022 profile as a constant
@@ -890,31 +889,37 @@ end
 
 
 function silicate_absorption(λ::Vector{<:QWave}, params::Vector{<:Real}, pstart::Integer, 
-    κ_abs::Union{Nothing,Spline1D}, absorption_type::String, screen::Bool)
+    cube_fitter::CubeFitter)
+
+    fopt = fit_options(cube_fitter)
+    screen = fopt.extinction_screen
     τ_97 = params[pstart]
     dp = 2
     ext_oli = ext_pyr = ext_for = nothing
     # First retrieve the normalized absorption profile
-    if absorption_type == "kvt"
+    if fopt.silicate_absorption == "kvt"
         β = params[pstart+1]
-        ext = extinction_factor.(τ_kvt(λ, β), τ_97, screen=screen)
-    elseif absorption_type == "ct"
-        ext = extinction_factor.(τ_ct(λ), τ_97, screen=screen)
-    elseif absorption_type == "ohm"
-        ext = extinction_factor.(τ_ohm(λ), τ_97, screen=screen)
-    elseif absorption_type == "d+"
+        ext = extinction_factor.(τ_kvt(λ, β, cube_fitter), τ_97, screen=screen)
+    elseif fopt.silicate_absorption == "ct"
+        ext = extinction_factor.(τ_ct(λ, cube_fitter), τ_97, screen=screen)
+    elseif fopt.silicate_absorption == "ohm"
+        ext = extinction_factor.(τ_ohm(λ, cube_fitter), τ_97, screen=screen)
+    elseif fopt.silicate_absorption == "d+"
         β = params[pstart+1]
-        ext = extinction_factor.(τ_dp(λ, β), τ_97, screen=screen)
-    elseif absorption_type == "decompose"
-        τ_norm, τ_oli, τ_pyr, τ_for = τ_decompose(λ, params[pstart:pstart+3], κ_abs)
+        ext = extinction_factor.(τ_dp(λ, β, cube_fitter), τ_97, screen=screen)
+    elseif fopt.silicate_absorption == "decompose"
+        τ_norm, τ_oli, τ_pyr, τ_for = τ_decompose(λ, params[pstart:pstart+3], fopt.κ_abs)
         τ_97 = 1.0
         ext_oli = extinction_factor.(τ_oli, τ_97, screen=screen)
         ext_pyr = extinction_factor.(τ_pyr, τ_97, screen=screen)
         ext_for = extinction_factor.(τ_for, τ_97, screen=screen)
         ext = extinction_factor.(τ_norm, τ_97, screen=screen)
         dp = 4
+    elseif fopt.silicate_absorption == "custom"
+        ext_curve = fopt.custom_ext_template(λ)
+        ext = extinction_factor.(ext_curve, τ_97, screen=screen)
     else
-        error("Unrecognized absorption type: $(absorption_type)")
+        error("Unrecognized absorption type: $(fopt.silicate_absorption)")
     end
     # Then apply it at the appropriate level of 9.7um optical depth
     ext, dp, ext_oli, ext_pyr, ext_for
@@ -929,24 +934,24 @@ Calculate the mixed silicate extinction profile based on Kemper, Vriend, & Tiele
 Function adapted from PAHFIT: Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/jdsmith/research/pahfit.php
 (with modifications)
 """
-function τ_kvt(λ::Vector{<:QWave}, β::Real)
+function τ_kvt(λ::Vector{<:QWave}, β::Real, cube_fitter::CubeFitter)
 
     # Get limits of the values that we have datapoints for via the kvt_prof constant
-    λ_mx, λ_mn = dust_profiles["kvt"][1][1], dust_profiles["kvt"][1][end]
+    λ_mx, λ_mn = cube_fitter.dust_profiles["kvt"][1][1], cube_fitter.dust_profiles["kvt"][1][end]
 
     # Interpolate based on the region of data 
     ext = zeros(typeof(β), length(λ))
     r1 = λ .≤ λ_mn
     if sum(r1) > 0
-        ext[r1] .= @. dust_profiles["kvt"][2][1] * exp(2.03 * ustrip(uconvert(u"μm", λ[r1] - λ_mn)))
+        ext[r1] .= @. cube_fitter.dust_profiles["kvt"][2][1] * exp(2.03 * ustrip(uconvert(u"μm", λ[r1] - λ_mn)))
     end
     r2 = λ_mn .< λ .< λ_mx
     if sum(r2) > 0
-        ext[r2] .= dust_interpolators["kvt"](ustrip.(λ[r2]))
+        ext[r2] .= cube_fitter.dust_interpolators["kvt"](ustrip.(λ[r2]))
     end
     r3 = λ_mx .< λ .< λ_mx+2u"μm"
     if sum(r3) > 0
-        ext[r3] .= dust_interpolators["kvt_end"](ustrip.(λ[r3]))
+        ext[r3] .= cube_fitter.dust_interpolators["kvt_end"](ustrip.(λ[r3]))
     end
     ext[ext .< 0] .= 0.
 
@@ -962,14 +967,14 @@ end
 
 Calculate the extinction profile based on Chiar & Tielens (2005)
 """
-function τ_ct(λ::Vector{<:QWave})
+function τ_ct(λ::Vector{<:QWave}, cube_fitter::CubeFitter)
 
-    mx = argmax(dust_profiles["ct"][1])
-    λ_mx = dust_profiles["ct"][1][mx]
+    mx = argmax(cube_fitter.dust_profiles["ct"][1])
+    λ_mx = cube_fitter.dust_profiles["ct"][1][mx]
 
-    ext = dust_interpolators["ct"](ustrip.(λ))
+    ext = cube_fitter.dust_interpolators["ct"](ustrip.(λ))
     w_mx = findall(λ .> λ_mx)
-    ext[w_mx] .= dust_profiles["ct"][2][mx] .* (λ_mx./λ[w_mx]).^1.7
+    ext[w_mx] .= cube_fitter.dust_profiles["ct"][2][mx] .* (λ_mx./λ[w_mx]).^1.7
 
     ext
 end
@@ -980,8 +985,8 @@ end
 
 Calculate the extinction profile based on Ossenkopf, Henning, & Mathis (1992)
 """
-function τ_ohm(λ::Vector{<:QWave})
-    dust_interpolators["ohm"](ustrip.(λ))
+function τ_ohm(λ::Vector{<:QWave}, cube_fitter::CubeFitter)
+    cube_fitter.dust_interpolators["ohm"](ustrip.(λ))
 end
 
 
@@ -990,9 +995,9 @@ end
 
 Calculate the mixed silicate extinction profile based on Donnan et al. (2022)
 """
-function τ_dp(λ::Vector{<:QWave}, β::Real)
+function τ_dp(λ::Vector{<:QWave}, β::Real, cube_fitter::CubeFitter)
     # Add 1.7 power law, as in PAHFIT
-    (1 .- β) .* dust_interpolators["dp"](ustrip.(λ)) .+ β .* (9.8u"μm"./λ).^1.7
+    (1 .- β) .* cube_fitter.dust_interpolators["dp"](ustrip.(λ)) .+ β .* (9.8u"μm"./λ).^1.7
 end
 
 
@@ -1019,9 +1024,9 @@ end
 
 Calculate the ice extinction profiles
 """
-function τ_ice(λ::Vector{<:QWave})
+function τ_ice(λ::Vector{<:QWave}, cube_fitter::CubeFitter)
     # Simple cubic spline interpolation
-    dust_interpolators["ice"](ustrip.(λ))
+    cube_fitter.dust_interpolators["ice"](ustrip.(λ))
 end
 
 
@@ -1030,9 +1035,9 @@ end
 
 Calculate the CH extinction profiles
 """
-function τ_ch(λ::Vector{<:QWave})
+function τ_ch(λ::Vector{<:QWave}, cube_fitter::CubeFitter)
     # Simple cubic spline interpolation
-    dust_interpolators["ch"](ustrip.(λ))
+    cube_fitter.dust_interpolators["ch"](ustrip.(λ))
 end
 
 

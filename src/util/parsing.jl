@@ -45,7 +45,7 @@ Checks that the parsed dust file has all of the keys that it should have.
 """
 function validate_ir_file(dust::Dict)
 
-    keylist1 = ["stellar_continuum_temp", "dust_features", "extinction", "hot_dust"]
+    keylist1 = ["dust_features", "extinction", "hot_dust"]
     keylist2 = ["wave", "fwhm"]
     keylist3 = ["tau_9_7", "tau_ice", "tau_ch", "beta"]
     keylist4 = ["temp", "frac", "tau_warm", "tau_cold", "peak"]
@@ -54,7 +54,6 @@ function validate_ir_file(dust::Dict)
         @assert haskey(dust, key) "Missing option $key in dust file!"
     end
     for key ∈ keylist5
-        @assert haskey(dust["stellar_continuum_temp"], key) "Missing option $key in stellar continuum temp options!"
         for df_key ∈ keys(dust["dust_features"])
             for df_key2 ∈ keylist2
                 @assert haskey(dust["dust_features"][df_key], df_key2) "Missing option $df_key2 in dust feature $df_key options!"
@@ -153,25 +152,7 @@ function validate_lines_file(lines)
     end
 
     @assert haskey(lines["profiles"], "default") "default not found in line profile options!"
-    profiles = Dict(ln => Symbol(lines["profiles"]["default"]) for ln ∈ keys(lines["lines"]))
-    for line ∈ keys(lines["lines"])
-        if haskey(lines["profiles"], line)
-            profiles[line] = Symbol(lines["profiles"][line])
-        end
-    end
-    # Keep in mind that a line can have multiple acomp profiles
-    acomp_profiles = Dict{String, Vector{Union{Symbol,Nothing}}}()
-    for line ∈ keys(lines["lines"])
-        acomp_profiles[line] = Vector{Union{Symbol,Nothing}}(nothing, lines["n_acomps"])
-        if haskey(lines, "acomps")
-            if haskey(lines["acomps"], line)
-                # Pad to match the length of n_acomps
-                acomp_profiles[line] = vcat(Symbol.(lines["acomps"][line]), [nothing for _ in 1:(lines["n_acomps"]-length(lines["acomps"][line]))])
-            end
-        end
-    end
-    
-    profiles, acomp_profiles
+
 end
 
 
@@ -211,7 +192,7 @@ end
 function parse_lines(region::SpectralRegion, λunit::Unitful.Units)
 
     lines = TOML.parsefile(joinpath(@__DIR__, "..", "options", "lines.toml"))
-    profiles, acomp_profiles = validate_lines_file(lines)
+    validate_lines_file(lines)
 
     cent_vals = Vector{typeof(1.0λunit)}()    # provide all the line wavelengths in consistent units
     for line in keys(lines["lines"])
@@ -221,14 +202,12 @@ function parse_lines(region::SpectralRegion, λunit::Unitful.Units)
         if !is_valid(cent_val, 0.0*λunit, region)
             # remove this line from the dictionary
             delete!(lines["lines"], line)
-            delete!(profiles, line)
-            delete!(acomp_profiles, line)
             continue
         end
         push!(cent_vals, cent_val)
     end
 
-    lines, profiles, acomp_profiles, cent_vals
+    lines, cent_vals
 end
 
 
@@ -696,6 +675,7 @@ function read_fit_results_csv(name::String, fname::String; output_path::Union{St
     folder = isnothing(output_path) ? "output_$(name)" : output_path
     # Read in the CSV as a DataFrame
     df = CSV.read(joinpath(folder, "spaxel_binaries", "$fname.csv"), DataFrame, delim='\t', stripwhitespace=true)
+    rename!(df, strip.(names(df)))
 
     # read back in the raw values
     p_out = df[!, "best"]
