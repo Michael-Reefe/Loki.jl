@@ -140,7 +140,7 @@ end
 
 # Helper function for plotting and annotating the emission lines
 function pyplot_annotate_emission_lines!(λ::Vector{<:QWave}, comps::Dict, lines::FitFeatures,
-    extinction::Vector{<:Real}, normalization::Vector{<:Quantity}, line_f::Vector{<:Real}, 
+    extinction::Vector{<:Real}, normalization::Vector{<:Quantity}, cube_fitter::CubeFitter,
     ax1, ax2, range::Union{Nothing,Tuple})
 
     # full line profile
@@ -170,17 +170,42 @@ function pyplot_annotate_emission_lines!(λ::Vector{<:QWave}, comps::Dict, lines
 
     # Annotate emission lines 
     line_λ = ustrip.(λ)
-    ak = py_lineidplot.initial_annotate_kwargs()
-    ak["verticalalignment"] = "bottom"
-    ak["horizontalalignment"] = "center"
-    pk = py_lineidplot.initial_plot_kwargs()
-    pk["lw"] = 0.5
-    pk["alpha"] = 0.5
-    # Set y values manually because sometimes it f*cks up if left to the defaults...
-    box_loc = [ax1.get_ybound()[2]*1.06 for _ in sum(lines.config.annotate)]
-    fig, ax1 = py_lineidplot.plot_line_ids(line_λ, ones(length(line_λ)),
-        line_wave[lines.config.annotate], lines.labels[lines.config.annotate], ax=ax1, extend=false, label1_size=12, 
-        plot_kwargs=pk, annotate_kwargs=ak, box_loc=box_loc, add_label_to_artists=false)
+    arrow_tip = ax1.get_ybound()[2]
+    box_loc = arrow_tip*1.06
+    # First time this is being plot - set up the line annotation positions with the python lineid_plot package
+    if all(iszero, cube_fitter.output.plot_line_annotation_positions) || !isnothing(range)
+        ak = py_lineidplot.initial_annotate_kwargs()
+        ak["verticalalignment"] = "bottom"
+        ak["horizontalalignment"] = "center"
+        pk = py_lineidplot.initial_plot_kwargs()
+        pk["lw"] = 0.5
+        pk["alpha"] = 0.5
+        # Set y values manually because sometimes it f*cks up if left to the defaults...
+        fig, ax1 = py_lineidplot.plot_line_ids(line_λ, ones(length(line_λ)),
+            line_wave[lines.config.annotate], lines.labels[lines.config.annotate], ax=ax1, extend=false, label1_size=12, 
+            plot_kwargs=pk, annotate_kwargs=ak, box_loc=box_loc, add_label_to_artists=true)
+        # Save the line annotation positions so they can be re-used later
+        if isnothing(range)
+            for i in 1:sum(lines.config.annotate)
+                box = ax1.texts[i]
+                cube_fitter.output.plot_line_annotation_positions[i] = box.xyann[1]
+            end
+            # Save these to a file 
+            open(joinpath("output_$(cube_fitter.name)", "line_annotation_positions.csv"), "w") do f
+                writedlm(f, cube_fitter.output.plot_line_annotation_positions, ',')
+            end
+        end
+    else
+        # read in the already-set annotation positions and re-use them
+        for i in 1:sum(lines.config.annotate)
+            # re-add the annotations at the same positions 
+            ax1.annotate(lines.labels[lines.config.annotate][i], 
+                         xy=(line_wave[lines.config.annotate][i], arrow_tip),
+                         xytext=(cube_fitter.output.plot_line_annotation_positions[i], box_loc),
+                         fontsize=12, va="bottom", ha="center", xycoords="data", textcoords="data",
+                         rotation=90., arrowprops=Dict("arrowstyle" => "-", "relpos" => (0.5, 0.0)))
+        end
+    end
 end
 
 
@@ -242,16 +267,18 @@ function plot_spaxel_fit_pyplot(cube_fitter::CubeFitter, spaxel::Spaxel, I_model
     for pair in cube_fitter.spectral_region.mask
         mask_resid .|= pair[1] .< spaxel.λ .< pair[2]
     end
-    max_resid = nanmaximum(((I.-I_model) ./ norm .* factor)[.~mask_resid][2:end-1])
+    max_resid = 5nanstd(((I.-I_model) ./ norm .* factor)[.~mask_resid][2:end-1])
     min_resid = -max_resid
     @assert unit(max_inten) == unit(min_inten) == unit(max_resid) == unit(min_resid) == NoUnits
 
-    if (max_inten < 1) && (norm ≠ 1.0)
+    if (max_inten < 1) && (norm ≠ 1.0Iunit)
         norm /= 10
         max_inten *= 10
+        max_resid *= 10
+        min_resid *= 10
         power -= 1
     end
-    if norm ≠ 1.0*Iunit
+    if norm ≠ 1.0Iunit
         prefix = L"$10^{%$power}$ "
     else
         prefix = ""
@@ -443,8 +470,7 @@ function plot_spaxel_fit_pyplot(cube_fitter::CubeFitter, spaxel::Spaxel, I_model
     end
 
     # annotate emission lines
-    pyplot_annotate_emission_lines!(λ, comps, model(cube_fitter).lines, ext_gas, factor ./ norm, copy(I ./ norm .* factor),
-        ax1, ax2, range)
+    pyplot_annotate_emission_lines!(λ, comps, model(cube_fitter).lines, ext_gas, factor ./ norm, cube_fitter, ax1, ax2, range)
 
     # Output file path creation
     out_folder = joinpath("output_$(cube_fitter.name)", isnothing(range) ? "spaxel_plots" : joinpath("zoomed_plots", split(label, "_")[end]))

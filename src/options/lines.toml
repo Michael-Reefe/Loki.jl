@@ -1073,9 +1073,9 @@ default = "Voigt"
 # of profile it should be. Can add an arbitrary number of additional components.
 [acomps]
 
-lo = ["Voigt"]
-med = ["Voigt"]
-hi = ["Voigt"]
+# lo = ["Voigt"]
+# med = ["Voigt"]
+# hi = ["Voigt"]
 
 ### Optical lines ###
 

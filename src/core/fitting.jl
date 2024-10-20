@@ -38,6 +38,7 @@ function repeat_fit_jitter(λ_spax::Vector{<:QWave}, I_spax::Vector{<:Real}, σ_
         # redo the fit with the slightly jittered starting parameters
         @debug "Jittered starting parameters: $(params .+ jitter)"
         res = cmpfit(λ_spax, I_spax, σ_spax, fit_func, params .+ jitter, parinfo=parinfo, config=config)
+        GC.gc(true)
         n += 1
         if n > 10
             @warn "LM solver has exceeded 10 tries on the continuum fit of spaxel $spaxel. Aborting."
@@ -118,11 +119,8 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter; init::Boo
     end
 
     # Do initial fit
-    t1 = time()
-    res = cmpfit(s.λ[spaxel_mask], s.I[spaxel_mask], s.σ[spaxel_mask], fit_cont, pfree_tied, parinfo=parinfo, config=config)
-    t2 = time()
-    # infiltrate if the fit took longer than 20 minutes
-    @infiltrate (t2-t1)/60 > 20.0
+    @time res = cmpfit(s.λ[spaxel_mask], s.I[spaxel_mask], s.σ[spaxel_mask], fit_cont, pfree_tied, parinfo=parinfo, config=config)
+    GC.gc(true)
 
     # This function checks how many iterations the first fit took, and if its less than 5 it repeats it with slightly different
     # starting parameters to try to get it to converge better. This is because rarely the first fit can get stuck in the starting
@@ -248,6 +246,7 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter, split_fla
     end
 
     res_1 = cmpfit(s.λ[spaxel_mask], s.I[spaxel_mask], s.σ[spaxel_mask], fit_step1, p1free_tied, parinfo=parinfo_1, config=config)
+    GC.gc(true)
     res_1 = repeat_fit_jitter(s.λ[spaxel_mask], s.I[spaxel_mask], s.σ[spaxel_mask], fit_step1, p1free_tied, lb_1_free_tied, ub_1_free_tied, parinfo_1, config,
         res_1, "continuum (step 1)", s.coords; check_cont_snr=true)
 
@@ -690,6 +689,7 @@ function line_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter, continuum::Vector{<
     ############################################# FIT WITH LEVMAR ###################################################
 
     res = cmpfit(s.λ, s.I, s.σ, fit_step3, p₁, parinfo=parinfo, config=config)
+    GC.gc(true)
     if !_fit_global
         res = repeat_fit_jitter(s.λ, s.I, s.σ, fit_step3, p₁, lbfree_tied, ubfree_tied,
             parinfo, config, res, "line", s.coords)
@@ -846,6 +846,7 @@ function all_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter; init::Bool=false, us
     parinfo, config = get_continuum_parinfo(n_free_cont+n_free_lines, lower_bounds, upper_bounds, dstep)
 
     res = cmpfit(s.λ[spaxel_mask], s.I[spaxel_mask], s.σ[spaxel_mask], fit_joint, p₁, parinfo=parinfo, config=config)
+    GC.gc(true)
     if !_fit_global
         res = repeat_fit_jitter(s.λ[spaxel_mask], s.I[spaxel_mask], s.σ[spaxel_mask], fit_joint, p₁, lower_bounds, upper_bounds, 
             parinfo, config, res, "continuum+lines", s.coords; check_cont_snr=true)

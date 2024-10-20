@@ -40,6 +40,7 @@ struct OutputOptions <: Options
     make_movies::Bool
     map_snr_thresh::Real
     sort_line_components::Union{Symbol,Nothing}
+    plot_line_annotation_positions::Vector{<:Real}
 end
 
 """
@@ -357,6 +358,12 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
         lsf_interp = Spline1D(ustrip.(cube.λ), ustrip.(cube.lsf), k=1)  # rest frame wavelengths
         lsf = λi -> lsf_interp(ustrip(uconvert(unit(cube.λ[1]), λi)))*unit(cube.lsf[1])
 
+        @debug "Preparing line annotation positions for line ID plotting..."
+        line_annotation_positions = zeros(sum(model_parameters.lines.config.annotate))
+        if isfile(joinpath("output_$name", "line_annotation_positions.csv"))
+            line_annotation_positions = readdlm(joinpath("output_$name", "line_annotation_positions.csv"), ',', Float64, '\n')[:,1]
+        end
+
         # Create options structs
         output_options = OutputOptions(
             out[:plot_spaxels],
@@ -371,7 +378,8 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
             out[:track_convergence],
             out[:make_movies],
             out[:map_snr_thresh],
-            out[:sort_line_components]
+            out[:sort_line_components],
+            line_annotation_positions
         )
         fitting_options = FittingOptions(
             out[:sys_err],
