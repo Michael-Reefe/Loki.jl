@@ -448,11 +448,11 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
     dL = luminosity_dist(u"cm", cosmo, z)
 
     # Generate templates over a range of ages and metallicities
-    ages = exp.(range(log(0.001), log(13.7), 20)) .* u"Gyr"        # logarithmically spaced from 1 Myr to 15 Gyr
+    ages = exp.(range(log(0.001), log(13.7), 40)) .* u"Gyr"        # logarithmically spaced from 1 Myr to 15 Gyr
     logzs = range(-2.3, 0.4, 10)                                   # linearly spaced from log(Z/Zsun) = [M/H] = -2.3 to 0.4
     output_units = intensity_units*u"sr"/u"Msun"
-    ssp_templates = zeros(typeof(1.0*output_units), length(ages), length(logzs), length(ssp_lnλ))
-    n_temp = size(ssp_templates, 1) * size(ssp_templates, 2)
+    ssp_templates = zeros(typeof(1.0*output_units), length(ssp_lnλ), length(ages), length(logzs))
+    n_temp = size(ssp_templates, 2) * size(ssp_templates, 3)
 
     @info "Generating $n_temp simple stellar population templates with FSPS with " * 
         "ages ∈ ($(minimum(ages)), $(maximum(ages))), log(Z/Zsun) ∈ ($(minimum(logzs)), $(maximum(logzs)))"
@@ -475,7 +475,7 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
             # Resample again, this time onto the logarithmic wavelength grid
             ssp_flux = Spline1D(ustrip.(ssp_λlin), ustrip.(ssp_flux), k=1, bc="nearest")(ustrip.(ssp_lnλ)) .* unit(ssp_flux[1])
             # Add to the templates array
-            ssp_templates[age_ind, z_ind, :] .= ssp_flux
+            ssp_templates[:, age_ind, z_ind] .= ssp_flux
             next!(prog)
         end
     end

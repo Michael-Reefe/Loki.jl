@@ -218,10 +218,11 @@ end
 
 # A little container for stellar populations 
 mutable struct StellarPopulations{Q1<:QWave,Q2<:Unitful.Units,
-    Q3<:typeof(1.0u"km/s"),T<:Union{<:Interpolations.Extrapolation,Matrix{<:Quantity}}} 
+    Q3<:typeof(1.0u"km/s"),S<:Real,T<:Quantity}
     λ::Vector{Q1}
-    templates::T
-    units::Q2
+    ages::Vector{typeof(1.0u"Gyr")}
+    logzs::Vector{S}
+    templates::Matrix{T}
     vsyst::Q3
 end
 

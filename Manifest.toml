@@ -2,7 +2,7 @@
 
 julia_version = "1.10.5"
 manifest_format = "2.0"
-project_hash = "6520accf48bfb79310c17873d8c98c9a73c30bea"
+project_hash = "f46818edf96edc7037004a83ac291422dfcb59ae"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -1059,6 +1059,12 @@ version = "0.4.20"
 [[deps.NetworkOptions]]
 uuid = "ca575930-c2e3-43a9-ace4-1e988b2c1908"
 version = "1.2.0"
+
+[[deps.NonNegLeastSquares]]
+deps = ["LinearAlgebra", "SparseArrays"]
+git-tree-sha1 = "cdc11138e74a0dd0b82e7d64eb1350fdf049d3b1"
+uuid = "b7351bd1-99d9-5c5d-8786-f205a815c4d7"
+version = "0.4.1"
 
 [[deps.NumericalIntegration]]
 deps = ["Interpolations", "LinearAlgebra", "Logging"]

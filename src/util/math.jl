@@ -631,6 +631,44 @@ function convolve_losvd(_templates::AbstractArray{T}, vsyst::S, v::S, σ::S, vre
 end
 
 
+function stellar_populations_nnls(s::Spaxel, contin::Vector{<:Real}, ext_stars::Vector{<:Real}, 
+    stel_vel::QVelocity, stel_sig::QVelocity, cube_fitter::CubeFitter)
+
+    # prepare buffer arrays for NNLS
+    nλ = length(s.λ)
+    reg_dims = (length(cube_fitter.ssps.ages), length(cube_fitter.ssps.logzs))
+    A = zeros(nλ+prod(reg_dims), cube_fitter.n_ssps)
+    b = zeros(nλ+prod(reg_dims))
+
+    # subtract everything else from the data to create a residual stellar spectrum 
+    b[1:nλ] .= s.I .- contin
+
+    # calculate the convolved stellar templates
+    A[1:nλ, :] .= convolve_losvd(ustrip.(cube_fitter.ssps.templates), cube_fitter.ssps.vsyst, 
+        stel_vel, stel_sig, s.vres, length(s.λ))
+
+    # divide out the solid angle and apply the extinction
+    A[1:nλ, :] .*= ext_stars ./ ustrip.(s.area_sr)
+    # normalize the stellar templates
+    stellar_N = nanmedian(A[1:nλ, :])
+    A[1:nλ, :] ./= stellar_N
+    stellar_norm = stellar_N*unit(cube_fitter.ssps.templates[1])/u"sr"
+    # weight by the errors
+    A[1:nλ, :] ./= s.σ
+    b[1:nλ] ./= s.σ
+    # add the regularization constraints
+    # (we dont need to modify b here as it is already initialized with 0s)
+    add_reg_constraints!(A, nλ, cube_fitter)
+    # perform a non-negative least-squares fit
+    weights = nonneg_lsq(A, b, alg=:pivot, variant=:comb)
+
+    # get the final stellar continuum with a matrix multiplication
+    ssp_contin = ((A[1:nλ, :].*s.σ) * weights[1:nλ])[:,1]
+
+    return ssp_contin, stellar_norm, weights[1:nλ]
+end
+
+
 ############################################## LINE PROFILES #############################################
 
 

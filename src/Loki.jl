@@ -14,7 +14,7 @@ using Distributions
 using Random
 using StatsBase, Statistics, NaNStatistics
 using NumericalIntegration
-using Dierckx, Interpolations
+using Dierckx
 using LinearAlgebra
 using FFTW
 using SpecialFunctions
@@ -23,8 +23,7 @@ using ImageFiltering
 using ImageTransformations
 
 # Optimization packages
-using Optim
-using CMPFit
+using Optim, CMPFit, NonNegLeastSquares
 
 # Astronomy packages
 using AstroLib

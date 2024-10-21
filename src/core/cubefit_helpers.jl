@@ -14,27 +14,18 @@ function cubefitter_prepare_continuum(λ::Vector{<:QWave}, z::Real, out::Dict, �
 
     # Stellar populations
     ssps = nothing
-    n_ssps = div(sum(contains.(pnames, "continuum.stellar_populations.")), 3)  # Each SSP has 3 parameters (mass, age, metallicity)
-    if n_ssps > 0
+    n_ssps = 0
+    if out[:fit_stellar_continuum]
         # Create the simple stellar population templates with FSPS
         ssp_λ, ages, metals, ssp_templates = generate_stellar_populations(λ, Iunit, cube.lsf, z, out[:cosmology], name)
-        ssp_unit = unit(ssp_templates[1])
-        # Create a 3D linear interpolation over the ages/metallicities
-        ssp_templates = extrapolate(interpolate((ages, metals, ssp_λ), ssp_templates, Gridded(Linear())), Interpolations.Flat())
+        # flatten template array
+        ssp_temp_flat = reshape(ssp_templates, size(ssp_templates,1), :)
+        # 2nd axis ordering: (age1_z1, age2_z1, age3_z1, ..., age1_z2, age2_z2, age3_z2, ...)
+        n_ssps = size(ssp_temp_flat, 2)
         # Systemic velocity offset
         vsyst_ssp = log(ssp_λ[1]/λ[1]) * C_KMS
-        # If age and metallicity are both locked for all templates, we can pre-compute the stellar template and save time during fitting
-        if all([params["continuum.stellar_populations.$(i).age"].locked && params["continuum.stellar_populations.$(i).metallicity"].locked 
-            for i in 1:n_ssps])
-            ssp_matrix = zeros(typeof(1.0*ssp_unit), length(ssp_λ), n_ssps)
-            for i in 1:n_ssps
-                age = params["continuum.stellar_populations.$(i).age"].value
-                met = params["continuum.stellar_populations.$(i).metallicity"].value
-                ssp_matrix[:, i] .= [ssp_templates[j](age, met) for j in eachindex(ssp_λ)]
-            end
-            ssp_templates = ssp_matrix
-        end
-        ssps = StellarPopulations(ssp_λ, ssp_templates, ssp_unit, vsyst_ssp)
+        # Build a StellarPopulations object
+        ssps = StellarPopulations(ssp_λ, ages, metals, ssp_temp_flat, vsyst_ssp)
     end
 
     # Fe II templates
@@ -270,33 +261,6 @@ function get_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, �
         p₀[inds] .= 0.
     end
 
-    # SSP Masses (amplitudes at this point)
-    if fopt.fit_stellar_continuum
-        for i ∈ 1:cube_fitter.n_ssps
-            # get the mass, age, metallicity
-            prefix = "continuum.stellar_populations.$(i)."
-            m_ind, a_ind, z_ind = fast_indexin(prefix .* ["mass", "age", "metallicity"], pnames)
-            # evaluate the starting spectrum of the SSP
-            ssp_i = cube_fitter.ssps.templates(p₀[a_ind], p₀[z_ind], λ)
-            # find the wavlenegth and intensity where it peaks
-            indmax = argmax(ssp_i)
-            # estimate the initial reddening and apply it inversely
-            _, att_star_i, _ = extinction_profiles([λ[indmax]], ustrip.(p₀), 1, fopt.fit_uv_bump, fopt.extinction_curve)
-            m_i = nanmedian(I[max(indmax-5,1):min(indmax+5,length(I))]) / att_star_i[1]
-            # adjust based on if there are other continuum components expected to be overlapping 
-            if cube_fitter.n_power_law > 0
-                m_i *= 0.5
-            end
-            if cube_fitter.n_templates > 0
-                m_i *= 0.5
-            end
-            if fopt.fit_sil_emission
-                m_i *= 0.8
-            end
-            p₀[m_ind] = clamp(m_i, 0., Inf)
-        end
-    end
-
     # Fe II amplitudes
     if fopt.fit_opt_na_feii
         ind = fast_indexin("continuum.feii.na.amp", pnames)
@@ -347,7 +311,7 @@ function get_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, �
     if fopt.fit_sil_emission
         inds = fast_indexin("continuum.hot_dust." .* ["amp", "temp", "frac", "tau_warm", "tau_cold", "sil_peak"], pnames)
         T_hd, Cf, τw, τc, peak = p₀[inds[2:end]]
-        hd = silicate_emission(λ, T_hd, Cf, τw, τc, peak, N)
+        hd = silicate_emission(λ, T_hd, Cf, τw, τc, peak, N, cube_fitter)
         mhd = argmax(hd)
         A_hd = 0.2 * nanmedian(I[max(mhd-5,1):min(mhd+5,length(I))])
         p₀[inds[1]] = clamp(A_hd, 0., Inf)
@@ -490,14 +454,6 @@ function get_continuum_initial_values_from_previous(cube_fitter::CubeFitter, spa
 
     scale_star = scale * atten_star_0 / atten_star_new    # may no longer be close to 1
     scale_gas = scale * atten_gas_0 / atten_gas_new
-
-    # SSP amplitudes
-    if fopt.fit_stellar_continuum
-        for i in 1:cube_fitter.n_ssps
-            ind = fast_indexin("continuum.stellar_populations.$(i).mass", pnames)
-            p₀[ind] *= scale_star
-        end
-    end
 
     # Fe II amplitudes
     if fopt.fit_opt_na_feii
