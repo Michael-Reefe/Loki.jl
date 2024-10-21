@@ -528,10 +528,10 @@ A hot silicate dust emission profile, i.e. Gallimore et al. (2010), with an ampl
 temperature T, covering fraction Cf, and optical depths τ_warm and τ_cold.
 """
 function silicate_emission(λ::Vector{S}, T::QTemp, Cf::Real, τ_warm::Real, 
-    τ_cold::Real, λ_peak::S, Iunit::QSIntensity) where {S<:QWave}
+    τ_cold::Real, λ_peak::S, Iunit::QSIntensity, cube_fitter::CubeFitter) where {S<:QWave}
     # Δλ = uconvert(unit(λ_peak), o_peak - λ_peak)
     # λshift = λ .+ Δλ
-    ext_curve = τ_ohm(λ)
+    ext_curve = τ_ohm(λ, cube_fitter)
     bb = Blackbody.(λ, T, Iunit) .* (1 .- extinction_factor.(ext_curve, τ_warm, screen=true))
     bb .* (1 .- Cf) .+ bb .* Cf .* extinction_factor.(ext_curve, τ_cold, screen=true)
 end

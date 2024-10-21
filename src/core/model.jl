@@ -222,7 +222,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         unit_check(punits[pᵢ+1], u"K")
         unit_check(punits[pᵢ+5], λunit)
         sil_emission = silicate_emission(λ, params[pᵢ+1]*u"K", params[pᵢ+2], params[pᵢ+3], params[pᵢ+4], 
-            params[pᵢ+5]*λunit, N)
+            params[pᵢ+5]*λunit, N, cube_fitter)
         norms["continuum.hot_dust.amp"] = maximum(sil_emission)
         comps["hot_dust"] = params[pᵢ] .* sil_emission ./ norms["continuum.hot_dust.amp"]
         contin .+= comps["hot_dust"] .* abs_tot 
@@ -408,7 +408,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         unit_check(punits[pᵢ+1], u"K")
         unit_check(punits[pᵢ+5], λunit)
         sil_emission = silicate_emission(λ, params[pᵢ+1]*u"K", params[pᵢ+2], params[pᵢ+3], params[pᵢ+4], 
-            params[pᵢ+5]*λunit, N)
+            params[pᵢ+5]*λunit, N, cube_fitter)
         contin .+= params[pᵢ] .* sil_emission./maximum(sil_emission) .* abs_tot
         pᵢ += 6
     end

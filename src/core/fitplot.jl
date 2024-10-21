@@ -621,7 +621,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, bunit::Abstra
     if occursin("chi2", name_i)
         vmin = 0
         # Hard upper limit on the reduced chi^2 map to show the structure
-        vmax = min(nanmaximum(filtered), 30)
+        # vmax = min(nanmaximum(filtered), 30)
     end
     # default cmap is magma for FWHMs and equivalent widths
     if (occursin("fwhm", name_i) || occursin("eqw", name_i) || occursin("vdisp", name_i) || occursin("w80", name_i)) && 

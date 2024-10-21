@@ -7,7 +7,11 @@ This will be the same shape as the input data.
 
 See [`cubemodel_empty`](@ref) for a default constructor method.
 """
-struct CubeModel{T<:Real,S<:QSIntensity}
+struct CubeModel{T<:Real,
+                 S<:Union{typeof(1.0*u"erg/s/cm^2/Hz/sr"),typeof(1.0f0*u"erg/s/cm^2/Hz/sr"),
+                          typeof(1.0*u"erg/s/cm^2/μm/sr"),typeof(1.0f0*u"erg/s/cm^2/μm/sr"),
+                          typeof(1.0*u"erg/s/cm^2/angstrom/sr"),typeof(1.0f0*u"erg/s/cm^2/angstrom/sr")}
+                }
     # full model
     model::Array{S, 3}
 
@@ -22,7 +26,7 @@ struct CubeModel{T<:Real,S<:QSIntensity}
     br_feii::Union{Array{S, 3}, Nothing}
     power_law::Array{S, 4}
     dust_continuum::Array{S, 4}
-    hot_dust::Array{S, 3}
+    hot_dust::Union{Array{S, 3}, Nothing}
     templates::Array{S, 4}
 
     # features

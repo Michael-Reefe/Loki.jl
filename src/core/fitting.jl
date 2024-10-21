@@ -119,7 +119,7 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter; init::Boo
     end
 
     # Do initial fit
-    @time res = cmpfit(s.λ[spaxel_mask], s.I[spaxel_mask], s.σ[spaxel_mask], fit_cont, pfree_tied, parinfo=parinfo, config=config)
+    res = cmpfit(s.λ[spaxel_mask], s.I[spaxel_mask], s.σ[spaxel_mask], fit_cont, pfree_tied, parinfo=parinfo, config=config)
     GC.gc(true)
 
     # This function checks how many iterations the first fit took, and if its less than 5 it repeats it with slightly different
@@ -1200,6 +1200,9 @@ function spaxel_loop_pmap!(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxe
         nothing
     end
 
+    # We no longer need the extra worker processes after this point
+    rmprocs(workers())
+
 end
 
 
@@ -1223,6 +1226,9 @@ function spaxel_loop_distributed!(cube_fitter::CubeFitter, cube_data::NamedTuple
             end
         end
     end
+
+    # We no longer need the extra worker processes after this point
+    rmprocs(workers())
 
 end
 
@@ -1364,10 +1370,10 @@ function fit_cube!(cube_fitter::CubeFitter)
 
     # Save a copy of the options file used to run the code, so the settings can be referenced/reused
     # (for example, if you need to recall which lines you tied, what your limits were, etc.)
-    cp(joinpath(@__DIR__, "..", "options", "options.toml"), joinpath("output_$(cube_fitter.name)", "general_options.archive.toml"), force=true)
-    cp(joinpath(@__DIR__, "..", "options", "dust.toml"), joinpath("output_$(cube_fitter.name)", "dust_options.archive.toml"), force=true)
-    cp(joinpath(@__DIR__, "..", "options", "lines.toml"), joinpath("output_$(cube_fitter.name)", "lines_options.archive.toml"), force=true)
-    cp(joinpath(@__DIR__, "..", "options", "optical.toml"), joinpath("output_$(cube_fitter.name)", "optical_options.archive.toml"), force=true)
+    cp(joinpath(@__DIR__, "..", "options", "options.toml"), joinpath("output_$(cube_fitter.name)", "options.archive.toml"), force=true)
+    cp(joinpath(@__DIR__, "..", "options", "optical.toml"), joinpath("output_$(cube_fitter.name)", "optical.archive.toml"), force=true)
+    cp(joinpath(@__DIR__, "..", "options", "infrared.toml"), joinpath("output_$(cube_fitter.name)", "infrared.archive.toml"), force=true)
+    cp(joinpath(@__DIR__, "..", "options", "lines.toml"), joinpath("output_$(cube_fitter.name)", "lines.archive.toml"), force=true)
 
     if oopt.make_movies
         @info "===> Writing MP4 movies... (this may take a while) <==="

@@ -39,26 +39,22 @@ end
 
 
 function get_val(parammap::ParamMaps, pname::String)
-    param = get_flattened_parameters(parammap.parameters)
-    ind = findfirst(param.names .== pname)
+    ind = findfirst(parammap.parameters.names .== pname)
     parammap.data[:, :, ind]
 end
 function get_val(parammap::ParamMaps, pnames::Vector{String})
-    param = get_flattened_parameters(parammap.parameters)
-    inds = [findfirst(param.names .== pname) for pname in pnames]
+    inds = [findfirst(parammap.parameters.names .== pname) for pname in pnames]
     parammap.data[:, :, inds]
 end
 get_val(parammap::ParamMaps, index::CartesianIndex, pname::String) = get_val(parammap, pname)[index]
 get_val(parammap::ParamMaps, index::CartesianIndex, pnames::Vector{String}) = get_val(parammap, pnames)[index]
 
 function get_err(parammap::ParamMaps, pname::String)
-    param = get_flattened_parameters(parammap.parameters)
-    ind = findfirst(param.names .== pname)
+    ind = findfirst(parammap.parameters.names .== pname)
     parammap.err_upp[:, :, ind], parammap.err_low[:, :, ind]
 end
 function get_err(parammap::ParamMaps, pnames::Vector{String})
-    param = get_flattened_parameters(parammap.parameters)
-    inds = [findfirst(param.names .== pname) for pname in pnames]
+    inds = [findfirst(parammap.parameters.names .== pname) for pname in pnames]
     parammap.err_upp[:, :, inds], parammap.err_low[:, :, inds]
 end
 function get_err(parammap::ParamMaps, index::CartesianIndex, pname::String)
@@ -71,24 +67,22 @@ function get_err(parammap::ParamMaps, index::CartesianIndex, pnames::Vector{Stri
 end
 
 function get_label(parammap::ParamMaps, pname::String)
-    param = get_flattened_parameters(parammap.parameters)
-    ind = findfirst(param.names .== pname)
-    param.labels[ind]
+    ind = findfirst(parammap.parameters.names .== pname)
+    parammap.parameters.labels[ind]
 end
 function get_label(parammap::ParamMaps, pnames::Vector{String})
-    param = get_flattened_parameters(parammap.parameters)
-    inds = [findfirst(param.names .== pname) for pname in pnames]
-    param.labels[inds]
+    inds = [findfirst(parammap.parameters.names .== pname) for pname in pnames]
+    parammap.parameters.labels[inds]
 end
 
 
 """
-    generate_parammaps(cube_fitter[, oneD])
+    generate_parammaps(cube_fitter[, do_1d])
 
 Generate three ParamMaps objects (for the values and upper/lower errors) corrresponding to the options given
 by the CubeFitter object.
 """
-function generate_parammaps(cube_fitter::CubeFitter, oneD::Bool=false)
-    shape = oneD ? (1,1,size(cube_fitter.cube.I, 3)) : size(cube_fitter.cube.I)
+function generate_parammaps(cube_fitter::CubeFitter; do_1d::Bool=false)
+    shape = do_1d ? (1,1) : size(cube_fitter.cube.I)[1:2]
     ParamMaps(cube_fitter.model, shape)
 end

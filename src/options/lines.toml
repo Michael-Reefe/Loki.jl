@@ -76,7 +76,7 @@ kinematic_group_hi = [
 ]
 
 # Lines to make combined flux/eqw maps for
-combined_maps = [["OII_03727", "OII_03729"]]
+combined_maps = [["OII_03727A", "OII_03729A"]]
 
 # Additional line components
 n_acomps = 1
@@ -1073,9 +1073,9 @@ default = "Voigt"
 # of profile it should be. Can add an arbitrary number of additional components.
 [acomps]
 
-# lo = ["Voigt"]
-# med = ["Voigt"]
-# hi = ["Voigt"]
+lo = ["Voigt"]
+med = ["Voigt"]
+hi = ["Voigt"]
 
 ### Optical lines ###
 

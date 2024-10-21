@@ -6,7 +6,7 @@ them into code objects.
 ############################## OPTIONS/SETUP/PARSING FUNCTIONS ####################################
 
 
-function pah_name_to_float(name::String)
+function pah_name_to_float(name::AbstractString)
     # assumed to be formatted such that the wavelength is given to two decimal places,
     # i.e. "PAH_620" is interpreted at 6.20
     wl = split(name, "_")[end]

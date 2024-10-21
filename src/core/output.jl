@@ -3,12 +3,12 @@
 const ascii_lowercase = "abcdefghijklmnopqrstuvwxyz"
 
 
-function assign_outputs(out_params::AbstractArray{<:Real}, out_errs::AbstractArray{<:Real}, cube_fitter::CubeFitter,
+function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractArray{<:Number}, cube_fitter::CubeFitter,
     cube_data::NamedTuple, aperture::Bool=false)
 
     # Create the CubeModel and ParamMaps structs to be filled in
-    cube_model = generate_cubemodel(cube_fitter, aperture)
-    param_maps = generate_parammaps(cube_fitter, aperture)
+    cube_model = generate_cubemodel(cube_fitter; do_1d=aperture)
+    param_maps = generate_parammaps(cube_fitter; do_1d=aperture)
 
     fopt = fit_options(cube_fitter)
     oopt = out_options(cube_fitter)
@@ -25,6 +25,12 @@ function assign_outputs(out_params::AbstractArray{<:Real}, out_errs::AbstractArr
     spaxels = CartesianIndices(size(out_params)[1:2])
     prog = Progress(length(spaxels); showspeed=true)
     for index ∈ spaxels
+
+        # skip spaxels that weren't actually fit
+        if all(.~isfinite.(out_params[index, :]))
+            next!(prog)
+            continue
+        end
 
         # Get the normalization to un-normalized the fitted parameters
         data_index = !isnothing(cube_fitter.cube.voronoi_bins) ? cube_fitter.cube.voronoi_bins[index] : index
@@ -77,12 +83,17 @@ function assign_outputs(out_params::AbstractArray{<:Real}, out_errs::AbstractArr
             # Shift back to observed frame
             do_log = false
             for transform in param_maps.parameters.transformations[pᵢ]
-                if transform isa RestframeTransform 
+                if transform == RestframeTransform 
                     if typeof(val) <: QWave
                         # if it's some kind of wavelength, ALWAYS do the wavelength transformation
                         val *= 1 + cube_fitter.z
                         err_upp *= 1 + cube_fitter.z
                         err_low *= 1 + cube_fitter.z
+                    elseif typeof(val) <: QInvWave
+                        # Drude asymmetry profiles (units of inverse wavelength)
+                        val /= 1 + cube_fitter.z
+                        err_upp /= 1 + cube_fitter.z
+                        err_low /= 1 + cube_fitter.z
                     else
                         # otherwise, assume it's some kind of amplitude with specific intensity units
                         val *= restframe_factor
@@ -91,7 +102,7 @@ function assign_outputs(out_params::AbstractArray{<:Real}, out_errs::AbstractArr
                     end
                 end
                 # Normalize units
-                if transform isa NormalizeTransform
+                if transform == NormalizeTransform
                     # grab a potential extra normalization constant from the fitting function
                     if pname in keys(norms)
                         norm_i = norms[pname]
@@ -103,7 +114,7 @@ function assign_outputs(out_params::AbstractArray{<:Real}, out_errs::AbstractArr
                     err_low *= spax.N / norm_i
                 end
                 # Take the log10 --> do it this way to ensure that this is always done LAST
-                if transform isa LogTransform
+                if transform == LogTransform
                     do_log = true
                 end
             end
@@ -200,8 +211,8 @@ end
 function assign_qso3d_outputs(param_maps::ParamMaps, cube_model::CubeModel, cube_fitter::CubeFitter,
     psf_norm::Array{<:Real,3})
 
-    param_maps_3d = generate_parammaps(cube_fitter, false)
-    cube_model_3d = generate_cubemodel(cube_fitter, false)
+    param_maps_3d = generate_parammaps(cube_fitter; do_1d=false)
+    cube_model_3d = generate_cubemodel(cube_fitter; do_1d=false)
     fopt = fit_options(cube_fitter)
     lines = model(cube_fitter).lines
     dust_features = model(cube_fitter).dust_features
@@ -320,14 +331,14 @@ function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMap
             # Dont bother for lines with only 1 component
             continue
         end
-        snr_filter = get(param_maps, "lines.$(string(line)).SNR")
+        snr_filter = get_val(param_maps, "lines.$(string(line)).SNR")
 
         # Get the total flux and eqw for lines with multiple components
         plot_total = false
         if n_line_comps > 1
             plot_total = true
-            total_flux = ustrip.(get(param_maps, "lines.$(string(line)).flux"))
-            total_eqw = ustrip.(get(param_maps, "lines.$(string(line)).eqw"))
+            total_flux = ustrip.(get_val(param_maps, "lines.$(string(line)).flux"))
+            total_eqw = ustrip.(get_val(param_maps, "lines.$(string(line)).eqw"))
         end
 
         parameters = unique([split(pname, ".")[end] for pname in param_maps.parameters.names if contains(pname, "lines.$line.1")])       
@@ -357,7 +368,7 @@ function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMap
                 vmax = quantile([0.; total_eqw[isfinite.(total_eqw) .& (snr_filter .> 3)]], 0.99)
             else
                 # Each element of 'minmax' is a tuple with the minimum and maximum for that spaxel
-                minmax = dropdims(nanextrema(ustrip.(get(param_maps, ["lines.$comp.$parameter" for comp in component_keys])), 
+                minmax = dropdims(nanextrema(ustrip.(get_val(param_maps, ["lines.$comp.$parameter" for comp in component_keys])), 
                     dims=3), dims=3)
                 mindata = [m[1] for m in minmax]
                 maxdata = [m[2] for m in minmax]
@@ -399,10 +410,10 @@ function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMap
             end
 
             for i in 1:n_line_comps
-                data = ustrip.(get(param_maps, "lines.$(component_keys[i]).$parameter"))
+                data = ustrip.(get_val(param_maps, "lines.$(component_keys[i]).$parameter"))
                 name_i = join([line, parameter], ".")
                 bunit = get_label(param_maps, "lines.$(component_keys[i]).$parameter")
-                snr_filt = get(param_maps, "lines.$(component_keys[i]).SNR")
+                snr_filt = ustrip.(get_val(param_maps, "lines.$(component_keys[i]).SNR"))
                 if contains(parameter, "SNR")
                     snr_filt = nothing
                 end
@@ -483,13 +494,26 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
         # Dust feature (PAH) parameters
         elseif category == "dust_features"
             df = split(parameter, ".")[2]  # get the name of the dust feature
-            snr_filt = get(param_maps, "dust_features.$df.SNR")
+            if "dust_features.$df.SNR" in param_maps.parameters.names
+                snr_filt = ustrip.(get_val(param_maps, "dust_features.$df.SNR"))
+            else
+                snr_filt = ustrip.(get_val(param_maps, "dust_features.$df.total_snr"))
+            end
             # Find the wavelength/index at which to get the PSF FWHM for the circle in the plot
-            wave_i = nanmedian(get(param_maps, "dust_features.$df.mean")) / (1 + cube_fitter.z)
-            psf = psf_interp(ustrip(uconvert(λunit, wave_i)))
+            if "dust_features.$df.mean" in param_maps.parameters.names
+                wave_i = nanmedian(ustrip.(get_val(param_maps, "dust_features.$df.mean"))) / (1 + cube_fitter.z) * λunit
+            else
+                wave_i = pah_name_to_float(df)
+            end
+            psf = psf_interp(ustrip(wave_i))
             # Create the name to annotate on the plot
-            ind = findfirst(string.(dust_features.names) .== df)
-            latex_i = dust_features.config.all_df_labels[ind]
+            if df in string.(dust_features.config.all_feature_names)
+                ind = findfirst(dust_features.config.all_feature_names .== df)
+                latex_i = dust_features.config.all_feature_labels[ind]
+            else
+                ind = findfirst(string.(dust_features.names) .== df)
+                latex_i = dust_features.labels[ind]
+            end
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", category, "$(name_i).pdf")
 
         # Absorption features
@@ -497,8 +521,8 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
             ab = split(parameter, ".")[2]   # get the name of the absorption feature
             snr_filt = nothing
             # Find the wavelength/index at which to get the PSF FWHM for the circle in the plot
-            wave_i = nanmedian(get(param_maps, "abs_features.$ab.mean")) / (1 + cube_fitter.z)
-            psf = psf_interp(ustrip(uconvert(λunit, wave_i)))
+            wave_i = nanmedian(ustrip.(get_val(param_maps, "abs_features.$ab.mean"))) / (1 + cube_fitter.z) * λunit
+            psf = psf_interp(ustrip(wave_i))
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", category, "$(name_i).pdf")
 
         # Lines
@@ -507,18 +531,18 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
             line_key, line_comp = split(parameter, ".")[2:3]
             line_i = findfirst(lines.names .== Symbol(line_key))
             # Find the wavelength/index at which to get the PSF FWHM for the circle in the plot
-            wave_i = lines.λ₀[line_i]
-            psf = psf_interp(ustrip(uconvert(λunit, wave_i)))
-            latex_i = lines.latex[line_i]
+            wave_i = uconvert(λunit, lines.λ₀[line_i])
+            psf = psf_interp(ustrip(wave_i))
+            latex_i = lines.labels[line_i]
             if isdigit(line_comp[1])
                 # individual line components
-                snr_filt = get(param_maps, "lines.$line_key.$line_comp.SNR")
+                snr_filt = ustrip.(get_val(param_maps, "lines.$line_key.$line_comp.SNR"))
                 if contains(parameter, "SNR")
                     snr_filt = nothing
                 end
             else
                 # composite line components
-                snr_filt = get(param_maps, "lines.$line_key.SNR")
+                snr_filt = ustrip.(get_val(param_maps, "lines.$line_key.total_snr"))
             end
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", category, "$line_key", "$(name_i).pdf")
 
@@ -543,11 +567,11 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
 
     # Calculate a tau_9.7 map if using the "decompose" method
     if fopt.extinction_curve == "decompose"
-        N_oli = exp10.(get(param_maps, "extinction.N_oli"))
+        N_oli = exp10.(get_val(param_maps, "extinction.N_oli"))
         N_oli[.~isfinite.(N_oli)] .= 0.
-        N_pyr = exp10.(get(param_maps, "extinction.N_pyr"))
+        N_pyr = exp10.(get_val(param_maps, "extinction.N_pyr"))
         N_pyr[.~isfinite.(N_pyr)] .= 0.
-        N_for = exp10.(get(param_maps, "extinction.N_for"))
+        N_for = exp10.(get_val(param_maps, "extinction.N_for"))
         N_for[.~isfinite.(N_for)] .= 0.
         data = N_oli .* fopt.κ_abs[1](9.7) .+ N_oli .* N_pyr .* fopt.κ_abs[2](9.7) .+ N_oli .* N_for .* fopt.κ_abs[3](9.7)
         name_i = "tau_9_7"
@@ -602,7 +626,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
         group_name = join(species, "+")
 
         # Get the SNR filter and wavelength
-        snr_filter = dropdims(nanmaximum(ustrip.(get(param_maps, ["lines.$comp.SNR" for comp in component_keys])), dims=3), dims=3)
+        snr_filter = dropdims(nanmaximum(ustrip.(get_val(param_maps, ["lines.$comp.SNR" for comp in component_keys])), dims=3), dims=3)
         wave_i = median([lines.λ₀[ind] for ind in line_inds])
 
         # Make a latex group name similar to the other group name
@@ -611,37 +635,37 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
 
         # Total Flux+EQW
         if fopt.lines_allow_negative
-            total_flux = ustrip.(sum([get(param_maps, "lines.$comp.flux") for comp in component_keys]))
+            total_flux = ustrip.(sum([get_val(param_maps, "lines.$comp.flux") for comp in component_keys]))
         else
-            total_flux = log10.(sum([exp10.(get(param_maps, "lines.$comp.flux")) for comp in component_keys]))
+            total_flux = log10.(sum([exp10.(get_val(param_maps, "lines.$comp.flux")) for comp in component_keys]))
         end
-        total_eqw = ustrip.(sum([get(param_maps, "lines.$comp.eqw") for comp in component_keys]))
+        total_eqw = ustrip.(sum([get_val(param_maps, "lines.$comp.eqw") for comp in component_keys]))
         for (nm_i, bu_i, total_i) in zip(["total_flux", "total_eqw"], 
                 get_label(param_maps, ["lines.$(component_keys[1]).flux", "lines.$(component_keys[1]).eqw"]),
                     [total_flux, total_eqw])
             name_i = join([group_name, nm_i], ".")
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(group_name)", "$(name_i).pdf")
-            plot_parameter_map(total_i, name_i, bu_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
+            plot_parameter_map(total_i, name_i, bu_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(ustrip(wave_i)),
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
                 line_latex=group_name_ltx, marker=centroid)
         end
 
         # Voff and FWHM
         if tied_voff
-            voff = get(param_maps, "lines.$(component_keys[1]).voff")
+            voff = get_val(param_maps, "lines.$(component_keys[1]).voff")
             name_i = join([group_name, "voff"], ".")
             bunit = get_label(param_maps, "lines.$(component_keys[1]).voff")
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(group_name)", "$(name_i).pdf") 
-            plot_parameter_map(voff, name_i, bunit, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
+            plot_parameter_map(voff, name_i, bunit, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(ustrip(wave_i)),
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
                 line_latex=group_name_ltx, marker=centroid) 
         end
         if tied_fwhm
-            fwhm = get(param_maps, "lines.$(component_keys[1]).fwhm")
+            fwhm = get_val(param_maps, "lines.$(component_keys[1]).fwhm")
             name_i = join([group_name, "fwhm"], ".")
             bunit = get_label(param_maps, "lines.$(component_keys[1]).fwhm")
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(group_name)", "$(name_i).pdf") 
-            plot_parameter_map(fwhm, name_i, bunit, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
+            plot_parameter_map(fwhm, name_i, bunit, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(ustrip(wave_i)),
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
                 line_latex=group_name_ltx, marker=centroid) 
         end
@@ -649,11 +673,11 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
     end
 
     # Reduced chi^2 
-    data = get(param_maps, "statistics.chi2") ./ get(param_maps, "statistics.dof")
+    data = get_val(param_maps, "statistics.chi2") ./ get_val(param_maps, "statistics.dof")
     name_i = "reduced_chi2"
     save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "$(name_i).pdf")
     plot_parameter_map(data, name_i, L"$\tilde{\chi}^2$", save_path, cube_fitter.cube.Ω, cube_fitter.z, 
-        median(cube_fitter.cube.psf), cube_fitter.cosmology, cube_fitter.cube.wcs, marker=centroid)
+        ustrip(median(cube_fitter.cube.psf)), cube_fitter.cosmology, cube_fitter.cube.wcs, marker=centroid)
 
     return
 
@@ -827,14 +851,14 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
             "CDELT1", "CDELT2", "CTYPE1", "CTYPE2", "CRPIX1", "CRPIX2", "CRVAL1", "CRVAL2", "CUNIT1", "CUNIT2", 
             "PC1_1", "PC1_2", "PC2_1", "PC2_2"], aperture_keys, dims=1)),
 
-        cat([cube_fitter.name, cube_fitter.z, cube_fitter.cube.channel, cube_fitter.cube.band, cube_fitter.cube.Ω, 
-         cube_fitter.cube.α, cube_fitter.cube.δ, cube_fitter.cube.wcs.naxis-1],
+        cat([cube_fitter.name, cube_fitter.z, cube_fitter.cube.channel, cube_fitter.cube.band, ustrip(cube_fitter.cube.Ω), 
+         ustrip(cube_fitter.cube.α), ustrip(cube_fitter.cube.δ), cube_fitter.cube.wcs.naxis-1],
          cube_fitter.cube.wcs.cdelt[1:2], cube_fitter.cube.wcs.ctype[1:2], cube_fitter.cube.wcs.crpix[1:2],
          cube_fitter.cube.wcs.crval[1:2], cube_fitter.cube.wcs.cunit[1:2], reshape(cube_fitter.cube.wcs.pc[1:2,1:2], (4,)), 
          aperture_vals, dims=1),
 
         Vector{String}(cat(["Target name", "Target redshift", "MIRI channel", "MIRI band",
-        "Solid angle per pixel (rad.)", "Right ascension of target (deg.)", "Declination of target (deg.)",
+        "Solid angle per pixel (sr)", "Right ascension of target (deg.)", "Declination of target (deg.)",
         "number of World Coordinate System axes", 
         "first axis increment per pixel", "second axis increment per pixel", 
         "first axis coordinate type", "second axis coordinate type", 
@@ -846,8 +870,7 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
         aperture_comments, dims=1))
     )
 
-    oopt = out_options(cube_data)
-
+    oopt = out_options(cube_fitter)
     if oopt.save_full_model
         write_fits_full_model(cube_fitter, cube_data, cube_model, hdr, nuc_temp_fit; qso3d=qso3d)
     end
@@ -868,11 +891,15 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
                 if ((split(parameter, ".")[1] == "statistics") && (index != 1)) || split(parameter, ".")[end] == "SNR"
                     continue
                 end
-                data = ustrip.(param_data[:, :, i])
-                units = replace(string(unit(param_data[:, :, i][1])), 'μ' => 'u', "Å" => "angstrom")
+                good = isfinite.(param_data[:, :, i])
+                units = "NoUnits"
+                if sum(good) > 0
+                    units = replace(string(unit(param_data[:, :, i][good][1])), 'μ' => 'u', "Å" => "angstrom")
+                end
                 if units == "NoUnits"
                     units = "-"
                 end
+                data = ustrip.(param_data[:, :, i])
                 name_i = uppercase(parameter)
                 write(f, data; name=name_i, header=hdr)
                 write_key(f[name_i], "BUNIT", units)
@@ -897,6 +924,7 @@ function write_fits_full_model(cube_fitter::CubeFitter, cube_data::NamedTuple, c
     else
         restframe_factor = 1 / (1 + cube_fitter.z)
     end
+    λunit = replace(string(unit(cube_data.λ[1])), 'μ' => 'u')
     Iunit = replace(string(unit(cube_data.I[1])), 'μ' => 'u', "Å" => "angstrom")
 
     # Create the 3D intensity model FITS file
@@ -910,7 +938,7 @@ function write_fits_full_model(cube_fitter::CubeFitter, cube_data::NamedTuple, c
         write(f, Vector{Int}())                                                                        # Primary HDU (empty)
         write(f, Float32.(ustrip.(cube_data.I) .* restframe_factor); name="DATA", header=hdr)          # Raw data 
         write(f, Float32.(ustrip.(cube_data.σ) .* restframe_factor); name="ERROR")                     # Error in the raw data
-        write(f, Float32.(permutedims(cube_model.model, (2,3,1))); name="MODEL")                       # Full intensity model
+        write(f, Float32.(ustrip.(permutedims(cube_model.model, (2,3,1)))); name="MODEL")                       # Full intensity model
         write_key(f["DATA"], "BUNIT", Iunit)
         write_key(f["ERROR"], "BUNIT", Iunit)
         write_key(f["MODEL"], "BUNIT", Iunit) 
@@ -921,7 +949,7 @@ function write_fits_full_model(cube_fitter::CubeFitter, cube_data::NamedTuple, c
             ["EXTINCTION.ABS_OLIVINE", "EXTINCTION.ABS_PYROXENE", "EXTINCTION.ABS_FORSTERITE"] : 
             ["EXTINCTION.ABS_SILICATES"]
         for r ∈ axes(cube_model.absorption_silicates, 4)                                               # Silicate absorption
-            write(f, Float32.(permutedims(cube_model.absorption_silicates[:, :, :, r]), (2,3,1)); name=ext_names[r])       
+            write(f, Float32.(permutedims(cube_model.absorption_silicates[:, :, :, r], (2,3,1))); name=ext_names[r])       
         end
         if fopt.fit_ch_abs
             write(f, Float32.(permutedims(cube_model.abs_ice, (2,3,1))); name="EXTINCTION.ABS_ICE")    # Ice Absorption model
@@ -976,7 +1004,7 @@ function write_fits_full_model(cube_fitter::CubeFitter, cube_data::NamedTuple, c
             write_key(f["LINES.$lnu"], "BUNIT", Iunit)
         end
         
-        write(f, ["wave"], [cube_data.λ .* (1 .+ cube_fitter.z)],                                   # wavelength vector
-            hdutype=TableHDU, name="WAVELENGTH", units=Dict(:wave => "um"))
+        write(f, ["wave"], [ustrip.(cube_data.λ) .* (1 .+ cube_fitter.z)],                                   # wavelength vector
+            hdutype=TableHDU, name="WAVELENGTH", units=Dict(:wave => λunit))
     end
 end

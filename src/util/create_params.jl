@@ -206,7 +206,7 @@ function construct_extinction_params!(params::Vector{FitParameter}, pnames::Vect
     msg *= "\nBeta $β"
     push!(params, β)
     push!(pnames, prefix .* "beta")
-    push!(plabels, L"$\beta")
+    push!(plabels, L"$\beta$")
     push!(ptrans, Transformation[])
     if out[:fit_ch_abs]
         τ_ice = parameter_from_dict(infrared["extinction"]["tau_ice"])
@@ -763,7 +763,7 @@ function default_line_parameters(out::Dict, lines::Dict, λunit::Unitful.Units, 
         npnames = prefix .* "$component." .* ["flux", "eqw", "SNR"]
         nplabels = String[out[:lines_allow_negative] ? L"$F$ (%$(latex(funit)))" : L"$\log_{10}(F /$ %$(latex(funit))$)$", 
             L"$W_{\rm eq}$ (%$(latex(λunit)))", L"$S/N$"]
-        nptrans = [out[:lines_allow_negative] ? [LogTransform] : Transformation[], [RestframeTransform], Transformation[]]
+        nptrans = [out[:lines_allow_negative] ? Transformation[] : [LogTransform], [RestframeTransform], Transformation[]]
         nonfit_parameters = NonFitParameters(npnames, nplabels, nptrans, nparams)
 
         push!(profs, FitProfile(profile, fit_parameters, nonfit_parameters))
@@ -778,7 +778,7 @@ function default_line_parameters(out::Dict, lines::Dict, λunit::Unitful.Units, 
     cplabels = String[out[:lines_allow_negative] ? L"$F$ (%$(latex(funit)))" : L"$\log_{10}(F /$ %$(latex(funit))$)$", 
         L"$W_{\rm eq}$ (" * latex(λunit) * ")", L"$S/N$", L"$n_{\rm comp}$", L"$W_{80}$ (km s$^{-1}$)", 
         L"$\Delta v$ (km s$^{-1}$)", L"$v_{\rm med}$ (km s$^{-1}$)", L"$v_{\rm peak}$ (km s$^{-1}$)"]
-    cptrans = [out[:lines_allow_negative] ? [LogTransform] : Transformation[], [RestframeTransform], Transformation[],
+    cptrans = [out[:lines_allow_negative] ? Transformation[] : [LogTransform], [RestframeTransform], Transformation[],
         Transformation[], Transformation[], Transformation[], Transformation[], Transformation[]]
     composite = NonFitParameters(cpnames, cplabels, cptrans, cparams)
 
