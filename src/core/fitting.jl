@@ -38,7 +38,6 @@ function repeat_fit_jitter(λ_spax::Vector{<:QWave}, I_spax::Vector{<:Real}, σ_
         # redo the fit with the slightly jittered starting parameters
         @debug "Jittered starting parameters: $(params .+ jitter)"
         res = cmpfit(λ_spax, I_spax, σ_spax, fit_func, params .+ jitter, parinfo=parinfo, config=config)
-        GC.gc(true)
         n += 1
         if n > 10
             @warn "LM solver has exceeded 10 tries on the continuum fit of spaxel $spaxel. Aborting."
@@ -120,7 +119,6 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter; init::Boo
 
     # Do initial fit
     res = cmpfit(s.λ[spaxel_mask], s.I[spaxel_mask], s.σ[spaxel_mask], fit_cont, pfree_tied, parinfo=parinfo, config=config)
-    GC.gc(true)
 
     # This function checks how many iterations the first fit took, and if its less than 5 it repeats it with slightly different
     # starting parameters to try to get it to converge better. This is because rarely the first fit can get stuck in the starting
@@ -246,7 +244,6 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter, split_fla
     end
 
     res_1 = cmpfit(s.λ[spaxel_mask], s.I[spaxel_mask], s.σ[spaxel_mask], fit_step1, p1free_tied, parinfo=parinfo_1, config=config)
-    GC.gc(true)
     res_1 = repeat_fit_jitter(s.λ[spaxel_mask], s.I[spaxel_mask], s.σ[spaxel_mask], fit_step1, p1free_tied, lb_1_free_tied, ub_1_free_tied, parinfo_1, config,
         res_1, "continuum (step 1)", s.coords; check_cont_snr=true)
 
@@ -498,7 +495,7 @@ function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Spaxel, e
                 p = zeros(length(parameters))
                 p[.~plock] .= pfree
                 p[plock] .= parameters[plock]
-                model_line_residuals(spaxel, p, punits_i, line_object, cube_fitter.lsf, extinction_curve)[region]
+                model_line_residuals(spaxel, p, punits_i, line_object, cube_fitter.lsf, extinction_curve, region)
             end
 
             p₁ = perform_global_SAMIN_fit(spaxel, cube_fitter, pfree, lower_bounds[pstart:pstop][.~plock],
@@ -573,7 +570,7 @@ function perform_global_SAMIN_fit(spaxel::Spaxel, cube_fitter::CubeFitter, pfree
 
     @debug "Beginning global fitting with Simulated Annealing:"
 
-    fit_func = p -> -ln_likelihood(spaxel.I[spaxel_mask], fit_func_inner(spaxel.λ[spaxel_mask], p), spaxel.σ[spaxel_mask])
+    fit_func = p -> -ln_likelihood(spaxel.I[spaxel_mask], fit_func_inner(nothing, p), spaxel.σ[spaxel_mask])
     x_tol = 1e-5
     f_tol = abs(fit_func(pfree_tied) - fit_func(clamp.(pfree_tied .* (1 .- x_tol), lbfree_tied, ubfree_tied)))
     f_tol = 10^floor(log10(f_tol))
@@ -664,7 +661,7 @@ function line_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter, continuum::Vector{<
 
     function fit_step3(x, pfree_tied::AbstractVector)
         ptot = rebuild_full_parameters(pfree_tied, pfix_tied, param_lock_tied, tied_pairs, tied_indices, n_tied)
-        model_line_residuals(s, ptot, punits, model(cube_fitter).lines, cube_fitter.lsf, extinction_curve)
+        model_line_residuals(s, ptot, punits, model(cube_fitter).lines, cube_fitter.lsf, extinction_curve, trues(length(s.λ)))
     end
 
     # Do an optional global fit with simulated annealing
@@ -689,7 +686,6 @@ function line_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter, continuum::Vector{<
     ############################################# FIT WITH LEVMAR ###################################################
 
     res = cmpfit(s.λ, s.I, s.σ, fit_step3, p₁, parinfo=parinfo, config=config)
-    GC.gc(true)
     if !_fit_global
         res = repeat_fit_jitter(s.λ, s.I, s.σ, fit_step3, p₁, lbfree_tied, ubfree_tied,
             parinfo, config, res, "line", s.coords)
@@ -817,7 +813,7 @@ function all_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter; init::Bool=false, us
     
         # Generate the models
         Icont, ext_gas = model_continuum(s, s.N, ptot_cont, punits_cont, cube_fitter, fopt.use_pah_templates; return_extinction=true)
-        Ilines = model_line_residuals(s, ptot_lines, punits_lines, model(cube_fitter).lines, cube_fitter.lsf, ext_gas)
+        Ilines = model_line_residuals(s, ptot_lines, punits_lines, model(cube_fitter).lines, cube_fitter.lsf, ext_gas, trues(length(s.λ)))
 
         # Return the sum of the models
         (Icont .+ Ilines)[spaxel_mask]
@@ -846,7 +842,6 @@ function all_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter; init::Bool=false, us
     parinfo, config = get_continuum_parinfo(n_free_cont+n_free_lines, lower_bounds, upper_bounds, dstep)
 
     res = cmpfit(s.λ[spaxel_mask], s.I[spaxel_mask], s.σ[spaxel_mask], fit_joint, p₁, parinfo=parinfo, config=config)
-    GC.gc(true)
     if !_fit_global
         res = repeat_fit_jitter(s.λ[spaxel_mask], s.I[spaxel_mask], s.σ[spaxel_mask], fit_joint, p₁, lower_bounds, upper_bounds, 
             parinfo, config, res, "continuum+lines", s.coords; check_cont_snr=true)
@@ -1880,7 +1875,7 @@ function _evaluate_model(λ::Vector{<:QWave}, cube_fitter::CubeFitter, p_cont::V
     # evaluate the model
     I_cont, comps_cont, = model_continuum(spax, spax.N, p_cont, p_units_cont, cube_fitter, false, true)
     I_lines, comps_lines = model_line_residuals(spax, p_lines, p_units_lines, model(cube_fitter).lines, cube_fitter.lsf,
-        comps_cont["total_extinction_gas"], true)
+        comps_cont["total_extinction_gas"], trues(length(spax.λ)), true)
     
     # combine and renormalize everything
     I_model, comps, = collect_total_fit_results(spax, cube_fitter, I_cont, I_lines, comps_cont, comps_lines, 0, 0)

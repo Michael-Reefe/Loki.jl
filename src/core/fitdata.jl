@@ -478,7 +478,7 @@ function collect_line_fit_results(res::CMPFit.Result, pfix_tied::Vector{<:Real},
 
     # Final optimized fit
     I_model, comps = model_line_residuals(spaxel, ustrip.(popt), punits, model(cube_fitter).lines, cube_fitter.lsf, 
-        extinction_curve, true)
+        extinction_curve, trues(length(spaxel.λ)), true)
 
     popt, perr, I_model, comps
 end
@@ -518,7 +518,7 @@ function collect_fit_results(res::CMPFit.Result, pfix_cont_tied::Vector{<:Real},
 
     I_cont, comps_cont, = model_continuum(spaxel, spaxel.N, ustrip.(popt_cont), punits_cont, cube_fitter, fopt.use_pah_templates, true)
     I_lines, comps_lines = model_line_residuals(spaxel, ustrip.(popt_lines), punits_lines, model(cube_fitter).lines, cube_fitter.lsf, 
-        comps_cont["total_extinction_gas"], true)
+        comps_cont["total_extinction_gas"], trues(length(spaxel.λ)), true)
     
     popt_cont, perr_cont, I_cont, comps_cont, popt_lines, perr_lines, I_lines, comps_lines
 end
@@ -581,7 +581,7 @@ function collect_bootstrapped_results(spaxel::Spaxel, cube_fitter::CubeFitter, p
     I_boot_cont, comps_boot_cont, = model_continuum(spaxel, spaxel.N, ustrip.(p_out[1:split1]), unit.(p_out[1:split1]), 
         cube_fitter, false, true)
     I_boot_line, comps_boot_line = model_line_residuals(spaxel, ustrip.(p_out[split1+1:split2]), unit.(p_out[split1+1:split2]), 
-        model(cube_fitter).lines, cube_fitter.lsf, comps_boot_cont["total_extinction_gas"], true)
+        model(cube_fitter).lines, cube_fitter.lsf, comps_boot_cont["total_extinction_gas"], trues(length(spaxel.λ)), true)
 
     # Reconstruct the full model
     I_model, comps, χ2, = collect_total_fit_results(spaxel, cube_fitter, I_boot_cont, I_boot_line,
