@@ -577,9 +577,9 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
 addition to the overall fit
 """
 function model_line_residuals(s::Spaxel, params::Vector{<:Real}, punits::Vector{<:Unitful.Units}, 
-    lines::FitFeatures, lsf::Function, ext_gas::Vector{<:Real}, return_components::Bool) 
+    lines::FitFeatures, lsf::Function, ext_gas::Vector{<:Real}, mask::BitVector, return_components::Bool) 
 
-    λ = s.λ
+    λ = s.λ[mask]
 
     # Prepare outputs
     out_type = typeof(ustrip(λ[1]))
@@ -665,7 +665,7 @@ function model_line_residuals(s::Spaxel, params::Vector{<:Real}, punits::Vector{
     end
 
     # Apply extinction
-    contin .*= ext_gas
+    contin .*= ext_gas[mask]
 
     # Return components if necessary
     if return_components
@@ -678,9 +678,9 @@ end
 
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
 function model_line_residuals(s::Spaxel, params::Vector{<:Real}, punits::Vector{<:Unitful.Units}, 
-    lines::FitFeatures, lsf::Function, ext_gas::Vector{<:Real}) 
+    lines::FitFeatures, lsf::Function, ext_gas::Vector{<:Real}, mask::BitVector) 
 
-    λ = s.λ
+    λ = s.λ[mask]
 
     # Prepare outputs
     out_type = eltype(params)
@@ -762,7 +762,7 @@ function model_line_residuals(s::Spaxel, params::Vector{<:Real}, punits::Vector{
     end
 
     # Apply extinction
-    contin .*= ext_gas
+    contin .*= ext_gas[mask]
 
     contin
 end

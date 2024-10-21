@@ -137,7 +137,7 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
         pᵢ = pc + cube_fitter.n_params_lines
 
         I_line, comps_l = model_line_residuals(spax, ustrip.(out_params[index, vᵢ:pᵢ-1]), unit.(out_params[index, vᵢ:pᵢ-1]), 
-            model(cube_fitter).lines, cube_fitter.lsf, comps_c["total_extinction_gas"], true)
+            model(cube_fitter).lines, cube_fitter.lsf, comps_c["total_extinction_gas"], trues(length(spax.λ)), true)
 
         I_model, comps, = collect_total_fit_results(spax, cube_fitter, I_cont, I_line, comps_c, comps_l, 0, 0)
 
