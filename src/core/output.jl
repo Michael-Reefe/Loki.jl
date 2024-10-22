@@ -323,7 +323,7 @@ function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMap
     for (i, line) ∈ enumerate(lines.names)
 
         # Find the wavelength/index at which to get the PSF FWHM for the circle in the plot
-        wave_i = lines.λ₀[i]
+        wave_i = uconvert(unit(cube_fitter.cube.λ[1]), lines.λ₀[i])
         latex_i = lines.labels[i]
         n_line_comps = length(lines.profiles[i])
         component_keys = [string(line) * ".$(j)" for j in 1:n_line_comps]
@@ -331,14 +331,14 @@ function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMap
             # Dont bother for lines with only 1 component
             continue
         end
-        snr_filter = get_val(param_maps, "lines.$(string(line)).SNR")
+        snr_filter = get_val(param_maps, "lines.$(string(line)).total_snr")
 
         # Get the total flux and eqw for lines with multiple components
         plot_total = false
         if n_line_comps > 1
             plot_total = true
-            total_flux = ustrip.(get_val(param_maps, "lines.$(string(line)).flux"))
-            total_eqw = ustrip.(get_val(param_maps, "lines.$(string(line)).eqw"))
+            total_flux = ustrip.(get_val(param_maps, "lines.$(string(line)).total_flux"))
+            total_eqw = ustrip.(get_val(param_maps, "lines.$(string(line)).total_eqw"))
         end
 
         parameters = unique([split(pname, ".")[end] for pname in param_maps.parameters.names if contains(pname, "lines.$line.1")])       
@@ -394,8 +394,8 @@ function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMap
                 name_i = join([line, "total_flux"], ".")
                 bunit = get_label(param_maps, "lines.$(component_keys[1]).flux")
                 save_path = ""
-                _, _, cdata = plot_parameter_map(total_flux, name_i, bunit, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
-                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
+                _, _, cdata = plot_parameter_map(total_flux, name_i, bunit, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(ustrip(wave_i)),
+                cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=ustrip.(snr_filter), snr_thresh=snr_thresh,
                     line_latex=latex_i, modify_ax=(fig, ax[ci]), disable_colorbar=true, colorscale_limits=(vmin, vmax), marker=marker)
                 ci += 1
             end
@@ -403,8 +403,8 @@ function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMap
                 name_i = join([line, "total_eqw"], ".")
                 bunit = get_label(param_maps, "lines.$(component_keys[1]).eqw")
                 save_path = ""
-                _, _, cdata = plot_parameter_map(total_eqw, name_i, bunit, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i),
-                    cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
+                _, _, cdata = plot_parameter_map(total_eqw, name_i, bunit, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(ustrip(wave_i)),
+                    cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=ustrip.(snr_filter), snr_thresh=snr_thresh,
                     line_latex=latex_i, modify_ax=(fig, ax[ci]), disable_colorbar=true, colorscale_limits=(vmin, vmax), marker=marker)
                 ci += 1
             end
@@ -418,10 +418,10 @@ function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMap
                     snr_filt = nothing
                 end
                 save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$line", "$(name_i).pdf")
-                _, _, cdata = plot_parameter_map(data, name_i, bunit, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(wave_i), 
-                    cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filt, snr_thresh=snr_thresh, 
-                    line_latex=latex_i, modify_ax=(fig, ax[ci]), disable_colorbar=true, colorscale_limits=(vmin, vmax),
-                    marker=marker)
+                _, _, cdata = plot_parameter_map(data, name_i, bunit, save_path, cube_fitter.cube.Ω, cube_fitter.z, 
+                    psf_interp(ustrip(wave_i)), cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filt, 
+                    snr_thresh=snr_thresh, line_latex=latex_i, modify_ax=(fig, ax[ci]), disable_colorbar=true, 
+                    colorscale_limits=(vmin, vmax), marker=marker)
                 ci += 1
             end
             # Save the final figure
