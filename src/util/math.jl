@@ -631,12 +631,41 @@ function convolve_losvd(_templates::AbstractArray{T}, vsyst::S, v::S, σ::S, vre
 end
 
 
+# get constraint equations for regularization for the least-squares fitting of the stellar templates
+function add_reg_constraints!(A::Matrix{<:Real}, nλ::Int, cube_fitter::CubeFitter)
+    # reshape into N_ages x N_logzs sized array
+    reg_dims = (length(cube_fitter.ssps.ages), length(cube_fitter.ssps.logzs))
+    # get a "view" so modifying a also modifies A
+    @assert size(A, 2) == prod(reg_dims)
+    a = reshape(view(A, :, :), (size(A, 1), reg_dims...))
+    reg_diffs = [1., -2., 1.] .* cube_fitter.fitting.ssp_regularize
+    # add constraint equations for regularization
+    i = nλ+1
+    for j in axes(a, 2)
+        for k in axes(a, 3)
+            if 1 < k < size(a, 3)
+                a[i, j, k-1:k+1] .= reg_diffs
+            end
+            if 1 < j < size(A, 2)
+                a[i, j-1:j+1, k] .+= reg_diffs
+            end
+            i += 1
+        end
+    end
+end
+
+
+# perform non-negative least squares fitting on the stellar template grids 
 function stellar_populations_nnls(s::Spaxel, contin::Vector{<:Real}, ext_stars::Vector{<:Real}, 
     stel_vel::QVelocity, stel_sig::QVelocity, cube_fitter::CubeFitter)
 
     # prepare buffer arrays for NNLS
     nλ = length(s.λ)
-    reg_dims = (length(cube_fitter.ssps.ages), length(cube_fitter.ssps.logzs))
+    if cube_fitter.fitting.ssp_regularize > 0.
+        reg_dims = (length(cube_fitter.ssps.ages), length(cube_fitter.ssps.logzs))
+    else
+        reg_dims = (0, 0)
+    end
     A = zeros(nλ+prod(reg_dims), cube_fitter.n_ssps)
     b = zeros(nλ+prod(reg_dims))
 
@@ -652,15 +681,17 @@ function stellar_populations_nnls(s::Spaxel, contin::Vector{<:Real}, ext_stars::
     # normalize the stellar templates
     stellar_N = nanmedian(A[1:nλ, :])
     A[1:nλ, :] ./= stellar_N
-    stellar_norm = stellar_N*unit(cube_fitter.ssps.templates[1])/u"sr"
+    stellar_norm = stellar_N*unit(cube_fitter.ssps.templates[1])/u"sr"  # should be specific intensity per unit mass
     # weight by the errors
     A[1:nλ, :] ./= s.σ
     b[1:nλ] ./= s.σ
     # add the regularization constraints
     # (we dont need to modify b here as it is already initialized with 0s)
-    add_reg_constraints!(A, nλ, cube_fitter)
+    if cube_fitter.fitting.ssp_regularize > 0.
+        add_reg_constraints!(A, nλ, cube_fitter)
+    end
     # perform a non-negative least-squares fit
-    weights = nonneg_lsq(A, b, alg=:pivot, variant=:comb)
+    weights = nonneg_lsq(A, b, alg=:fnnls)
 
     # get the final stellar continuum with a matrix multiplication
     ssp_contin = ((A[1:nλ, :].*s.σ) * weights[1:nλ])[:,1]

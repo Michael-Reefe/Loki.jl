@@ -130,7 +130,7 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter; init::Boo
     @debug "Continuum CMPFit Status: $(res.status)"
 
     # Get the results of the fit as a parameter vector, error vector, model intensity vector, and comps dict
-    popt, perr, I_model, comps = collect_cont_fit_results(res, pfix_tied, plock_tied, punits, tied_pairs, tied_indices, n_tied,
+    popt, perr, I_model, comps, norms = collect_cont_fit_results(res, pfix_tied, plock_tied, punits, tied_pairs, tied_indices, n_tied,
         spaxel, cube_fitter; bootstrap_iter=bootstrap_iter)
 
     fopt = fit_options(cube_fitter)
@@ -175,7 +175,7 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter; init::Boo
         cube_fitter.p_init_pahtemp[:] .= pah_amp
     end
 
-    result, I_model, comps, pah_amp, chi2, n_free
+    result, I_model, comps, norms, pah_amp, chi2, n_free
 end
 
 
@@ -249,7 +249,7 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter, split_fla
 
     @debug "Continuum CMPFit Status: $(res_1.status)"
 
-    popt, perr, I_model, comps = collect_cont_fit_results(res_1, p1fix_tied, lock_1_tied, punits_1, tied_pairs, tied_indices, 
+    popt, perr, I_model, comps, norms = collect_cont_fit_results(res_1, p1fix_tied, lock_1_tied, punits_1, tied_pairs, tied_indices, 
         n_tied_1, spaxel, cube_fitter; bootstrap_iter=bootstrap_iter)
     # Get the continuum component without the PAHs so that we can subtract it
     I_cont = comps["continuum"]
@@ -283,7 +283,7 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter, split_fla
 
     @debug "Continuum CMPFit Step 2 status: $(res_2.status)"
 
-    popt, perr, n_free, pahtemp, I_model, comps = collect_cont_fit_results(res_1, p1fix_tied, lock_1_tied, punits_1, tied_pairs, 
+    popt, perr, n_free, pahtemp, I_model, comps, norms = collect_cont_fit_results(res_1, p1fix_tied, lock_1_tied, punits_1, tied_pairs, 
         tied_indices, n_tied_1, res_2, p2fix, lock_2, punits_2, n_free_1, n_free_2, cube_fitter, spaxel; 
         bootstrap_iter=bootstrap_iter)
 
@@ -330,7 +330,7 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter, split_fla
         cube_fitter.p_init_pahtemp[:] .= pahtemp
     end
 
-    result, I_model, comps, pahtemp, chi2, n_free
+    result, I_model, comps, norms, pahtemp, chi2, n_free
 end
 
 
@@ -848,7 +848,7 @@ function all_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter; init::Bool=false, us
     end
 
     @debug "Continuum+Lines CMPFit Status: $(res.status)"
-    popt_cont, perr_cont, I_cont, comps_cont, popt_lines, perr_lines, I_lines, comps_lines = 
+    popt_cont, perr_cont, I_cont, comps_cont, norms, popt_lines, perr_lines, I_lines, comps_lines = 
         collect_fit_results(res, pfix_cont_tied, lock_cont_tied, punits_cont, tied_pairs_cont, tied_indices_cont,
         n_tied_cont, n_free_cont, pfix_lines_tied, lock_lines_tied, punits_lines, tied_pairs_lines, tied_indices_lines,
         n_tied_lines, n_free_lines, s, cube_fitter; bootstrap_iter=bootstrap_iter)
@@ -874,7 +874,7 @@ function all_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter; init::Bool=false, us
         write_fit_results_csv(cube_fitter, "init_fit_lines", result_lines)
     end
 
-    result_cont, result_lines, I_cont, I_lines, comps_cont, comps_lines, n_free_cont, n_free_lines, pah_amp
+    result_cont, result_lines, I_cont, I_lines, comps_cont, norms, comps_lines, n_free_cont, n_free_lines, pah_amp
 end
 
 
@@ -892,7 +892,7 @@ function _fit_spaxel_iterfunc(spaxel::Spaxel, cube_fitter::CubeFitter; bootstrap
 
     if !fopt.fit_joint
         # First, do the continuum fit 
-        result_c, I_cont, comps_cont, pahtemp, _, n_free_c = continuum_fit_spaxel(spaxel, cube_fitter, 
+        result_c, I_cont, comps_cont, norms, pahtemp, _, n_free_c = continuum_fit_spaxel(spaxel, cube_fitter, 
             fopt.use_pah_templates; init=init, use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_cont)
         # Decide whether to subtract the real continuum fit or a cubic spline continuum fit based on the settings 
         line_cont = get_continuum_for_line_fit(spaxel, cube_fitter, I_cont, comps_cont)
@@ -901,7 +901,7 @@ function _fit_spaxel_iterfunc(spaxel::Spaxel, cube_fitter::CubeFitter; bootstrap
             init=init, use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_l)
     else
         # Fit the continuum and lines together
-        result_c, result_l, I_cont, I_line, comps_cont, comps_line, n_free_c, n_free_l, pahtemp = all_fit_spaxel(
+        result_c, result_l, I_cont, I_line, comps_cont, norms, comps_line, n_free_c, n_free_l, pahtemp = all_fit_spaxel(
             spaxel, cube_fitter; init=init, use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots_cont=p1_boots_cont, 
             p1_boots_line=p1_boots_l)
         line_cont = get_continuum_for_line_fit(spaxel, cube_fitter, I_cont, comps_cont)
@@ -923,9 +923,15 @@ function _fit_spaxel_iterfunc(spaxel::Spaxel, cube_fitter::CubeFitter; bootstrap
         # Add the extra parameters to the final result object
         combine!(result, result_e)
         combine!(result, result_s)
+
+        # The stellar parameters (masses, ages, metallicities)
+        result_stellar = nothing
+        if fopt.fit_stellar_continuum
+            result_stellar = calculate_stellar_parameters(cube_fitter, norms, spaxel.N)
+        end
     end
 
-    return result, result_c, result_l, pahtemp, I_model, comps, χ2, dof
+    return result, result_c, result_l, result_stellar, pahtemp, I_model, comps, χ2, dof
 end
 
 
@@ -957,7 +963,7 @@ function _fit_bootstraps(spax::Spaxel, cube_fitter::CubeFitter, I_model::Vector{
         spax.I .= I_boots[nboot]
 
         # Re-perform the fitting on the resampled data
-        result_boot, _, _, _, Ib_i, = with_logger(NullLogger()) do
+        result_boot, _, _, _, _, Ib_i, = with_logger(NullLogger()) do
             _fit_spaxel_iterfunc(spax, cube_fitter; bootstrap_iter=true, p1_boots_c=result_c.popt, 
                 p1_boots_l=result_l.popt, p1_boots_pah=pahtemp, use_ap=use_ap)
         end
@@ -978,12 +984,16 @@ function _fit_bootstraps(spax::Spaxel, cube_fitter::CubeFitter, I_model::Vector{
     split1 = length(result_c.popt)
     split2 = length(result_c.popt) + length(result_l.popt)
     
-    p_out, p_err, I_boot_min, I_boot_max, I_model, comps, χ2 = collect_bootstrapped_results(spax, cube_fitter, p_boot, 
+    p_out, p_err, I_boot_min, I_boot_max, I_model, comps, norms, χ2 = collect_bootstrapped_results(spax, cube_fitter, p_boot, 
         I_model_boot, split1, split2)
     result.popt .= p_out
     result.perr .= p_err
+    result_stellar = nothing
+    if fopt.fit_stellar_continuum
+        result_stellar = calculate_stellar_parameters(cube_fitter, norms, spax.N)
+    end
 
-    result, I_boot_min, I_boot_max, I_model, comps, χ2
+    result, result_stellar, I_boot_min, I_boot_max, I_model, comps, χ2
 end
 
 
@@ -1013,7 +1023,12 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, coords::Cart
     if isfile(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.csv")) && !oopt.overwrite
         # Otherwise, just grab the results from before
         p_out, p_err = read_fit_results_csv(cube_fitter.name, fname)
-        return p_out, p_err
+        np_ssp = 0
+        if fopt.fit_stellar_continuum
+            rs = deserialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.ssp"))
+            np_ssp = length(rs.ages)
+        end
+        return p_out, p_err, np_ssp
     end
 
     # if there are any NaNs, skip over the spaxel
@@ -1038,17 +1053,17 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, coords::Cart
     # so there should be no problems w.ith I/O race conditions
     spaxel_logger = make_spaxel_logger(cube_fitter.name, fname)
 
-    result = with_logger(spaxel_logger) do
+    result, np_ssp = with_logger(spaxel_logger) do
 
         # Perform the regular fit
-        result, result_c, result_l, pahtemp, I_model, comps, χ2, dof = _fit_spaxel_iterfunc(spax, cube_fitter; 
-            bootstrap_iter=false, use_ap=use_ap)
+        result, result_c, result_l, result_stellar, pahtemp, I_model, comps, χ2, dof = _fit_spaxel_iterfunc(
+            spax, cube_fitter; bootstrap_iter=false, use_ap=use_ap)
 
         # Perform the bootstrapping iterations, if n_bootstrap > 0
         I_boot_min = I_boot_max = nothing
         if fopt.n_bootstrap > 0
-            result, I_boot_min, I_boot_max, I_model, comps, χ2 = _fit_bootstraps(spax, cube_fitter, I_model, result,
-                result_c, result_l, pahtemp, fname; use_ap=use_ap)
+            result, result_stellar, I_boot_min, I_boot_max, I_model, comps, χ2 = _fit_bootstraps(
+                spax, cube_fitter, I_model, result, result_c, result_l, pahtemp, fname; use_ap=use_ap)
         end
 
         # Plot the fit
@@ -1069,16 +1084,24 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, coords::Cart
         # serialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).LOKI"), (p_out=p_out, p_err=p_err))
         # save output as csv file
         write_fit_results_csv(cube_fitter, fname, result)
+
+        # Plot and save the stellar populations, if relevant
+        np_ssp = 0
+        if fopt.fit_stellar_continuum
+            plot_stellar_grids(result_stellar, cube_fitter, fname)
+            serialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.ssp"), result_stellar)
+            np_ssp = length(result_stellar.ages)
+        end
         
         # save memory allocations & other logistic data to a separate log file
         if oopt.track_memory
             write_memory_log(cube_fitter, fname)
         end
 
-        result
+        result, np_ssp
     end
 
-    return result.popt, result.perr
+    return result.popt, result.perr, np_ssp
 end
 
 
@@ -1117,7 +1140,7 @@ function fit_stack!(cube_fitter::CubeFitter)
     fill_bad_pixels!(s_init)
 
     # No bootstrapping on the first integrated fit
-    _, _, _, pahtemp, I_model_init, comps_init, χ2_init, dof_init = _fit_spaxel_iterfunc(s_init, cube_fitter; 
+    _, _, _, _, pahtemp, I_model_init, comps_init, χ2_init, dof_init = _fit_spaxel_iterfunc(s_init, cube_fitter; 
         bootstrap_iter=false, use_ap=false, init=true)
     χ2red_init = χ2_init / dof_init
 
@@ -1139,7 +1162,7 @@ end
 # Helper function that loops over previously fit spaxels and adds their results into
 # the out_params and out_errs
 function spaxel_loop_previous(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxels::Vector{CartesianIndex{2}}, 
-    vorbin::Bool, out_params::AbstractArray{<:Real,3}, out_errs::AbstractArray{<:Real,4})
+    vorbin::Bool, out_params::AbstractArray{<:Real,3}, out_errs::AbstractArray{<:Real,4}, out_np_ssp::AbstractArray{Int,2})
 
     _m2 = falses(length(spaxels))
     if !(out_options(cube_fitter).overwrite)
@@ -1149,16 +1172,18 @@ function spaxel_loop_previous(cube_fitter::CubeFitter, cube_data::NamedTuple, sp
             fpath = joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.csv")
             if isfile(fpath)
                 # just loads in the previous fit results since they already exist
-                p_out, p_err = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
+                p_out, p_err, np_ssp = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
                 if vorbin
                     out_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(index)[1])
                     for out_index in out_indices
                         out_params[out_index, :] .= ustrip.(p_out)
                         out_errs[out_index, :, :] .= ustrip.(p_err)
+                        out_np_ssp[out_index] = np_ssp
                     end
                 else
                     out_params[index, :] .= ustrip.(p_out)
                     out_errs[index, :, :] .= ustrip.(p_err)
+                    out_np_ssp[index] = np_ssp
                 end
                 # remove this spaxel from the list of spaxels that still need to be fit
                 _m2[ii] = 1
@@ -1172,24 +1197,27 @@ end
 
 # Helper function that loops over spaxels using pmap to fit them in parallel
 function spaxel_loop_pmap!(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxels::Vector{CartesianIndex{2}},
-    vorbin::Bool, out_params::AbstractArray{<:Real,3}, out_errs::AbstractArray{<:Real,4})
+    vorbin::Bool, out_params::AbstractArray{<:Real,3}, out_errs::AbstractArray{<:Real,4}, 
+    out_np_ssp::AbstractArray{Int,2})
 
     prog = Progress(length(spaxels))
     # => create a closure where the only actual function argument is the spaxel index; 
     #    I think this, in combination with the default Caching Pool, means the large cube_fitter 
     #    and cube_data structures dont have to all be passed to the individual workers
     progress_pmap(spaxels, progress=prog, retry_delays=ones(1)) do index
-        p_out, p_err = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin) 
+        p_out, p_err, np_ssp = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin) 
         if !isnothing(p_out)
             if vorbin
                 out_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(index)[1])
                 for out_index in out_indices
                     out_params[out_index, :] .= ustrip.(p_out)
                     out_errs[out_index, :, :] .= ustrip.(p_err)
+                    out_np_ssp[out_index] = np_ssp
                 end
             else
                 out_params[index, :] .= ustrip.(p_out)
                 out_errs[index, :, :] .= ustrip.(p_err)
+                out_np_ssp[index] = np_ssp
             end
         end
         nothing
@@ -1204,20 +1232,22 @@ end
 # Helper function that loops over spaxels using distributed to fit them in parallel
 function spaxel_loop_distributed!(cube_fitter::CubeFitter, cube_data::NamedTuple,
     spaxels::Vector{CartesianIndex{2}}, vorbin::Bool, out_params::AbstractArray{<:Real,3}, 
-    out_errs::AbstractArray{<:Real,4})
+    out_errs::AbstractArray{<:Real,4}, out_np_ssp::AbstractArray{Int,2})
 
     @showprogress @distributed for index ∈ spaxels
-        p_out, p_err = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
+        p_out, p_err, np_ssp = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
         if !isnothing(p_out)
             if vorbin
                 out_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(index)[1])
                 for out_index in out_indices
                     out_params[out_index, :] .= ustrip.(p_out)
                     out_errs[out_index, :, :] .= ustrip.(p_err)
+                    out_np_ssp[out_index] = np_ssp
                 end
             else
                 out_params[index, :] .= ustrip.(p_out)
                 out_errs[index, :, :] .= ustrip.(p_err)
+                out_np_ssp[index] = np_ssp
             end
         end
     end
@@ -1230,21 +1260,23 @@ end
 
 # Helper function that loops over spaxels, fitting them in sequence (not parallel)
 function spaxel_loop_serial!(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxels::Vector{CartesianIndex{2}},
-    vorbin::Bool, out_params::AbstractArray{<:Real,3}, out_errs::AbstractArray{<:Real,4})
+    vorbin::Bool, out_params::AbstractArray{<:Real,3}, out_errs::AbstractArray{<:Real,4}, out_np_ssp::AbstractArray{Int,2})
 
     prog = Progress(length(spaxels))
     for index ∈ spaxels
-        p_out, p_err = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
+        p_out, p_err, np_ssp = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
         if !isnothing(p_out)
             if vorbin
                 out_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(index)[1])
                 for out_index in out_indices
                     out_params[out_index, :] .= ustrip.(p_out)
                     out_errs[out_index, :, :] .= ustrip.(p_err)
+                    out_np_ssp[out_index] = np_ssp
                 end
             else
                 out_params[index, :] .= ustrip.(p_out)
                 out_errs[index, :, :] .= ustrip.(p_err)
+                out_np_ssp[index] = np_ssp
             end
         end
         next!(prog)
@@ -1286,6 +1318,7 @@ function fit_cube!(cube_fitter::CubeFitter)
     out_params .= NaN
     out_errs = Array{Float64}(undef, shape[1:2]..., cube_fitter.n_params_total, 2)
     out_errs .= NaN
+    out_np_ssp = zeros(Int, shape[1:2]...)
 
     # "cube_data" object holds the primary wavelength, intensity, and errors
     # this is just a convenience object since these may be different when fitting an integrated spectrum
@@ -1320,7 +1353,7 @@ function fit_cube!(cube_fitter::CubeFitter)
     spaxels = spaxels[.~_m]
 
     # First (non-parallel) loop over already-completed spaxels
-    _m2 = spaxel_loop_previous(cube_fitter, cube_data, spaxels, vorbin, out_params, out_errs)
+    _m2 = spaxel_loop_previous(cube_fitter, cube_data, spaxels, vorbin, out_params, out_errs, out_np_ssp)
     spaxels = spaxels[.~_m2]
 
     fopt = fit_options(cube_fitter)
@@ -1332,16 +1365,17 @@ function fit_cube!(cube_fitter::CubeFitter)
         # Parallel loops require these to be SharedArrays so that each process accesses the same array
         out_params = SharedArray(out_params)
         out_errs = SharedArray(out_errs)
+        out_np_ssp = SharedArray(out_np_ssp)
         if oopt.parallel_strategy == "pmap"
-            spaxel_loop_pmap!(cube_fitter, cube_data, spaxels, vorbin, out_params, out_errs)
+            spaxel_loop_pmap!(cube_fitter, cube_data, spaxels, vorbin, out_params, out_errs, out_np_ssp)
         elseif oopt.parallel_strategy == "distributed"
-            spaxel_loop_distributed!(cube_fitter, cube_data, spaxels, vorbin, out_params, out_errs)
+            spaxel_loop_distributed!(cube_fitter, cube_data, spaxels, vorbin, out_params, out_errs, out_np_ssp)
         else
             error("Unrecognized parallel strategy: $(oopt.parallel_strategy). May be \"pmap\" or \"distributed\".")
         end
     else
         @info "===> Beginning individual spaxel fitting... <==="
-        spaxel_loop_serial!(cube_fitter, cube_data, spaxels, vorbin, out_params, out_errs)
+        spaxel_loop_serial!(cube_fitter, cube_data, spaxels, vorbin, out_params, out_errs, out_np_ssp)
     end
 
     @info "===> Generating parameter maps and model cubes... <==="
@@ -1351,7 +1385,7 @@ function fit_cube!(cube_fitter::CubeFitter)
     out_errs = out_errs .* repeat(reshape(out_units, (1,1,length(out_units),1)), outer=[shape[1],shape[2],1,2])
 
     # Create the ParamMaps and CubeModel structs containing the outputs
-    param_maps, cube_model = assign_outputs(out_params, out_errs, cube_fitter, cube_data, false)
+    param_maps, cube_model = assign_outputs(out_params, out_errs, out_np_ssp, cube_fitter, cube_data, false)
 
     if oopt.plot_maps
         @info "===> Plotting parameter maps... <==="
@@ -1420,6 +1454,7 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
     out_params .= NaN
     out_errs = Array{Float64}(undef, shape[1:2]..., cube_fitter.n_params_total, 2)
     out_errs .= NaN
+    out_np_ssp = zeros(Int, shape[1:2]...)
 
     # Loop through each wavelength pixel and perform the aperture photometry
     if aperture isa String
@@ -1455,10 +1490,11 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
     spaxels = CartesianIndices((1,1))
 
     @info "===> Beginning integrated spectrum fitting... <==="
-    p_out, p_err = fit_spaxel(cube_fitter, cube_data, spaxels[1]; use_ap=true)
+    p_out, p_err, np_ssp = fit_spaxel(cube_fitter, cube_data, spaxels[1]; use_ap=true)
     if !isnothing(p_out)
         out_params[spaxels[1], :] .= ustrip.(p_out)
         out_errs[spaxels[1], :, :] .= ustrip.(p_err)
+        out_np_ssp[spaxels[1]] = np_ssp
     end
 
     @info "===> Generating parameter maps and model cubes... <==="
@@ -1468,7 +1504,7 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
     out_errs = out_errs .* repeat(reshape(out_units, (1,1,length(out_units),1)), outer=[shape[1],shape[2],1,2])
 
     # Create the ParamMaps and CubeModel structs containing the outputs
-    param_maps, cube_model = assign_outputs(out_params, out_errs, cube_fitter, cube_data, true)
+    param_maps, cube_model = assign_outputs(out_params, out_errs, out_np_ssp, cube_fitter, cube_data, true)
 
     oopt = out_options(cube_fitter)
     if oopt.save_fits
@@ -1532,6 +1568,7 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, agn_templates::Arra
     out_params .= NaN
     out_errs = Array{Float64}(undef, shape[1:2]..., cube_fitter.n_params_total, 2)
     out_errs .= NaN
+    out_np_ssp = zeros(Int, shape[1:2]...)
     cube_data = create_cube_data_postnuctemp(cube_fitter, agn_templates)
 
     @debug """
@@ -1543,11 +1580,12 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, agn_templates::Arra
     @info "===> Beginning nuclear spectrum fitting... <==="
     # Add a minimum uncertainty to prevent the statistical uncertainties on the model from being close to 0 due to it being
     # a smooth model rather than actual data
-    p_out, p_err = fit_spaxel(cube_fitter, cube_data, CartesianIndex(1,1); use_ap=true, 
+    p_out, p_err, np_ssp = fit_spaxel(cube_fitter, cube_data, CartesianIndex(1,1); use_ap=true, 
         σ_min=nanminimum(ustrip.(cube_fitter.cube.σ))*unit(cube_fitter.cube.σ[1]))
     if !isnothing(p_out)
         out_params[1, 1, :] .= ustrip.(p_out)
         out_errs[1, 1, :, :] .= ustrip.(p_err)
+        out_np_ssp[1,1] = np_ssp
     end
 
     @info "===> Generating parameter maps and model cubes... <==="
@@ -1557,7 +1595,7 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, agn_templates::Arra
     out_errs = out_errs .* repeat(reshape(out_units, (1,1,length(out_units),1)), outer=[shape[1],shape[2],1,2])
 
     # Create the ParamMaps and CubeModel structs containing the outputs
-    param_maps, cube_model = assign_outputs(out_params, out_errs, cube_fitter, cube_data, true)
+    param_maps, cube_model = assign_outputs(out_params, out_errs, out_np_ssp, cube_fitter, cube_data, true)
 
     # Create another set of ParamMaps and CubeModels--this time 3D--containing the features fluxes dispersed by the PSF model
     param_maps_3d, cube_model_3d = assign_qso3d_outputs(param_maps, cube_model, cube_fitter, psf_norm)

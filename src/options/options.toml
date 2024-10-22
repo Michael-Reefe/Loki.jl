@@ -91,6 +91,10 @@ extinction_screen = true
 # whether or not to fit the stellar continuum
 fit_stellar_continuum = true
 
+# the regularization value for the SSPs, if they are being fit.
+# set to 0 to disable regularization
+ssp_regularize = 100.0
+
 # whether or not to fit optical Fe II emission (obviously only applies for optical spectra)
 # separate options for narrow- and broad-line templates
 fit_opt_na_feii = false

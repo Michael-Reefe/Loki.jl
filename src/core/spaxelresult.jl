@@ -16,6 +16,15 @@ mutable struct SpaxelFitResult
 end
 
 
+# A container for holding stellar population results
+struct StellarResult
+    mtot::typeof(1.0u"Msun")
+    masses::Matrix{<:typeof(1.0u"Msun")}
+    ages::Vector{typeof(1.0u"Gyr")}
+    logzs::Vector{<:Real}
+end
+
+
 # combine multiple SpaxelFitResult objects together
 function combine!(s1::SpaxelFitResult, s2::SpaxelFitResult)
     s1.pnames = cat(s1.pnames, s2.pnames, dims=1)

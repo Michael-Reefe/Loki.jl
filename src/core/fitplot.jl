@@ -125,11 +125,6 @@ function plot_spaxel_fit_plotly(cube_fitter::CubeFitter, spaxel::Spaxel, I_model
         end
     end
     append!(traces, [PlotlyJS.scatter(x=λ, y=sdust, mode="lines", line=Dict(:color => "blue", :width => 1), name="Total PAHs")])
-    # Summed up SSPs
-    if cube_fitter.n_ssps > 1
-        append!(traces, [PlotlyJS.scatter(x=λ, y=sum([ustrip.(comps["SSP_$i"]) for i ∈ 1:cube_fitter.n_ssps], dims=1)[1] .* 
-            ext_stars, mode="lines", line=Dict(:color => "#FF00FF", :width => 1), name="Total SSPs")])
-    end
 
     # save as HTML file
     p = PlotlyJS.plot(traces, layout)
@@ -422,8 +417,8 @@ function plot_spaxel_fit_pyplot(cube_fitter::CubeFitter, spaxel::Spaxel, I_model
     # full continuum (no PAHs)
     ax1.plot(ustrip.(λ), comps["continuum"] ./ norm .* factor, "k-", lw=2, alpha=0.5, label="Continuum")
     # individual continuum components
-    for i in 1:cube_fitter.n_ssps
-        ax1.plot(ustrip.(λ), comps["SSP_$i"] .* ext_stars ./ norm .* factor, "-", color="fuchsia", alpha=0.75, label="SSPs")
+    if fopt.fit_stellar_continuum
+        ax1.plot(ustrip.(λ), comps["SSPs"] .* ext_stars ./ norm .* factor, "-", color="fuchsia", alpha=0.75, label="SSPs")
     end
     if fopt.fit_opt_na_feii
         ax1.plot(ustrip.(λ), comps["na_feii"] .* ext_gas ./ norm .* factor, "-", color="goldenrod", alpha=0.8, label="Narrow Fe II")
@@ -717,6 +712,39 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, bunit::Abstra
     if !isnothing(modify_ax)
         return fig, ax, cdata
     end
+    plt.close()
+
+end
+
+
+function plot_stellar_grids(result::StellarResult, cube_fitter::CubeFitter, label::String)
+
+    logm = log10.(result.masses)
+    all_ages = log10.(ustrip.(uconvert.(u"yr", cube_fitter.ssps.ages)))
+    all_logzs = cube_fitter.ssps.logzs
+
+    # Create a 2D colormap of the masses
+    fig, ax = plt.subplots()
+    cdata = ax.imshow(logm', origin=:lower, cmap=:cubehelix, vmin=minimum(logm), vmax=maximum(logm),
+        extent=[minimum(all_ages), maximum(all_ages), minimum(all_logzs), maximum(all_logzs)])
+    # add colorbar
+    fig.colorbar(cdata, ax=ax, label=L"$\log_{10}(M/M_\odot)$")
+    # axis labels
+    ax.set_xlabel(L"$\log_{10}$(Age / yr)")
+    ax.set_ylabel(L"$\log_{10}(Z/Z_\odot)$")
+
+    # plot points at the located maxima of the distribution
+    for (ai, zi) in zip(result.ages, result.logzs)
+        ax.plot(log10(ustrip(uconvert(u"yr", ai))), zi, "rx", ms=5)
+    end
+
+    # Output file path creation
+    out_folder = joinpath("output_$(cube_fitter.name)", "stellar_grids")
+    if !isdir(out_folder)
+        mkdir(out_folder)
+    end
+    # Save figure as PDF, yay for vector graphics!
+    plt.savefig(joinpath(out_folder, "$label.stellar_grid.pdf"), dpi=300, bbox_inches="tight")
     plt.close()
 
 end

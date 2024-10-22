@@ -105,6 +105,7 @@ mutable struct FittingOptions{T<:Real,S<:Integer} <: Options
     ebv_map::Union{Array{T,3},Nothing}
     sil_abs_map::Union{Array{T,3},Nothing}
     fit_stellar_continuum::Bool
+    ssp_regularize::T
     fit_sil_emission::Bool
     fit_ch_abs::Bool
     fit_temp_multexp::Bool
@@ -391,6 +392,7 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
             ebv_map,
             sil_abs_map,
             out[:fit_stellar_continuum],
+            out[:ssp_regularize]
             out[:fit_sil_emission],
             out[:fit_ch_abs],
             out[:fit_temp_multexp],

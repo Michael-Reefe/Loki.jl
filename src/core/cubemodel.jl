@@ -21,7 +21,7 @@ struct CubeModel{T<:Real,
     absorption_silicates::Array{T, 4}  # (may be just tau_97 or N_oli, N_pyr, N_for)
     abs_ice::Union{Array{T, 3}, Nothing}
     abs_ch::Union{Array{T, 3}, Nothing}
-    stellar::Array{S, 4}
+    stellar::Array{S, 3}
     na_feii::Union{Array{S, 3}, Nothing}
     br_feii::Union{Array{S, 3}, Nothing}
     power_law::Array{S, 4}
@@ -65,7 +65,7 @@ function generate_cubemodel(cube_fitter::CubeFitter, floattype::DataType=Float32
     absorption_silicates = zeros(floattype, shape2..., fopt.extinction_curve == "decompose" ? 4 : 1)
     abs_ice = fopt.fit_ch_abs ? zeros(floattype, shape2...) : nothing
     abs_ch = fopt.fit_ch_abs ? zeros(floattype, shape2...) : nothing
-    stellar = zeros(qtype, shape2..., cube_fitter.n_ssps)
+    stellar = zeros(qtype, shape2...)
     na_feii = fopt.fit_opt_na_feii ? zeros(qtype, shape2...) : nothing
     br_feii = fopt.fit_opt_br_feii ? zeros(qtype, shape2...) : nothing
     power_law = zeros(qtype, shape2..., cube_fitter.n_power_law)

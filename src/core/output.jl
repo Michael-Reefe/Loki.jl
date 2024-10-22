@@ -3,12 +3,13 @@
 const ascii_lowercase = "abcdefghijklmnopqrstuvwxyz"
 
 
-function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractArray{<:Number}, cube_fitter::CubeFitter,
-    cube_data::NamedTuple, aperture::Bool=false)
+function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractArray{<:Number}, 
+    out_np_ssp::AbstractArray{Int}, cube_fitter::CubeFitter, cube_data::NamedTuple, aperture::Bool=false)
 
     # Create the CubeModel and ParamMaps structs to be filled in
+    np_ssp = maximum(out_np_ssp)
     cube_model = generate_cubemodel(cube_fitter; do_1d=aperture)
-    param_maps = generate_parammaps(cube_fitter; do_1d=aperture)
+    param_maps = generate_parammaps(cube_fitter; do_1d=aperture, stellar_params=np_ssp)
 
     fopt = fit_options(cube_fitter)
     oopt = out_options(cube_fitter)
@@ -45,12 +46,30 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
         I_cont, comps_c, norms = model_continuum(spax, spax.N, ustrip.(out_params[index, 1:pc-1]), unit.(out_params[index, 1:pc-1]),
             cube_fitter, false, true)
 
+        # Grab the stellar results
+        stellar_vals = nothing
+        if fopt.fit_stellar_continuum
+            fname = !isnothing(cube_fitter.cube.voronoi_bins) ? "voronoi_bin_$(index[1])" : "spaxel_$(index[1])_$(index[2])"
+            results_stellar = deserialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.ssp"))
+            stellar_vals = Array{Quantity{Float64}}(undef, 1+2np_ssp)
+            stellar_vals[:] .= NaN
+            stellar_vals[2:1+length(results_stellar.ages)] .= results_stellar.ages
+            stellar_vals[2+np_ssp:1+np_ssp+length(results_stellar.logzs)] .= results_stellar.logzs
+        end
+
         # Loop through parameters and save them in the parammaps data structure 
         for (pᵢ, pname) in enumerate(param_maps.parameters.names)
 
             # Get the values
-            val = out_params[index, pᵢ]
-            err_upp, err_low = out_errs[index, pᵢ, 1:2]
+            if pᵢ ≤ size(out_params, 2)
+                val = out_params[index, pᵢ]
+                err_upp, err_low = out_errs[index, pᵢ, 1:2]
+            else
+                @assert fopt.fit_stellar_continuum 
+                val = stellar_vals[pᵢ-size(out_params, 2)]
+                err_upp = NaN * unit(val)
+                err_low = NaN * unit(val)
+            end
             unit_check(unit(val), unit(err_upp))
             unit_check(unit(err_upp), unit(err_low))
 
@@ -164,9 +183,7 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
                 cube_model.abs_ice[:, index] .= comps["absorption_ice"]
                 cube_model.abs_ch[:, index] .= comps["absorption_ch"]
             end
-            for i ∈ 1:cube_fitter.n_ssps
-                cube_model.stellar[:, index, i] .= comps["SSP_$i"] .* restframe_factor
-            end
+            cube_model.stellar[:, index] .= comps["SSPs"] .* restframe_factor
             if fopt.fit_opt_na_feii
                 cube_model.na_feii[:, index] .= comps["na_feii"] .* restframe_factor
             end
@@ -269,9 +286,7 @@ function assign_qso3d_outputs(param_maps::ParamMaps, cube_model::CubeModel, cube
         cube_model_3d.abs_ice .= cube_model.abs_ice[:,1,1]
         cube_model_3d.abs_ch .= cube_model.abs_ch[:,1,1]
     end
-    for i ∈ 1:cube_fitter.n_ssps
-        cube_model_3d.stellar[:,:,:,i] .= extendp(cube_model.stellar[:,1,1,i], _shape) .* psf_norm_p
-    end
+    cube_model_3d.stellar .= extendp(cube_model.stellar[:,1,1], _shape) .* psf_norm_p
     if fopt.fit_opt_na_feii
         cube_model_3d.na_feii .= extendp(cube_model.na_feii[:,1,1], _shape) .* psf_norm_p
     end
@@ -956,11 +971,9 @@ function write_fits_full_model(cube_fitter::CubeFitter, cube_data::NamedTuple, c
             write(f, Float32.(permutedims(cube_model.abs_ch, (2,3,1))); name="EXTINCTION.ABS_CH")      # CH Absorption model
         end
         if fopt.fit_stellar_continuum
-            for i ∈ 1:size(cube_model.stellar, 4)
-                write(f, Float32.(permutedims(ustrip.(cube_model.stellar[:, :, :, i]), (2,3,1)));      # Stellar population models
-                    name="CONTINUUM.STELLAR_POPULATIONS.$i")   
-                write_key(f["CONTINUUM.STELLAR_POPULATIONS.$i"], "BUNIT", Iunit)
-            end
+            write(f, Float32.(permutedims(ustrip.(cube_model.stellar), (2,3,1)));      # Stellar population models
+                name="CONTINUUM.STELLAR_POPULATIONS")   
+            write_key(f["CONTINUUM.STELLAR_POPULATIONS"], "BUNIT", Iunit)
         end
         if fopt.fit_opt_na_feii
             write(f, Float32.(permutedims(ustrip.(cube_model.na_feii), (2,3,1))); name="CONTINUUM.FEII.NA")  # Narrow Fe II emission

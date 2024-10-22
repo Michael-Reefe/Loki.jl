@@ -52,31 +52,6 @@ function get_normalized_templates!(contin::Vector{<:Real}, λ::Vector{<:QWave}, 
 end
 
 
-# get constraint equations for regularization for the least-squares fitting of the stellar templates
-function add_reg_constraints!(A::Matrix{<:Real}, nλ::Int, cube_fitter::CubeFitter)
-    # reshape into N_ages x N_logzs sized array
-    reg_dims = (length(cube_fitter.ssps.ages), length(cube_fitter.ssps.logzs))
-    # get a "view" so modifying a also modifies A
-    @assert size(A, 2) == prod(reg_dims)
-    a = reshape(view(A, :, :), (size(A, 1), reg_dims...))
-    reg_diffs = [1., -2., 1.] ./ cube_fitter.Δ_reg
-    # add constraint equations for regularization
-    i = nλ+1
-    for j in axes(a, 2)
-        for k in axes(a, 3)
-            if 1 < k < size(a, 3)
-                a[i, j, k-1:k+1] .= reg_diffs
-            end
-            if 1 < j < size(A, 2)
-                a[i, j-1:j+1, k] .+= reg_diffs
-            end
-            i += 1
-        end
-    end
-end
-
-
-
 """
     model_continuum(λ, params, N, cube_fitter, nuc_temp_fit, return_components)
 
@@ -264,7 +239,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
     if fopt.fit_stellar_continuum
         ssp_contin, norms["continuum.stellar_norm"], norms["continuum.stellar_weights"] = stellar_populations_nnls(
             s, contin, comps["total_extinction_stars"], stel_vel, stel_sig, cube_fitter)
-        comps["SSPs"] = ssp_contin
+        comps["SSPs"] = ssp_contin ./ comps["total_extinction_stars"]   # (save the un-extincted stellar continuum)
         contin .+= ssp_contin
     end
 
@@ -336,40 +311,23 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
     end
     @. ext_stars = Cf * ext_stars * abs_sil * abs_tot + (1.0 - Cf)
     @. ext_gas = Cf * ext_gas * abs_sil * abs_tot + (1.0 - Cf)
-    
-    ##### 2. STELLAR POPULATIONS #####
 
+
+    #############################
+
+    # Collect the stellar velocities
+    stel_vel = stel_sig = 0.0u"km/s"
     if fopt.fit_stellar_continuum
-        ssps = zeros(length(cube_fitter.ssps.λ), cube_fitter.n_ssps)
-        ssp_amps = zeros(cube_fitter.n_ssps)
-        # Sanity check on units
-        unit_check(cube_fitter.ssps.units, unit(N)*u"sr/Msun")
-        # Interpolate the SSPs to the right ages/metallicities 
-        for i in 1:cube_fitter.n_ssps
-            # divide out the solid angle vector so that we're measured in intensity units
-            unit_check(punits[pᵢ+1], u"Gyr")
-            if cube_fitter.ssps.templates isa Interpolations.Extrapolation
-                ssps[:,i] .= ustrip.(cube_fitter.ssps.templates.(params[pᵢ+1]*u"Gyr", params[pᵢ+2], cube_fitter.ssps.λ))
-            else
-                ssps[:,i] .= ustrip.(cube_fitter.ssps.templates[:,i])
-            end
-            ssp_amps[i] = params[pᵢ]
-            pᵢ += 3
-        end
-        # Convolve with a line-of-sight velocity distribution (LOSVD) according to the stellar velocity and dispersion
         unit_check(punits[pᵢ], u"km/s")
         unit_check(punits[pᵢ+1], u"km/s")
-        ssps = convolve_losvd(ssps, cube_fitter.ssps.vsyst, params[pᵢ]*u"km/s", params[pᵢ+1]*u"km/s", s.vres, length(λ))
+        stel_vel = params[pᵢ]*u"km/s"
+        stel_sig = params[pᵢ+1]*u"km/s"
         pᵢ += 2
-        for i in 1:cube_fitter.n_ssps
-            # divide out the solid angle
-            ssps[:, i] ./= s.area_sr
-            # normalize the templates by their maximum so that the amplitude is properly separated from the age and metallicity during fitting
-            contin .+= ssp_amps[i].*ssps[:, i]./maximum(ssps[:, i]).*ext_stars
-        end
     end
 
-    ##### 3. FE II EMISSION #####
+    #############################
+    
+    ##### 2. FE II EMISSION #####
 
     if fopt.fit_opt_na_feii
         unit_check(punits[pᵢ+1], u"km/s")
@@ -391,7 +349,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         pᵢ += 3
     end
 
-    ##### 4. POWER LAWS #####
+    ##### 3. POWER LAWS #####
 
     for j ∈ 1:cube_fitter.n_power_law
         # Reference wavelength at the median wavelength of the input spectrum
@@ -400,7 +358,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         pᵢ += 2
     end
 
-    ##### 5. THERMAL DUST CONTINUA #####
+    ##### 4. THERMAL DUST CONTINUA #####
 
     for i ∈ 1:cube_fitter.n_dust_cont
         unit_check(punits[pᵢ+1], u"K")
@@ -409,7 +367,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         pᵢ += 2
     end
 
-    ##### 6. SILICATE EMISSION #####
+    ##### 5. SILICATE EMISSION #####
 
     if fopt.fit_sil_emission
         # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
@@ -422,7 +380,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         pᵢ += 6
     end
 
-    ##### 7. PSF TEMPLATES #####
+    ##### 6. PSF TEMPLATES #####
 
     if haskey(s.aux, "templates") && haskey(s.aux, "channel_masks") && size(s.aux["templates"], 2) > 0
         # use the in-place version for F A S T  (its not actually that much faster lmao)
@@ -431,7 +389,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         pᵢ += dp
     end
 
-    ##### 8. PAH EMISSION FEATURES #####
+    ##### 7. PAH EMISSION FEATURES #####
 
     if use_pah_templates
         contin .+= params[pᵢ] .* cube_fitter.dust_interpolators["smith3"](ustrip.(λ)) .* ext_gas
@@ -457,6 +415,12 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
                 end
             end
         end
+    end
+
+    ##### 8. STELLAR POPULATIONS #####
+
+    if fopt.fit_stellar_continuum
+        contin .+= stellar_populations_nnls(s, contin, ext_stars, stel_vel, stel_sig, cube_fitter)[1]
     end
 
     if return_extinction

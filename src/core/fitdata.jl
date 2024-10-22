@@ -390,6 +390,40 @@ function create_cube_data_postnuctemp(cube_fitter::CubeFitter, agn_templates::Ar
 end
 
 
+# Calculate stellar masses, ages, and metallicities based on a fit
+function calculate_stellar_parameters(cube_fitter::CubeFitter, norms::Dict, N::Number)
+
+    # reshape SSPs into a 3D array with axes (wavelength, age, logz)
+    p_dims = (length(cube_fitter.ssps.ages), length(cube_fitter.ssps.logzs))
+    # rest-frame transform 
+    if unit(cube_fitter.cube.I[1]) <: QPerFreq
+        restframe_factor = 1 + cube_fitter.z
+    else
+        restframe_factor = 1 / (1 + cube_fitter.z)
+    end
+
+    stellar_N = norms["continuum.stellar_populations"]     
+    weights = reshape(norms["continuum.stellar_weights"], p_dims...)
+    f = N / stellar_N   
+    unit_check(unit(f), u"Msun")  # should have units of Msun
+    # stellar mass that each SSP template contributes
+    masses = weights .* f .* restframe_factor
+    # total mass
+    mtot = sum(masses)
+
+    # detect "peaks" in the age/logz axes and report their values
+    minds = findlocalmaxima(masses)
+    # cut off after 10 so we dont get TOO excessive here
+    if length(minds) > 10
+        minds = minds[1:10]
+    end
+    ages = [cube_fitter.ssps.ages[m.I[1]] for m in minds]
+    logzs = [cube_fitter.ssps.logzs[m.I[2]] for m in minds]
+
+    StellarResult(mtot, masses, ages, logzs)
+end
+
+
 # Helper function to collect the results of a fit into a parameter vector, error vector,
 # intensity vector as a function of wavelength, and a comps dict giving individual components
 # of the final model
@@ -409,9 +443,9 @@ function collect_cont_fit_results(res::CMPFit.Result, pfix_tied::Vector{<:Real},
     @debug "Best fit continuum parameters: \n $popt"
     @debug "Continuum parameter errors: \n $perr"
 
-    I_model, comps, = model_continuum(spaxel, spaxel.N, ustrip.(popt), punits, cube_fitter, fopt.use_pah_templates, true)
+    I_model, comps, norms = model_continuum(spaxel, spaxel.N, ustrip.(popt), punits, cube_fitter, fopt.use_pah_templates, true)
 
-    popt, perr, I_model, comps
+    popt, perr, I_model, comps, norms
 end
 
 
@@ -451,9 +485,9 @@ function collect_cont_fit_results(res_1::CMPFit.Result, p1fix_tied::Vector{<:Rea
     n_free = n_free_1 + n_free_2 - 2
 
     # Create the full model, again only if not bootstrapping
-    I_model, comps, = model_continuum(spaxel, spaxel.N, ustrip.(popt), [punit_1[1:end-2]; punit_2], cube_fitter, false, true)
+    I_model, comps, norms = model_continuum(spaxel, spaxel.N, ustrip.(popt), [punit_1[1:end-2]; punit_2], cube_fitter, false, true)
 
-    popt, perr, n_free, pahtemp, I_model, comps
+    popt, perr, n_free, pahtemp, I_model, comps, norms
 end
 
 
@@ -516,11 +550,11 @@ function collect_fit_results(res::CMPFit.Result, pfix_cont_tied::Vector{<:Real},
     @debug "Best fit line parameters: \n $popt_lines"
     @debug "Line parameter errors: \n $perr_lines"
 
-    I_cont, comps_cont, = model_continuum(spaxel, spaxel.N, ustrip.(popt_cont), punits_cont, cube_fitter, fopt.use_pah_templates, true)
+    I_cont, comps_cont, norms = model_continuum(spaxel, spaxel.N, ustrip.(popt_cont), punits_cont, cube_fitter, fopt.use_pah_templates, true)
     I_lines, comps_lines = model_line_residuals(spaxel, ustrip.(popt_lines), punits_lines, model(cube_fitter).lines, cube_fitter.lsf, 
         comps_cont["total_extinction_gas"], trues(length(spaxel.λ)), true)
     
-    popt_cont, perr_cont, I_cont, comps_cont, popt_lines, perr_lines, I_lines, comps_lines
+    popt_cont, perr_cont, I_cont, comps_cont, norms, popt_lines, perr_lines, I_lines, comps_lines
 end
 
 
@@ -578,7 +612,7 @@ function collect_bootstrapped_results(spaxel::Spaxel, cube_fitter::CubeFitter, p
     I_boot_max = dropdims(nanmaximum(ustrip.(I_model_boot), dims=2), dims=2) .* unit(I_model_boot[1])
 
     # Replace the best-fit model with the 50th percentile model to be consistent with p_out
-    I_boot_cont, comps_boot_cont, = model_continuum(spaxel, spaxel.N, ustrip.(p_out[1:split1]), unit.(p_out[1:split1]), 
+    I_boot_cont, comps_boot_cont, norms = model_continuum(spaxel, spaxel.N, ustrip.(p_out[1:split1]), unit.(p_out[1:split1]), 
         cube_fitter, false, true)
     I_boot_line, comps_boot_line = model_line_residuals(spaxel, ustrip.(p_out[split1+1:split2]), unit.(p_out[split1+1:split2]), 
         model(cube_fitter).lines, cube_fitter.lsf, comps_boot_cont["total_extinction_gas"], trues(length(spaxel.λ)), true)
@@ -590,7 +624,7 @@ function collect_bootstrapped_results(spaxel::Spaxel, cube_fitter::CubeFitter, p
     # Recalculate chi^2 based on the median model
     p_out[end-1] = χ2
 
-    p_out, p_err, I_boot_min, I_boot_max, I_model, comps, χ2
+    p_out, p_err, I_boot_min, I_boot_max, I_model, comps, norms, χ2
 end
 
 
