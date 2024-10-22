@@ -63,7 +63,7 @@ function get_val(parammap::ParamMaps, pnames::Vector{String})
     parammap.data[:, :, inds]
 end
 get_val(parammap::ParamMaps, index::CartesianIndex, pname::String) = get_val(parammap, pname)[index]
-get_val(parammap::ParamMaps, index::CartesianIndex, pnames::Vector{String}) = get_val(parammap, pnames)[index]
+get_val(parammap::ParamMaps, index::CartesianIndex, pnames::Vector{String}) = get_val(parammap, pnames)[index,:]
 
 function get_err(parammap::ParamMaps, pname::String)
     ind = findfirst(parammap.parameters.names .== pname)
@@ -79,7 +79,7 @@ function get_err(parammap::ParamMaps, index::CartesianIndex, pname::String)
 end
 function get_err(parammap::ParamMaps, index::CartesianIndex, pnames::Vector{String})
     upp, low = get_err(parammap, pnames)
-    upp[index], low[index]
+    upp[index,:], low[index,:]
 end
 
 function get_label(parammap::ParamMaps, pname::String)

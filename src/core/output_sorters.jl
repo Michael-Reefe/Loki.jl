@@ -155,7 +155,9 @@ function sort_line_components!(cube_fitter::CubeFitter, param_maps::ParamMaps, i
             @debug "Skipping line component sorting for $prefix due to 1 or fewer profiles in this spaxel"
             continue
         end
-        if !all(lines.profiles[k][1:n_prof] .== lines.profiles[k][1])
+        prof_1 = lines.profiles[k][1].profile
+        prof_all = [p.profile for p in lines.profiles[k][1:n_prof]]
+        if !all(prof_all .== prof_1)
             @warn "Skipping line component sorting for $prefix because it is not supported for different line profiles!"
             continue
         end
