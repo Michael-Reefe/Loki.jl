@@ -58,7 +58,7 @@ function normalize!(s::Spaxel, N::T) where {T}
     if !isnothing(s.I_spline)
         s.I_spline = s.I_spline ./ N
     end
-    if haskey(s.aux, "templates")
+    if haskey(s.aux, "templates") && size(s.aux["templates"], 2) > 0
         s.aux["templates"] = s.aux["templates"] ./ N
     end
     unit_check(unit(s.I[1]), NoUnits)
@@ -66,7 +66,7 @@ function normalize!(s::Spaxel, N::T) where {T}
     if !isnothing(s.I_spline)
         unit_check(unit(s.I[1]), unit(s.I_spline[1]))
     end
-    if haskey(s.aux, "templates")
+    if haskey(s.aux, "templates") && size(s.aux["templates"], 2) > 0
         unit_check(unit(s.I[1]), unit(s.aux["templates"][1]))
     end
     s.normalized = true
@@ -109,7 +109,7 @@ function interpolate_over_lines!(s::Spaxel, scale::Integer)
     # Do it for the templates => THIS IS IMPORTANT 
     # because the templates have the lines built-in, and if interpolate over the lines in the data then we
     # need to also do it in the templates
-    if haskey(s.aux, "templates")
+    if haskey(s.aux, "templates") && size(s.aux["templates"], 2) > 0
         for si in axes(s.aux["templates"], 2)
             m = .~isfinite.(s.aux["templates"][:, si])
             s.aux["templates"][mask_ir.|m, si] .= Spline1D(ustrip.(s.λ[.~mask_ir .& .~m]), 

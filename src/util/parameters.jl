@@ -212,27 +212,28 @@ struct SpectralRegion{T<:Union{typeof(1.0u"μm"),typeof(1.0u"angstrom")}}
     n_channels::Int
     channel_masks::Vector{BitVector}
     channel_bounds::Vector{T}
+    gaps::Vector{Tuple{T,T}}
     wavelength_range::WavelengthRange
 end
 
 
 # A little container for stellar populations 
-mutable struct StellarPopulations{Q1<:QWave,Q2<:Unitful.Units,
-    Q3<:typeof(1.0u"km/s"),S<:Real,T<:Quantity}
-    λ::Vector{Q1}
-    ages::Vector{typeof(1.0u"Gyr")}
+mutable struct StellarPopulations{Qw<:QWave,Qa<:typeof(1.0u"Gyr"),
+    Qv<:typeof(1.0u"km/s"),S<:Real,T<:Quantity}
+    λ::Vector{Qw}
+    ages::Vector{Qa}
     logzs::Vector{S}
     templates::Matrix{T}
-    vsyst::Q3
+    vsysts::Vector{Qv}
 end
 
 # A little container for iron templates
-mutable struct FeIITemplates{Q1<:QWave,Q2<:typeof(1.0u"km/s"),C<:Complex}
-    λ::Vector{Q1}
+mutable struct FeIITemplates{Qw<:QWave,Qv<:typeof(1.0u"km/s"),C<:Complex}
+    λ::Vector{Qw}
     npad::Int
     na_fft::Vector{C}
     br_fft::Vector{C}
-    vsyst::Q2
+    vsysts::Vector{Qv}
 end
 
 
@@ -392,7 +393,7 @@ function Base.getindex(p::Parameters, names::AbstractVector{String})
 end
 
 # methods for adding to a parameter list
-function Base.push!(p::Parameters, name::String, label::String, trans::Vector{Transformation}, new::Parameter)
+function Base.push!(p::Parameters, name::AbstractString, label::AbstractString, trans::Vector{Transformation}, new::Parameter)
     @assert !(name in p.names) "$name already has an entry in $(typeof(p)) object!"
     push!(p.names, name)
     push!(p.labels, label)
@@ -625,6 +626,25 @@ function get_λrange(λlim::Tuple{QLength,QLength})
     else
         UVOptical
     end
+end
+
+# get masks for each part of the spectrum separated by the gaps
+function get_gap_masks(λ::Vector{T}, gaps::Vector{Tuple{T,T}}) where {T<:Number}
+    region_masks = BitVector[]
+    if length(gaps) == 0
+        push!(region_masks, trues(length(λ)))
+    else
+        for i in 1:(length(gaps)+1)
+            if i == 1
+                push!(region_masks, λ .< gaps[i][1])
+            elseif i == (length(gaps)+1)
+                push!(region_masks, gaps[i-1][2] .< λ)
+            else
+                push!(region_masks, gaps[i-1][2] .≤ λ .≤ gaps[i][1])
+            end
+        end
+    end
+    region_masks
 end
 
 

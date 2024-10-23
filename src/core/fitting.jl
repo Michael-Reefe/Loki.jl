@@ -924,11 +924,11 @@ function _fit_spaxel_iterfunc(spaxel::Spaxel, cube_fitter::CubeFitter; bootstrap
         combine!(result, result_e)
         combine!(result, result_s)
 
-        # The stellar parameters (masses, ages, metallicities)
-        result_stellar = nothing
-        if fopt.fit_stellar_continuum
-            result_stellar = calculate_stellar_parameters(cube_fitter, norms, spaxel.N)
-        end
+    end
+    # The stellar parameters (masses, ages, metallicities)
+    result_stellar = nothing
+    if fopt.fit_stellar_continuum
+        result_stellar = calculate_stellar_parameters(cube_fitter, norms, spaxel.N)
     end
 
     return result, result_c, result_l, result_stellar, pahtemp, I_model, comps, χ2, dof
@@ -1020,7 +1020,9 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, coords::Cart
     fopt = fit_options(cube_fitter)
     oopt = out_options(cube_fitter)
     fname = use_vorbins ? "voronoi_bin_$(coords[1])" : "spaxel_$(coords[1])_$(coords[2])"
-    if isfile(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.csv")) && !oopt.overwrite
+    if isfile(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.csv")) && 
+        isfile(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.ssp")) && 
+        !oopt.overwrite
         # Otherwise, just grab the results from before
         p_out, p_err = read_fit_results_csv(cube_fitter.name, fname)
         np_ssp = 0
@@ -1087,7 +1089,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, coords::Cart
 
         # Plot and save the stellar populations, if relevant
         np_ssp = 0
-        if fopt.fit_stellar_continuum
+        if fopt.fit_stellar_continuum && (oopt.plot_spaxels != :none)
             plot_stellar_grids(result_stellar, cube_fitter, fname)
             serialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.ssp"), result_stellar)
             np_ssp = length(result_stellar.ages)
@@ -1140,11 +1142,12 @@ function fit_stack!(cube_fitter::CubeFitter)
     fill_bad_pixels!(s_init)
 
     # No bootstrapping on the first integrated fit
-    _, _, _, _, pahtemp, I_model_init, comps_init, χ2_init, dof_init = _fit_spaxel_iterfunc(s_init, cube_fitter; 
+    _, _, _, result_stellar, pahtemp, I_model_init, comps_init, χ2_init, dof_init = _fit_spaxel_iterfunc(s_init, cube_fitter; 
         bootstrap_iter=false, use_ap=false, init=true)
     χ2red_init = χ2_init / dof_init
 
     # Plot the fit
+    fopt = fit_options(cube_fitter)
     oopt = out_options(cube_fitter)
     if oopt.plot_spaxels != :none
         @debug "Plotting spaxel sum initial fit"
@@ -1156,6 +1159,12 @@ function fit_stack!(cube_fitter::CubeFitter)
             end
         end
     end
+
+    # Plot the stellar matrix
+    if fopt.fit_stellar_continuum && (oopt.plot_spaxels != :none)
+        plot_stellar_grids(result_stellar, cube_fitter, "initial_sum_fit")
+    end
+
 end
 
 
@@ -1169,8 +1178,9 @@ function spaxel_loop_previous(cube_fitter::CubeFitter, cube_data::NamedTuple, sp
         @info "Loading in previous fit results (if any...)"
         @showprogress for (ii, index) ∈ enumerate(spaxels)
             fname = vorbin ? "voronoi_bin_$(index[1])" : "spaxel_$(index[1])_$(index[2])"
-            fpath = joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.csv")
-            if isfile(fpath)
+            fpath1 = joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.csv")
+            fpath2 = joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.ssp")
+            if isfile(fpath1) && isfile(fpath2)
                 # just loads in the previous fit results since they already exist
                 p_out, p_err, np_ssp = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
                 if vorbin

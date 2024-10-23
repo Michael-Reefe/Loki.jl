@@ -23,9 +23,13 @@ function cubefitter_prepare_continuum(λ::Vector{<:QWave}, z::Real, out::Dict, �
         # 2nd axis ordering: (age1_z1, age2_z1, age3_z1, ..., age1_z2, age2_z2, age3_z2, ...)
         n_ssps = size(ssp_temp_flat, 2)
         # Systemic velocity offset
-        vsyst_ssp = log(ssp_λ[1]/λ[1]) * C_KMS
+        vsyst_ssp = [log(ssp_λ[1]/λ[1]) * C_KMS]
+        # add velocity offsets for each separate region
+        for gap in region.gaps
+            push!(vsyst_ssp, log(ssp_λ[1]/λ[λ .> gap[2]][1]) * C_KMS)
+        end
         # Build a StellarPopulations object
-        ssps = StellarPopulations(ssp_λ, ages, metals, ssp_temp_flat, vsyst_ssp)
+        ssps = StellarPopulations(ssp_λ, ages, collect(metals), ssp_temp_flat, vsyst_ssp)
     end
 
     # Fe II templates
@@ -34,13 +38,17 @@ function cubefitter_prepare_continuum(λ::Vector{<:QWave}, z::Real, out::Dict, �
         # Load in the Fe II templates from Veron-Cetty et al. (2004)
         npad_feii, feii_λ, na_feii_fft, br_feii_fft = generate_feii_templates(λ, Iunit, cube.lsf)
         # Make the object
-        vsyst_feii = log(feii_λ[1]/λ[1]) * C_KMS
+        vsyst_feii = [log(feii_λ[1]/λ[1]) * C_KMS]
+        for gap in region.gaps
+            push!(vsyst_feii, log(feii_λ[1]/λ[λ .> gap[2]][1]) * C_KMS)
+        end
         feii = FeIITemplates(feii_λ, npad_feii, na_feii_fft, br_feii_fft, vsyst_feii)
     end
 
     # Velocity resolution
     if n_ssps > 0 || out[:fit_opt_na_feii] || out[:fit_opt_br_feii]
         vres = log(λ[2]/λ[1]) * C_KMS
+        @assert vres ≈ (log(λ[end]/λ[end-1]) * C_KMS)
     end
 
     # Power laws
@@ -161,7 +169,7 @@ function get_continuum_parameter_limits(cube_fitter::CubeFitter, I::Vector{<:Rea
 
     # Lock E(B-V) if an extinction map has been provided
     ext_criterion = force_noext || nanmedian(I) ≤ nanmedian(σ)
-    if (!isnothing(fopt.ebv_map) && !init) || ext_criterion
+    if !isnothing(fopt.ebv_map) || ext_criterion
         prefix = "extinction."
         pwhere = prefix .* ["E_BV", "E_BV_factor"]
         inds = fast_indexin(pwhere, pnames)
@@ -237,6 +245,15 @@ function get_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, �
     df_p₀ = df_params.values
     df_names = df_params.names
     df_feature_names = dust_features.config.all_feature_names
+
+    # Extinction maps
+    if !isnothing(fopt.ebv_map)
+        @debug "Using the provided E(B-V) values from the extinction_map"
+        # use the intensity-weighted EBV value from the cube
+        ebv_avg = sum(fopt.ebv_map[:, :, 1] .* sumdim(ustrip.(cube_fitter.cube.I), 3)) ./ nansum(ustrip.(cube_fitter.cube.I))
+        ind = fast_indexin("extinction.E_BV", pnames)
+        p₀[ind] = ebv_avg
+    end
 
     # We need to fill in some missing values - particularly the amplitudes of different components
     att_gas_med, att_star_med, _ = extinction_profiles([median(λ)], ustrip.(p₀), 1, fopt.fit_uv_bump, fopt.extinction_curve)

@@ -276,6 +276,12 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
     by the kwargs object using the same syntax as any keyword argument. The rest of the fields are generated in the function 
     from these inputs =#
     function CubeFitter(cube::DataCube, z::Real, name::String; kwargs...) 
+
+        # Do a few checks on the input data cube
+        @assert cube.vacuum_wave "Please make sure the data is in vacuum wavelengths before constructing a CubeFitter! (use function: correct!)"
+        @assert cube.rest_frame "Please make sure the data is in the rest-frame before constructing a CubeFitter! (use function: correct!)"
+        @assert cube.masked "Please make sure the data is properly masked before constructing a CubeFitter! (use function: correct!)"
+        @assert cube.dereddened "Please make sure the data is de-reddened before constructing a CubeFitter! (use function: deredden!)"
         
         # Some setup variables
         λ = cube.λ
@@ -392,7 +398,7 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
             ebv_map,
             sil_abs_map,
             out[:fit_stellar_continuum],
-            out[:ssp_regularize]
+            out[:ssp_regularize],
             out[:fit_sil_emission],
             out[:fit_ch_abs],
             out[:fit_temp_multexp],
@@ -550,7 +556,6 @@ function cubefitter_add_default_options!(cube::DataCube, out::Dict)
     if !haskey(out, :F_test_ext)
         out[:F_test_ext] = false
     end
-
 
 end
 

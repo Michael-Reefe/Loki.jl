@@ -259,6 +259,7 @@ end
 match_fluxunits(I_mod::Q1, I_ref::Q2, ::QLength) where {Q1<:QPerAng,Q2<:QPerum} = uconvert(unit(I_ref), I_mod)
 match_fluxunits(I_mod::Q1, I_ref::Q2, ::QLength) where {Q1<:QPerum,Q2<:QPerAng} = uconvert(unit(I_ref), I_mod)
 match_fluxunits(I_mod::Q, ::Q, ::QLength) where {Q<:QGeneralPerFreq} = I_mod
+match_fluxunits(I_mod::Q, ::Q, ::QLength) where {Q<:QGeneralPerWave} = I_mod
 function match_fluxunits(I_mod::Q1, I_ref::Q2, λ::QLength) where {
     Q1<:Union{QGeneralPerWave,QGeneralPerFreq},
     Q2<:Union{QGeneralPerWave,QGeneralPerFreq}
@@ -646,7 +647,7 @@ function add_reg_constraints!(A::Matrix{<:Real}, nλ::Int, cube_fitter::CubeFitt
             if 1 < k < size(a, 3)
                 a[i, j, k-1:k+1] .= reg_diffs
             end
-            if 1 < j < size(A, 2)
+            if 1 < j < size(a, 2)
                 a[i, j-1:j+1, k] .+= reg_diffs
             end
             i += 1
@@ -673,8 +674,12 @@ function stellar_populations_nnls(s::Spaxel, contin::Vector{<:Real}, ext_stars::
     b[1:nλ] .= s.I .- contin
 
     # calculate the convolved stellar templates
-    A[1:nλ, :] .= convolve_losvd(ustrip.(cube_fitter.ssps.templates), cube_fitter.ssps.vsyst, 
-        stel_vel, stel_sig, s.vres, length(s.λ))
+    gap_masks = get_gap_masks(s.λ, cube_fitter.spectral_region.gaps)
+    for (gi, gap_mask) in enumerate(gap_masks)
+        # split if the spectrum has a few separated regions
+        A[(1:nλ)[gap_mask], :] .= convolve_losvd(ustrip.(cube_fitter.ssps.templates), 
+            cube_fitter.ssps.vsysts[gi], stel_vel, stel_sig, s.vres, sum(gap_mask))
+    end
 
     # divide out the solid angle and apply the extinction
     A[1:nλ, :] .*= ext_stars ./ ustrip.(s.area_sr)
@@ -691,12 +696,14 @@ function stellar_populations_nnls(s::Spaxel, contin::Vector{<:Real}, ext_stars::
         add_reg_constraints!(A, nλ, cube_fitter)
     end
     # perform a non-negative least-squares fit
-    weights = nonneg_lsq(A, b, alg=:fnnls)
+    ml_extended = falses(length(b))
+    ml_extended[1:nλ] .= s.mask_lines
+    weights = nonneg_lsq(A[.~ml_extended, :], b[.~ml_extended], alg=:fnnls)  # mask out the emission lines!
 
     # get the final stellar continuum with a matrix multiplication
-    ssp_contin = ((A[1:nλ, :].*s.σ) * weights[1:nλ])[:,1]
+    ssp_contin = ((A[1:nλ, :].*s.σ) * weights)[:,1]
 
-    return ssp_contin, stellar_norm, weights[1:nλ]
+    return ssp_contin, stellar_norm, weights
 end
 
 

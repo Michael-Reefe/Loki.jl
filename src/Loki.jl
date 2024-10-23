@@ -168,10 +168,13 @@ export DataCube,   # DataCube struct
 
        # DataCube Functions
        from_fits, 
+       from_data,
+       from_cubes,
        to_rest_frame!, 
        apply_mask!, 
        to_vacuum_wavelength!,
        log_rebin!,
+       deredden!,
        correct!, 
        interpolate_nans!, 
        calculate_statistical_errors!,
@@ -236,8 +239,6 @@ export DataCube,   # DataCube struct
        get_patches,
        centroid_com,
        make_aperture,
-       frebin,
-       fshift,
        resample_conserving_flux,
        extend,
        sumdim,

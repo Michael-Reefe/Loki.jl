@@ -87,8 +87,7 @@ Checks that the parsed optical file has all of the keys that it should have.
 """
 function validate_optical_file(optical::Dict)
 
-    keylist1 = ["extinction", "stellar_population_ages", "stellar_population_metallicities", "stellar_kinematics", 
-        "na_feii_kinematics", "br_feii_kinematics"]
+    keylist1 = ["extinction", "stellar_kinematics", "na_feii_kinematics", "br_feii_kinematics"]
     keylist2 = ["E_BV", "E_BV_factor", "uv_slope", "frac"]
     keylist3 = ["vel", "vdisp"]
     keylist4 = ["val", "plim", "locked"]

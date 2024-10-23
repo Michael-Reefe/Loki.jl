@@ -396,13 +396,13 @@ function calculate_stellar_parameters(cube_fitter::CubeFitter, norms::Dict, N::N
     # reshape SSPs into a 3D array with axes (wavelength, age, logz)
     p_dims = (length(cube_fitter.ssps.ages), length(cube_fitter.ssps.logzs))
     # rest-frame transform 
-    if unit(cube_fitter.cube.I[1]) <: QPerFreq
+    if eltype(cube_fitter.cube.I) <: QPerFreq
         restframe_factor = 1 + cube_fitter.z
     else
         restframe_factor = 1 / (1 + cube_fitter.z)
     end
 
-    stellar_N = norms["continuum.stellar_populations"]     
+    stellar_N = norms["continuum.stellar_norm"]
     weights = reshape(norms["continuum.stellar_weights"], p_dims...)
     f = N / stellar_N   
     unit_check(unit(f), u"Msun")  # should have units of Msun

@@ -7,6 +7,10 @@ function plot_spaxel_fit_plotly(cube_fitter::CubeFitter, spaxel::Spaxel, I_model
     fopt = fit_options(cube_fitter)
     λunit = replace(latex(unit(spaxel.λ[1])), '$' => "")  # plotly cannot parse more than one latex math expression per axis label
     Iunit = replace(latex(unit(spaxel.N)), '$' => "") 
+    if unit(spaxel.λ[1]) == u"angstrom"
+        λunit = replace(λunit, "\\AA" => "\\mathring{A}")
+        Iunit = replace(Iunit, "\\AA" => "\\mathring{A}")
+    end
 
     # plotly doesnt like \mathrm for some reason
     perfreq = typeof(spaxel.N) <: QPerFreq
@@ -228,25 +232,22 @@ function plot_spaxel_fit_pyplot(cube_fitter::CubeFitter, spaxel::Spaxel, I_model
         sub = "\\lambda"
     end
 
-    min_inten = logy ? nothing : -0.01
     extscale_limits = (1e-5, 1.)
     ext_label = "Extinction"
     I_label = prefix -> L"$%$sub I_{%$sub}$ (%$prefix%$(latex(Iunit)))"
 
     # If max is above 10^4, normalize so the y axis labels aren't super wide
     power = floor(Int, log10(ustrip(maximum(I .* factor))))
-    if (power ≥ 4) || (power ≤ -4)
+    if (power ≥ 3) || (power ≤ -3)
         norm = 10.0^power * Iunit
     else
         norm = 1.0 * Iunit
     end
 
-    if isnothing(min_inten)
-        if !logy || !isnothing(range)
-            min_inten = (sum((I ./ norm .* factor) .< -0.01) > (length(λ)/10)) ? -2nanstd(I ./ norm .* factor) : -0.01
-        else
-            min_inten = 0.1nanminimum(I[I .> 0.0*Nunit] ./ norm .* factor)
-        end
+    if !logy || !isnothing(range)
+        min_inten = (sum((I ./ norm .* factor) .< 0.0) > (length(λ)/10)) ? -2nanstd(I ./ norm .* factor) : 0.0
+    else
+        min_inten = 0.1nanminimum(I[I .> 0.0*Nunit] ./ norm .* factor)
     end
     if !logy || !isnothing(range)
         max_inten = isnothing(range) ? 
@@ -552,7 +553,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, bunit::Abstra
     psf_fwhm::Float64, cosmo::Cosmology.AbstractCosmology, wcs::Union{WCSTransform,Nothing}; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, 
     snr_thresh::Float64=3., abs_thresh::Union{Float64,Nothing}=nothing, cmap=py_colormap.cubehelix, line_latex::Union{String,Nothing}=nothing, 
     marker::Union{Vector{<:Real},Nothing}=nothing, disable_axes::Bool=true, disable_colorbar::Bool=false, modify_ax=nothing, colorscale_limits=nothing, 
-    custom_bunit::Union{AbstractString,Nothing}=nothing)
+    custom_bunit::Union{AbstractString,Nothing}=nothing, wave_unit::Unitful.Units)
 
     # Overwrite with input if provided
     if !isnothing(custom_bunit)
@@ -576,7 +577,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, bunit::Abstra
     @debug "Performing SNR filtering, $(sum(isfinite.(filtered)))/$(length(filtered)) passed"
     # filter out insane/unphysical equivalent widths (due to ~0 continuum level)
     if occursin("eqw", name_i)
-        filtered[filtered .> 100] .= NaN
+        filtered[(filtered.*wave_unit) .> 100u"μm"] .= NaN
     end
     if occursin("voff", name_i)
         # Perform a 5-sigma clip to remove outliers
@@ -719,16 +720,29 @@ end
 
 function plot_stellar_grids(result::StellarResult, cube_fitter::CubeFitter, label::String)
 
-    logm = log10.(result.masses)
+    logm = log10.(ustrip.(result.masses))
     all_ages = log10.(ustrip.(uconvert.(u"yr", cube_fitter.ssps.ages)))
     all_logzs = cube_fitter.ssps.logzs
+    halfpix = [diff(all_ages)[1]/2, diff(all_logzs)[1]/2]
+
+    # extent of the image
+    extent = [minimum(all_ages)-halfpix[1], maximum(all_ages)+halfpix[1], 
+        minimum(all_logzs)-halfpix[2], maximum(all_logzs)+halfpix[2]]
+    # aspect ratio to keep pixels square
+    dx = (extent[2]-extent[1]) / length(all_ages)
+    dy = (extent[4]-extent[3]) / length(all_logzs)
+    aspect = dx/dy
+    vmin = sum(isfinite.(logm)) > 0 ? minimum(logm[isfinite.(logm)])-2.0 : -Inf
+    vmax = sum(isfinite.(logm)) > 0 ? maximum(logm[isfinite.(logm)]) : Inf
 
     # Create a 2D colormap of the masses
     fig, ax = plt.subplots()
-    cdata = ax.imshow(logm', origin=:lower, cmap=:cubehelix, vmin=minimum(logm), vmax=maximum(logm),
-        extent=[minimum(all_ages), maximum(all_ages), minimum(all_logzs), maximum(all_logzs)])
+    cmap = py_colormap.cubehelix
+    cmap.set_bad(color="k")
+    cdata = ax.imshow(logm', origin=:lower, cmap=cmap, vmin=vmin, vmax=vmax, extent=extent, aspect=aspect)
     # add colorbar
-    fig.colorbar(cdata, ax=ax, label=L"$\log_{10}(M/M_\odot)$")
+    cax = fig.add_axes([ax.get_position().x1+0.01, ax.get_position().y0, 0.02, ax.get_position().height])
+    fig.colorbar(cdata, cax=cax, label=L"$\log_{10}(M/M_\odot)$")
     # axis labels
     ax.set_xlabel(L"$\log_{10}$(Age / yr)")
     ax.set_ylabel(L"$\log_{10}(Z/Z_\odot)$")

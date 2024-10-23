@@ -63,6 +63,7 @@ An object for holding 3D IFU spectroscopy data.
 - `rest_frame`: whether or not the DataCube wavelength vector is in the rest-frame
 - `masked`: whether or not the DataCube has been masked
 - `vacuum_wave`: whether or not the wavelength vector is in vacuum wavelengths; if false, it is assumed to be air wavelengths
+- `log_binned`: whether or not the wavelength vector is logarithmically spaceed
 - `sky_aligned`: whether or not the data cube is aligned to the sky (RA/Dec) axes or the IFU (α/β) axes
 - `voronoi_bins`: a map giving unique labels to each spaxel which place them within voronoi bins
 """
@@ -95,6 +96,8 @@ mutable struct DataCube{T<:Vector{<:QWave}, S<:Array{<:QSIntensity, 3}}
     rest_frame::Bool
     masked::Bool
     vacuum_wave::Bool
+    log_binned::Bool
+    dereddened::Bool
     sky_aligned::Bool
 
     voronoi_bins::Union{Matrix{<:Integer},Nothing}
@@ -103,9 +106,10 @@ mutable struct DataCube{T<:Vector{<:QWave}, S<:Array{<:QSIntensity, 3}}
     function DataCube(λ::T, I::S, σ::S, mask::Union{BitArray{3},Nothing}=nothing, psf_model::Union{Array{<:Real,3},Nothing}=nothing, 
         Ω=NaN*u"sr", α=NaN*u"°", δ=NaN*u"°", θ_sky=NaN*u"rad", psf::Union{U,Nothing}=nothing, lsf::Union{V,Nothing}=nothing, 
         wcs::Union{WCSTransform,Nothing}=nothing, channel::String="Generic Channel", band::String="Generic Band", 
-        user_mask::Union{Vector{Tuple{W,W}},Nothing}=nothing, rest_frame::Bool=false, z::Union{Real,Nothing}=nothing, 
-        masked::Bool=false, vacuum_wave::Bool=true, sky_aligned::Bool=false, voronoi_bins::Union{Matrix{<:Integer},Nothing}=nothing, 
-        format::Symbol=:JWST, instrument_channel_edges::Union{T,Nothing}=nothing) where {
+        user_mask::Union{Vector{Tuple{W,W}},Nothing}=nothing, gaps::Union{Vector{Tuple{W,W}},Nothing}=nothing, 
+        rest_frame::Bool=false, z::Union{Real,Nothing}=nothing, masked::Bool=false, vacuum_wave::Bool=true, 
+        log_binned::Bool=false, dereddened::Bool=false, sky_aligned::Bool=false, voronoi_bins::Union{Matrix{<:Integer},Nothing}=nothing, 
+        format::Symbol=:MIRI, instrument_channel_edges::Union{T,Nothing}=nothing) where {
             T<:Vector{<:Quantity},S<:Array{<:Quantity,3},U<:Vector{<:Quantity},V<:Vector{<:Quantity},W<:Quantity
         }
 
@@ -128,8 +132,8 @@ mutable struct DataCube{T<:Vector{<:QWave}, S<:Array{<:QSIntensity, 3}}
         if dimension(I_unit) == u"𝐌*𝐓^-2"
             new_I_unit = u"erg*s^-1*cm^-2*Hz^-1*sr^-1"
         elseif dimension(I_unit) == u"𝐌*𝐋^-1*𝐓^-3"
-            λ_unit = unit(λ[1])
-            new_I_unit = uparse("erg*s^-1*cm^-2*$(λ_unit)^-1*sr^-1", unit_context=UnitfulAstro)
+            λ_unit = string(unit(λ[1]))
+            new_I_unit = uparse("erg*s^-1*cm^-2*$(λ_unit)^-1*sr^-1"; unit_context=[Unitful, UnitfulAstro])
         end
         I = uconvert.(new_I_unit, I)
         σ = uconvert.(new_I_unit, σ)
@@ -147,18 +151,25 @@ mutable struct DataCube{T<:Vector{<:QWave}, S<:Array{<:QSIntensity, 3}}
             @assert size(psf_model) == size(I) "The PSF model must be the same size as the intensity cube!"
         end
 
-        λlim = extrema(λ)
+        restframe_factor = rest_frame ? 1.0 : 1 / (1 + z)
+        λlim = extrema(λ .* restframe_factor)
         λrange = get_λrange(λlim)
         umask = !isnothing(user_mask) ? user_mask : Vector{Tuple{eltype(λ),eltype(λ)}}()
         n_channels, ch_bounds, channel_masks = get_n_channels(λ, rest_frame, z; format=format, 
             instrument_channel_edges=instrument_channel_edges)
-        spectral_region = SpectralRegion(λlim, umask, n_channels, channel_masks, ch_bounds, λrange)
+        if isnothing(gaps)
+            gaps = Vector{Tuple{eltype(λ),eltype(λ)}}()
+        end
+        for gap in gaps
+            @assert sum(gap[1] .< (λ.*restframe_factor) .< gap[2]) == 0 "Data was detected within the gap $gap"
+        end
+        spectral_region = SpectralRegion(λlim, umask, n_channels, channel_masks, ch_bounds, gaps, λrange)
 
         # Return a new instance of the DataCube struct
         Tnew = typeof(λ)
         Snew = typeof(I)
         new{Tnew, Snew}(λ, I, σ, mask, psf_model, Ω, α, δ, θ_sky, psf, lsf, wcs, channel, band, nx, ny, nz, spectral_region,
-            rest_frame, masked, vacuum_wave, sky_aligned, voronoi_bins)
+            rest_frame, masked, vacuum_wave, log_binned, dereddened, sky_aligned, voronoi_bins)
     end
 
 end
@@ -167,21 +178,12 @@ end
 """
     from_fits(filename::String)
 
-Utility class-method for creating DataCube structures directly from FITS files.
+Utility function for creating DataCube structures directly from FITS files.
 
 # Arguments
 - `filename::String`: the filepath to the JWST-formatted FITS file
 """
-function from_fits(filename::String; format=:JWST)
-    if format == :JWST
-        from_fits_jwst(filename)
-    else
-        error("Unrecognized format $format")
-    end
-end
-
-
-function from_fits_jwst(filename::String)::DataCube
+function from_fits(filename::String)::DataCube
 
     @info "Initializing DataCube struct from $filename"
 
@@ -199,7 +201,7 @@ function from_fits_jwst(filename::String)::DataCube
     Ω = hdr["PIXAR_SR"] * u"sr"
     # Intensity and error arrays
     # JWST cubes come in units of MJy/sr
-    bunit = uparse(fits_unitstr_to_unitful(hdr["BUNIT"]); unit_context=UnitfulAstro)
+    bunit = uparse(fits_unitstr_to_unitful(hdr["BUNIT"]); unit_context=[Unitful, UnitfulAstro])
     Iν = read(hdu["SCI"]) * bunit
     σI = read(hdu["ERR"]) * bunit
 
@@ -207,16 +209,17 @@ function from_fits_jwst(filename::String)::DataCube
 
     # Construct 3D World coordinate system to convert from pixels to (RA,Dec,wave) and vice versa
     wcs = WCS.from_header(read_header(hdu["SCI"], String))[1]
-    cunit3 = uparse(fits_unitstr_to_unitful(hdr["CUNIT3"]); unit_context=UnitfulAstro)
+    cunit3 = uparse(fits_unitstr_to_unitful(hdr["CUNIT3"]); unit_context=[Unitful, UnitfulAstro])
 
     # Wavelength vector
     λ = try
         # for some reason the units arent saved correctly in the FITS table HDUs, so just set this to um for JWST
-        read(hdu["AUX"], "wave") .* u"μm"  
+        tblhdr = read_header(hdu["AUX"])
+        read(hdu["AUX"], "wave") .* uparse(tblhdr["UNIT1"]; unit_context=[Unitful, UnitfulAstro])
     catch
         (hdr["CRVAL3"] .+ hdr["CDELT3"] .* (collect(0:hdr["NAXIS3"]-1) .+ hdr["CRPIX3"] .- 1)) .* cunit3
     end
-    λ = uconvert.(u"μm", λ)
+
     # Alternative method using the WCS directly:
     # λ = pix_to_world(wcs, Matrix(hcat(ones(nz), ones(nz), collect(1:nz))'))[3,:] ./ 1e-6
 
@@ -293,6 +296,14 @@ function from_fits_jwst(filename::String)::DataCube
     if haskey(hdr0, "VACWAVE")
         vacuum_wave = hdr0["VACWAVE"]
     end
+    log_binned = false
+    if haskey(hdr0, "LOGBIN")
+        log_binned = hdr0["LOGBIN"]
+    end
+    dereddened = false
+    if haskey(hdr0, "DERED")
+        dereddened = hdr0["DERED"]
+    end
 
     if isnothing(n_channels)
         error("Please only input single-band data cubes! You can combine them into multi-channel cubes using LOKI routines.")
@@ -303,13 +314,210 @@ function from_fits_jwst(filename::String)::DataCube
         redshift = hdr["REDSHIFT"]
     end
 
-    DataCube(λ, Iν, σI, mask, psf_model, Ω, ra, dec, θ_sky, psf, lsf, wcs, channel, band, nothing, 
-        rest_frame, redshift, masked, vacuum_wave, sky_aligned, nothing, :JWST, nothing)
+    gaps = try
+        tblhdr = read_header(hdu["GAP"])
+        wu1 = uparse(tblhdr["UNIT1"]; unit_context=[Unitful, UnitfulAstro])
+        wu2 = uparse(tblhdr["UNIT2"]; unit_context=[Unitful, UnitfulAstro])
+        g1 = read(hdu["GAP"], "gaps_1") .* wu1
+        g2 = read(hdu["GAP"], "gaps_2") .* wu2
+        [(gi1, gi2) for (gi1, gi2) in zip(g1, g2)]
+    catch
+        nothing
+    end
+
+    # format type
+    format = Symbol(hdr0["INSTRUME"])
+
+    DataCube(λ, Iν, σI, mask, psf_model, Ω, ra, dec, θ_sky, psf, lsf, wcs, channel, band, nothing, gaps, 
+        rest_frame, redshift, masked, vacuum_wave, log_binned, dereddened, sky_aligned, nothing, format, nothing)
+end
+
+
+"""
+    from_data(Ω, z, λ, I[, σ]; <keyword_args>)
+
+Utility function for creating DataCube structures directly from input data.
+
+# Arguments
+- `Ω`: The solid angle per spaxel (or for 1D spectra, the total solid angle that the spectrum covers) (must include units)
+- `z`: The redshift 
+- `λ`: The wavelength vector (must include units)
+- `I`: The specific intensity vector (must include units)
+- `σ`: [Optional] The error in the specificy intensity (must include units)
+
+# Optional Keyword Arguments
+- `mask`: A bitarray specifying which pixels should be masked out
+- `α`: The right ascension of the central brightest point (must include units)
+- `δ`: The declination of the central brightest point (must include units)
+- `θ_sky`: The position angle between the IFU axes and the sky axes (must include units)
+- `psf_fwhm`: The FWHM of the PSF, either as a single value or a vector (must include units)
+- `psf_model`: A full 3D model of the PSF of the same shape as I and σ (required for QSO PSF decomposition)
+- `R`: The spectral FWHM resolution, either as a single value or a vector
+- `wcs`: The world coordinate system of the 3D arrays
+- `channel`: The name of the wavelength channel of the observations (string)
+- `band`: The name of the wavelength band of the observations (string)
+- `user_mask`: A series of tuples of (min, max) wavelengths specifying regions in the spectrum to mask out
+- `gaps`: A series of tuples of (min, max) wavelengths specifying regions in the spectrum that are missing data 
+    (i.e. in the case where multiwavelength data has been stitched together)
+- `rest_frame`: A boolean specifying whether the input wavelength/intensity/error are in the rest frame or observed frame
+- `masked`: A boolean specifying whether the input intensities/errors have already been masked
+- `vacuum_wave`: A boolean specifying whether the input wavelengths are in vacuum or in air
+- `log_binned`: A boolean specifying whether the input wavelengths are logarithmically binned
+    (note: due to the potential presence of wavelength gaps in the spectrum, this cannot be automatically inferred)
+- `dereddened`: A boolean specifying whether the input intensities/errors have been corrected for galactic (Milky Way) dust extinction
+- `sky_aligned`: A boolean specifying whether the input IFU axes are aligned to the sky RA/Dec axes
+- `instrument_channel_edges`: A series of wavelengths specifying the edges of individual wavelength channels 
+    (this is only relevant if doing QSO PSF decomposition with multi-channel data)
+"""
+function from_data(Ω::typeof(1.0u"sr"), z::Real, λ::AbstractVector{<:Quantity}, 
+    I::AbstractArray{<:Quantity}, σ::Union{AbstractArray{<:Quantity},Nothing}=nothing; mask::Union{BitArray,Nothing}=nothing, 
+    α=0.0*u"°", δ=0.0*u"°", θ_sky=0.0*u"rad", psf_fwhm::Union{Quantity,AbstractVector{<:Quantity},Nothing}=nothing, 
+    psf_model::Union{AbstractArray{<:Real},Nothing}=nothing, R::Union{Real,AbstractVector{<:Real},Nothing}=nothing, 
+    wcs::Union{WCSTransform,Nothing}=nothing, channel::String="Generic Channel", band::String="Generic Band", 
+    user_mask::Union{Vector{<:Tuple},Nothing}=nothing, gaps::Union{Vector{<:Tuple},Nothing}=nothing, 
+    rest_frame::Union{Bool,Nothing}=nothing, masked::Union{Bool,Nothing}=nothing, vacuum_wave::Union{Bool,Nothing}=nothing, 
+    log_binned::Union{Bool,Nothing}=nothing, dereddened::Union{Bool,Nothing}=nothing, sky_aligned::Union{Bool,Nothing}=nothing, 
+    instrument_channel_edges::Union{Vector{<:Quantity},Nothing}=nothing) 
+
+    # convert to a normal vector
+    _λ = collect(λ)
+
+    # if I/σ/mask are 1D, convert to 3D as expected by the code
+    _I = I
+    if ndims(I) == 1
+        _I = reshape(I, (1,1,length(I)))
+    end
+    @assert ndims(_I) == 3 "The input intensity dimensions must be 1 or 3"
+    @assert occursin("sr", string(unit(_I[1]))) "The input intensity must be measured per sr! (if you input a flux, divide it by Ω)"
+
+    _σ = σ
+    if isnothing(σ)
+        _σ = ones(eltype(_I), size(_I)...) .* nanmedian(ustrip.(_I)[ustrip.(_I) .> 0.])./100
+    end
+    if ndims(_σ) == 1
+        _σ = reshape(_σ, (1,1,length(_σ)))
+    end
+    @assert ndims(_σ) == 3 "The input error dimensions must be 1 or 3"
+    @assert occursin("sr", string(unit(_σ[1]))) "The input error must be measured per sr! (if you input a flux, divide it by Ω)"
+
+    _mask = mask
+    if isnothing(mask)
+        # Mask out blank spaxels
+        _mask = [all(iszero.(_I[i,j,:]) .| .~isfinite.(_I[i,j,:])) for i in axes(_I, 1), j in axes(_I, 2)]
+        _mask = BitArray(repeat(_mask, outer=(1,1,size(_I,3))))
+    end
+    if ndims(_mask) == 1
+        _mask = reshape(_mask, (1,1,length(_mask)))
+    end
+    @assert ndims(_mask) == 3 "The input mask dimensions must be 1 or 3"
+
+    # the input PSF model
+    _psf_model = psf_model
+    if !isnothing(psf_model)
+        if ndims(psf_model) == 1
+            _psf_model = reshape(_psf_model, (1,1,length(_psf_model)))
+        end
+        @assert ndims(_psf_model) == 3 "The input PSF model dimensions must be 1 or 3"
+    end
+
+    # if no PSF is given, assume that it's the size of 3 pixels
+    _psf = psf_fwhm
+    if isnothing(psf_fwhm)
+        _psf = 3 * uconvert(u"arcsecond", sqrt(Ω))
+        @warn "No PSF size [FWHM] was given in the input. It will be assumed that the PSF is 3 spatial pixels wide ($(_psf))."
+    end
+    if length(_psf) == 1
+        _psf = repeat([_psf], length(_λ))
+    end
+
+    # if no spectral resolution is given, assume that it's the size of 3 pixels
+    _R = R
+    if isnothing(R)
+        _R = _λ[1] / (3*(_λ[2]-_λ[1]))
+        @warn "No spectral resolution [FWHM] was given in the input. It will be assumed that R is 3 spectral pixels wide ($(_R))."
+    end
+    if length(_R) == 1
+        _R = repeat([_R], length(_λ))
+    end
+    # convert R to km/s
+    _lsf = C_KMS ./ _R
+
+    # if no WCS is given, create a generic default one
+    _wcs = wcs
+    if isnothing(wcs)
+        _, mx = findmax(sumdim(ustrip.(_I), 3))
+        _α = uconvert(u"°", α)
+        _δ = uconvert(u"°", δ)
+        pix_res_deg = uconvert(u"°", sqrt(Ω))
+        x_cent, y_cent = centroid_com(sumdim(ustrip.(_I), 3)[mx[1]-5:mx[1]+5, mx[2]-5:mx[2]+5]) .+ (mx.I .- 5) .- 1
+        waveunit_str = replace(string(unit(_λ[1])), 'μ' => 'u', "Å" => "angstrom")
+        _wcs = WCSTransform(3; crpix=[x_cent, y_cent, 1.], crval=[ustrip(_α), ustrip(_δ), ustrip(_λ[1])], 
+            cdelt=[pix_res_deg, pix_res_deg, ustrip.(_λ[2]-_λ[1])], cunit=["deg", "deg", waveunit_str], 
+            ctype=["RA---TAN", "DEC--TAN", "WAVE"], pc=[-1. 0. 0.; 0. 1. 0.; 0. 0. 1.], radesys="ICRS")
+        if !((_λ[2]-_λ[1]) ≈ (_λ[end]-_λ[end-1]))
+            @warn "The input wavelength vector is non-linear. The wavelength axis of the auto-generated WCS will not accurately " * 
+                  "reflect this fact. This will not matter for the rest of this code, as it will not be used, but keep this in mind " * 
+                  "if using FITS files generated as outputs."
+        end
+    end
+
+    # check for wavelength gaps
+    _gaps = gaps
+    if isnothing(gaps)
+        _gaps = Tuple{eltype(_λ),eltype(_λ)}[]
+        dλ = diff(_λ)
+        for i in 2:(length(dλ)-1)
+            if (dλ[i] > 10dλ[i-1]) && (dλ[i] > 10dλ[i+1])
+                _gap = (_λ[i], _λ[i+1])
+                @info "Autodetected a wavelength gap at $(_gap)"
+                push!(_gaps, _gap)
+            end
+        end
+    end
+
+    # Print some warnings for users
+    _rest_frame = rest_frame
+    if isnothing(rest_frame)
+        @warn "Assuming input wavelengths are not redshift corrected; if they already are in the rest frame, " *
+              "please provide the keyword rest_frame=true."
+        _rest_frame = false
+    end
+    _masked = masked
+    if isnothing(masked)
+        # (dont really need a warning for this one as applying it twice does not hurt anything)
+        _masked = false
+    end
+    _vacuum_wave = vacuum_wave
+    if isnothing(vacuum_wave)
+        @warn "Assuming input wavelengths are in vacuum; if they are in air, please provide the keyword vacuum_wave=false."
+        _vacuum_wave = true
+    end
+    _log_binned = log_binned
+    if isnothing(log_binned)
+        @warn "Assuming input wavelengths are not logarithmically binned; if they are, please provide the keyword log_binned=true."
+        _log_binned = false
+    end
+    _dereddened = dereddened
+    if isnothing(dereddened)
+        @warn "Assuming input intensities are not reddening-corrected; if they are already reddening-correct, " * 
+              "please provide the keyword dereddened=true"
+        _dereddened = false
+    end
+    _sky_aligned = sky_aligned
+    if isnothing(sky_aligned)
+        @warn "Assuming the input intensity cube is aligned with the sky RA/Dec axes; if it is not, please provide " * 
+              "the keyword sky_aligned=false and the position angle θ_sky=..."
+        _sky_aligned = true
+    end
+
+    DataCube(_λ, _I, _σ, _mask, _psf_model, Ω, _α, _δ, θ_sky, _psf, _lsf, _wcs, channel, band, user_mask, 
+        _gaps, _rest_frame, z, _masked, _vacuum_wave, _log_binned, _dereddened, _sky_aligned, nothing, :Generic, 
+        instrument_channel_edges)
 end
 
 
 # Helper function for calculating the number of subchannels covered by MIRI observations
-function get_n_channels(_λ::Vector{<:QWave}, rest_frame::Bool, z::Union{Real,Nothing}; format=:JWST, 
+function get_n_channels(_λ::Vector{<:QWave}, rest_frame::Bool, z::Union{Real,Nothing}; format=:MIRI, 
     instrument_channel_edges::Union{Vector{<:QWave},Nothing}=nothing)
 
     # NOTE: do not use n_channels to count the ACTUAL number of channels/bands in an observation,
@@ -317,14 +525,14 @@ function get_n_channels(_λ::Vector{<:QWave}, rest_frame::Bool, z::Union{Real,No
     #  to allow them to have different normalizations
     n_channels = 0
     channel_masks = BitVector[]
-    if format == :JWST
+    if format == :MIRI
         ch_edge_sort = sort(channel_edges)
         ch_bounds = channel_boundaries
     else
         if isnothing(instrument_channel_edges) 
             @warn "The DataCube format is not JWST! Please manually input the channel edges (if any), otherwise it will be assumed " *
                   "that there is only one channel"
-            return 1, QWave[], [trues(length(_λ))]
+            return 1, eltype(_λ)[], [trues(length(_λ))]
         else
             ch_edge_sort = sort(instrument_channel_edges)
             ch_bounds = Vector{eltype(_λ)}()
@@ -411,25 +619,16 @@ end
 
 Convert a DataCube object's wavelength vector from air wavelengths to vacuum wavelengths.
 """
-function to_vacuum_wavelength!(cube::DataCube; linear_resample::Bool=true)
+function to_vacuum_wavelength!(cube::DataCube)
 
     # Only convert if it isn't already in vacuum wavelengths
     if !cube.vacuum_wave
         @debug "Converting the wavelength vector of cube with channel $(cube.channel), band $(cube.band)" *
             " to vacuum wavelengths."
         # Convert to vacuum wavelengths (airtovac uses Angstroms, 1 Angstrom = 10^-4 μm)
-        λ_unit = unit(cube.λ)
+        λ_unit = unit(cube.λ[1])
         # airtovac always works in angstroms, so we need to convert to them and back
-        cube.λ = uconvert(λ_unit, airtovac.(uconvert(u"angstrom", cube.λ) |> ustrip)*u"angstrom")
-        # Optionally resample back onto a linear grid
-        if linear_resample
-            λlin = collect(range(minimum(cube.λ), maximum(cube.λ), length=length(cube.λ)))
-            cube.I, cube.σ, cube.mask = resample_flux_permuted3D(λlin, cube.λ, cube.I, cube.σ, cube.mask)
-            if !isnothing(cube.psf_model)
-                cube.psf_model = resample_flux_permuted3D(λlin, cube.λ, cube.psf_model)
-            end
-            cube.λ = collect(λlin)
-        end
+        cube.λ = uconvert.(λ_unit, airtovac.(ustrip.(uconvert.(u"angstrom", cube.λ))).*u"angstrom")
         cube.vacuum_wave = true
     else
         @debug "The wavelength vector is already in vacuum wavelengths for cube with channel $(cube.channel), " *
@@ -437,7 +636,6 @@ function to_vacuum_wavelength!(cube::DataCube; linear_resample::Bool=true)
     end
 
     cube
-
 end
 
 
@@ -467,7 +665,6 @@ function apply_mask!(cube::DataCube)
     end
 
     cube
-
 end
 
 
@@ -479,27 +676,75 @@ Optionally input a rebinning factor > 1 to resample onto a coarser wavelength gr
 """
 function log_rebin!(cube::DataCube, factor::Integer=1)
 
-    # check if it is already log-rebinned
-    log_check = (cube.λ[2]/cube.λ[1]) ≈ (cube.λ[end]/cube.λ[end-1])
-
-    # rebin onto a logarithmically spaced wavelength grid
-    if !log_check
-        dλ = (maximum(cube.λ) - minimum(cube.λ)) / (length(cube.λ)-1) * factor
-        linλ = minimum(cube.λ):dλ:maximum(cube.λ)
-        lnλ = get_logarithmic_λ(ustrip.(linλ)) * unit(linλ[1])
-        cube.I, cube.σ, cube.mask = resample_flux_permuted3D(lnλ, cube.λ, cube.I, cube.σ, cube.mask)
+    if !cube.log_binned
+        # rebin onto a logarithmically spaced wavelength grid
+        # get masks for each gap region and the logarithmic spacing
+        gap_masks = get_gap_masks(cube.λ, cube.spectral_region.gaps)
+        logscale = log(cube.λ[2]/cube.λ[1])
+        # prepare buffers
+        λ_out = Vector{eltype(cube.λ)}()
+        I_out = Array{eltype(cube.I), 3}(undef, size(cube.I)[1:2]..., 0)
+        σ_out = Array{eltype(cube.σ), 3}(undef, size(cube.σ)[1:2]..., 0)
+        mask_out = BitArray(undef, size(cube.mask)[1:2]..., 0)
         if !isnothing(cube.psf_model)
-            cube.psf_model = resample_flux_permuted3D(lnλ, cube.λ, cube.psf_model)
+            psf_model_out = Array{eltype(cube.psf_model), 3}(undef, size(cube.psf_model)[1:2]..., 0)
         end
-        cube.psf = Spline1D(ustrip.(cube.λ), ustrip.(cube.psf), k=1, bc="extrapolate")(ustrip.(lnλ)) * unit(cube.psf[1])
-        cube.lsf = Spline1D(ustrip.(cube.λ), ustrip.(cube.lsf), k=1, bc="extrapolate")(ustrip.(lnλ)) * unit(cube.lsf[1])
-        cube.λ = lnλ
+        psf_out = Vector{eltype(cube.psf)}()
+        lsf_out = Vector{eltype(cube.lsf)}()
+        # loop through regions and append to the buffers
+        for gap_mask in gap_masks
+            dλ = (maximum(cube.λ[gap_mask]) - minimum(cube.λ[gap_mask])) / (length(cube.λ[gap_mask])-1) * factor
+            linλ = minimum(cube.λ[gap_mask]):dλ:maximum(cube.λ[gap_mask])
+            lnλ = get_logarithmic_λ(ustrip.(linλ), logscale) * unit(linλ[1])
+            I, σ, mask = resample_flux_permuted3D(lnλ, cube.λ, cube.I, cube.σ, cube.mask)
+            psf = Spline1D(ustrip.(cube.λ), ustrip.(cube.psf), k=1, bc="extrapolate")(ustrip.(lnλ)) * unit(cube.psf[1])
+            lsf = Spline1D(ustrip.(cube.λ), ustrip.(cube.lsf), k=1, bc="extrapolate")(ustrip.(lnλ)) * unit(cube.lsf[1])
+            λ_out = cat(λ_out, lnλ, dims=1)
+            I_out = cat(I_out, I, dims=3)
+            σ_out = cat(σ_out, σ, dims=3)
+            mask_out = cat(mask_out, mask, dims=3)
+            if !isnothing(cube.psf_model)
+                psf_model = resample_flux_permuted3D(lnλ, cube.λ, cube.psf_model)
+                psf_model_out = cat(psf_model_out, psf_model, dims=3)
+            end
+            psf_out = cat(psf_out, psf, dims=1)
+            lsf_out = cat(lsf_out, lsf, dims=1)
+        end
+        # set them back into the cube object
+        cube.λ = λ_out
+        cube.I = I_out
+        cube.σ = σ_out
+        cube.mask = mask_out
+        if !isnothing(cube.psf_model)
+            cube.psf_model = psf_model_out
+        end
+        cube.psf = psf_out
+        cube.lsf = lsf_out
+
+        cube.log_binned = true
     else
-        @warn "Cube is already log-rebinned! Will not be rebinned again."
+        @debug "The cube has already been log-rebinned! Will not be log-rebinned again."
     end
 
     cube
+end
 
+
+# Apply a Cardelli extinction correction
+function deredden!(cube::DataCube, E_BV::Real=0.0)
+
+    if !cube.dereddened
+        unred = 1 ./ extinction_cardelli.(cube.λ, E_BV)
+        unred = extend(unred, size(cube.I)[1:2])
+        cube.I .*= unred
+        cube.σ .*= unred
+
+        cube.dereddened = true
+    else
+        @debug "Cube has already been de-reddened! Will not be de-reddened again."
+    end
+
+    cube
 end
 
 
@@ -1079,12 +1324,15 @@ mutable struct Observation
     rest_frame::Bool
     masked::Bool
     vacuum_wave::Bool
+    log_binned::Bool
+    dereddened::Bool
     sky_aligned::Bool
 
     function Observation(channels::Dict{Any,DataCube}=Dict{Any,DataCube}(), name::String="Generic Observation",
         z::Real=NaN, α=NaN*u"°", δ=NaN*u"°", instrument::String="Generic Instrument", rest_frame::Bool=false, 
-        masked::Bool=false, vacuum_wave::Bool=true, sky_aligned::Bool=false)
-        new(channels, name, z, α, δ, instrument, rest_frame, masked, vacuum_wave, sky_aligned)
+        masked::Bool=false, vacuum_wave::Bool=true, log_binned::Bool=false, dereddened::Bool=false, 
+        sky_aligned::Bool=false)
+        new(channels, name, z, α, δ, instrument, rest_frame, masked, vacuum_wave, log_binned, dereddened, sky_aligned)
     end
     
 end
@@ -1105,13 +1353,14 @@ function save_fits(path::String, obs::Observation, channels::Vector)
         # Header information
         hdr = FITSHeader(
             Vector{String}(["TARGNAME", "REDSHIFT", "CHANNEL", "BAND", "PIXAR_SR", "TARG_RA", "TARG_DEC", "INSTRUME",
-                "ROTANGLE", "N_CHANNELS", "RESTFRAM", "MASKED", "VACWAVE", "DATAMODL", "NAXIS1", "NAXIS2", "NAXIS3", "WCSAXES", "CDELT1", "CDELT2", "CDELT3", 
-                "CTYPE1", "CTYPE2", "CTYPE3", "CRPIX1", "CRPIX2", "CRPIX3", "CRVAL1", "CRVAL2", "CRVAL3", "CUNIT1", "CUNIT2", "CUNIT3", 
-                "PC1_1", "PC1_2", "PC1_3", "PC2_1", "PC2_2", "PC2_3", "PC3_1", "PC3_2", "PC3_3"]),
+                "ROTANGLE", "N_CHANNELS", "RESTFRAM", "MASKED", "VACWAVE", "LOGBIN", "DERED", "DATAMODL", "NAXIS1", "NAXIS2", "NAXIS3", "WCSAXES", 
+                "CDELT1", "CDELT2", "CDELT3", "CTYPE1", "CTYPE2", "CTYPE3", "CRPIX1", "CRPIX2", "CRPIX3", "CRVAL1", "CRVAL2", "CRVAL3", 
+                "CUNIT1", "CUNIT2", "CUNIT3", "PC1_1", "PC1_2", "PC1_3", "PC2_1", "PC2_2", "PC2_3", "PC3_1", "PC3_2", "PC3_3"]),
 
             [obs.name, obs.z, string(channel), obs.channels[channel].band, ustrip(obs.channels[channel].Ω), 
                 ustrip(obs.α), ustrip(obs.δ), obs.instrument, ustrip(obs.channels[channel].θ_sky), nchannels(obs.channels[channel].spectral_region), 
-                obs.rest_frame, obs.masked, obs.vacuum_wave, "IFUCubeModel", size(obs.channels[channel].I, 1), size(obs.channels[channel].I, 2), 
+                obs.rest_frame, obs.masked, obs.vacuum_wave, obs.log_binned, obs.dereddened, "IFUCubeModel", 
+                size(obs.channels[channel].I, 1), size(obs.channels[channel].I, 2), 
                 size(obs.channels[channel].I, 3), obs.channels[channel].wcs.naxis, 
                 obs.channels[channel].wcs.cdelt[1], obs.channels[channel].wcs.cdelt[2], obs.channels[channel].wcs.cdelt[3],
                 obs.channels[channel].wcs.ctype[1], obs.channels[channel].wcs.ctype[2], obs.channels[channel].wcs.ctype[3],
@@ -1125,7 +1374,7 @@ function save_fits(path::String, obs::Observation, channels::Vector)
             Vector{String}(["Target name", "Target redshift", "Channel", "Band",
                 "Solid angle per pixel (rad.)", "Right ascension of target (deg.)", "Declination of target (deg.)",
                 "Instrument name", "rotation angle to sky axes", "number of individual wavelength channels/bands in the data", 
-                "data in rest frame", "data masked", "vacuum wavelengths", "data model", "length of the first axis", 
+                "data in rest frame?", "data masked?", "vacuum wavelengths?", "log binned?", "dereddened?", "data model", "length of the first axis", 
                 "length of the second axis", "length of the third axis", "number of World Coordinate System axes", 
                 "first axis increment per pixel", "second axis increment per pixel", "third axis increment per pixel",
                 "first axis coordinate type", "second axis coordinate type", "third axis coordinate type",
@@ -1140,28 +1389,33 @@ function save_fits(path::String, obs::Observation, channels::Vector)
             @info "Writing FITS file from Observation object"
 
             write(f, Vector{Int}(); header=hdr)                                 # Primary HDU (empty)
-            write(f, ustrip.(obs.channels[channel].I); name="SCI", header=hdr)   # Data HDU
-            write(f, ustrip.(obs.channels[channel].σ); name="ERR")               # Error HDU
+            write(f, ustrip.(obs.channels[channel].I); name="SCI", header=hdr)  # Data HDU
+            write(f, ustrip.(obs.channels[channel].σ); name="ERR")              # Error HDU
             write(f, UInt8.(obs.channels[channel].mask); name="DQ")             # Mask HDU
             if !isnothing(obs.channels[channel].psf_model)
                 write(f, obs.channels[channel].psf_model; name="PSF")           # PSF HDU
             end
-            write(f, ["wave", "psf", "lsf"],                                    # Auxiliary HDU
-                     [ustrip.(obs.channels[channel].λ), ustrip.(obs.channels[channel].psf), ustrip.(obs.channels[channel].lsf)], 
-                     hdutype=TableHDU, name="AUX", 
-                     units=Dict(:wave => replace(string(unit(obs.channels[channel].λ[1])), 'μ' => 'u'), 
-                                :psf => string(unit(obs.channels[channel].psf[1])), 
-                                :lsf => string(unit(obs.channels[channel].lsf[1]))
-                    )
-            )
+            write(f, ["wave", "psf", "lsf"],                # Auxiliary HDU
+                     [ustrip.(obs.channels[channel].λ), ustrip.(obs.channels[channel].psf), ustrip.(obs.channels[channel].lsf)],
+                     hdutype=TableHDU, name="AUX")
+            write(f, ["gaps_1", "gaps_2"],
+                      [Float64[g[1] for g in ustrip.(obs.channels[channel].spectral_region.gaps)], 
+                       Float64[g[2] for g in ustrip.(obs.channels[channel].spectral_region.gaps)]], 
+                      hdutype=TableHDU, name="GAP")
             
-            # unit_str = replace(string(unit(obs.channels[channel].I[1])), 'μ' => 'u')
-            io = IOBuffer()
-            show(IOContext(io, :fancy_exponent => false), unit(obs.channels[channel].I[1]))
-            unit_str = String(take!(io))
-            unit_str = replace(unit_str, 'μ' => 'u', ' ' => '.', '*' => '.')
+            unit_str = string(unit(obs.channels[channel].I[1]))
+            unit_str = replace(unit_str, "Å" => "angstrom", 'μ' => 'u', ' ' => '.', '*' => '.')
             write_key(f["SCI"], "BUNIT", unit_str)
             write_key(f["ERR"], "BUNIT", unit_str)
+            unit_str = string(unit(obs.channels[channel].λ[1]))
+            unit_str = replace(unit_str, "Å" => "angstrom", 'μ' => 'u', ' ' => '.', '*' => '.')
+            write_key(f["AUX"], "UNIT1", unit_str)
+            write_key(f["GAP"], "UNIT1", unit_str)
+            write_key(f["GAP"], "UNIT2", unit_str)
+            unit_str = string(unit(obs.channels[channel].psf[1]))
+            write_key(f["AUX"], "UNIT2", unit_str)
+            unit_str = string(unit(obs.channels[channel].lsf[1]))
+            write_key(f["AUX"], "UNIT3", unit_str)
         end
     end
 end
@@ -1178,7 +1432,7 @@ Create an Observation object from a series of fits files with IFU cubes in diffe
 - `user_mask`: An optional vector of tuples specifying regions to be masked out
 - `format`: The format of the FITS files 
 """
-function from_fits(filenames::Vector{String}, z::Real=0.; user_mask=nothing, format=:JWST)
+function from_fits(filenames::Vector{String}, z::Real=0.; user_mask=nothing, format=:MIRI)
 
     # Grab object information from the FITS header of the first file
     channels = Dict{Any,DataCube}()
@@ -1205,21 +1459,38 @@ function from_fits(filenames::Vector{String}, z::Real=0.; user_mask=nothing, for
 
     # Loop through the files and call the individual DataCube method of the from_fits function
     for (i, filepath) ∈ enumerate(filenames)
-        cube = from_fits(filepath; format=format)
+        cube = from_fits(filepath)
         # checks for JWST-formatted individual channel/band cubes
-        if (format == :JWST) && (cube.band in keys(bands)) && (cube.channel in string.(1:4))    
+        if (format == :MIRI) && (cube.band in keys(bands)) && (cube.channel in string.(1:4))    
             channels[Symbol(bands[cube.band] * cube.channel)] = cube
             continue
         end
         # otherwise just use the channel number
         channels[parse(Int, cube.channel)] = cube
     end
+
+    from_cubes(name, redshift, collect(values(channels)), collect(keys(channels)), inst=inst)
+end
+
+
+function from_cubes(name::String, redshift::Real, cubes::Vector{<:DataCube}, channel_names::Vector; 
+    inst::String="Generic Instrument")
+
+    channels = Dict{Any,DataCube}()
+    for (chan, cube) in zip(channel_names, cubes)
+        channels[chan] = cube
+    end
     rest_frame = all([channels[ch].rest_frame for ch in keys(channels)])
     masked = all([channels[ch].masked for ch in keys(channels)])
     vacuum_wave = all([channels[ch].vacuum_wave for ch in keys(channels)])
+    log_binned = all([channels[ch].log_binned for ch in keys(channels)])
+    dereddened = all([channels[ch].dereddened for ch in keys(channels)])
     sky_aligned = all([channels[ch].sky_aligned for ch in keys(channels)])
+    ra = cubes[1].α
+    dec = cubes[1].δ
 
-    Observation(channels, name, redshift, ra, dec, inst, rest_frame, masked, vacuum_wave, sky_aligned)
+    Observation(channels, name, redshift, ra, dec, inst, rest_frame, masked, vacuum_wave, log_binned, 
+        dereddened, sky_aligned)
 end
 
 
@@ -1244,7 +1515,6 @@ function to_rest_frame!(obs::Observation)
     obs.rest_frame = true
 
     obs
-
 end
 
 
@@ -1253,7 +1523,7 @@ end
 
 Convert each wavelength channel into vacuum wavelengths.
 """
-function to_vacuum_wavelength!(obs::Observation; linear_resample::Bool=true)
+function to_vacuum_wavelength!(obs::Observation)
 
     @debug """\n
     Converting observation of $(obs.name) to vacuum wavelengths
@@ -1261,12 +1531,11 @@ function to_vacuum_wavelength!(obs::Observation; linear_resample::Bool=true)
     """
     # Loop through the channels and call the individual DataCube method of the to_vacuum_wavelength function
     for k ∈ keys(obs.channels)
-        to_vacuum_wavelength!(obs.channels[k]; linear_resample=linear_resample)
+        to_vacuum_wavelength!(obs.channels[k])
     end
     obs.vacuum_wave = true
 
     obs
-
 end
 
 
@@ -1291,7 +1560,6 @@ function apply_mask!(obs::Observation)
     obs.masked = true
 
     obs
-
 end
 
 
@@ -1320,14 +1588,54 @@ function rotate_to_sky_axes!(obs::Observation)
 end
 
 
+function log_rebin!(obs::Observation, factor::Integer=1)
+
+    @debug """\n
+    Rebinning observation of $(obs.name) to logarithmic wavelength vector
+    #####################################################################
+    """
+
+    for k ∈ keys(obs.channels)
+        log_rebin!(obs.channels[k], factor)
+    end
+    obs.log_binned = true
+    
+    obs
+end
+
+
+"""
+    deredden!(obs[, E_BV])
+
+De-redden each DataCube using a given E(B-V) value
+
+# Arguments 
+- `obs::Observation`: The Observation object to de-redden
+"""
+function deredden!(obs::Observation, E_BV::Real=0.0)
+
+    @debug """\n
+    Dereddening observation of $(obs.name) with E(B-V) = $E_BV
+    ##########################################################
+    """
+
+    for k ∈ keys(obs.channels)
+        deredden!(obs.channels[k])
+    end
+    obs.dereddened = true
+
+    obs
+end
+
+
 """
     correct!
 
-A composition of the `apply_mask!`, `to_rest_frame!`, and `to_vacuum_wavelength!` functions for Observation objects
+A composition of the `apply_mask!`, `to_rest_frame!`, `to_vacuum_wavelength!`, and `log_rebin!` functions for Observation objects
 
 See [`apply_mask!`](@ref) and [`to_rest_frame!`](@ref)
 """
-correct! = apply_mask! ∘ to_rest_frame! ∘ to_vacuum_wavelength!
+correct! = apply_mask! ∘ log_rebin! ∘ to_rest_frame! ∘ to_vacuum_wavelength!
 
 
 #################################### CHANNEL ALIGNMENT AND REPROJECTION ######################################
@@ -1838,10 +2146,7 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
     output_wcs_frame::Integer=1, extract_from_ap::Real=0., match_psf::Bool=false, 
     user_mask::Union{Vector{Tuple{W,W}},Nothing}=nothing) where {W<:QWave}
 
-    format = :Generic
-    if obs.instrument == "MIRI"
-        format = :JWST
-    end
+    format = Symbol(obs.instrument)
 
     # Default to all 4 channels
     if (obs.instrument == "MIRI") && isnothing(channels)
@@ -1960,7 +2265,8 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
         λ_out, I_out, σ_out, mask_out, psf_out, Ω_out, obs.α, obs.δ, 
         obs.channels[channels[output_wcs_frame]].θ_sky, psf_fwhm_out, 
         lsf_fwhm_out, wcs_optimal_3d, "MULTIPLE", "MULTIPLE",
-        user_mask, obs.rest_frame, obs.z, obs.masked, obs.vacuum_wave, obs.sky_aligned,
+        user_mask, obs.rest_frame, obs.z, obs.masked, obs.vacuum_wave, 
+        obs.log_binned, obs.dereddened, obs.sky_aligned,
         obs.channels[channels[output_wcs_frame]].voronoi_bins, format, 
         instrument_channel_edges
     )

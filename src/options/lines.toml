@@ -76,7 +76,7 @@ kinematic_group_hi = [
 ]
 
 # Lines to make combined flux/eqw maps for
-combined_maps = [["OII_03727A", "OII_03729A"]]
+combined_maps = [["OII_3727A", "OII_3729A"]]
 
 # Additional line components
 n_acomps = 1

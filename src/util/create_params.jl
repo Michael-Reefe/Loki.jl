@@ -263,7 +263,7 @@ function construct_continuum_params!(params::Vector{FitParameter}, pnames::Vecto
         append!(params, [stel_vel, stel_vdisp])
         append!(pnames, prefix .* ["vel", "vdisp"])
         append!(plabels, [L"$v_*$ (km s$^{-1}$)", L"$\sigma_*$ (km s$^{-1}$)"])
-        append!(ptrans, Transformation[], Transformation[])
+        append!(ptrans, [Transformation[], Transformation[]])
         @debug msg
     end
 
@@ -388,7 +388,7 @@ end
 function construct_template_params!(params::Vector{FitParameter}, pnames::Vector{String}, plabels::Vector{String},
     ptrans::Vector{Vector{Transformation}}, out::Dict, contin_options::Dict, region::SpectralRegion)
 
-    if haskey(contin_options, "template_amps") && !out[:fit_temp_multexp]
+    if haskey(contin_options, "template_amps") && !out[:fit_temp_multexp] && (length(out[:template_names]) > 0)
         msg = "Template amplitudes:"
         for i ∈ eachindex(contin_options["template_amps"])
             tname = out[:template_names][i]
@@ -406,7 +406,7 @@ function construct_template_params!(params::Vector{FitParameter}, pnames::Vector
             end
         end
         @debug msg
-    elseif haskey(contin_options, "template_inds") && out[:fit_temp_multexp]
+    elseif haskey(contin_options, "template_inds") && out[:fit_temp_multexp] 
         msg = "Template amplitudes:"
         for i ∈ 1:4
             temp_A = FitParameter(NaN, false, (0., Inf))
@@ -477,7 +477,10 @@ function construct_continuum_parameters(out::Dict, λunit::Unitful.Units, Iunit:
     # For optical only fitting, we cant constrain the silicate absorption, so also lock these parameters
     if λrange == UVOptical
         pwhere = "extinction." .* (out[:silicate_absorption] == "decompose" ? ["N_oli", "N_pyr", "N_for"] : ["tau_97"])
-        append!(pwhere, "extinction" .* ["tau_ice", "tau_ch", "beta"])
+        append!(pwhere, "extinction." .* ["beta"])
+        if out[:fit_ch_abs]
+            append!(pwhere, "extinction." .* ["tau_ice", "tau_ch"])
+        end
         for pw in pwhere
             set_val!(continuum[pw], 0.0)
             lock!(continuum[pw])
@@ -496,6 +499,13 @@ function construct_continuum_parameters(out::Dict, λunit::Unitful.Units, Iunit:
             set_val!(continuum[pw], 0.0)
             lock!(continuum[pw])
         end
+    end
+
+    # If there are no dust features, disable the use_pah_templates option
+    if (length(dust_features.names) == 0) && out[:use_pah_templates]
+        @warn "There are no PAH features within the input wavelength range of the spectrum. " * 
+              "The use_pah_templates option will be disabled."
+        out[:use_pah_templates] = false
     end
 
     # Final few non-fit parameters

@@ -1,31 +1,6 @@
 # optical.toml: this file contains options pertaining to fitting the
 # optical continuum of spectra, including SSPs, extinction, and power laws
 
-########## Simple Stellar Populations (SSPs) ##########
-
-# Ages in Gyr
-
-# Use one old population and one young population
-[[stellar_population_ages]]
-val = 8.0
-plim = [4.0, 8.1] # upper limit is clamped from the redshift
-locked = false 
-# [[stellar_population_ages]]
-# val = 0.005
-# plim = [0.0, 0.02]
-# locked = false
-
-# Metallicities in log10(Z/Zsun)
-
-[[stellar_population_metallicities]]
-val = -0.5
-plim = [-2.3, 0.4]
-locked = false
-# [[stellar_population_metallicities]]
-# val = -0.5
-# plim = [-2.3, 0.4]
-# locked = false
-
 ################# Stellar Kinematics #################
 
 # Stellar offset velocity (relative to the rest frame given by z)

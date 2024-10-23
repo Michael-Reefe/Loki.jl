@@ -83,7 +83,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
     # Prepare outputs
     out_type = typeof(ustrip(λ[1]))
     comps = Dict{String, Union{Vector{out_type}, Vector{typeof(N)}}}()
-    norms = Dict{String, Number}()
+    norms = Dict{String, Union{Number, Matrix{out_type}}}()
     contin = zeros(out_type, nλ)
     pᵢ::Int64 = 1
 
@@ -147,11 +147,17 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
     
     ##### 2. FE II EMISSION #####
 
+    gap_masks = get_gap_masks(s.λ, cube_fitter.spectral_region.gaps)
     if fopt.fit_opt_na_feii
         unit_check(punits[pᵢ+1], u"km/s")
         unit_check(punits[pᵢ+2], u"km/s")
-        conv_na_feii = convolve_losvd(cube_fitter.feii.na_fft, cube_fitter.feii.vsyst, params[pᵢ+1]*u"km/s",
-            params[pᵢ+2]*u"km/s", s.vres, length(λ), temp_fft=true, npad_in=cube_fitter.feii.npad)
+        conv_na_feii = zeros(nλ, 1)
+        for (gi, gap_mask) in enumerate(gap_masks)
+            # split if the spectrum has a few separated regions
+            conv_na_feii[gap_mask, 1] .= convolve_losvd(cube_fitter.feii.na_fft, cube_fitter.feii.vsysts[gi], 
+                params[pᵢ+1]*u"km/s", params[pᵢ+2]*u"km/s", s.vres, sum(gap_mask), temp_fft=true, 
+                npad_in=cube_fitter.feii.npad)
+        end
         # These templates also need the solid angle divided out
         conv_na_feii[:, 1] ./= s.area_sr
         norms["continuum.feii.na.amp"] = maximum(conv_na_feii[:, 1])
@@ -162,8 +168,12 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
     if fopt.fit_opt_br_feii
         unit_check(punits[pᵢ+1], u"km/s")
         unit_check(punits[pᵢ+2], u"km/s")
-        conv_br_feii = convolve_losvd(cube_fitter.feii.br_fft, cube_fitter.feii.vsyst, params[pᵢ+1]*u"km/s",
-            params[pᵢ+2]*u"km/s", s.vres, length(λ), temp_fft=true, npad_in=cube_fitter.feii.npad)
+        conv_br_feii = zeros(nλ, 1)
+        for (gi, gap_mask) in enumerate(gap_masks)
+            conv_br_feii[gap_mask, 1] .= convolve_losvd(cube_fitter.feii.br_fft, cube_fitter.feii.vsysts[gi], 
+                params[pᵢ+1]*u"km/s", params[pᵢ+2]*u"km/s", s.vres, length(λ), temp_fft=true, 
+                npad_in=cube_fitter.feii.npad)
+        end
         conv_br_feii[:, 1] ./= s.area_sr
         norms["continuum.feii.br.amp"] = maximum(conv_br_feii[:, 1])
         comps["br_feii"] = params[pᵢ] .* conv_br_feii[:, 1] ./ norms["continuum.feii.br.amp"]
@@ -270,6 +280,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
 
     # Get the wavelength data 
     λ = s.λ
+    nλ = length(λ)
 
     # Prepare outputs
     out_type = typeof(ustrip(λ[1]))
@@ -329,11 +340,17 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
     
     ##### 2. FE II EMISSION #####
 
+    gap_masks = get_gap_masks(s.λ, cube_fitter.spectral_region.gaps)
     if fopt.fit_opt_na_feii
         unit_check(punits[pᵢ+1], u"km/s")
         unit_check(punits[pᵢ+2], u"km/s")
-        conv_na_feii = convolve_losvd(cube_fitter.feii.na_fft, cube_fitter.feii.vsyst, params[pᵢ+1]*u"km/s",
-            params[pᵢ+2]*u"km/s", s.vres, length(λ), temp_fft=true, npad_in=cube_fitter.feii.npad)
+        conv_na_feii = zeros(nλ, 1)
+        for (gi, gap_mask) in enumerate(gap_masks)
+            # split if the spectrum has a few separated regions
+            conv_na_feii[gap_mask, 1] .= convolve_losvd(cube_fitter.feii.na_fft, cube_fitter.feii.vsysts[gi], 
+                params[pᵢ+1]*u"km/s", params[pᵢ+2]*u"km/s", s.vres, sum(gap_mask), temp_fft=true, 
+                npad_in=cube_fitter.feii.npad)
+        end
         # These templates also need the solid angle divided out
         conv_na_feii[:, 1] ./= s.area_sr
         contin .+= params[pᵢ] .* conv_na_feii[:, 1]./maximum(conv_na_feii[:, 1]) .* ext_gas
@@ -342,8 +359,12 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
     if fopt.fit_opt_br_feii
         unit_check(punits[pᵢ+1], u"km/s")
         unit_check(punits[pᵢ+2], u"km/s")
-        conv_br_feii = convolve_losvd(cube_fitter.feii.br_fft, cube_fitter.feii.vsyst, params[pᵢ+1]*u"km/s",
-            params[pᵢ+2]*u"km/s", s.vres, length(λ), temp_fft=true, npad_in=cube_fitter.feii.npad)
+        conv_br_feii = zeros(nλ, 1)
+        for (gi, gap_mask) in enumerate(gap_masks)
+            conv_br_feii[gap_mask, 1] .= convolve_losvd(cube_fitter.feii.br_fft, cube_fitter.feii.vsysts[gi], 
+                params[pᵢ+1]*u"km/s", params[pᵢ+2]*u"km/s", s.vres, length(λ), temp_fft=true, 
+                npad_in=cube_fitter.feii.npad)
+        end
         conv_br_feii[:, 1] ./= s.area_sr
         contin .+= params[pᵢ] .* conv_br_feii[:, 1]./maximum(conv_br_feii[:, 1]) .* ext_gas
         pᵢ += 3
