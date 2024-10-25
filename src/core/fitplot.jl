@@ -553,7 +553,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, bunit::Abstra
     psf_fwhm::Float64, cosmo::Cosmology.AbstractCosmology, wcs::Union{WCSTransform,Nothing}; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, 
     snr_thresh::Float64=3., abs_thresh::Union{Float64,Nothing}=nothing, cmap=py_colormap.cubehelix, line_latex::Union{String,Nothing}=nothing, 
     marker::Union{Vector{<:Real},Nothing}=nothing, disable_axes::Bool=true, disable_colorbar::Bool=false, modify_ax=nothing, colorscale_limits=nothing, 
-    custom_bunit::Union{AbstractString,Nothing}=nothing, wave_unit::Unitful.Units)
+    custom_bunit::Union{AbstractString,Nothing}=nothing, wave_unit::Union{Unitful.Units,Nothing}=nothing)
 
     # Overwrite with input if provided
     if !isnothing(custom_bunit)
@@ -577,6 +577,7 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, bunit::Abstra
     @debug "Performing SNR filtering, $(sum(isfinite.(filtered)))/$(length(filtered)) passed"
     # filter out insane/unphysical equivalent widths (due to ~0 continuum level)
     if occursin("eqw", name_i)
+        @assert !isnothing(wave_unit)
         filtered[(filtered.*wave_unit) .> 100u"μm"] .= NaN
     end
     if occursin("voff", name_i)

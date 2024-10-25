@@ -671,20 +671,20 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
 
         # Voff and FWHM
         if tied_voff
-            voff = get_val(param_maps, "lines.$(component_keys[1]).1.voff")
-            name_i = join([group_name, "voff"], ".")
-            bunit = get_label(param_maps, "lines.$(component_keys[1]).1.voff")
+            vpeak = get_val(param_maps, "lines.$(component_keys[1]).vpeak")
+            name_i = join([group_name, "vpeak"], ".")
+            bunit = get_label(param_maps, "lines.$(component_keys[1]).vpeak")
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(group_name)", "$(name_i).pdf") 
-            plot_parameter_map(ustrip.(voff), name_i, bunit, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(ustrip(wave_i)),
+            plot_parameter_map(ustrip.(vpeak), name_i, bunit, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(ustrip(wave_i)),
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
                 line_latex=group_name_ltx, marker=centroid, wave_unit=unit(cube_fitter.cube.λ[1])) 
         end
         if tied_fwhm
-            fwhm = get_val(param_maps, "lines.$(component_keys[1]).1.fwhm")
-            name_i = join([group_name, "fwhm"], ".")
-            bunit = get_label(param_maps, "lines.$(component_keys[1]).1.fwhm")
+            w80 = get_val(param_maps, "lines.$(component_keys[1]).w80")
+            name_i = join([group_name, "w80"], ".")
+            bunit = get_label(param_maps, "lines.$(component_keys[1]).w80")
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(group_name)", "$(name_i).pdf") 
-            plot_parameter_map(ustrip.(fwhm), name_i, bunit, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(ustrip(wave_i)),
+            plot_parameter_map(ustrip.(w80), name_i, bunit, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(ustrip(wave_i)),
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
                 line_latex=group_name_ltx, marker=centroid, wave_unit=unit(cube_fitter.cube.λ[1])) 
         end
@@ -696,7 +696,8 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
     name_i = "reduced_chi2"
     save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "$(name_i).pdf")
     plot_parameter_map(data, name_i, L"$\tilde{\chi}^2$", save_path, cube_fitter.cube.Ω, cube_fitter.z, 
-        ustrip(median(cube_fitter.cube.psf)), cube_fitter.cosmology, cube_fitter.cube.wcs, marker=centroid)
+        ustrip(median(cube_fitter.cube.psf)), cube_fitter.cosmology, cube_fitter.cube.wcs, marker=centroid,
+        wave_unit=unit(cube_fitter.cube.λ[1]))
 
     return
 
