@@ -228,7 +228,7 @@ function from_fits(filename::String)::DataCube
     dq = read(hdu["DQ"])
     # also make sure to mask any points with Inf/NaN in the intensity or error, in case they were 
     # missed by the DQ map
-    mask = (dq .≠ 0) .|| .!isfinite.(Iν) .|| .!isfinite.(σI)
+    mask = (dq .≠ 0) .| .~isfinite.(Iν) .| .~isfinite.(σI)
 
     # Target info from the header
     hdr0 = read_header(hdu[1])
@@ -430,11 +430,11 @@ function from_data(Ω::typeof(1.0u"sr"), z::Real, λ::AbstractVector{<:Quantity}
         _psf = repeat([_psf], length(_λ))
     end
 
-    # if no spectral resolution is given, assume that it's the size of 3 pixels
+    # if no spectral resolution FWHM is given, assume that it's the size of 6 pixels
     _R = R
     if isnothing(R)
-        _R = _λ[1] / (3*(_λ[2]-_λ[1]))
-        @warn "No spectral resolution [FWHM] was given in the input. It will be assumed that R is 3 spectral pixels wide ($(_R))."
+        _R = _λ ./ (3 .* [_λ[2]-_λ[1]; diff(_λ)])
+        @warn "No spectral resolution [FWHM] was given in the input. It will be assumed that the FWHM is 3 spectral pixels wide ($(_R[1])-$(_R[end]))."
     end
     if length(_R) == 1
         _R = repeat([_R], length(_λ))
@@ -449,10 +449,13 @@ function from_data(Ω::typeof(1.0u"sr"), z::Real, λ::AbstractVector{<:Quantity}
         _α = uconvert(u"°", α)
         _δ = uconvert(u"°", δ)
         pix_res_deg = uconvert(u"°", sqrt(Ω))
-        x_cent, y_cent = centroid_com(sumdim(ustrip.(_I), 3)[mx[1]-5:mx[1]+5, mx[2]-5:mx[2]+5]) .+ (mx.I .- 5) .- 1
+        x_cent, y_cent = (1.0,1.0)
+        if size(_I)[1:2] ≠ (1,1)
+            x_cent, y_cent = centroid_com(sumdim(ustrip.(_I), 3)[mx[1]-5:mx[1]+5, mx[2]-5:mx[2]+5]) .+ (mx.I .- 5) .- 1
+        end
         waveunit_str = replace(string(unit(_λ[1])), 'μ' => 'u', "Å" => "angstrom")
         _wcs = WCSTransform(3; crpix=[x_cent, y_cent, 1.], crval=[ustrip(_α), ustrip(_δ), ustrip(_λ[1])], 
-            cdelt=[pix_res_deg, pix_res_deg, ustrip.(_λ[2]-_λ[1])], cunit=["deg", "deg", waveunit_str], 
+            cdelt=[ustrip(pix_res_deg), ustrip(pix_res_deg), ustrip.(_λ[2]-_λ[1])], cunit=["deg", "deg", waveunit_str], 
             ctype=["RA---TAN", "DEC--TAN", "WAVE"], pc=[-1. 0. 0.; 0. 1. 0.; 0. 0. 1.], radesys="ICRS")
         if !((_λ[2]-_λ[1]) ≈ (_λ[end]-_λ[end-1]))
             @warn "The input wavelength vector is non-linear. The wavelength axis of the auto-generated WCS will not accurately " * 
@@ -461,14 +464,22 @@ function from_data(Ω::typeof(1.0u"sr"), z::Real, λ::AbstractVector{<:Quantity}
         end
     end
 
+    _rest_frame = rest_frame
+    if isnothing(rest_frame)
+        @warn "Assuming input wavelengths are not redshift corrected; if they already are in the rest frame, " *
+              "please provide the keyword rest_frame=true."
+        _rest_frame = false
+    end
+
     # check for wavelength gaps
     _gaps = gaps
     if isnothing(gaps)
         _gaps = Tuple{eltype(_λ),eltype(_λ)}[]
         dλ = diff(_λ)
+        restframe_factor = _rest_frame ? 1.0 : 1/(1+z)
         for i in 2:(length(dλ)-1)
             if (dλ[i] > 10dλ[i-1]) && (dλ[i] > 10dλ[i+1])
-                _gap = (_λ[i], _λ[i+1])
+                _gap = ((_λ[i]+sqrt(eps())*dλ[i])*restframe_factor, (_λ[i+1]-sqrt(eps())*dλ[i])*restframe_factor)
                 @info "Autodetected a wavelength gap at $(_gap)"
                 push!(_gaps, _gap)
             end
@@ -476,12 +487,6 @@ function from_data(Ω::typeof(1.0u"sr"), z::Real, λ::AbstractVector{<:Quantity}
     end
 
     # Print some warnings for users
-    _rest_frame = rest_frame
-    if isnothing(rest_frame)
-        @warn "Assuming input wavelengths are not redshift corrected; if they already are in the rest frame, " *
-              "please provide the keyword rest_frame=true."
-        _rest_frame = false
-    end
     _masked = masked
     if isnothing(masked)
         # (dont really need a warning for this one as applying it twice does not hurt anything)
@@ -780,7 +785,7 @@ function interpolate_nans!(cube::DataCube)
             @debug "Too many NaNs in spaxel $index -- this spaxel will not be fit"
             continue
         end
-        filt = .!isfinite.(I) .& .!isfinite.(σ)
+        filt = .!isfinite.(I) .| .!isfinite.(σ)
 
         # Interpolate the NaNs
         if sum(filt) > 0
@@ -1399,8 +1404,8 @@ function save_fits(path::String, obs::Observation, channels::Vector)
                      [ustrip.(obs.channels[channel].λ), ustrip.(obs.channels[channel].psf), ustrip.(obs.channels[channel].lsf)],
                      hdutype=TableHDU, name="AUX")
             write(f, ["gaps_1", "gaps_2"],
-                      [Float64[g[1] for g in ustrip.(obs.channels[channel].spectral_region.gaps)], 
-                       Float64[g[2] for g in ustrip.(obs.channels[channel].spectral_region.gaps)]], 
+                      [Float64[ustrip.(g[1]) for g in obs.channels[channel].spectral_region.gaps], 
+                       Float64[ustrip.(g[2]) for g in obs.channels[channel].spectral_region.gaps]], 
                       hdutype=TableHDU, name="GAP")
             
             unit_str = string(unit(obs.channels[channel].I[1]))

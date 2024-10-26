@@ -1307,6 +1307,12 @@ will only be performed on the integrated spectrum within the aperture.
 """
 function fit_cube!(cube_fitter::CubeFitter)
 
+    # if the "cube" is a size 1x1xN, call the aperture method with the "all" keyword
+    shape = size(cube_fitter.cube.I)
+    if shape[1:2] == (1,1)
+        return fit_cube!(cube_fitter, "all")
+    end
+
     @info """\n
     #############################################################################
     ######## BEGINNING FULL CUBE FITTING ROUTINE FOR $(cube_fitter.name) ########
@@ -1319,8 +1325,6 @@ function fit_cube!(cube_fitter::CubeFitter)
     """
     # copy the main log file
     cp(joinpath(@__DIR__, "..", "loki.main.log"), joinpath("output_$(cube_fitter.name)", "loki.main.log"), force=true)
-
-    shape = size(cube_fitter.cube.I)
 
     # Prepare output array
     @info "===> Preparing output data structures... <==="
@@ -1525,7 +1529,7 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
     # Save a copy of the options file used to run the code, so the settings can be referenced/reused
     # (for example, if you need to recall which lines you tied, what your limits were, etc.)
     cp(joinpath(@__DIR__, "..", "options", "options.toml"), joinpath("output_$(cube_fitter.name)", "general_options.archive.toml"), force=true)
-    cp(joinpath(@__DIR__, "..", "options", "dust.toml"), joinpath("output_$(cube_fitter.name)", "dust_options.archive.toml"), force=true)
+    cp(joinpath(@__DIR__, "..", "options", "infrared.toml"), joinpath("output_$(cube_fitter.name)", "dust_options.archive.toml"), force=true)
     cp(joinpath(@__DIR__, "..", "options", "lines.toml"), joinpath("output_$(cube_fitter.name)", "lines_options.archive.toml"), force=true)
     cp(joinpath(@__DIR__, "..", "options", "optical.toml"), joinpath("output_$(cube_fitter.name)", "optical_options.archive.toml"), force=true)
 

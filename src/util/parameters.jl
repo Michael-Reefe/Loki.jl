@@ -240,12 +240,16 @@ end
 λlim(region::SpectralRegion) = region.λlim
 nchannels(region::SpectralRegion) = region.n_channels
 umask(region::SpectralRegion) = region.mask
+gaps(region::SpectralRegion) = region.gaps
 wavelength_range(region::SpectralRegion) = region.wavelength_range
 function is_valid(λ::Quantity{<:Real, u"𝐋"}, tol::Quantity{<:Real, u"𝐋"}, region::SpectralRegion) 
     lim = λlim(region)
     valid = (lim[1]-tol) < λ < (lim[2]+tol)
     for mlim in umask(region)
         valid &= !(mlim[1] < λ < mlim[2])
+    end
+    for gap in gaps(region)
+        valid &= !(gap[1] < λ < gap[2])
     end
     valid
 end

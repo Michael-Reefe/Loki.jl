@@ -73,6 +73,7 @@ kinematic_group_hi = [
     "FeVII_",
     "FeVIII_",
     "SiIX_",
+    "OVI_"
 ]
 
 # Lines to make combined flux/eqw maps for
@@ -162,6 +163,38 @@ locked = true
 #   Good infrared line lists for HI and H2: https://www.not.iac.es/instruments/notcam/ReferenceInfo/
 #   NIST: https://physics.nist.gov/PhysRefData/ASD/lines_form.html 
 
+
+##################################### UV LINES      ################################################
+
+[lines.HI_Ly_beta]
+wave = 1025.722
+latex = "Ly$\\beta$"
+annotate = true
+unit = "angstrom"
+
+[lines.OVI_1032A]
+wave = 1031.912
+latex = "O $\\textsc{vi}$"
+annotate = true
+unit = "angstrom"
+
+[lines.OVI_1038A]
+wave = 1037.613
+latex = "O $\\textsc{vi}$"
+annotate = true
+unit = "angstrom"
+
+[lines.ArI_1067A]
+wave = 1066.660
+latex = "[Ar $\\textsc{i}$]"
+annotate = true
+unit = "angstrom"
+
+[lines.HeII_1085A]
+wave = 1084.9
+latex = "He $\\textsc{ii}$"
+annotate = true
+unit = "angstrom"
 
 ##################################### OPTICAL LINES ################################################
 
