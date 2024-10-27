@@ -8,7 +8,16 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
 
     # Create the CubeModel and ParamMaps structs to be filled in
     np_ssp = maximum(out_np_ssp)
-    cube_model = generate_cubemodel(cube_fitter; do_1d=aperture)
+
+    spax = make_normalized_spaxel(cube_data, CartesianIndex(1,1), cube_fitter; use_ap=aperture, 
+    use_vorbins=!isnothing(cube_fitter.cube.voronoi_bins))
+    spax_model = spax
+    if length(cube_fitter.spectral_region.gaps) > 0
+        spax_model = get_model_spaxel(cube_fitter, spax, nothing)
+    end
+    size3 = length(spax_model.λ)
+
+    cube_model = generate_cubemodel(cube_fitter, (size(cube_fitter.cube.I)[1:2]..., size3); do_1d=aperture)
     param_maps = generate_parammaps(cube_fitter; do_1d=aperture, stellar_params=np_ssp)
 
     fopt = fit_options(cube_fitter)
@@ -37,17 +46,9 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
         data_index = !isnothing(cube_fitter.cube.voronoi_bins) ? cube_fitter.cube.voronoi_bins[index] : index
         @debug "Spaxel $index"
 
-        # Set the 2D parameter map outputs
-        # First re-evaluate the model and grab the normalizations we need
-        pc = cube_fitter.n_params_cont + 1
-        spax = make_normalized_spaxel(cube_data, index, cube_fitter; use_ap=aperture, 
-            use_vorbins=!isnothing(cube_fitter.cube.voronoi_bins))
-
-        I_cont, comps_c, norms = model_continuum(spax, spax.N, ustrip.(out_params[index, 1:pc-1]), unit.(out_params[index, 1:pc-1]),
-            cube_fitter, false, true)
-
         # Grab the stellar results
         stellar_vals = nothing
+        results_stellar = nothing
         if fopt.fit_stellar_continuum
             fname = !isnothing(cube_fitter.cube.voronoi_bins) ? "voronoi_bin_$(index[1])" : "spaxel_$(index[1])_$(index[2])"
             results_stellar = deserialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.ssp"))
@@ -57,6 +58,19 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
             stellar_vals[2:1+length(results_stellar.ages)] .= results_stellar.ages
             stellar_vals[2+np_ssp:1+np_ssp+length(results_stellar.logzs)] .= results_stellar.logzs
         end
+
+        # Set the 2D parameter map outputs
+        # First re-evaluate the model and grab the normalizations we need
+        pc = cube_fitter.n_params_cont + 1
+        spax = make_normalized_spaxel(cube_data, index, cube_fitter; use_ap=aperture, 
+            use_vorbins=!isnothing(cube_fitter.cube.voronoi_bins))
+        spax_model = spax
+        if length(cube_fitter.spectral_region.gaps) > 0
+            spax_model = get_model_spaxel(cube_fitter, spax, results_stellar)
+        end
+
+        I_cont, comps_c, norms = model_continuum(spax_model, spax_model.N, ustrip.(out_params[index, 1:pc-1]), unit.(out_params[index, 1:pc-1]),
+            cube_fitter, false, spax_model == spax, true)
 
         # Loop through parameters and save them in the parammaps data structure 
         for (pᵢ, pname) in enumerate(param_maps.parameters.names)
@@ -129,9 +143,9 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
                     else
                         norm_i = 1.0
                     end
-                    val *= spax.N / norm_i
-                    err_upp *= spax.N / norm_i
-                    err_low *= spax.N / norm_i
+                    val *= spax_model.N / norm_i
+                    err_upp *= spax_model.N / norm_i
+                    err_low *= spax_model.N / norm_i
                 end
                 # Take the log10 --> do it this way to ensure that this is always done LAST
                 if transform == LogTransform
@@ -157,10 +171,10 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
         vᵢ = pc
         pᵢ = pc + cube_fitter.n_params_lines
 
-        I_line, comps_l = model_line_residuals(spax, ustrip.(out_params[index, vᵢ:pᵢ-1]), unit.(out_params[index, vᵢ:pᵢ-1]), 
-            model(cube_fitter).lines, cube_fitter.lsf, comps_c["total_extinction_gas"], trues(length(spax.λ)), true)
+        I_line, comps_l = model_line_residuals(spax_model, ustrip.(out_params[index, vᵢ:pᵢ-1]), unit.(out_params[index, vᵢ:pᵢ-1]), 
+            model(cube_fitter).lines, cube_fitter.lsf, comps_c["total_extinction_gas"], trues(length(spax_model.λ)), true)
 
-        I_model, comps, = collect_total_fit_results(spax, cube_fitter, I_cont, I_line, comps_c, comps_l, 0, 0)
+        I_model, comps, = collect_total_fit_results(spax, spax_model, cube_fitter, I_cont, I_line, comps_c, comps_l, 0, 0)
 
         # Sort the dust continuum parameters based on the temperature
         sort_temperatures!(cube_fitter, param_maps, index)

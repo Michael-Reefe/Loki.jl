@@ -38,10 +38,10 @@ end
 
 # A constructor function for making a default empty CubeModel object with all the necessary fields for a given
 # fit of a DataCube.
-function generate_cubemodel(cube_fitter::CubeFitter, floattype::DataType=Float32; do_1d::Bool=false)
+function generate_cubemodel(cube_fitter::CubeFitter, _shape::Tuple, floattype::DataType=Float32; do_1d::Bool=false)
 
     @debug "Generating full 3D cube models"
-    shape = do_1d ? (1,1,size(cube_fitter.cube.I, 3)) : size(cube_fitter.cube.I)
+    shape = do_1d ? (1,1,_shape[3]) : _shape
 
     @debug """\n
     Creating CubeModel struct with shape $shape

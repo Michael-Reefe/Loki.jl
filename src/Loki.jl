@@ -33,6 +33,7 @@ using Cosmology
 using AstroAngles
 using SkyCoords
 using WCS
+using DustExtinction
 using Reproject
 using SpectralResampling
 using VoronoiBinning
@@ -256,8 +257,8 @@ include("core/cubefit.jl")
 include("core/cubefit_helpers.jl")
 include("core/parammaps.jl")
 include("core/cubemodel.jl")
-include("core/spaxel.jl")
 include("core/spaxelresult.jl")
+include("core/spaxel.jl")
 
 include("util/parsing.jl")
 include("util/create_params.jl")

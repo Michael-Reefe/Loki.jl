@@ -70,7 +70,7 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
     addition to the overall fit
 """
 function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, punits::Vector{<:Unitful.Units}, 
-    cube_fitter::CubeFitter, use_pah_templates::Bool, return_components::Bool)
+    cube_fitter::CubeFitter, use_pah_templates::Bool, do_gaps::Bool, return_components::Bool)
 
     # Get options from the cube fitter
     fopt = fit_options(cube_fitter)
@@ -248,7 +248,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
 
     if fopt.fit_stellar_continuum
         ssp_contin, norms["continuum.stellar_norm"], norms["continuum.stellar_weights"] = stellar_populations_nnls(
-            s, contin, comps["total_extinction_stars"], stel_vel, stel_sig, cube_fitter)
+            s, contin, comps["total_extinction_stars"], stel_vel, stel_sig, cube_fitter; do_gaps=do_gaps)
         comps["SSPs"] = ssp_contin ./ comps["total_extinction_stars"]   # (save the un-extincted stellar continuum)
         contin .+= ssp_contin
     end
@@ -273,7 +273,7 @@ end
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
 # --> the N argument NEEDS to be separate from the spaxel object for optimal type stability
 function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, punits::Vector{<:Unitful.Units}, 
-    cube_fitter::CubeFitter, use_pah_templates::Bool; return_extinction::Bool=false) 
+    cube_fitter::CubeFitter, use_pah_templates::Bool, do_gaps::Bool; return_extinction::Bool=false) 
 
     # Get options from the cube fitter
     fopt = fit_options(cube_fitter)
@@ -441,7 +441,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
     ##### 8. STELLAR POPULATIONS #####
 
     if fopt.fit_stellar_continuum
-        contin .+= stellar_populations_nnls(s, contin, ext_stars, stel_vel, stel_sig, cube_fitter)[1]
+        contin .+= stellar_populations_nnls(s, contin, ext_stars, stel_vel, stel_sig, cube_fitter; do_gaps=do_gaps)[1]
     end
 
     if return_extinction
@@ -892,7 +892,7 @@ end
 Calculate extra parameters that are not fit, but are nevertheless important to know, for a given spaxel.
 Currently this includes the integrated intensity, equivalent width, and signal to noise ratios of dust features and emission lines.
 """
-function calculate_extra_parameters(s::Spaxel, cube_fitter::CubeFitter, comps::Dict, result_c::SpaxelFitResult, 
+function calculate_extra_parameters(s::Spaxel, s_model::Spaxel, cube_fitter::CubeFitter, comps::Dict, result_c::SpaxelFitResult, 
     result_l::SpaxelFitResult, continuum::Vector{<:Real}, propagate_err::Bool=true)
 
     @debug "Calculating extra parameters"
@@ -903,12 +903,12 @@ function calculate_extra_parameters(s::Spaxel, cube_fitter::CubeFitter, comps::D
     perr_l = result_l.perr
 
     # Normalization
-    N = s.N; λ = s.λ; I = s.I; σ = s.σ
+    N = s.N
     @debug "Normalization: $(N)"
 
     n_extra_df = length(get_flattened_nonfit_parameters(model(cube_fitter).dust_features))
-    p_dust = Vector{Quantity{eltype(I)}}(undef, n_extra_df)
-    p_dust_err = Vector{Quantity{eltype(I)}}(undef, n_extra_df)
+    p_dust = Vector{Quantity{eltype(s.I)}}(undef, n_extra_df)
+    p_dust_err = Vector{Quantity{eltype(s.I)}}(undef, n_extra_df)
     p_dust_err .= 0.
     pₒ = 1
 
@@ -917,12 +917,12 @@ function calculate_extra_parameters(s::Spaxel, cube_fitter::CubeFitter, comps::D
     pᵢ = i_split + 1
 
     if typeof(N) <: QPerAng
-        @assert unit(λ[1]) == u"angstrom" "Wavelength and intensity units are not consistent!"
+        @assert unit(s.λ[1]) == u"angstrom" "Wavelength and intensity units are not consistent!"
     end
     if typeof(N) <: QPerum
-        @assert unit(λ[1]) == u"μm" "Wavelength and intensity units are not consistent!"
+        @assert unit(s.λ[1]) == u"μm" "Wavelength and intensity units are not consistent!"
     end
-    perwave_unit = typeof(N) <: QPerWave ? unit(N) : unit(N)*u"Hz"/unit(λ[1])
+    perwave_unit = typeof(N) <: QPerWave ? unit(N) : unit(N)*u"Hz"/unit(s.λ[1])
 
     # Loop through dust features
     # for ii ∈ 1:cube_fitter.n_dust_feat
@@ -931,8 +931,8 @@ function calculate_extra_parameters(s::Spaxel, cube_fitter::CubeFitter, comps::D
         # initialize values
         total_flux = 0.0*u"erg/s/cm^2"
         total_flux_err = 0.0*u"erg/s/cm^2"
-        total_eqw = 0.0*unit(λ[1])
-        total_eqw_err = 0.0*unit(λ[1])
+        total_eqw = 0.0*unit(s.λ[1])
+        total_eqw_err = 0.0*unit(s.λ[1])
         total_snr = 0.0
 
         for component in dcomplex                               # <- iterates over each individual component 
@@ -950,7 +950,7 @@ function calculate_extra_parameters(s::Spaxel, cube_fitter::CubeFitter, comps::D
             end
 
             # Get the index of the central wavelength
-            cent_ind = argmin(abs.(λ .- μ))
+            cent_ind = argmin(abs.(s.λ .- μ))
             
             # Integrate over the solid angle
             A_cgs = A_cgs * s.area_sr[cent_ind]
@@ -978,16 +978,16 @@ function calculate_extra_parameters(s::Spaxel, cube_fitter::CubeFitter, comps::D
             #  versions so that we can calculate the appropriate error on the equivalent width)
             feature_err = nothing
             if prof == :Drude
-                feature = Drude.(λ, A*N, μ, fwhm, asym)
+                feature = Drude.(s_model.λ, A*N, μ, fwhm, asym)
                 if propagate_err
-                    feature_err = hcat(Drude.(λ, max(A*N-A_err*N, 0.0*N), μ, max(fwhm-fwhm_err, eps()*unit(fwhm)), asym-asym_err),
-                                    Drude.(λ, A*N+A_err*N, μ, fwhm+fwhm_err, asym+asym_err))
+                    feature_err = hcat(Drude.(s_model.λ, max(A*N-A_err*N, 0.0*N), μ, max(fwhm-fwhm_err, eps()*unit(fwhm)), asym-asym_err),
+                                    Drude.(s_model.λ, A*N+A_err*N, μ, fwhm+fwhm_err, asym+asym_err))
                 end
             elseif prof == :PearsonIV
-                feature = PearsonIV.(λ, A*N, μ, fwhm, m, ν)
+                feature = PearsonIV.(s_model.λ, A*N, μ, fwhm, m, ν)
                 if propagate_err
-                    feature_err = hcat(PearsonIV.(λ, max(A*N-A_err*N, 0.0*N), μ, max(fwhm-fwhm_err, eps()*unit(fwhm)), m-m_err, ν-ν_err),
-                                    PearsonIV.(λ, A*N+A_err*N, μ, fwhm+fwhm_err, m+m_err, ν+ν_err))
+                    feature_err = hcat(PearsonIV.(s_model.λ, max(A*N-A_err*N, 0.0*N), μ, max(fwhm-fwhm_err, eps()*unit(fwhm)), m-m_err, ν-ν_err),
+                                    PearsonIV.(s_model.λ, A*N+A_err*N, μ, fwhm+fwhm_err, m+m_err, ν+ν_err))
                 end
             else
                 error("Unrecognized PAH profile: $prof")
@@ -1004,12 +1004,16 @@ function calculate_extra_parameters(s::Spaxel, cube_fitter::CubeFitter, comps::D
             unit_check(unit(flux), u"erg/s/cm^2")
             
             # Calculate the equivalent width using the utility function
-            eqw, e_err = calculate_eqw(λ, feature, comps, false, feature_err=feature_err, propagate_err=propagate_err)
-            unit_check(unit(eqw), unit(λ[1]))
+            eqw, e_err = calculate_eqw(s_model.λ, feature, comps, false, feature_err=feature_err, propagate_err=propagate_err)
+            unit_check(unit(eqw), unit(s.λ[1]))
             
             # snr = A*N*ext*tn / std(I[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)] .- continuum[.!mask_lines .& (abs.(λ .- μ) .< 2fwhm)])
-            window = abs.(λ .- μ) .< 3fwhm
-            snr = sum(feature[window]) / sqrt(sum((σ.*N)[window].^2))
+            window = abs.(s.λ .- μ) .< 3fwhm
+            feature_d = feature
+            if s != s_model
+                feature_d = Spline1D(ustrip.(s_model.λ), feature, k=1)(ustrip.(s.λ))
+            end
+            snr = sum(feature_d[window]) / sqrt(sum((s.σ.*N)[window].^2))
             snr = round(snr, digits=2)
 
             @debug "PAH feature ($prof) with ($A_cgs, $μ, $fwhm, $asym, $m, $ν) and errors " * 
@@ -1055,8 +1059,8 @@ function calculate_extra_parameters(s::Spaxel, cube_fitter::CubeFitter, comps::D
 
     # Loop through lines
     n_extra_line = length(get_flattened_nonfit_parameters(model(cube_fitter).lines))
-    p_lines = Vector{Quantity{eltype(I)}}(undef, n_extra_line)
-    p_lines_err = Vector{Quantity{eltype(I)}}(undef, n_extra_line)
+    p_lines = Vector{Quantity{eltype(s.I)}}(undef, n_extra_line)
+    p_lines_err = Vector{Quantity{eltype(s.I)}}(undef, n_extra_line)
     p_lines_err .= 0.
 
     # Unpack the relative flags
@@ -1067,7 +1071,7 @@ function calculate_extra_parameters(s::Spaxel, cube_fitter::CubeFitter, comps::D
         
         # initialize composite line profile
         amp_1 = amp_1_err = voff_1 = voff_1_err = fwhm_1 = fwhm_1_err = nothing
-        total_profile = zeros(typeof(N), length(λ))
+        total_profile = zeros(typeof(N), length(s_model.λ))
         profile_err_lo = profile_err_hi = nothing
         if propagate_err
             profile_err_lo = copy(total_profile)
@@ -1077,8 +1081,8 @@ function calculate_extra_parameters(s::Spaxel, cube_fitter::CubeFitter, comps::D
         # initialize values
         total_flux = 0.0*u"erg/s/cm^2"
         total_flux_err = 0.0*u"erg/s/cm^2"
-        total_eqw = 0.0*unit(λ[1])
-        total_eqw_err = 0.0*unit(λ[1])
+        total_eqw = 0.0*unit(s.λ[1])
+        total_eqw_err = 0.0*unit(s.λ[1])
         total_snr = 0.0
 
         λ0 = lines.λ₀[k]
@@ -1161,7 +1165,7 @@ function calculate_extra_parameters(s::Spaxel, cube_fitter::CubeFitter, comps::D
             end
 
             # Get the index of the central wavelength
-            cent_ind = argmin(abs.(λ .- mean_wave))
+            cent_ind = argmin(abs.(s.λ .- mean_wave))
 
             # Integrate over the solid angle
             amp_cgs *= s.area_sr[cent_ind]
@@ -1175,28 +1179,28 @@ function calculate_extra_parameters(s::Spaxel, cube_fitter::CubeFitter, comps::D
             # Create the extincted line profile in units matching the continuum
             feature_err = nothing
             if component.profile == :Gaussian
-                feature = Gaussian.(λ, amp*N, mean_wave, fwhm_wave)
+                feature = Gaussian.(s_model.λ, amp*N, mean_wave, fwhm_wave)
                 if propagate_err
-                    feature_err = hcat(Gaussian.(λ, max(amp*N-amp_err*N, 0.0*N), mean_wave, max(fwhm_wave-fwhm_wave_err, eps()*unit(fwhm_wave))),
-                                    Gaussian.(λ, amp*N+amp_err*N, mean_wave, fwhm_wave+fwhm_wave_err))
+                    feature_err = hcat(Gaussian.(s_model.λ, max(amp*N-amp_err*N, 0.0*N), mean_wave, max(fwhm_wave-fwhm_wave_err, eps()*unit(fwhm_wave))),
+                                    Gaussian.(s_model.λ, amp*N+amp_err*N, mean_wave, fwhm_wave+fwhm_wave_err))
                 end
             elseif component.profile == :Lorentzian
-                feature = Lorentzian.(λ, amp*N, mean_wave, fwhm_wave)
+                feature = Lorentzian.(s_model.λ, amp*N, mean_wave, fwhm_wave)
                 if propagate_err
-                    feature_err = hcat(Lorentzian.(λ, max(amp*N-amp_err*N, 0.0*N), mean_wave, max(fwhm_wave-fwhm_wave_err, eps()*unit(fwhm_wave))),
-                                    Lorentzian.(λ, amp*N+amp_err*N, mean_wave, fwhm_wave+fwhm_wave_err))
+                    feature_err = hcat(Lorentzian.(s_model.λ, max(amp*N-amp_err*N, 0.0*N), mean_wave, max(fwhm_wave-fwhm_wave_err, eps()*unit(fwhm_wave))),
+                                    Lorentzian.(s_model.λ, amp*N+amp_err*N, mean_wave, fwhm_wave+fwhm_wave_err))
                 end
             elseif component.profile == :GaussHermite
-                feature = GaussHermite.(λ, amp*N, mean_wave, fwhm_wave, h3, h4)
+                feature = GaussHermite.(s_model.λ, amp*N, mean_wave, fwhm_wave, h3, h4)
                 if propagate_err
-                    feature_err = hcat(GaussHermite.(λ, max(amp*N-amp_err*N, 0.0*N), mean_wave, max(fwhm_wave-fwhm_wave_err, eps()*unit(fwhm_wave)), 
-                        h3-h3_err, h4-h4_err), GaussHermite.(λ, amp*N+amp_err*N, mean_wave, fwhm_wave+fwhm_wave_err, h3+h3_err, h4+h4_err))
+                    feature_err = hcat(GaussHermite.(s_model.λ, max(amp*N-amp_err*N, 0.0*N), mean_wave, max(fwhm_wave-fwhm_wave_err, eps()*unit(fwhm_wave)), 
+                        h3-h3_err, h4-h4_err), GaussHermite.(s_model.λ, amp*N+amp_err*N, mean_wave, fwhm_wave+fwhm_wave_err, h3+h3_err, h4+h4_err))
                 end
             elseif component.profile == :Voigt
-                feature = Voigt.(λ, amp*N, mean_wave, fwhm_wave, η)
+                feature = Voigt.(s_model.λ, amp*N, mean_wave, fwhm_wave, η)
                 if propagate_err
-                    feature_err = hcat(Voigt.(λ, max(amp*N-amp_err*N, 0.0*N), mean_wave, max(fwhm_wave-fwhm_wave_err, eps()*unit(fwhm_wave)), 
-                        max(η-η_err, 0.)), Voigt.(λ, amp*N+amp_err*N, mean_wave, fwhm_wave+fwhm_wave_err, min(η+η_err, 1.)))
+                    feature_err = hcat(Voigt.(s_model.λ, max(amp*N-amp_err*N, 0.0*N), mean_wave, max(fwhm_wave-fwhm_wave_err, eps()*unit(fwhm_wave)), 
+                        max(η-η_err, 0.)), Voigt.(s_model.λ, amp*N+amp_err*N, mean_wave, fwhm_wave+fwhm_wave_err, min(η+η_err, 1.)))
                 end
             else
                 error("Unrecognized line profile $(component.profile)")
@@ -1213,12 +1217,16 @@ function calculate_extra_parameters(s::Spaxel, cube_fitter::CubeFitter, comps::D
                 propagate_err=propagate_err)
             
             # Calculate equivalent width using the helper function
-            p_lines[pₒ+1], p_lines_err[pₒ+1] = calculate_eqw(λ, feature, comps, true, feature_err=feature_err, 
+            p_lines[pₒ+1], p_lines_err[pₒ+1] = calculate_eqw(s_model.λ, feature, comps, true, feature_err=feature_err, 
                 propagate_err=propagate_err)
 
             # SNR
-            region = .~s.mask_lines .& ((abs.(λ .- mean_wave)./mean_wave.*C_KMS) .< 5000.0u"km/s")
-            snr = amp*ext / std(I[region] .- continuum[region])
+            region = .~s.mask_lines .& ((abs.(s.λ .- mean_wave)./mean_wave.*C_KMS) .< 5000.0u"km/s")
+            continuum_d = continuum
+            if s != s_model
+                continuum_d = Spline1D(ustrip.(s_model.λ), continuum, k=1)(ustrip.(s.λ))
+            end
+            snr = amp*ext / std(s.I[region] .- continuum_d[region])
             p_lines[pₒ+2] = round(snr, digits=2)
             # rms = std(I[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)] .- continuum[.!mask_lines .& (abs.(λ .- mean_μm) .< 0.1)]) 
             # p_lines[pₒ+2] = sum(feature) / (sqrt(sum(snr_filter)) * rms)
@@ -1258,14 +1266,14 @@ function calculate_extra_parameters(s::Spaxel, cube_fitter::CubeFitter, comps::D
 
         # W80 and Δv parameters
         fwhm_inst = cube_fitter.lsf(λ0)
-        w80, Δv, vmed, vpeak = calculate_composite_params(λ, total_profile, λ0, fwhm_inst)
+        w80, Δv, vmed, vpeak = calculate_composite_params(s_model.λ, total_profile, λ0, fwhm_inst)
         p_lines[pₒ+1] = w80
         p_lines[pₒ+2] = Δv
         p_lines[pₒ+3] = vmed
         p_lines[pₒ+4] = vpeak
         if propagate_err
-            w80_lo, Δv_lo, vmed_lo, vpeak_lo = calculate_composite_params(λ, profile_err_lo, λ0, fwhm_inst)
-            w80_hi, Δv_hi, vmed_hi, vpeak_hi = calculate_composite_params(λ, profile_err_hi, λ0, fwhm_inst)
+            w80_lo, Δv_lo, vmed_lo, vpeak_lo = calculate_composite_params(s_model.λ, profile_err_lo, λ0, fwhm_inst)
+            w80_hi, Δv_hi, vmed_hi, vpeak_hi = calculate_composite_params(s_model.λ, profile_err_hi, λ0, fwhm_inst)
             w80_err = abs(mean([w80 - w80_lo, w80_hi - w80]))
             Δv_err = abs(mean([Δv - Δv_lo, Δv_hi - Δv]))
             vmed_err = abs(mean([vmed - vmed_lo, vmed_hi - vmed]))

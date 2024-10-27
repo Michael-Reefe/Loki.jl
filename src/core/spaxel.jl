@@ -74,9 +74,14 @@ function normalize!(s::Spaxel, N::T) where {T}
 end
 
 
-function subtract_continuum!(s::Spaxel, continuum::AbstractVector{<:Real})
+function subtract_continuum!(s::Spaxel, s_model::Spaxel, continuum::AbstractVector{<:Real})
     unit_check(unit(s.I[1]), unit(continuum[1]))
-    s.I .-= continuum
+    cont = continuum
+    if s != s_model
+        # interpolate 
+        cont = Spline1D(ustrip.(s_model.λ), continuum, k=1)(ustrip.(s.λ))
+    end
+    s.I .-= cont
 end
 
 
@@ -218,4 +223,47 @@ function make_normalized_spaxel(cube_data::NamedTuple, coords::CartesianIndex, c
     fill_bad_pixels!(spax)
 
     spax
+end
+
+
+function get_model_spaxel(cube_fitter::CubeFitter, spaxel::Spaxel, stellar::Union{StellarResult,Nothing})
+    if length(cube_fitter.spectral_region.gaps) == 0
+        return spaxel
+    end
+
+    # create a full filled logarithmically spaced wavelength vector
+    logscale = spaxel.λ[2]/spaxel.λ[1]
+    λstart = spaxel.λ[begin]
+    λend = spaxel.λ[end]
+    nλ = floor(Int, log(λend/λstart) / log(logscale))
+    λ_model = λstart .* logscale.^collect(0:nλ)
+    vres = log(logscale) * C_KMS
+
+    # extensions of other objects
+    area_sr = Spline1D(ustrip.(spaxel.λ), ustrip.(spaxel.area_sr), k=1)(ustrip.(λ_model)) .* unit(spaxel.area_sr[1])
+    mask_lines = mask_emission_lines(λ_model, cube_fitter.linemask_overrides)
+    mask_bad = falses(length(λ_model))
+
+    aux = Dict()
+    if haskey(spaxel.aux, "templates")
+        templates = zeros(length(λ_model), size(spaxel.aux["templates"], 2))
+        for si in axes(spaxel.aux["templates"], 2)
+            templates[:, si] .= Spline1D(ustrip.(spaxel.λ), spaxel.aux["templates"][:, si], k=1)(ustrip.(λ_model))
+        end
+        aux["templates"] = templates
+    end
+    if haskey(spaxel.aux, "channel_masks")
+        channel_masks = BitVector[]
+        for ch_mask in spaxel.aux["channel_masks"]
+            push!(channel_masks, Spline1D(ustrip.(spaxel.λ), ch_mask, k=1)(ustrip.(λ_model)) .> 0)
+        end
+        aux["channel_masks"] = channel_masks
+    end
+    if !isnothing(stellar)
+        aux["stellar_norm"] = stellar.norm
+        aux["stellar_weights"] = stellar.weights
+    end
+
+    Spaxel(spaxel.coords, λ_model, ones(length(λ_model)), ones(length(λ_model)), area_sr, mask_lines,
+        mask_bad, vres; N=spaxel.N, aux=aux)
 end

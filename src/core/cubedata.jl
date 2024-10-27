@@ -392,7 +392,7 @@ function from_data(Ω::typeof(1.0u"sr"), z::Real, λ::AbstractVector{<:Quantity}
 
     _σ = σ
     if isnothing(σ)
-        _σ = ones(eltype(_I), size(_I)...) .* nanmedian(ustrip.(_I)[ustrip.(_I) .> 0.])./100
+        _σ = ones(eltype(_I), size(_I)...) .* nanmedian(ustrip.(_I)[ustrip.(_I) .> 0.])./10
     end
     if ndims(_σ) == 1
         _σ = reshape(_σ, (1,1,length(_σ)))
@@ -446,8 +446,16 @@ function from_data(Ω::typeof(1.0u"sr"), z::Real, λ::AbstractVector{<:Quantity}
     _wcs = wcs
     if isnothing(wcs)
         _, mx = findmax(sumdim(ustrip.(_I), 3))
-        _α = uconvert(u"°", α)
-        _δ = uconvert(u"°", δ)
+        _α = α
+        _δ = δ
+        if unit(_α) == NoUnits
+            _α = α*u"°"
+        end
+        if unit(_δ) == NoUnits
+            _δ = δ*u"°"
+        end
+        _α = uconvert(u"°", _α)
+        _δ = uconvert(u"°", _δ)
         pix_res_deg = uconvert(u"°", sqrt(Ω))
         x_cent, y_cent = (1.0,1.0)
         if size(_I)[1:2] ≠ (1,1)
@@ -736,9 +744,21 @@ end
 
 
 # Apply a Cardelli extinction correction
-function deredden!(cube::DataCube, E_BV::Real=0.0)
+function deredden!(cube::DataCube)
 
     if !cube.dereddened
+
+        # get galactic coordinates
+        c = ICRSCoords(cube.α, cube.δ)
+        g = convert(GalCoords, c)
+
+        # get E(B-V) from galactic dust maps
+        dustmap = SFD98Map()
+        E_BV = dustmap(g.l, g.b)
+        @info "Using SFD98 dust map at (α=$(cube.α), δ=$(cube.δ)): E(B-V)=$E_BV"
+
+        # use the CCM89 extinction law with Rv = 3.1 for the Milky Way
+        # unred = 10 .^ (0.4 .* Av .* ustrip.(CCM89(Rv=Rv).(cube.λ)))
         unred = 1 ./ extinction_cardelli.(cube.λ, E_BV)
         unred = extend(unred, size(cube.I)[1:2])
         cube.I .*= unred
@@ -1617,11 +1637,11 @@ De-redden each DataCube using a given E(B-V) value
 # Arguments 
 - `obs::Observation`: The Observation object to de-redden
 """
-function deredden!(obs::Observation, E_BV::Real=0.0)
+function deredden!(obs::Observation)
 
     @debug """\n
-    Dereddening observation of $(obs.name) with E(B-V) = $E_BV
-    ##########################################################
+    Dereddening observation of $(obs.name)
+    ######################################
     """
 
     for k ∈ keys(obs.channels)
@@ -1636,11 +1656,16 @@ end
 """
     correct!
 
-A composition of the `apply_mask!`, `to_rest_frame!`, `to_vacuum_wavelength!`, and `log_rebin!` functions for Observation objects
+A composition of the many functions for Observation objects that convert the data into a fittable format:
+    - Convert to vacuum wavelengths
+    - Convert to rest-frame wavelengths
+    - Logarithmically rebin 
+    - Apply the bad pixel mask
+    - De-redden the data
 
 See [`apply_mask!`](@ref) and [`to_rest_frame!`](@ref)
 """
-correct! = apply_mask! ∘ log_rebin! ∘ to_rest_frame! ∘ to_vacuum_wavelength!
+correct! = deredden! ∘ apply_mask! ∘ log_rebin! ∘ to_rest_frame! ∘ to_vacuum_wavelength!
 
 
 #################################### CHANNEL ALIGNMENT AND REPROJECTION ######################################

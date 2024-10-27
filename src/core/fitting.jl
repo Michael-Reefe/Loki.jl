@@ -114,7 +114,7 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter; init::Boo
         # important! evaluate over the whole wavelength vector in s, THEN apply the mask at the very end
         # (why? if fitting any stellar or fe ii templates, they depend on the wavelength vector being 
         #  logarithmic without any weird gaps due to the FFTs that are performed)
-        model_continuum(s, s.N, ptot, punits, cube_fitter, cube_fitter.fitting.use_pah_templates)[spaxel_mask]
+        model_continuum(s, s.N, ptot, punits, cube_fitter, cube_fitter.fitting.use_pah_templates, true)[spaxel_mask]
     end
 
     # Do initial fit
@@ -130,8 +130,8 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter; init::Boo
     @debug "Continuum CMPFit Status: $(res.status)"
 
     # Get the results of the fit as a parameter vector, error vector, model intensity vector, and comps dict
-    popt, perr, I_model, comps, norms = collect_cont_fit_results(res, pfix_tied, plock_tied, punits, tied_pairs, tied_indices, n_tied,
-        spaxel, cube_fitter; bootstrap_iter=bootstrap_iter)
+    popt, perr, I_model, comps, norms, results_stellar, spaxel_model = collect_cont_fit_results(res, pfix_tied, plock_tied, 
+        punits, tied_pairs, tied_indices, n_tied, spaxel, cube_fitter; bootstrap_iter=bootstrap_iter)
 
     fopt = fit_options(cube_fitter)
     if determine_fit_redo_with0extinction(cube_fitter, s.λ, s.σ, pnames, ustrip.(popt), plock, 
@@ -139,8 +139,8 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter; init::Boo
 
         # set optical depth to 0 if the template fits all of the spectrum
         @debug "Redoing the fit with optical depth locked to 0 due to template amplitudes"
-        result0, I_model0, comps0, pah_amp0, chi20, nfree0 = continuum_fit_spaxel(spaxel, cube_fitter; 
-            init=init, use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots, force_noext=true)
+        result0, I_model0, comps0, pah_amp0, results_stellar0, spaxel_model0, chi20, nfree0 = continuum_fit_spaxel(spaxel, 
+            cube_fitter; init=init, use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots, force_noext=true)
 
         # Does an F-test to determine whether or not the extinction is actually statistically significant
         if fopt.F_test_ext
@@ -149,10 +149,10 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter; init::Boo
             @debug "Extinction F-test results: $(test_passed ? "SUCCESS" : "FAILURE")"
             @debug "Extinction F-test value = $F_data | Critical value = $F_crit | Threshold = $(fopt.line_test_threshold)"
             if !test_passed
-                return result0, I_model0, comps0, pah_amp0, chi20, nfree0
+                return result0, I_model0, comps0, pah_amp0, results_stellar0, spaxel_model0, chi20, nfree0
             end
         else
-            return result0, I_model0, comps0, pah_amp0, chi20, nfree0
+            return result0, I_model0, comps0, pah_amp0, results_stellar0, spaxel_model0, chi20, nfree0
         end
     end
 
@@ -175,7 +175,7 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter; init::Boo
         cube_fitter.p_init_pahtemp[:] .= pah_amp
     end
 
-    result, I_model, comps, norms, pah_amp, chi2, n_free
+    result, I_model, comps, norms, pah_amp, results_stellar, spaxel_model, chi2, n_free
 end
 
 
@@ -240,7 +240,7 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter, split_fla
 
     function fit_step1(x, p1free_tied::AbstractVector)
         ptot = rebuild_full_parameters(p1free_tied, p1fix_tied, lock_1_tied, tied_pairs, tied_indices, n_tied_1)
-        model_continuum(s, s.N, ptot, punits_1, cube_fitter, cube_fitter.fitting.use_pah_templates)[spaxel_mask]
+        model_continuum(s, s.N, ptot, punits_1, cube_fitter, cube_fitter.fitting.use_pah_templates, true)[spaxel_mask]
     end
 
     res_1 = cmpfit(s.λ[spaxel_mask], s.I[spaxel_mask], s.σ[spaxel_mask], fit_step1, p1free_tied, parinfo=parinfo_1, config=config)
@@ -249,8 +249,8 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter, split_fla
 
     @debug "Continuum CMPFit Status: $(res_1.status)"
 
-    popt, perr, I_model, comps, norms = collect_cont_fit_results(res_1, p1fix_tied, lock_1_tied, punits_1, tied_pairs, tied_indices, 
-        n_tied_1, spaxel, cube_fitter; bootstrap_iter=bootstrap_iter)
+    popt, perr, I_model, comps, norms, _, _ = collect_cont_fit_results(res_1, p1fix_tied, lock_1_tied, punits_1, tied_pairs, tied_indices, 
+        n_tied_1, spaxel, cube_fitter; bootstrap_iter=bootstrap_iter, step1=true)
     # Get the continuum component without the PAHs so that we can subtract it
     I_cont = comps["continuum"]
 
@@ -283,17 +283,17 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter, split_fla
 
     @debug "Continuum CMPFit Step 2 status: $(res_2.status)"
 
-    popt, perr, n_free, pahtemp, I_model, comps, norms = collect_cont_fit_results(res_1, p1fix_tied, lock_1_tied, punits_1, tied_pairs, 
-        tied_indices, n_tied_1, res_2, p2fix, lock_2, punits_2, n_free_1, n_free_2, cube_fitter, spaxel; 
-        bootstrap_iter=bootstrap_iter)
+    popt, perr, n_free, pahtemp, I_model, comps, norms, results_stellar, spaxel_model = collect_cont_fit_results(res_1, p1fix_tied, 
+        lock_1_tied, punits_1, tied_pairs, tied_indices, n_tied_1, res_2, p2fix, lock_2, punits_2, n_free_1, n_free_2, cube_fitter, 
+        spaxel; bootstrap_iter=bootstrap_iter)
 
     # set optical depth to 0 if the template fits all of the spectrum
     if determine_fit_redo_with0extinction(cube_fitter, s.λ, s.σ, pnames_1, ustrip.(popt), lock_1, 
         I_model, comps, init, force_noext)
 
         @debug "Redoing the fit with optical depth locked to 0 due to template amplitudes"
-        result0, I_model0, comps0, pah_amp0, chi20, nfree0 = continuum_fit_spaxel(spaxel, cube_fitter, split_flag; 
-            init=init, use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots, force_noext=true)
+        result0, I_model0, comps0, pah_amp0, results_stellar0, spaxel_model0, chi20, nfree0 = continuum_fit_spaxel(spaxel, 
+            cube_fitter, split_flag; init=init, use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots, force_noext=true)
 
         # Does an F-test to determine whether or not the extinction is actually statistically significant
         if fopt.F_test_ext
@@ -301,10 +301,10 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter, split_fla
             @debug "Extinction F-test results: $(test_passed ? "SUCCESS" : "FAILURE")"
             @debug "Extinction F-test value = $F_data | Critical value = $F_crit | Threshold = $(fopt.line_test_threshold)"
             if !test_passed
-                return result0, I_model0, comps0, pah_amp0, chi20, nfree0
+                return result0, I_model0, comps0, pah_amp0, results_stellar0, spaxel_model0, chi20, nfree0
             end
         else
-            return result0, I_model0, comps0, pah_amp0, chi20, nfree0
+            return result0, I_model0, comps0, pah_amp0, results_stellar0, spaxel_model0, chi20, nfree0
         end
 
     end
@@ -330,7 +330,7 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter, split_fla
         cube_fitter.p_init_pahtemp[:] .= pahtemp
     end
 
-    result, I_model, comps, norms, pahtemp, chi2, n_free
+    result, I_model, comps, norms, pahtemp, results_stellar, spaxel_model, chi2, n_free
 end
 
 
@@ -614,8 +614,9 @@ See Smith, Draine, et al. 2007; http://tir.astro.utoledo.edu/jdsmith/research/pa
 - `p1_boots`: If `bootstrap_iter` is true, this should give the best-fit parameter vector
 for the initial non-bootstrapped fit of the spectrum.
 """
-function line_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter, continuum::Vector{<:Real}, extinction_curve::Vector{<:Real}; 
-    init::Bool=false, use_ap::Bool=false, bootstrap_iter::Bool=false, p1_boots::Union{Vector{<:Real},Nothing}=nothing)
+function line_fit_spaxel(s::Spaxel, s_model::Spaxel, cube_fitter::CubeFitter, continuum::Vector{<:Real}, 
+    extinction_gas::Vector{<:Real}; init::Bool=false, use_ap::Bool=false, bootstrap_iter::Bool=false, 
+    p1_boots::Union{Vector{<:Real},Nothing}=nothing)
 
     @debug """\n
     #########################################################
@@ -628,11 +629,17 @@ function line_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter, continuum::Vector{<
     _orig_I = copy(s.I)
 
     # Subtract the continuum
-    subtract_continuum!(s, continuum)
+    subtract_continuum!(s, s_model, continuum)
     # This ensures that any lines that fall within the masked regions will go to 0
     spaxel_mask = get_vector_mask(s; lines=false, user_mask=cube_fitter.cube.spectral_region.mask)
     s.I[spaxel_mask] .= 0.0*unit(s.I[1])
     @debug "Using normalization N=$(s.N)"
+
+    # interpolate extinction curve
+    extinction_curve = extinction_gas
+    if s != s_model
+        extinction_curve = Spline1D(ustrip.(s_model.λ), extinction_gas, k=1)(ustrip.(s.λ))
+    end
 
     # Get the line parameter initial values, limits, locks, and tied indices
     p₀, plimits, param_lock, param_names, step, tied_pairs, tied_indices, tie_vec = get_line_initial_values_limits_locked(
@@ -695,7 +702,7 @@ function line_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter, continuum::Vector{<
 
     # Collect the results of the fit
     popt, perr, I_model, comps = collect_line_fit_results(res, pfix_tied, param_lock_tied, punits, tied_pairs,
-        tied_indices, n_tied, s, extinction_curve, cube_fitter; bootstrap_iter=bootstrap_iter)
+        tied_indices, n_tied, s_model, extinction_gas, cube_fitter; bootstrap_iter=bootstrap_iter)
 
     ######################################################################################################################
     
@@ -812,7 +819,7 @@ function all_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter; init::Bool=false, us
         ptot_lines = rebuild_full_parameters(pfree_lines_tied, pfix_lines_tied, lock_lines_tied, tied_pairs_lines, tied_indices_lines, n_tied_lines)
     
         # Generate the models
-        Icont, ext_gas = model_continuum(s, s.N, ptot_cont, punits_cont, cube_fitter, fopt.use_pah_templates; return_extinction=true)
+        Icont, ext_gas = model_continuum(s, s.N, ptot_cont, punits_cont, cube_fitter, fopt.use_pah_templates, true; return_extinction=true)
         Ilines = model_line_residuals(s, ptot_lines, punits_lines, model(cube_fitter).lines, cube_fitter.lsf, ext_gas, trues(length(s.λ)))
 
         # Return the sum of the models
@@ -848,7 +855,7 @@ function all_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter; init::Bool=false, us
     end
 
     @debug "Continuum+Lines CMPFit Status: $(res.status)"
-    popt_cont, perr_cont, I_cont, comps_cont, norms, popt_lines, perr_lines, I_lines, comps_lines = 
+    popt_cont, perr_cont, I_cont, comps_cont, norms, popt_lines, perr_lines, I_lines, comps_lines, result_stellar, s_model = 
         collect_fit_results(res, pfix_cont_tied, lock_cont_tied, punits_cont, tied_pairs_cont, tied_indices_cont,
         n_tied_cont, n_free_cont, pfix_lines_tied, lock_lines_tied, punits_lines, tied_pairs_lines, tied_indices_lines,
         n_tied_lines, n_free_lines, s, cube_fitter; bootstrap_iter=bootstrap_iter)
@@ -874,7 +881,7 @@ function all_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter; init::Bool=false, us
         write_fit_results_csv(cube_fitter, "init_fit_lines", result_lines)
     end
 
-    result_cont, result_lines, I_cont, I_lines, comps_cont, norms, comps_lines, n_free_cont, n_free_lines, pah_amp
+    result_cont, result_lines, I_cont, I_lines, comps_cont, norms, comps_lines, n_free_cont, n_free_lines, pah_amp, result_stellar, s_model
 end
 
 
@@ -892,22 +899,23 @@ function _fit_spaxel_iterfunc(spaxel::Spaxel, cube_fitter::CubeFitter; bootstrap
 
     if !fopt.fit_joint
         # First, do the continuum fit 
-        result_c, I_cont, comps_cont, norms, pahtemp, _, n_free_c = continuum_fit_spaxel(spaxel, cube_fitter, 
-            fopt.use_pah_templates; init=init, use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_cont)
+        result_c, I_cont, comps_cont, norms, pahtemp, result_stellar, spaxel_model, _, n_free_c = continuum_fit_spaxel(
+            spaxel, cube_fitter, fopt.use_pah_templates; init=init, use_ap=use_ap, bootstrap_iter=bootstrap_iter, 
+            p1_boots=p1_boots_cont)
         # Decide whether to subtract the real continuum fit or a cubic spline continuum fit based on the settings 
         line_cont = get_continuum_for_line_fit(spaxel, cube_fitter, I_cont, comps_cont)
         # Then do the line fit
-        result_l, I_line, comps_line, n_free_l = line_fit_spaxel(spaxel, cube_fitter, line_cont, comps_cont["total_extinction_gas"]; 
-            init=init, use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_l)
+        result_l, I_line, comps_line, n_free_l = line_fit_spaxel(spaxel, spaxel_model, cube_fitter, line_cont, 
+            comps_cont["total_extinction_gas"]; init=init, use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_l)
     else
         # Fit the continuum and lines together
-        result_c, result_l, I_cont, I_line, comps_cont, norms, comps_line, n_free_c, n_free_l, pahtemp = all_fit_spaxel(
-            spaxel, cube_fitter; init=init, use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots_cont=p1_boots_cont, 
+        result_c, result_l, I_cont, I_line, comps_cont, norms, comps_line, n_free_c, n_free_l, pahtemp, result_stellar, spaxel_model = 
+            all_fit_spaxel(spaxel, cube_fitter; init=init, use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots_cont=p1_boots_cont, 
             p1_boots_line=p1_boots_l)
         line_cont = get_continuum_for_line_fit(spaxel, cube_fitter, I_cont, comps_cont)
     end
     # Get the total fit results
-    I_model, comps, χ2, dof = collect_total_fit_results(spaxel, cube_fitter, I_cont, I_line, comps_cont, comps_line, 
+    I_model, comps, χ2, dof = collect_total_fit_results(spaxel, spaxel_model, cube_fitter, I_cont, I_line, comps_cont, comps_line, 
         n_free_c, n_free_l)
 
     result = copy(result_c)
@@ -915,7 +923,7 @@ function _fit_spaxel_iterfunc(spaxel::Spaxel, cube_fitter::CubeFitter; bootstrap
 
     if !init
         # The extra parameters (fluxes, equivalent widths, SNRs, etc.)
-        result_e = calculate_extra_parameters(spaxel, cube_fitter, comps, result_c, result_l, line_cont, !bootstrap_iter)
+        result_e = calculate_extra_parameters(spaxel, spaxel_model, cube_fitter, comps, result_c, result_l, line_cont, !bootstrap_iter)
         # The chi2 and dof 
         result_s = SpaxelFitResult(["statistics.chi2", "statistics.dof"], [χ2, dof], [0. 0.; 0. 0.], [-Inf Inf; -Inf Inf],
             falses(2), Vector{Union{Nothing,Tie}}([nothing, nothing]))
@@ -925,18 +933,14 @@ function _fit_spaxel_iterfunc(spaxel::Spaxel, cube_fitter::CubeFitter; bootstrap
         combine!(result, result_s)
 
     end
-    # The stellar parameters (masses, ages, metallicities)
-    result_stellar = nothing
-    if fopt.fit_stellar_continuum
-        result_stellar = calculate_stellar_parameters(cube_fitter, norms, spaxel.N)
-    end
 
-    return result, result_c, result_l, result_stellar, pahtemp, I_model, comps, χ2, dof
+    return result, result_c, result_l, result_stellar, pahtemp, I_model, comps, spaxel_model, χ2, dof
 end
 
 
-function _fit_bootstraps(spax::Spaxel, cube_fitter::CubeFitter, I_model::Vector{<:QSIntensity}, result::SpaxelFitResult, 
-    result_c::SpaxelFitResult, result_l::SpaxelFitResult, pahtemp::Vector{<:Quantity}, fname::String; use_ap::Bool=false)
+function _fit_bootstraps(spax::Spaxel, spax_model::Spaxel, cube_fitter::CubeFitter, I_model::Vector{<:QSIntensity}, 
+    result::SpaxelFitResult, result_c::SpaxelFitResult, result_l::SpaxelFitResult, pahtemp::Vector{<:Quantity}, 
+    fname::String; use_ap::Bool=false)
 
     # Set the random seed
     fopt = fit_options(cube_fitter)
@@ -984,8 +988,8 @@ function _fit_bootstraps(spax::Spaxel, cube_fitter::CubeFitter, I_model::Vector{
     split1 = length(result_c.popt)
     split2 = length(result_c.popt) + length(result_l.popt)
     
-    p_out, p_err, I_boot_min, I_boot_max, I_model, comps, norms, χ2 = collect_bootstrapped_results(spax, cube_fitter, p_boot, 
-        I_model_boot, split1, split2)
+    p_out, p_err, I_boot_min, I_boot_max, I_model, comps, norms, χ2 = collect_bootstrapped_results(spax, spax_model, cube_fitter, 
+        p_boot, I_model_boot, split1, split2)
     result.popt .= p_out
     result.perr .= p_err
     result_stellar = nothing
@@ -1058,25 +1062,25 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, coords::Cart
     result, np_ssp = with_logger(spaxel_logger) do
 
         # Perform the regular fit
-        result, result_c, result_l, result_stellar, pahtemp, I_model, comps, χ2, dof = _fit_spaxel_iterfunc(
+        result, result_c, result_l, result_stellar, pahtemp, I_model, comps, spax_model, χ2, dof = _fit_spaxel_iterfunc(
             spax, cube_fitter; bootstrap_iter=false, use_ap=use_ap)
 
         # Perform the bootstrapping iterations, if n_bootstrap > 0
         I_boot_min = I_boot_max = nothing
         if fopt.n_bootstrap > 0
             result, result_stellar, I_boot_min, I_boot_max, I_model, comps, χ2 = _fit_bootstraps(
-                spax, cube_fitter, I_model, result, result_c, result_l, pahtemp, fname; use_ap=use_ap)
+                spax, spax_model, cube_fitter, I_model, result, result_c, result_l, pahtemp, fname; use_ap=use_ap)
         end
 
         # Plot the fit
         if oopt.plot_spaxels != :none
             @debug "Plotting spaxel $coords best fit" 
-            plot_spaxel_fit(cube_fitter, spax, I_model, comps, χ2/dof, fname; backend=oopt.plot_spaxels, I_boot_min=I_boot_min,
+            plot_spaxel_fit(cube_fitter, spax, spax_model, I_model, comps, χ2/dof, fname; backend=oopt.plot_spaxels, I_boot_min=I_boot_min,
                 I_boot_max=I_boot_max, logy=false)
             if !isnothing(oopt.plot_range)
                 for (i, plot_range) ∈ enumerate(oopt.plot_range)
                     fname2 = use_vorbins ? "lines_bin_$(spax.coords[1])_$i" : "lines_$(spax.coords[1])_$(spax.coords[2])_$i"
-                    plot_spaxel_fit(cube_fitter, spax, I_model, comps, χ2/dof, fname2; backend=oopt.plot_spaxels, 
+                    plot_spaxel_fit(cube_fitter, spax, spax_model, I_model, comps, χ2/dof, fname2; backend=oopt.plot_spaxels, 
                         I_boot_min=I_boot_min, I_boot_max=I_boot_max, range=plot_range, logy=false)
                 end
             end
@@ -1142,8 +1146,8 @@ function fit_stack!(cube_fitter::CubeFitter)
     fill_bad_pixels!(s_init)
 
     # No bootstrapping on the first integrated fit
-    _, _, _, result_stellar, pahtemp, I_model_init, comps_init, χ2_init, dof_init = _fit_spaxel_iterfunc(s_init, cube_fitter; 
-        bootstrap_iter=false, use_ap=false, init=true)
+    _, _, _, result_stellar, pahtemp, I_model_init, comps_init, s_init_model, χ2_init, dof_init = _fit_spaxel_iterfunc(
+        s_init, cube_fitter; bootstrap_iter=false, use_ap=false, init=true)
     χ2red_init = χ2_init / dof_init
 
     # Plot the fit
@@ -1151,10 +1155,10 @@ function fit_stack!(cube_fitter::CubeFitter)
     oopt = out_options(cube_fitter)
     if oopt.plot_spaxels != :none
         @debug "Plotting spaxel sum initial fit"
-        plot_spaxel_fit(cube_fitter, s_init, I_model_init, comps_init, χ2red_init, "initial_sum_fit"; backend=:both, logy=false)
+        plot_spaxel_fit(cube_fitter, s_init, s_init_model, I_model_init, comps_init, χ2red_init, "initial_sum_fit"; backend=:both, logy=false)
         if !isnothing(oopt.plot_range)
             for (i, plot_range) ∈ enumerate(oopt.plot_range)
-                plot_spaxel_fit(cube_fitter, s_init, I_model_init, comps_init, χ2red_init, "initial_sum_line_$i"; 
+                plot_spaxel_fit(cube_fitter, s_init, s_init_model, I_model_init, comps_init, χ2red_init, "initial_sum_line_$i"; 
                     backend=:both, range=plot_range)
             end
         end
@@ -1925,7 +1929,7 @@ function _evaluate_model(λ::Vector{<:QWave}, cube_fitter::CubeFitter, p_cont::V
         falses(length(λ)), vres; N=N, aux=aux)
 
     # evaluate the model
-    I_cont, comps_cont, = model_continuum(spax, spax.N, p_cont, p_units_cont, cube_fitter, false, true)
+    I_cont, comps_cont, = model_continuum(spax, spax.N, p_cont, p_units_cont, cube_fitter, false, true, true)
     I_lines, comps_lines = model_line_residuals(spax, p_lines, p_units_lines, model(cube_fitter).lines, cube_fitter.lsf,
         comps_cont["total_extinction_gas"], trues(length(spax.λ)), true)
     

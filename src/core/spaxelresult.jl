@@ -18,8 +18,11 @@ end
 
 # A container for holding stellar population results
 struct StellarResult
+    norm::Quantity
     mtot::typeof(1.0u"Msun")
-    masses::Matrix{<:typeof(1.0u"Msun")}
+    mfracs::Matrix{<:Real}
+    lfracs::Matrix{<:Real}
+    weights::Matrix{<:Real}
     ages::Vector{typeof(1.0u"Gyr")}
     logzs::Vector{<:Real}
 end

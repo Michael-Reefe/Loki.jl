@@ -638,7 +638,7 @@ function add_reg_constraints!(A::Matrix{<:Real}, nλ::Int, cube_fitter::CubeFitt
     reg_dims = (length(cube_fitter.ssps.ages), length(cube_fitter.ssps.logzs))
     # get a "view" so modifying a also modifies A
     @assert size(A, 2) == prod(reg_dims)
-    a = reshape(view(A, :, :), (size(A, 1), reg_dims...))
+    a = reshape(A, (size(A, 1), reg_dims...))
     reg_diffs = [1., -2., 1.] .* cube_fitter.fitting.ssp_regularize
     # add constraint equations for regularization
     i = nλ+1
@@ -658,7 +658,7 @@ end
 
 # perform non-negative least squares fitting on the stellar template grids 
 function stellar_populations_nnls(s::Spaxel, contin::Vector{<:Real}, ext_stars::Vector{<:Real}, 
-    stel_vel::QVelocity, stel_sig::QVelocity, cube_fitter::CubeFitter)
+    stel_vel::QVelocity, stel_sig::QVelocity, cube_fitter::CubeFitter; do_gaps::Bool=true)
 
     # prepare buffer arrays for NNLS
     nλ = length(s.λ)
@@ -674,7 +674,7 @@ function stellar_populations_nnls(s::Spaxel, contin::Vector{<:Real}, ext_stars::
     b[1:nλ] .= s.I .- contin
 
     # calculate the convolved stellar templates
-    gap_masks = get_gap_masks(s.λ, cube_fitter.spectral_region.gaps)
+    gap_masks = do_gaps ? get_gap_masks(s.λ, cube_fitter.spectral_region.gaps) : [trues(length(s.λ))]
     for (gi, gap_mask) in enumerate(gap_masks)
         # split if the spectrum has a few separated regions
         A[(1:nλ)[gap_mask], :] .= convolve_losvd(ustrip.(cube_fitter.ssps.templates), 
@@ -682,9 +682,10 @@ function stellar_populations_nnls(s::Spaxel, contin::Vector{<:Real}, ext_stars::
     end
 
     # divide out the solid angle and apply the extinction
-    A[1:nλ, :] .*= ext_stars ./ ustrip.(s.area_sr)
+    A[1:nλ, :] .*= ext_stars ./ s.area_sr
     # normalize the stellar templates
-    stellar_N = nanmedian(A[1:nλ, :])
+    stellar_N = haskey(s.aux, "stellar_norm") ? ustrip(s.aux["stellar_norm"]) : nanmedian(A[1:nλ, :])
+    # stellar_N = ustrip(nanmedian(cube_fitter.ssps.templates) * nanmedian(ext_stars ./ s.area_sr))
     A[1:nλ, :] ./= stellar_N
     stellar_norm = stellar_N*unit(cube_fitter.ssps.templates[1])/u"sr"  # should be specific intensity per unit mass
     # weight by the errors
@@ -696,9 +697,13 @@ function stellar_populations_nnls(s::Spaxel, contin::Vector{<:Real}, ext_stars::
         add_reg_constraints!(A, nλ, cube_fitter)
     end
     # perform a non-negative least-squares fit
-    ml_extended = falses(length(b))
-    ml_extended[1:nλ] .= s.mask_lines
-    weights = nonneg_lsq(A[.~ml_extended, :], b[.~ml_extended], alg=:fnnls)  # mask out the emission lines!
+    if !haskey(s.aux, "stellar_weights") || isnothing(s.aux["stellar_weights"])
+        ml_extended = falses(length(b))
+        ml_extended[1:nλ] .= s.mask_lines
+        weights = nonneg_lsq(A[.~ml_extended, :], b[.~ml_extended], alg=:fnnls)  # mask out the emission lines!
+    else
+        weights = reshape(s.aux["stellar_weights"], cube_fitter.n_ssps, 1)
+    end
 
     # get the final stellar continuum with a matrix multiplication
     ssp_contin = ((A[1:nλ, :].*s.σ) * weights)[:,1]
@@ -937,8 +942,8 @@ function extinction_cardelli(λ::QWave, E_BV::Real; Rv::Real=3.10)
     # Optical/NIR
     elseif 1.1 ≤ x < 3.3
         y = x - 1.82
-        a = 1.0 + 0.104y - 0.609x^2 + 0.701x^3 + 1.137x^4 - 1.718x^5 - 0.827x^6 + 1.647x^7 - 0.505x^8
-        b = 1.952x + 2.908x^2 - 3.989x^3 - 7.985x^4 + 11.102x^5 + 5.491x^6 - 10.805x^7 + 3.347x^8
+        a = 1.0 + 0.104y - 0.609y^2 + 0.701y^3 + 1.137y^4 - 1.718y^5 - 0.827y^6 + 1.647y^7 - 0.505y^8
+        b = 1.952y + 2.908y^2 - 3.989y^3 - 7.985y^4 + 11.102y^5 + 5.491y^6 - 10.805y^7 + 3.347y^8
     # Mid-UV
     elseif 3.3 ≤ x < 8.0
         y = x

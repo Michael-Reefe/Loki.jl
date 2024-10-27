@@ -424,7 +424,7 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
     mask = λleft .< ssp_λ .< λright
     ssp_λ = ssp_λ[mask]
     # Resample onto a linear wavelength grid
-    Δλ = (λright - λleft) / (length(ssp_λ)-1)
+    Δλ = minimum(diff(λ))
     ssp_λlin = λleft:Δλ:λright
     
     # LSF FWHM of the input spectrum in wavelength units, interpolated at the locations of the SSP templates
