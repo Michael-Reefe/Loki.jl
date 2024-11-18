@@ -70,7 +70,7 @@ Adapted from PAHFIT, Smith, Draine, et al. (2007); http://tir.astro.utoledo.edu/
     addition to the overall fit
 """
 function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, punits::Vector{<:Unitful.Units}, 
-    cube_fitter::CubeFitter, use_pah_templates::Bool, do_gaps::Bool, return_components::Bool)
+    cube_fitter::CubeFitter, use_pah_templates::Bool, do_gaps::Bool, mask_lines::Bool, return_components::Bool)
 
     # Get options from the cube fitter
     fopt = fit_options(cube_fitter)
@@ -248,7 +248,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
 
     if fopt.fit_stellar_continuum
         ssp_contin, norms["continuum.stellar_norm"], norms["continuum.stellar_weights"] = stellar_populations_nnls(
-            s, contin, comps["total_extinction_stars"], stel_vel, stel_sig, cube_fitter; do_gaps=do_gaps)
+            s, contin, comps["total_extinction_stars"], stel_vel, stel_sig, cube_fitter; do_gaps=do_gaps, mask_lines=mask_lines)
         comps["SSPs"] = ssp_contin ./ comps["total_extinction_stars"]   # (save the un-extincted stellar continuum)
         contin .+= ssp_contin
     end
@@ -273,7 +273,7 @@ end
 # Multiple dispatch for more efficiency --> not allocating the dictionary improves performance DRAMATICALLY
 # --> the N argument NEEDS to be separate from the spaxel object for optimal type stability
 function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, punits::Vector{<:Unitful.Units}, 
-    cube_fitter::CubeFitter, use_pah_templates::Bool, do_gaps::Bool; return_extinction::Bool=false) 
+    cube_fitter::CubeFitter, use_pah_templates::Bool, do_gaps::Bool, mask_lines::Bool; return_extinction::Bool=false) 
 
     # Get options from the cube fitter
     fopt = fit_options(cube_fitter)
@@ -441,7 +441,8 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
     ##### 8. STELLAR POPULATIONS #####
 
     if fopt.fit_stellar_continuum
-        contin .+= stellar_populations_nnls(s, contin, ext_stars, stel_vel, stel_sig, cube_fitter; do_gaps=do_gaps)[1]
+        contin .+= stellar_populations_nnls(s, contin, ext_stars, stel_vel, stel_sig, cube_fitter; do_gaps=do_gaps, 
+            mask_lines=mask_lines)[1]
     end
 
     if return_extinction

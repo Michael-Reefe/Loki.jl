@@ -89,15 +89,11 @@ noise. Returns the line mask, spline-interpolated I, and spline-interpolated σ.
 See also [`mask_emission_lines`](@ref)
 """
 function continuum_cubic_spline(λ::Vector{<:Quantity}, I::Vector{S}, σ::Vector{S}, 
-    overrides::Vector{Tuple{T,T}}=Vector{Tuple{Quantity,Quantity}}(); do_err::Bool=true) where {S<:Number,T<:Quantity}
+    overrides::Vector{Tuple{T,T}}=Vector{Tuple{Quantity,Quantity}}(); do_err::Bool=true,
+    scale::Int=7) where {S<:Number,T<:Quantity}
 
     # Mask out emission lines so that they aren't included in the continuum fit
     mask_lines = mask_emission_lines(λ, overrides)
-
-    # Interpolate the NaNs
-    # Break up cubic spline interpolation into knots 7 pixels long
-    # (longer than a narrow emission line but not too long)
-    scale = 7
 
     _λ = ustrip.(λ)
     _I = ustrip.(I)
@@ -452,15 +448,17 @@ function collect_cont_fit_results(res::CMPFit.Result, pfix_tied::Vector{<:Real},
 
     result_stellar = nothing
     if fopt.fit_stellar_continuum && !step1
-        _, _, norms = model_continuum(spaxel, spaxel.N, ustrip.(popt), punits, cube_fitter, fopt.use_pah_templates, true, true)
+        _, _, norms = model_continuum(spaxel, spaxel.N, ustrip.(popt), punits, cube_fitter, fopt.use_pah_templates, true, true, true)
         result_stellar = calculate_stellar_parameters(cube_fitter, norms, spaxel.N)
     end
-    spaxel_model = spaxel
+    spaxel_model = copy(spaxel)
     if (length(cube_fitter.spectral_region.gaps) > 0) && !step1
         spaxel_model = get_model_spaxel(cube_fitter, spaxel, result_stellar)
+    else
+        add_stellar_weights!(spaxel_model, result_stellar)
     end
     I_model, comps, norms = model_continuum(spaxel_model, spaxel_model.N, ustrip.(popt), punits, cube_fitter, 
-        fopt.use_pah_templates, spaxel_model == spaxel, true)
+        fopt.use_pah_templates, spaxel_model == spaxel, true, true)
 
     popt, perr, I_model, comps, norms, result_stellar, spaxel_model
 end
@@ -506,15 +504,17 @@ function collect_cont_fit_results(res_1::CMPFit.Result, p1fix_tied::Vector{<:Rea
     result_stellar = nothing
     if fopt.fit_stellar_continuum
         _, _, norms = model_continuum(spaxel, spaxel.N, ustrip.(popt), [punit_1[1:end-2]; punit_2], cube_fitter, 
-            fopt.use_pah_templates, true, true)
+            fopt.use_pah_templates, true, true, true)
         result_stellar = calculate_stellar_parameters(cube_fitter, norms, spaxel.N)
     end
-    spaxel_model = spaxel
+    spaxel_model = copy(spaxel)
     if length(cube_fitter.spectral_region.gaps) > 0
         spaxel_model = get_model_spaxel(cube_fitter, spaxel, result_stellar)
+    else
+        add_stellar_weights!(spaxel_model, result_stellar)
     end
     I_model, comps, norms = model_continuum(spaxel_model, spaxel_model.N, ustrip.(popt), [punit_1[1:end-2]; punit_2], cube_fitter, 
-        false, spaxel_model == spaxel, true)
+        false, spaxel_model == spaxel, true, true)
 
     popt, perr, n_free, pahtemp, I_model, comps, norms, result_stellar, spaxel_model
 end
@@ -579,19 +579,30 @@ function collect_fit_results(res::CMPFit.Result, pfix_cont_tied::Vector{<:Real},
     @debug "Best fit line parameters: \n $popt_lines"
     @debug "Line parameter errors: \n $perr_lines"
 
-    # Create the full model, again only if not bootstrapping
     result_stellar = nothing
     if fopt.fit_stellar_continuum
+        ext_gas_0, _, _ = extinction_profiles(spaxel.λ, ustrip.(popt_cont), 1, fopt.fit_uv_bump, fopt.extinction_curve)
+        I_lines_0, _ = model_line_residuals(spaxel, ustrip.(popt_lines), punits_lines, model(cube_fitter).lines, 
+            cube_fitter.lsf, ext_gas_0, trues(length(spaxel.λ)), true)
+        spaxel.I .-= I_lines_0
         _, _, norms = model_continuum(spaxel, spaxel.N, ustrip.(popt_cont), punits_cont, cube_fitter, 
-            fopt.use_pah_templates, true, true)
+            fopt.use_pah_templates, true, false, true)
+        spaxel.I .+= I_lines_0
         result_stellar = calculate_stellar_parameters(cube_fitter, norms, spaxel.N)
     end
-    spaxel_model = spaxel
+    spaxel_model = copy(spaxel)
     if length(cube_fitter.spectral_region.gaps) > 0
         spaxel_model = get_model_spaxel(cube_fitter, spaxel, result_stellar)
+    else
+        add_stellar_weights!(spaxel_model, result_stellar)
     end
+
+    # Create the full model, again only if not bootstrapping
+    # (we dont need to do that ugly stuff in the main fit_joint function because the stellar weights are already added 
+    #  to the spaxel_model object, so there wont actually be any NNLS fitting being done, it'll just use the pre-calculated
+    #  weights)
     I_cont, comps_cont, norms = model_continuum(spaxel_model, spaxel_model.N, ustrip.(popt_cont), punits_cont, cube_fitter, 
-        fopt.use_pah_templates, spaxel_model == spaxel, true)
+        fopt.use_pah_templates, spaxel_model == spaxel, false, true)
     I_lines, comps_lines = model_line_residuals(spaxel_model, ustrip.(popt_lines), punits_lines, model(cube_fitter).lines, cube_fitter.lsf, 
         comps_cont["total_extinction_gas"], trues(length(spaxel_model.λ)), true)
     
@@ -659,10 +670,14 @@ function collect_bootstrapped_results(spaxel::Spaxel, spaxel_model::Spaxel, cube
     I_boot_max = dropdims(nanmaximum(ustrip.(I_model_boot), dims=2), dims=2) .* unit(I_model_boot[1])
 
     # Replace the best-fit model with the 50th percentile model to be consistent with p_out
-    I_boot_cont, comps_boot_cont, norms = model_continuum(spaxel_model, spaxel_model.N, ustrip.(p_out[1:split1]), unit.(p_out[1:split1]), 
-        cube_fitter, false, spaxel_model == spaxel, true)
+    fopt = fit_options(cube_fitter)
+    ext_gas, _, _ = extinction_profiles(spaxel_model.λ, ustrip.(p_out[1:split1]), 1, fopt.fit_uv_bump, fopt.extinction_curve)
     I_boot_line, comps_boot_line = model_line_residuals(spaxel_model, ustrip.(p_out[split1+1:split2]), unit.(p_out[split1+1:split2]), 
-        model(cube_fitter).lines, cube_fitter.lsf, comps_boot_cont["total_extinction_gas"], trues(length(spaxel_model.λ)), true)
+        model(cube_fitter).lines, cube_fitter.lsf, ext_gas, trues(length(spaxel_model.λ)), true)
+    fopt.fit_joint && spaxel_model.I .-= I_boot_line
+    I_boot_cont, comps_boot_cont, norms = model_continuum(spaxel_model, spaxel_model.N, ustrip.(p_out[1:split1]), unit.(p_out[1:split1]), 
+        cube_fitter, false, spaxel_model == spaxel, !fopt.fit_joint, true)
+    fopt.fit_joint && spaxel_model.I .+= I_boot_line
 
     # Reconstruct the full model
     I_model, comps, χ2, = collect_total_fit_results(spaxel, spaxel_model, cube_fitter, I_boot_cont, I_boot_line,

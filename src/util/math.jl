@@ -658,7 +658,7 @@ end
 
 # perform non-negative least squares fitting on the stellar template grids 
 function stellar_populations_nnls(s::Spaxel, contin::Vector{<:Real}, ext_stars::Vector{<:Real}, 
-    stel_vel::QVelocity, stel_sig::QVelocity, cube_fitter::CubeFitter; do_gaps::Bool=true)
+    stel_vel::QVelocity, stel_sig::QVelocity, cube_fitter::CubeFitter; do_gaps::Bool=true, mask_lines::Bool=true)
 
     # prepare buffer arrays for NNLS
     nλ = length(s.λ)
@@ -699,7 +699,10 @@ function stellar_populations_nnls(s::Spaxel, contin::Vector{<:Real}, ext_stars::
     # perform a non-negative least-squares fit
     if !haskey(s.aux, "stellar_weights") || isnothing(s.aux["stellar_weights"])
         ml_extended = falses(length(b))
-        ml_extended[1:nλ] .= s.mask_lines
+        # if doing a joint fit, DONT mask out the lines
+        if mask_lines
+            ml_extended[1:nλ] .= s.mask_lines
+        end
         weights = nonneg_lsq(A[.~ml_extended, :], b[.~ml_extended], alg=:fnnls)  # mask out the emission lines!
     else
         weights = reshape(s.aux["stellar_weights"], cube_fitter.n_ssps, 1)
@@ -956,6 +959,7 @@ function extinction_cardelli(λ::QWave, E_BV::Real; Rv::Real=3.10)
         a = 1.752 - 0.316x - 0.104/((x - 4.67)^2 + 0.341) + Fa
         b = -3.090 + 1.825x + 1.206/((x - 4.62)^2 + 0.263) + Fb
     # Far-UV
+    # ((just kind of let it apply to x > 11 even though it technically shouldnt...I'm sure this will never become a problem))
     elseif 8.0 ≤ x ≤ 11.0
         y = x - 8.0
         a = -1.703 - 0.628y + 0.137y^2 - 0.07y^3

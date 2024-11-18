@@ -380,7 +380,7 @@ function from_data(Ω::typeof(1.0u"sr"), z::Real, λ::AbstractVector{<:Quantity}
     instrument_channel_edges::Union{Vector{<:Quantity},Nothing}=nothing) 
 
     # convert to a normal vector
-    _λ = collect(λ)
+    _λ = Float64.(collect(λ))
 
     # if I/σ/mask are 1D, convert to 3D as expected by the code
     _I = I
@@ -389,6 +389,7 @@ function from_data(Ω::typeof(1.0u"sr"), z::Real, λ::AbstractVector{<:Quantity}
     end
     @assert ndims(_I) == 3 "The input intensity dimensions must be 1 or 3"
     @assert occursin("sr", string(unit(_I[1]))) "The input intensity must be measured per sr! (if you input a flux, divide it by Ω)"
+    _I = Float64.(_I)
 
     _σ = σ
     if isnothing(σ)
@@ -399,6 +400,7 @@ function from_data(Ω::typeof(1.0u"sr"), z::Real, λ::AbstractVector{<:Quantity}
     end
     @assert ndims(_σ) == 3 "The input error dimensions must be 1 or 3"
     @assert occursin("sr", string(unit(_σ[1]))) "The input error must be measured per sr! (if you input a flux, divide it by Ω)"
+    _σ = Float64.(_σ)
 
     _mask = mask
     if isnothing(mask)
@@ -418,6 +420,7 @@ function from_data(Ω::typeof(1.0u"sr"), z::Real, λ::AbstractVector{<:Quantity}
             _psf_model = reshape(_psf_model, (1,1,length(_psf_model)))
         end
         @assert ndims(_psf_model) == 3 "The input PSF model dimensions must be 1 or 3"
+        _psf_model = Float64.(_psf_model)
     end
 
     # if no PSF is given, assume that it's the size of 3 pixels
@@ -429,6 +432,7 @@ function from_data(Ω::typeof(1.0u"sr"), z::Real, λ::AbstractVector{<:Quantity}
     if length(_psf) == 1
         _psf = repeat([_psf], length(_λ))
     end
+    _psf = Float64.(_psf)
 
     # if no spectral resolution FWHM is given, assume that it's the size of 6 pixels
     _R = R
@@ -441,6 +445,7 @@ function from_data(Ω::typeof(1.0u"sr"), z::Real, λ::AbstractVector{<:Quantity}
     end
     # convert R to km/s
     _lsf = C_KMS ./ _R
+    _lsf = Float64.(_lsf)
 
     # if no WCS is given, create a generic default one
     _wcs = wcs
@@ -682,18 +687,18 @@ end
 
 
 """
-    log_rebin!(cube, factor)
+    log_rebin!(cube, z[, factor])
 
 Rebin a DataCube onto a logarithmically spaced wavelength vector, conserving flux.
 Optionally input a rebinning factor > 1 to resample onto a coarser wavelength grid.
 """
-function log_rebin!(cube::DataCube, factor::Integer=1)
+function log_rebin!(cube::DataCube, z::Real, factor::Integer=1)
 
     if !cube.log_binned
         # rebin onto a logarithmically spaced wavelength grid
         # get masks for each gap region and the logarithmic spacing
         gap_masks = get_gap_masks(cube.λ, cube.spectral_region.gaps)
-        logscale = log(cube.λ[2]/cube.λ[1])
+        logscale = max(log(cube.λ[2]/cube.λ[1]), log(cube.λ[end]/cube.λ[end-1]))
         # prepare buffers
         λ_out = Vector{eltype(cube.λ)}()
         I_out = Array{eltype(cube.I), 3}(undef, size(cube.I)[1:2]..., 0)
@@ -722,6 +727,11 @@ function log_rebin!(cube::DataCube, factor::Integer=1)
             end
             psf_out = cat(psf_out, psf, dims=1)
             lsf_out = cat(lsf_out, lsf, dims=1)
+        end
+        # re-calculate channel masks
+        for i in eachindex(cube.spectral_region.channel_masks)
+            ch_mask = Spline1D(ustrip.(cube.λ), cube.spectral_region.channel_masks[i], k=1)(ustrip.(λ_out)) .> 0
+            cube.spectral_region.channel_masks[i] = ch_mask
         end
         # set them back into the cube object
         cube.λ = λ_out

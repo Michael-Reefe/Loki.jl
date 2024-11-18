@@ -114,7 +114,7 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter; init::Boo
         # important! evaluate over the whole wavelength vector in s, THEN apply the mask at the very end
         # (why? if fitting any stellar or fe ii templates, they depend on the wavelength vector being 
         #  logarithmic without any weird gaps due to the FFTs that are performed)
-        model_continuum(s, s.N, ptot, punits, cube_fitter, cube_fitter.fitting.use_pah_templates, true)[spaxel_mask]
+        model_continuum(s, s.N, ptot, punits, cube_fitter, cube_fitter.fitting.use_pah_templates, true, true)[spaxel_mask]
     end
 
     # Do initial fit
@@ -240,7 +240,7 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter, split_fla
 
     function fit_step1(x, p1free_tied::AbstractVector)
         ptot = rebuild_full_parameters(p1free_tied, p1fix_tied, lock_1_tied, tied_pairs, tied_indices, n_tied_1)
-        model_continuum(s, s.N, ptot, punits_1, cube_fitter, cube_fitter.fitting.use_pah_templates, true)[spaxel_mask]
+        model_continuum(s, s.N, ptot, punits_1, cube_fitter, cube_fitter.fitting.use_pah_templates, true, true)[spaxel_mask]
     end
 
     res_1 = cmpfit(s.λ[spaxel_mask], s.I[spaxel_mask], s.σ[spaxel_mask], fit_step1, p1free_tied, parinfo=parinfo_1, config=config)
@@ -751,7 +751,7 @@ function all_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter; init::Bool=false, us
     p1_boots_line::Union{Vector{<:Real},Nothing}=nothing) 
 
     fopt = fit_options(cube_fitter)
-    @assert fopt.use_pah_templates "The fit_joint and use_pah_templates options are mutually exclusive!"
+    @assert !fopt.use_pah_templates "The fit_joint and use_pah_templates options are mutually exclusive!"
 
     @debug """\n
     ################################################################
@@ -773,12 +773,13 @@ function all_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter; init::Bool=false, us
         cube_fitter, s.I[spaxel_mask], s.σ[spaxel_mask]; init=init||use_ap)
     # Get the initial values and step sizes
     pars_0_cont, dstep_0_cont = get_continuum_initial_values(cube_fitter, s.coords, s.λ[spaxel_mask], s.I[spaxel_mask], 
-        s.σ[spaxel_mask], s.N; init=init||use_ap)
+        s.σ[spaxel_mask], s.N; init=init||use_ap, split=false)
     if bootstrap_iter
         pars_0_cont = p1_boots_cont
     end
     # Get the units of the parameters and strip them off of the actual parameter vector
     pars_0_cont, plims_cont, punits_cont = strip_units(pars_0_cont, plims_cont)
+    dstep_0_cont = ustrip.(dstep_0_cont)
 
     @debug "Continuum Parameters:"
     pfree_cont_tied, pfix_cont_tied, dfree_cont_tied, lock_cont_tied, lbfree_cont_tied, ubfree_cont_tied, 
@@ -787,6 +788,7 @@ function all_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter; init::Bool=false, us
     pars_0_lines, plims_lines, lock_lines, names_lines, dstep_0_lines, tied_pairs_lines, tied_indices_lines, tie_vec_lines = 
         get_line_initial_values_limits_locked(cube_fitter, s.λ[spaxel_mask], s.I[spaxel_mask]; init=init||use_ap)
     pars_0_lines, plims_lines, punits_lines = strip_units(pars_0_lines, plims_lines)
+    dstep_0_lines = ustrip.(dstep_0_lines)
     if bootstrap_iter
         pars_0_lines = p1_boots_line
     end
@@ -818,9 +820,17 @@ function all_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter; init::Bool=false, us
         ptot_cont = rebuild_full_parameters(pfree_cont_tied, pfix_cont_tied, lock_cont_tied, tied_pairs_cont, tied_indices_cont, n_tied_cont)
         ptot_lines = rebuild_full_parameters(pfree_lines_tied, pfix_lines_tied, lock_lines_tied, tied_pairs_lines, tied_indices_lines, n_tied_lines)
     
-        # Generate the models
-        Icont, ext_gas = model_continuum(s, s.N, ptot_cont, punits_cont, cube_fitter, fopt.use_pah_templates, true; return_extinction=true)
+        # First, get the extinction profile
+        fopt = fit_options(cube_fitter)
+        ext_gas, _, _ = extinction_profiles(s.λ, ptot_cont, 1, fopt.fit_uv_bump, fopt.extinction_curve)
+        # Generate the lines 
         Ilines = model_line_residuals(s, ptot_lines, punits_lines, model(cube_fitter).lines, cube_fitter.lsf, ext_gas, trues(length(s.λ)))
+        # Subtract the lines
+        s.I .-= Ilines
+        # Generate the continuum model (with the mask_lines option set to false)
+        Icont, ext_gas = model_continuum(s, s.N, ptot_cont, punits_cont, cube_fitter, fopt.use_pah_templates, true, false; return_extinction=true)
+        # Add the lines back in
+        s.I .+= Ilines
 
         # Return the sum of the models
         (Icont .+ Ilines)[spaxel_mask]
@@ -1929,7 +1939,7 @@ function _evaluate_model(λ::Vector{<:QWave}, cube_fitter::CubeFitter, p_cont::V
         falses(length(λ)), vres; N=N, aux=aux)
 
     # evaluate the model
-    I_cont, comps_cont, = model_continuum(spax, spax.N, p_cont, p_units_cont, cube_fitter, false, true, true)
+    I_cont, comps_cont, = model_continuum(spax, spax.N, p_cont, p_units_cont, cube_fitter, false, true, true, true)
     I_lines, comps_lines = model_line_residuals(spax, p_lines, p_units_lines, model(cube_fitter).lines, cube_fitter.lsf,
         comps_cont["total_extinction_gas"], trues(length(spax.λ)), true)
     

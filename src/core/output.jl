@@ -64,13 +64,15 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
         pc = cube_fitter.n_params_cont + 1
         spax = make_normalized_spaxel(cube_data, index, cube_fitter; use_ap=aperture, 
             use_vorbins=!isnothing(cube_fitter.cube.voronoi_bins))
-        spax_model = spax
+        spax_model = copy(spax)
         if length(cube_fitter.spectral_region.gaps) > 0
             spax_model = get_model_spaxel(cube_fitter, spax, results_stellar)
+        else
+            add_stellar_weights!(spax_model, results_stellar)
         end
 
         I_cont, comps_c, norms = model_continuum(spax_model, spax_model.N, ustrip.(out_params[index, 1:pc-1]), unit.(out_params[index, 1:pc-1]),
-            cube_fitter, false, spax_model == spax, true)
+            cube_fitter, false, spax_model == spax, true, true)
 
         # Loop through parameters and save them in the parammaps data structure 
         for (pᵢ, pname) in enumerate(param_maps.parameters.names)

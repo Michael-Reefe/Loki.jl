@@ -259,11 +259,17 @@ function get_model_spaxel(cube_fitter::CubeFitter, spaxel::Spaxel, stellar::Unio
         end
         aux["channel_masks"] = channel_masks
     end
-    if !isnothing(stellar)
-        aux["stellar_norm"] = stellar.norm
-        aux["stellar_weights"] = stellar.weights
-    end
 
-    Spaxel(spaxel.coords, λ_model, ones(length(λ_model)), ones(length(λ_model)), area_sr, mask_lines,
+    s = Spaxel(spaxel.coords, λ_model, ones(length(λ_model)), ones(length(λ_model)), area_sr, mask_lines,
         mask_bad, vres; N=spaxel.N, aux=aux)
+    add_stellar_weights!(s, stellar)
+    return s
+end
+
+
+function add_stellar_weights!(s::Spaxel, stellar::Union{StellarResult,Nothing})
+    if !isnothing(stellar)
+        s.aux["stellar_norm"] = stellar.norm
+        s.aux["stellar_weights"] = stellar.weights
+    end
 end

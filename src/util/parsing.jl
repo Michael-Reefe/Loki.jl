@@ -379,6 +379,32 @@ function read_dust_κ(x::Real, y::Real, a::QLength, λunit::Unitful.Units)
 end
 
 
+# Get the transmission function for a photometric filter by querying the SVO archive
+function get_transmission(filter::String, z::Real)
+    # grab the filter transmission curve from SVO's archive (astroquery uses caching so this is fast after the first time)
+    tbl = py_svo.SvoFps.get_transmission_data(filter)
+    t_λ = tbl.columns["Wavelength"] .* u"angstrom"
+    t_T = tbl.columns["Transmission"]
+    # de-redshift
+    t_λ ./= (1 .+ z)
+    return t_λ, t_T
+end
+
+
+# Get the average wavelength and flux within a photometric filter
+function calculate_photometry(t_λ::Vector{<:QWave}, t_T::Vector{<:Real}, λ::Vector{<:QWave}, spectrum::Vector{<:Number})
+    # make sure the input spectrum covers the appropriate wavelengths (after de-redshifting it)
+    @assert all(λ[1] .≤ t_λ .≤ λ[end]) "The input spectrum does not cover the given filter!"
+    # resample the spectrum onto the same grid
+    region = t_λ[1] .≤ λ .≤ t_λ[end]
+    t_I = resample_conserving_flux(ustrip.(t_λ), ustrip.(λ[region]), ustrip.(spectrum[region]); fill=0.0) .* unit(spectrum[region][1])
+    # integrate weighted by the response function to get the average flux within the filter
+    λ_avg = NumericalIntegration.integrate(t_λ, t_T.*t_λ.^2) / NumericalIntegration.integrate(t_λ, t_T.*t_λ)
+    I_avg = NumericalIntegration.integrate(t_λ, t_I.*t_T.*t_λ) / NumericalIntegration.integrate(t_λ, t_T.*t_λ)
+    uconvert(unit(λ[1]), λ_avg), uconvert(unit(spectrum[1]), I_avg)
+end
+
+
 """
     generate_stellar_populations(λ, lsf, z, Ω, cosmo, name)
 
@@ -395,7 +421,7 @@ Returns 1D arrays for the wavelengths, ages, and metals that the templates are e
 occupied.
 """
 function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unitful.Units, lsf::Vector{typeof(1.0u"km/s")}, 
-    z::Real, cosmo::Cosmology.AbstractCosmology, name::String)
+    z::Real, cosmo::Cosmology.AbstractCosmology, name::String; photometry_filters::Vector{String}=String[])
 
     # Make sure λ is logarithmically binned
     @assert isapprox((λ[2]/λ[1]), (λ[end]/λ[end-1]), rtol=1e-6) "Input spectrum must be logarithmically binned to fit with stellar populations!"
@@ -404,25 +430,34 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
     if isfile(joinpath("output_$name", "stellar_templates.loki"))
         @info "Loading pre-generated stellar templates from binary file"
         out = deserialize(joinpath("output_$name", "stellar_templates.loki"))
-        return out.λ, out.age, out.logz, out.templates
+        return out.λ, out.age, out.logz, out.templates, out.phot_λ, out.phot_t
     end
-
-    # Cut off the templates a little bit before/after the input spectrum
-    λleft, λright = minimum(λ)*0.98, maximum(λ)*1.02
 
     # Dummy population
     ssp0 = py_fsps.StellarPopulation()
     # Get the wavelength grid that FSPS uses
-    ssp_λ = ssp0.wavelengths*u"angstrom"
+    ssp_λ0 = ssp0.wavelengths*u"angstrom"
     # Convert to the same units as the input wavelength vector
     wave_unit = unit(λ[1])
-    ssp_λ = uconvert.(wave_unit, ssp_λ)
-    @assert (λleft ≥ minimum(ssp_λ)) && (λright ≤ maximum(ssp_λ)) "The extended input spectrum range of ($λleft, $λright) " * 
-        "is outside the FSPS template range of ($(minimum(ssp_λ)), $(maximum(ssp_λ))). Please adjust the input spectrum accordingly."
+    ssp_λ0 = uconvert.(wave_unit, ssp_λ0)
+
+    # Prepare photometric band calculations
+    λ_phot_bands = Dict{String, Vector{typeof(1.0u"angstrom")}}()
+    T_phot_bands = Dict{String, Vector{Float64}}()
+    for filt in photometry_filters
+        λ_phot_bands[filt], T_phot_bands[filt] = get_transmission(filt, z)
+    end
+
+    # Cut off the templates a little bit before/after the input spectrum
+    λleft = 0.98*min(minimum(λ), minimum([minimum(λ_phot_bands[filt]) for filt in photometry_filters], init=Inf*wave_unit))
+    λright = 1.02*max(maximum(λ), maximum([maximum(λ_phot_bands[filt]) for filt in photometry_filters], init=-Inf*wave_unit))
+
+    @assert (λleft ≥ minimum(ssp_λ0)) && (λright ≤ maximum(ssp_λ0)) "The extended input spectrum range of ($λleft, $λright) " * 
+        "is outside the FSPS template range of ($(minimum(ssp_λ0)), $(maximum(ssp_λ0))). Please adjust the input spectrum accordingly."
 
     # Mask to a range around the input spectrum
-    mask = λleft .< ssp_λ .< λright
-    ssp_λ = ssp_λ[mask]
+    mask = λleft .< ssp_λ0 .< λright
+    ssp_λ = ssp_λ0[mask]
     # Resample onto a linear wavelength grid
     Δλ = minimum(diff(λ))
     ssp_λlin = λleft:Δλ:λright
@@ -453,6 +488,10 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
     ssp_templates = zeros(typeof(1.0*output_units), length(ssp_lnλ), length(ages), length(logzs))
     n_temp = size(ssp_templates, 2) * size(ssp_templates, 3)
 
+    # Prepare photometric band calculations
+    ssp_phot_λ = zeros(eltype(ssp_lnλ), length(photometry_filters), length(ages), length(logzs))
+    ssp_phot_I = zeros(typeof(1.0*output_units), length(photometry_filters), length(ages), length(logzs))
+
     @info "Generating $n_temp simple stellar population templates with FSPS with " * 
         "ages ∈ ($(minimum(ages)), $(maximum(ages))), log(Z/Zsun) ∈ ($(minimum(logzs)), $(maximum(logzs)))"
 
@@ -466,9 +505,14 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
             _, ssp_L = ssp.get_spectrum(tage=ustrip(age), peraa=peraa)
             ssp_L = ssp_L .* u"Lsun/Msun" ./ (peraa ? u"angstrom" : u"Hz")
             # Convert Lsun/Msun/Ang to [flux units]/Msun
-            ssp_flux = uconvert.(output_units, ssp_L[mask] ./ (4π .* dL.^2))
+            ssp_flux = uconvert.(output_units, ssp_L ./ (4π .* dL.^2))
+            # Get the photometric values
+            for ip in axes(ssp_phot_I, 1)
+                ssp_phot_λ[ip, age_ind, z_ind], ssp_phot_I[ip, age_ind, z_ind] = calculate_photometry(
+                    λ_phot_bands[photometry_filters[ip]], T_phot_bands[photometry_filters[ip]], ssp_λ0, ssp_flux)
+            end
             # Resample onto the linear wavelength grid
-            ssp_flux = Spline1D(ustrip.(ssp_λ), ustrip.(ssp_flux), k=1, bc="nearest")(ustrip.(ssp_λlin)) .* unit(ssp_flux[1])
+            ssp_flux = Spline1D(ustrip.(ssp_λ), ustrip.(ssp_flux[mask]), k=1, bc="nearest")(ustrip.(ssp_λlin)) .* unit(ssp_flux[1])
             # Convolve with gaussian kernels to degrade the spectrum to match the input spectrum's resolution
             ssp_flux = convolveGaussian1D(ssp_flux, dfwhm)
             # Resample again, this time onto the logarithmic wavelength grid
@@ -490,9 +534,10 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
     #         to get the result back in units of Msun.
 
     # save for later
-    serialize(joinpath("output_$name", "stellar_templates.loki"), (λ=ssp_lnλ, age=ages, logz=logzs, templates=ssp_templates))
+    serialize(joinpath("output_$name", "stellar_templates.loki"), (λ=ssp_lnλ, age=ages, logz=logzs, templates=ssp_templates,
+        phot_λ=ssp_phot_λ, phot_t=ssp_phot_I))
 
-    ssp_lnλ, ages, logzs, ssp_templates
+    ssp_lnλ, ages, logzs, ssp_templates, ssp_phot_λ, ssp_phot_I
 end
 
 

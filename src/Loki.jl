@@ -71,10 +71,14 @@ const py_colormap::PyObject = PyNULL()
 const py_colors::PyObject = PyNULL()
 const py_animation::PyObject = PyNULL()
 
+# Line ID plot package
 const py_lineidplot::PyObject = PyNULL()
 
 # FSPS Library
 const py_fsps::PyObject = PyNULL()
+
+# Astroquery SVO FPS module 
+const py_svo::PyObject = PyNULL()
 
 # Some constants for setting matplotlib font sizes
 const SMALL::UInt8 = 12
@@ -133,6 +137,15 @@ function __init__()
         # Conda.pip_interop(true)
         # Conda.pip("install", "fsps")
         # copy!(py_fsps, pyimport("fsps"))
+    end
+    # Astroquery
+    try
+        copy!(py_svo, pyimport("astroquery.svo_fps"))
+    catch
+        @warn "Could not find the Python astroquery library! Photometry modeling will not be possible."
+        # Conda.pip_interop(true)
+        # Conda.pip("install", "astroquery")
+        # copy!(py_astroquery, pyimport("astroquery"))
     end
 
     # Matplotlib settings to make plots look pretty :)
