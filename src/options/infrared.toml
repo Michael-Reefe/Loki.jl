@@ -63,13 +63,6 @@ locked = false
 # plim = [34.9, 35.1]
 # locked = true
 
-# power laws: should not be used in conjunction with blackbodies 
-# (should be one or the other) since they are degenerate.
-# [[power_law_indices]]
-# val = 1.65
-# plim = [-3.0, 3.0]
-# locked = true
-
 # template_amps: amplitude parameters for each template in the fit
 # do NOT repeat entries here for different subchannel amplitudes -- those are handled internally
 # and the initial value/limits/locked are assumed to be the same for each subchannel amplitude for a given

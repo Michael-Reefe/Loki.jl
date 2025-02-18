@@ -248,17 +248,17 @@ latex = "He $\\textsc{ii}$"
 annotate = true
 unit = "angstrom"
 
-# [lines.HeI_5877A]
-# wave = 5877.253
-# latex = "He $\\textsc{i}$"
-# annotate = true
-# unit = "angstrom"
+[lines.HeI_5877A]
+wave = 5877.253
+latex = "He $\\textsc{i}$"
+annotate = true
+unit = "angstrom"
 
-# [lines.HeI_7067A]
-# wave = 7067.144
-# latex = "He $\\textsc{i}$"
-# annotate = true
-# unit = "angstrom"
+[lines.HeI_7067A]
+wave = 7067.144
+latex = "He $\\textsc{i}$"
+annotate = true
+unit = "angstrom"
 
 # Neon lines
 
@@ -327,6 +327,12 @@ latex = "[O $\\textsc{iii}$]"
 annotate = true
 unit = "angstrom"
 
+[lines.OI_6048A]
+wave = 6048.114
+latex = "[O $\\textsc{i}$]"
+annotate = true
+unit = "angstrom"
+
 [lines.OI_06302A]
 wave = 6302.046
 latex = "[O $\\textsc{i}$]"
@@ -352,6 +358,12 @@ annotate = true
 unit = "angstrom"
 
 # Iron lines
+[lines.FeIII_5272A]
+wave = 5271.869
+latex = "[Fe $\\textsc{iii}$]"
+annotate = true
+unit = "angstrom"
+
 # [lines.FeXIV_5304A]
 # wave = 5304.335
 # latex = "[Fe $\\textsc{xiv}$]"
@@ -1106,9 +1118,9 @@ default = "Voigt"
 # of profile it should be. Can add an arbitrary number of additional components.
 [acomps]
 
-lo = ["Voigt"]
-med = ["Voigt"]
-hi = ["Voigt"]
+# lo = ["Voigt"]
+# med = ["Voigt"]
+# hi = ["Voigt"]
 
 ### Optical lines ###
 

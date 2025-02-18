@@ -69,7 +69,7 @@ map_snr_thresh = 3.0
 # "ohm" for the Ossenkopf, Henning, & Mathis (1992) extinction profile, or "d+" for the 
 # Donnan et al. (2022) extinction profile.
 # May also be "decompose" to fit as a combination of amorphous olivine, pyroxene, and crystalline forsterite absorption
-# Note that for combined optical+IR fitting, only "kvt" and "dp" are supported here because the 
+# Note that for combined optical+IR fitting, only "kvt" and "d+" are supported here because the 
 # other templates also include other types of extinction which are covered by the calzetti/CCM curves
 silicate_absorption = "d+"
 # optical options: may be either "calz" for the Calzetti et al. (2000) starburst galaxy curve,

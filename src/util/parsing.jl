@@ -433,6 +433,7 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
         return out.λ, out.age, out.logz, out.templates, out.phot_λ, out.phot_t
     end
 
+    @debug "Initializing FSPS"
     # Dummy population
     ssp0 = py_fsps.StellarPopulation()
     # Get the wavelength grid that FSPS uses
