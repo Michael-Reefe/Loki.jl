@@ -955,9 +955,7 @@ function calculate_extra_parameters(s::Spaxel, s_model::Spaxel, cube_fitter::Cub
             
             # Integrate over the solid angle
             A_cgs = A_cgs * s.area_sr[cent_ind]
-            if propagate_err
-                A_cgs_err = A_cgs_err * s.area_sr[cent_ind]
-            end
+            A_cgs_err = A_cgs_err * s.area_sr[cent_ind]
 
             # Get the extinction profile at the center
             # ext = ext_curve[cent_ind] 
@@ -1012,7 +1010,7 @@ function calculate_extra_parameters(s::Spaxel, s_model::Spaxel, cube_fitter::Cub
             window = abs.(s.λ .- μ) .< 3fwhm
             feature_d = feature
             if s != s_model
-                feature_d = Spline1D(ustrip.(s_model.λ), feature, k=1)(ustrip.(s.λ))
+                feature_d = Spline1D(ustrip.(s_model.λ), ustrip.(feature), k=1)(ustrip.(s.λ)) .* unit(feature[1])
             end
             snr = sum(feature_d[window]) / sqrt(sum((s.σ.*N)[window].^2))
             snr = round(snr, digits=2)
@@ -1151,11 +1149,11 @@ function calculate_extra_parameters(s::Spaxel, s_model::Spaxel, cube_fitter::Cub
 
             # Convert voff in km/s to mean wavelength in μm
             mean_wave = λ0 + Doppler_width_λ(voff, λ0)
-            mean_wave_err = propagate_err ? λ0 / C_KMS * voff_err : 0.0*voff_err
+            mean_wave_err = propagate_err ? λ0 / C_KMS * voff_err : 0.0*unit(mean_wave)
 
             # Convert FWHM from km/s to μm
             fwhm_wave = Doppler_width_λ(fwhm, λ0)
-            fwhm_wave_err = propagate_err ? λ0 / C_KMS * fwhm_err : 0.0*fwhm_err
+            fwhm_wave_err = propagate_err ? λ0 / C_KMS * fwhm_err : 0.0*unit(fwhm_wave)
 
             # Convert amplitude to per-wavelength units, put back in the normalization
             amp_cgs = match_fluxunits(amp*N, 1.0perwave_unit, mean_wave)
@@ -1170,9 +1168,7 @@ function calculate_extra_parameters(s::Spaxel, s_model::Spaxel, cube_fitter::Cub
 
             # Integrate over the solid angle
             amp_cgs *= s.area_sr[cent_ind]
-            if propagate_err
-                amp_cgs_err *= s.area_sr[cent_ind]
-            end
+            amp_cgs_err *= s.area_sr[cent_ind]
 
             # Get the extinction factor at the line center
             ext = comps["total_extinction_gas"][cent_ind]
@@ -1316,7 +1312,7 @@ function calculate_eqw(λ::Vector{<:QWave}, feature::Vector{T}, comps::Dict, lin
 
     # May blow up for spaxels where the continuum is close to 0
     eqw = NumericalIntegration.integrate(λ, feature ./ contin, Trapezoidal())
-    err = 0.
+    err = 0. * unit(λ[1])
     if propagate_err
         err_lo = eqw - NumericalIntegration.integrate(λ, feature_err[:,1] ./ contin, Trapezoidal())
         err_up = NumericalIntegration.integrate(λ, feature_err[:,2] ./ contin, Trapezoidal()) - eqw

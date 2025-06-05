@@ -8,8 +8,10 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
 
     # Create the CubeModel and ParamMaps structs to be filled in
     np_ssp = maximum(out_np_ssp)
+    spaxels = CartesianIndices(size(out_params)[1:2])
 
-    spax = make_normalized_spaxel(cube_data, CartesianIndex(1,1), cube_fitter; use_ap=aperture, 
+    firsti = findfirst(index->any(isfinite.(out_params[index, :])), spaxels)
+    spax = make_normalized_spaxel(cube_data, firsti, cube_fitter; use_ap=aperture, 
     use_vorbins=!isnothing(cube_fitter.cube.voronoi_bins))
     spax_model = spax
     if length(cube_fitter.spectral_region.gaps) > 0
@@ -32,7 +34,6 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
 
     # Loop over each spaxel and fill in the associated fitting parameters into the ParamMaps and CubeModel
     # I know this is long and ugly and looks stupid but it works for now and I'll make it pretty later
-    spaxels = CartesianIndices(size(out_params)[1:2])
     prog = Progress(length(spaxels); showspeed=true)
     for index ∈ spaxels
 
@@ -159,7 +160,6 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
             if do_log
                 err_upp = err_upp / (log(10) * val)
                 err_low = err_low / (log(10) * val)
-                @infiltrate ustrip(val) < 0.
                 val = log10(ustrip(val))
             end
 
@@ -201,7 +201,9 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
                 cube_model.abs_ice[:, index] .= comps["absorption_ice"]
                 cube_model.abs_ch[:, index] .= comps["absorption_ch"]
             end
-            cube_model.stellar[:, index] .= comps["SSPs"] .* restframe_factor
+            if fopt.fit_stellar_continuum
+                cube_model.stellar[:, index] .= comps["SSPs"] .* restframe_factor
+            end
             if fopt.fit_opt_na_feii
                 cube_model.na_feii[:, index] .= comps["na_feii"] .* restframe_factor
             end

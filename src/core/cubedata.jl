@@ -138,6 +138,17 @@ mutable struct DataCube{T<:Vector{<:QWave}, S<:Array{<:QSIntensity, 3}}
         I = uconvert.(new_I_unit, I)
         σ = uconvert.(new_I_unit, σ)
 
+        # Also upgrade to Float64 if necessary
+        ftype = typeof(1.0)
+        λ = ftype.(λ); I = ftype.(I); σ = ftype.(σ)
+        Ω = ftype(Ω); α = ftype(α); δ = ftype.(δ); θ_sky = ftype.(θ_sky)
+        if !isnothing(psf)
+            psf = ftype.(psf)
+        end
+        if !isnothing(lsf)
+            lsf = ftype.(lsf)
+        end
+
         nx, ny, nz = size(I)
 
         # If no mask is given, make the default mask to be all falses (i.e. don't mask out anything)
@@ -183,7 +194,7 @@ Utility function for creating DataCube structures directly from FITS files.
 # Arguments
 - `filename::String`: the filepath to the JWST-formatted FITS file
 """
-function from_fits(filename::String)::DataCube
+function from_fits(filename::String, z::Union{Real,Nothing}=nothing)::DataCube
 
     @info "Initializing DataCube struct from $filename"
 
@@ -215,7 +226,7 @@ function from_fits(filename::String)::DataCube
     λ = try
         # for some reason the units arent saved correctly in the FITS table HDUs, so just set this to um for JWST
         tblhdr = read_header(hdu["AUX"])
-        read(hdu["AUX"], "wave") .* uparse(tblhdr["UNIT1"]; unit_context=[Unitful, UnitfulAstro])
+        read(hdu["AUX"], "wave") .* uparse(fits_unitstr_to_unitful(tblhdr["UNIT1"]); unit_context=[Unitful, UnitfulAstro])
     catch
         (hdr["CRVAL3"] .+ hdr["CDELT3"] .* (collect(0:hdr["NAXIS3"]-1) .+ hdr["CRPIX3"] .- 1)) .* cunit3
     end
@@ -309,7 +320,7 @@ function from_fits(filename::String)::DataCube
         error("Please only input single-band data cubes! You can combine them into multi-channel cubes using LOKI routines.")
     end
 
-    redshift = nothing
+    redshift = z
     if haskey(hdr, "REDSHIFT")
         redshift = hdr["REDSHIFT"]
     end
@@ -1494,7 +1505,7 @@ function from_fits(filenames::Vector{String}, z::Real=0.; user_mask=nothing, for
 
     # Loop through the files and call the individual DataCube method of the from_fits function
     for (i, filepath) ∈ enumerate(filenames)
-        cube = from_fits(filepath)
+        cube = from_fits(filepath, z)
         # checks for JWST-formatted individual channel/band cubes
         if (format == :MIRI) && (cube.band in keys(bands)) && (cube.channel in string.(1:4))    
             channels[Symbol(bands[cube.band] * cube.channel)] = cube
@@ -2184,7 +2195,7 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
     instrument_channel_edges::Union{Vector{<:QWave},Nothing}=nothing,
     order::Union{Integer,String}=1, adjust_wcs_headerinfo::Bool=false, min_λ::QWave=0.0*u"μm", max_λ=27.0*u"μm", 
     output_wcs_frame::Integer=1, extract_from_ap::Real=0., match_psf::Bool=false, 
-    user_mask::Union{Vector{Tuple{W,W}},Nothing}=nothing) where {W<:QWave}
+    user_mask::Union{Vector{Tuple{W,W}},Nothing}=nothing, gap_mask::Union{Vector{Tuple{W,W}},Nothing}=nothing) where {W<:QWave}
 
     format = Symbol(obs.instrument)
 
@@ -2299,13 +2310,20 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
             append!(user_mask, umask(obs.channels[channel].spectral_region))
         end
     end
+    # Get combined gaps
+    if isnothing(gap_mask)
+        gap_mask = Vector{Tuple{eltype(λ_out),eltype(λ_out)}}()
+        for channel in channels
+            append!(gap_mask, gaps(obs.channels[channel].spectral_region))
+        end
+    end
 
     # Define the interpolated cube as the out_id channel 
     obs.channels[out_id] = DataCube(
         λ_out, I_out, σ_out, mask_out, psf_out, Ω_out, obs.α, obs.δ, 
         obs.channels[channels[output_wcs_frame]].θ_sky, psf_fwhm_out, 
         lsf_fwhm_out, wcs_optimal_3d, "MULTIPLE", "MULTIPLE",
-        user_mask, obs.rest_frame, obs.z, obs.masked, obs.vacuum_wave, 
+        user_mask, gap_mask, obs.rest_frame, obs.z, obs.masked, obs.vacuum_wave, 
         obs.log_binned, obs.dereddened, obs.sky_aligned,
         obs.channels[channels[output_wcs_frame]].voronoi_bins, format, 
         instrument_channel_edges

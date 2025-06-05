@@ -650,19 +650,20 @@ end
 
 # Helper function to get bootstrapped fit results 
 function collect_bootstrapped_results(spaxel::Spaxel, spaxel_model::Spaxel, cube_fitter::CubeFitter, 
-    p_boot::Matrix{Quantity{<:Real}}, I_model_boot::Matrix{<:QSIntensity}, split1::Integer, split2::Integer)
+    p_boot::Matrix{<:Quantity}, I_model_boot::Matrix{<:QSIntensity}, split1::Integer, split2::Integer)
 
     # Filter out any large (>5 sigma) outliers
-    p_med = dropdims(nanquantile(p_boot, 0.50, dims=2), dims=2)
+    punits = unit.(p_boot[:, 1])
+    p_med = dropdims(nanquantile(ustrip.(p_boot), 0.50, dims=2), dims=2) .* punits
     # factor of 1.4826 to normalize the MAD it so it is interpretable as a standard deviation
-    p_mad = nanmad(p_boot, dims=2) .* 1.4826 
+    p_mad = dropdims(nanmad(ustrip.(p_boot), dims=2), dims=2) .* 1.4826  .* punits
     p_mask = (p_boot .< (p_med .- 5 .* p_mad)) .| (p_boot .> (p_med .+ 5 .* p_mad))
-    p_boot[p_mask] .= NaN
+    p_boot[p_mask] .*= NaN
     p_out = p_med
 
     # (if set to :best, p_out is already the best-fit values from earlier)
-    p_err_lo = p_med .- dropdims(nanquantile(p_boot, 0.159, dims=2), dims=2)
-    p_err_up = dropdims(nanquantile(p_boot, 0.841, dims=2), dims=2) .- p_med
+    p_err_lo = p_med .- dropdims(nanquantile(ustrip.(p_boot), 0.159, dims=2), dims=2) .* punits
+    p_err_up = dropdims(nanquantile(ustrip.(p_boot), 0.841, dims=2), dims=2) .* punits .- p_med
     p_err = [p_err_lo p_err_up]
 
     # Get the minimum/maximum pointwise bootstrapped models
@@ -674,10 +675,14 @@ function collect_bootstrapped_results(spaxel::Spaxel, spaxel_model::Spaxel, cube
     ext_gas, _, _ = extinction_profiles(spaxel_model.λ, ustrip.(p_out[1:split1]), 1, fopt.fit_uv_bump, fopt.extinction_curve)
     I_boot_line, comps_boot_line = model_line_residuals(spaxel_model, ustrip.(p_out[split1+1:split2]), unit.(p_out[split1+1:split2]), 
         model(cube_fitter).lines, cube_fitter.lsf, ext_gas, trues(length(spaxel_model.λ)), true)
-    fopt.fit_joint && spaxel_model.I .-= I_boot_line
+    if fopt.fit_joint
+        spaxel_model.I .-= I_boot_line
+    end
     I_boot_cont, comps_boot_cont, norms = model_continuum(spaxel_model, spaxel_model.N, ustrip.(p_out[1:split1]), unit.(p_out[1:split1]), 
         cube_fitter, false, spaxel_model == spaxel, !fopt.fit_joint, true)
-    fopt.fit_joint && spaxel_model.I .+= I_boot_line
+    if fopt.fit_joint
+        spaxel_model.I .+= I_boot_line
+    end
 
     # Reconstruct the full model
     I_model, comps, χ2, = collect_total_fit_results(spaxel, spaxel_model, cube_fitter, I_boot_cont, I_boot_line,

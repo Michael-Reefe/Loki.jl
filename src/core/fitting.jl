@@ -67,7 +67,7 @@ Levenberg-Marquardt least squares fitting method with the `CMPFit` package.
 for the initial non-bootstrapped fit of the spectrum.
 """
 function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter; init::Bool=false, use_ap::Bool=false, 
-    bootstrap_iter::Bool=false, p1_boots::Union{Vector{<:Quantity},Nothing}=nothing, force_noext::Bool=false)
+    bootstrap_iter::Bool=false, p1_boots::Union{Vector{<:Real},Nothing}=nothing, force_noext::Bool=false)
 
     @debug """\n
     #########################################################
@@ -89,11 +89,11 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter; init::Boo
     # Get the initial values and step sizes
     pars_0, dstep_0 = get_continuum_initial_values(cube_fitter, s.coords, s.λ[spaxel_mask], s.I[spaxel_mask], 
         s.σ[spaxel_mask], s.N; init=init||use_ap, split=false, force_noext=force_noext)
+    # Get the units of the parameters and strip them off of the actual parameter vector
+    pars_0, plims, punits = strip_units(pars_0, plims)
     if bootstrap_iter
         pars_0 = p1_boots
     end
-    # Get the units of the parameters and strip them off of the actual parameter vector
-    pars_0, plims, punits = strip_units(pars_0, plims)
 
     @debug """\n
     ##########################################################################################################
@@ -180,7 +180,7 @@ end
 
 
 function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter, split_flag::Bool; init::Bool=false, 
-    use_ap::Bool=false, bootstrap_iter::Bool=false, p1_boots::Union{Vector{<:Quantity},Nothing}=nothing,
+    use_ap::Bool=false, bootstrap_iter::Bool=false, p1_boots::Union{Vector{<:Real},Nothing}=nothing,
     force_noext::Bool=false) 
 
     if !split_flag
@@ -212,13 +212,13 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter, split_fla
             force_noext=force_noext)
     pars_1, pars_2, dstep_1, dstep_2 = get_continuum_initial_values(cube_fitter, s.coords, s.λ[spaxel_mask], s.I[spaxel_mask], 
         s.σ[spaxel_mask], s.N; init=init||use_ap, split=true, force_noext=force_noext)
+    # Get the units of the parameters and strip them off of the actual parameter vector
+    pars_1, plims_1, punits_1, pars_2, plims_2, punits_2 = strip_units(pars_1, pars_2, plims_1, plims_2)
     if bootstrap_iter
         n_split = count_cont_parameters(model(cube_fitter); split=true)
         pars_1 = vcat(p1_boots[1:n_split], p1_boots[end-1:end])
         pars_2 = p1_boots[n_split+1:end-2]
     end
-    # Get the units of the parameters and strip them off of the actual parameter vector
-    pars_1, plims_1, punits_1, pars_2, plims_2, punits_2 = strip_units(pars_1, pars_2, plims_1, plims_2)
 
     @debug """\n
     ##########################################################################################################
@@ -374,7 +374,7 @@ function lock_nonfit_component_amps!(cube_fitter::CubeFitter, coords::CartesianI
         inds = inds[.~isnothing.(inds)]  # may get nothings if the "*" flag is used, but this is ok since we only need the inds
                                         # to find the maximum number of profiles in the group, so the "*"s are irrelevant here
         # Fit the maximum number of components in the group
-        profiles_group = maximum(profiles_to_fit_list[inds])
+        profiles_group = maximum(profiles_to_fit_list[inds]; init=1)
 
         # Save the number of components fit for this spaxel
         if coords != CartesianIndex(0,0)
@@ -774,12 +774,12 @@ function all_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter; init::Bool=false, us
     # Get the initial values and step sizes
     pars_0_cont, dstep_0_cont = get_continuum_initial_values(cube_fitter, s.coords, s.λ[spaxel_mask], s.I[spaxel_mask], 
         s.σ[spaxel_mask], s.N; init=init||use_ap, split=false)
-    if bootstrap_iter
-        pars_0_cont = p1_boots_cont
-    end
     # Get the units of the parameters and strip them off of the actual parameter vector
     pars_0_cont, plims_cont, punits_cont = strip_units(pars_0_cont, plims_cont)
     dstep_0_cont = ustrip.(dstep_0_cont)
+    if bootstrap_iter
+        pars_0_cont = p1_boots_cont
+    end
 
     @debug "Continuum Parameters:"
     pfree_cont_tied, pfix_cont_tied, dfree_cont_tied, lock_cont_tied, lbfree_cont_tied, ubfree_cont_tied, 
@@ -949,7 +949,7 @@ end
 
 
 function _fit_bootstraps(spax::Spaxel, spax_model::Spaxel, cube_fitter::CubeFitter, I_model::Vector{<:QSIntensity}, 
-    result::SpaxelFitResult, result_c::SpaxelFitResult, result_l::SpaxelFitResult, pahtemp::Vector{<:Quantity}, 
+    result::SpaxelFitResult, result_c::SpaxelFitResult, result_l::SpaxelFitResult, pahtemp::Vector{<:Real}, 
     fname::String; use_ap::Bool=false)
 
     # Set the random seed
@@ -978,8 +978,8 @@ function _fit_bootstraps(spax::Spaxel, spax_model::Spaxel, cube_fitter::CubeFitt
 
         # Re-perform the fitting on the resampled data
         result_boot, _, _, _, _, Ib_i, = with_logger(NullLogger()) do
-            _fit_spaxel_iterfunc(spax, cube_fitter; bootstrap_iter=true, p1_boots_c=result_c.popt, 
-                p1_boots_l=result_l.popt, p1_boots_pah=pahtemp, use_ap=use_ap)
+            _fit_spaxel_iterfunc(spax, cube_fitter; bootstrap_iter=true, p1_boots_c=ustrip.(result_c.popt), 
+                p1_boots_l=ustrip.(result_l.popt), p1_boots_pah=ustrip.(pahtemp), use_ap=use_ap)
         end
         # Sort the emission line components (if not using relative parameters) to avoid multi-modal distirbutions
         # only mask additional line components after the first bootstrap so that they have a minimum of 1 finite sample
@@ -1035,7 +1035,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, coords::Cart
     oopt = out_options(cube_fitter)
     fname = use_vorbins ? "voronoi_bin_$(coords[1])" : "spaxel_$(coords[1])_$(coords[2])"
     if isfile(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.csv")) && 
-        isfile(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.ssp")) && 
+        (!fopt.fit_stellar_continuum || isfile(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.ssp"))) && 
         !oopt.overwrite
         # Otherwise, just grab the results from before
         p_out, p_err = read_fit_results_csv(cube_fitter.name, fname)
@@ -1194,7 +1194,7 @@ function spaxel_loop_previous(cube_fitter::CubeFitter, cube_data::NamedTuple, sp
             fname = vorbin ? "voronoi_bin_$(index[1])" : "spaxel_$(index[1])_$(index[2])"
             fpath1 = joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.csv")
             fpath2 = joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.ssp")
-            if isfile(fpath1) && isfile(fpath2)
+            if isfile(fpath1) && (!fit_options(cube_fitter).fit_stellar_continuum || isfile(fpath2))
                 # just loads in the previous fit results since they already exist
                 p_out, p_err, np_ssp = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
                 if vorbin

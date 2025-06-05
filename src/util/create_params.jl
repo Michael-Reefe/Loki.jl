@@ -707,7 +707,7 @@ function default_line_parameters(out::Dict, lines::Dict, λunit::Unitful.Units, 
 
         msg = "Component $component:"
         amp = component > 1 ? parameter_from_dict(lines["acomp_amp"][component-1]) : FitParameter(NaN, false, (0., Inf))
-        t_amp = [RestframeTransform, LogTransform]
+        t_amp = [RestframeTransform]
         if !out[:lines_allow_negative]
             push!(t_amp, LogTransform)
         end

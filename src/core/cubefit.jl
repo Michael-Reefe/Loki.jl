@@ -597,11 +597,13 @@ end
 function make_linemask!(out::Dict, lines::FitFeatures, λunit::Unitful.Units)
     # overrides for all lines in the line list with a width of +/-1000 km/s;
     # this can still be overridden with a manual line mask input
+    if haskey(out, :linemask_width) && !(typeof(out[:linemask_width]) <: QVelocity)
+        out[:linemask_width] *= u"km/s"
+    end
     if !haskey(out, :linemask_overrides)
         overrides = Tuple[]
         for λi in lines.λ₀
-            vunit = typeof(out[:linemask_width]) <: QVelocity ? 1.0 : u"km/s"
-            push!(overrides, λi .* (1-out[:linemask_width]*vunit/C_KMS, 1+out[:linemask_width]*vunit/C_KMS))
+            push!(overrides, λi .* (1-out[:linemask_width]/C_KMS, 1+out[:linemask_width]/C_KMS))
         end
         out[:linemask_overrides] = overrides
     else
