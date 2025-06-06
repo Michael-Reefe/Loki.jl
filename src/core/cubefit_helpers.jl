@@ -197,14 +197,14 @@ function get_continuum_parameter_limits(cube_fitter::CubeFitter, I::Vector{<:Rea
         plock[inds] .= true
     end
     # Lock template amplitudes during the initial fit
-    if !fopt.fit_temp_multexp && init
-        for tname in cube_fitter.template_names
-            for n in 1:nchannels(cube_fitter.spectral_region)
-                ind = fast_indexin("templates.$(tname).amp_$n", pnames)
-                plock[ind] = true
-            end
-        end
-    end
+    # if !fopt.fit_temp_multexp && init
+    #     for tname in cube_fitter.template_names
+    #         for n in 1:nchannels(cube_fitter.spectral_region)
+    #             ind = fast_indexin("templates.$(tname).amp_$n", pnames)
+    #             plock[ind] = true
+    #         end
+    #     end
+    # end
 
     # Get the tied pairs/indices
     tied_pairs, tied_indices = get_tied_pairs(continuum)
@@ -263,14 +263,14 @@ function get_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, �
     λlim = extrema(λ)
 
     # Extinction
-    if !isnothing(fopt.guess_tau) && fopt.extinction_curve != "decompose"
+    if !isnothing(fopt.guess_tau) && fopt.silicate_absorption != "decompose"
         ind = fast_indexin("extinction.tau_97", pnames)
         p₀[ind] = guess_optical_depth(cube_fitter, λ, I)
     end
     # Force no extinction
     if force_noext
         inds = [fast_indexin("extinction.E_BV", pnames)]
-        if fopt.extinction_curve != "decompose"
+        if fopt.silicate_absorption != "decompose"
             push!(inds, fast_indexin("extinction.tau_97", pnames))
         else
             push!(inds, fast_indexin("extinction.N_oli", pnames))
@@ -396,7 +396,7 @@ function get_continuum_initial_values_from_previous(cube_fitter::CubeFitter, spa
     # Force no extinction
     if force_noext
         inds = [fast_indexin("extinction.E_BV", pnames)]
-        if fopt.extinction_curve != "decompose"
+        if fopt.silicate_absorption != "decompose"
             push!(inds, fast_indexin("extinction.tau_97", pnames))
         else
             push!(inds, fast_indexin("extinction.N_oli", pnames))
@@ -417,7 +417,7 @@ function get_continuum_initial_values_from_previous(cube_fitter::CubeFitter, spa
     end
     if !isnothing(fopt.sil_abs_map)
         @debug "Using the provided τ_9.7 values from the extinction_map"
-        if fopt.extinction_curve == "decompose"
+        if fopt.silicate_absorption == "decompose"
             inds = fast_indexin("extinction." .* ["N_oli", "N_pyr", "N_for"], pnames)
         else
             inds = fast_indexin(["extinction.tau_97"], pnames)
@@ -425,17 +425,17 @@ function get_continuum_initial_values_from_previous(cube_fitter::CubeFitter, spa
         if !isnothing(cube_fitter.cube.voronoi_bins)
             data_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(spaxel)[1])
             for i in eachindex(inds)
-                p₀[inds[i]] = mean(fopt.extinction_map[data_indices, i])
+                p₀[inds[i]] = mean(fopt.sil_abs_map[data_indices, i])
             end
         else
             data_index = spaxel
             for i in eachindex(inds)
-                p₀[inds[i]] = fopt.extinction_map[data_index, i]
+                p₀[inds[i]] = fopt.sil_abs_map[data_index, i]
             end
         end
     end
 
-    if fopt.extinction_curve != "decompose"
+    if fopt.silicate_absorption != "decompose"
         ind = fast_indexin("extinction.tau_97", pnames)
         p₀[ind] = max(model(cube_fitter).continuum["extinction.tau_97"].value, p₀[ind])
     end
@@ -453,7 +453,7 @@ function get_continuum_initial_values_from_previous(cube_fitter::CubeFitter, spa
         p₀[inds] .= 0.
     end
     # Set τ_9.7 to the guess if the guess_tau flag is set
-    if !isnothing(fopt.guess_tau) && (fopt.extinction_curve != "decompose")
+    if !isnothing(fopt.guess_tau) && (fopt.silicate_absorption != "decompose")
         ind = fast_indexin("extinction.tau_97", pnames)
         p₀[ind] = guess_optical_depth(cube_fitter, λ, I)
     end

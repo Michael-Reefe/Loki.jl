@@ -139,7 +139,7 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter; init::Boo
 
         # set optical depth to 0 if the template fits all of the spectrum
         @debug "Redoing the fit with optical depth locked to 0 due to template amplitudes"
-        result0, I_model0, comps0, pah_amp0, results_stellar0, spaxel_model0, chi20, nfree0 = continuum_fit_spaxel(spaxel, 
+        result0, I_model0, comps0, norms0, pah_amp0, results_stellar0, spaxel_model0, chi20, nfree0 = continuum_fit_spaxel(spaxel, 
             cube_fitter; init=init, use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots, force_noext=true)
 
         # Does an F-test to determine whether or not the extinction is actually statistically significant
@@ -149,10 +149,10 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter; init::Boo
             @debug "Extinction F-test results: $(test_passed ? "SUCCESS" : "FAILURE")"
             @debug "Extinction F-test value = $F_data | Critical value = $F_crit | Threshold = $(fopt.line_test_threshold)"
             if !test_passed
-                return result0, I_model0, comps0, pah_amp0, results_stellar0, spaxel_model0, chi20, nfree0
+                return result0, I_model0, comps0, norms0, pah_amp0, results_stellar0, spaxel_model0, chi20, nfree0
             end
         else
-            return result0, I_model0, comps0, pah_amp0, results_stellar0, spaxel_model0, chi20, nfree0
+            return result0, I_model0, comps0, norms0, pah_amp0, results_stellar0, spaxel_model0, chi20, nfree0
         end
     end
 
@@ -292,7 +292,7 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter, split_fla
         I_model, comps, init, force_noext)
 
         @debug "Redoing the fit with optical depth locked to 0 due to template amplitudes"
-        result0, I_model0, comps0, pah_amp0, results_stellar0, spaxel_model0, chi20, nfree0 = continuum_fit_spaxel(spaxel, 
+        result0, I_model0, comps0, norms0, pah_amp0, results_stellar0, spaxel_model0, chi20, nfree0 = continuum_fit_spaxel(spaxel, 
             cube_fitter, split_flag; init=init, use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots, force_noext=true)
 
         # Does an F-test to determine whether or not the extinction is actually statistically significant
@@ -301,10 +301,10 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter, split_fla
             @debug "Extinction F-test results: $(test_passed ? "SUCCESS" : "FAILURE")"
             @debug "Extinction F-test value = $F_data | Critical value = $F_crit | Threshold = $(fopt.line_test_threshold)"
             if !test_passed
-                return result0, I_model0, comps0, pah_amp0, results_stellar0, spaxel_model0, chi20, nfree0
+                return result0, I_model0, comps0, norms0, pah_amp0, results_stellar0, spaxel_model0, chi20, nfree0
             end
         else
-            return result0, I_model0, comps0, pah_amp0, results_stellar0, spaxel_model0, chi20, nfree0
+            return result0, I_model0, comps0, norms0, pah_amp0, results_stellar0, spaxel_model0, chi20, nfree0
         end
 
     end

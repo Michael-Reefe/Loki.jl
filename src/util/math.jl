@@ -1001,7 +1001,7 @@ function silicate_absorption(λ::Vector{<:QWave}, params::Vector{<:Real}, pstart
         ext = extinction_factor.(τ_norm, τ_97, screen=screen)
         dp = 4
     elseif fopt.silicate_absorption == "custom"
-        ext_curve = fopt.custom_ext_template(λ)
+        ext_curve = fopt.custom_ext_template(ustrip.(λ))
         ext = extinction_factor.(ext_curve, τ_97, screen=screen)
     else
         error("Unrecognized absorption type: $(fopt.silicate_absorption)")
