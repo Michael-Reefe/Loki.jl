@@ -960,9 +960,13 @@ function _fit_bootstraps(spax::Spaxel, spax_model::Spaxel, cube_fitter::CubeFitt
     # Save the original spaxel intensity
     I0 = copy(spax.I)
 
-    # Do bootstrapping multi-threaded to save time
-    @debug "Performing multi-threaded bootstrapping iterations for spaxel $(spax.coords)..."
-    Threads.@threads for nboot ∈ 1:fopt.n_bootstrap
+    # Bootstrapping 
+    @debug "Performing bootstrapping iterations for spaxel $(spax.coords)..."
+
+    # ---> I'm disabling threads here for now because it causes something fucky in the results
+    #      and I have no idea what the root cause is...
+    # Threads.@threads for nboot ∈ 1:fopt.n_bootstrap
+    for nboot ∈ 1:fopt.n_bootstrap
         lock(file_lock) do
             @debug "Bootstrap iteration: $nboot"
         end
