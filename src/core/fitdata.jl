@@ -672,17 +672,10 @@ function collect_bootstrapped_results(spaxel::Spaxel, spaxel_model::Spaxel, cube
 
     # Replace the best-fit model with the 50th percentile model to be consistent with p_out
     fopt = fit_options(cube_fitter)
-    ext_gas, _, _ = extinction_profiles(spaxel_model.λ, ustrip.(p_out[1:split1]), 1, fopt.fit_uv_bump, fopt.extinction_curve)
-    I_boot_line, comps_boot_line = model_line_residuals(spaxel_model, ustrip.(p_out[split1+1:split2]), unit.(p_out[split1+1:split2]), 
-        model(cube_fitter).lines, cube_fitter.lsf, ext_gas, trues(length(spaxel_model.λ)), true)
-    if fopt.fit_joint
-        spaxel_model.I .-= I_boot_line
-    end
     I_boot_cont, comps_boot_cont, norms = model_continuum(spaxel_model, spaxel_model.N, ustrip.(p_out[1:split1]), unit.(p_out[1:split1]), 
         cube_fitter, false, spaxel_model == spaxel, !fopt.fit_joint, true)
-    if fopt.fit_joint
-        spaxel_model.I .+= I_boot_line
-    end
+    I_boot_line, comps_boot_line = model_line_residuals(spaxel_model, ustrip.(p_out[split1+1:split2]), unit.(p_out[split1+1:split2]), 
+        model(cube_fitter).lines, cube_fitter.lsf, comps_boot_cont["total_extinction_gas"], trues(length(spaxel_model.λ)), true)
 
     # Reconstruct the full model
     I_model, comps, χ2, = collect_total_fit_results(spaxel, spaxel_model, cube_fitter, I_boot_cont, I_boot_line,

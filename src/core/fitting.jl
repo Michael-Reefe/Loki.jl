@@ -693,10 +693,8 @@ function line_fit_spaxel(s::Spaxel, s_model::Spaxel, cube_fitter::CubeFitter, co
     ############################################# FIT WITH LEVMAR ###################################################
 
     res = cmpfit(s.λ, s.I, s.σ, fit_step3, p₁, parinfo=parinfo, config=config)
-    if !_fit_global
-        res = repeat_fit_jitter(s.λ, s.I, s.σ, fit_step3, p₁, lbfree_tied, ubfree_tied,
-            parinfo, config, res, "line", s.coords)
-    end
+    res = repeat_fit_jitter(s.λ, s.I, s.σ, fit_step3, p₁, lbfree_tied, ubfree_tied,
+        parinfo, config, res, "line", s.coords)
 
     @debug "Line CMPFit status: $(res.status)"
 
@@ -719,7 +717,6 @@ function line_fit_spaxel(s::Spaxel, s_model::Spaxel, cube_fitter::CubeFitter, co
         write_fit_results_csv(cube_fitter, "init_fit_line", result)
         cube_fitter.p_init_line[:] .= popt
     end
-
 
     # Now we can replace back the original intensity
     s.I .= _orig_I
@@ -859,10 +856,8 @@ function all_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter; init::Bool=false, us
     parinfo, config = get_continuum_parinfo(n_free_cont+n_free_lines, lower_bounds, upper_bounds, dstep)
 
     res = cmpfit(s.λ[spaxel_mask], s.I[spaxel_mask], s.σ[spaxel_mask], fit_joint, p₁, parinfo=parinfo, config=config)
-    if !_fit_global
-        res = repeat_fit_jitter(s.λ[spaxel_mask], s.I[spaxel_mask], s.σ[spaxel_mask], fit_joint, p₁, lower_bounds, upper_bounds, 
-            parinfo, config, res, "continuum+lines", s.coords; check_cont_snr=true)
-    end
+    res = repeat_fit_jitter(s.λ[spaxel_mask], s.I[spaxel_mask], s.σ[spaxel_mask], fit_joint, p₁, lower_bounds, upper_bounds, 
+        parinfo, config, res, "continuum+lines", s.coords; check_cont_snr=true)
 
     @debug "Continuum+Lines CMPFit Status: $(res.status)"
     popt_cont, perr_cont, I_cont, comps_cont, norms, popt_lines, perr_lines, I_lines, comps_lines, result_stellar, s_model = 
