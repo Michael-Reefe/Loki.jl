@@ -1027,7 +1027,7 @@ of a crash.
     use_ap or use_vorbins is true.
 """
 function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, coords::CartesianIndex; use_ap::Bool=false,
-    use_vorbins::Bool=false, σ_min::Quantity=0.0*unit(cube_data.σ[1]))
+    use_vorbins::Bool=false, σ_min::Vector=zeros(eltype(cube_data.σ), length(cube_data.σ)))
 
     # Check if the fit has already been performed
     fopt = fit_options(cube_fitter)
@@ -1574,7 +1574,7 @@ dispersed by the PSF and the host galaxy portion. This function is to be used AF
 performed and will fit a model to the integrated QSO spectrum over the full FOV of the cube. This has the advantage of
 including the normalizations of the QSO spectrum in each individual spaxel so that the overall model is consistent.
 """
-function post_fit_nuclear_template!(cube_fitter::CubeFitter, agn_templates::Array{<:Real,3}, psf_norm::Array{<:Real,3})
+function post_fit_nuclear_template!(cube_fitter::CubeFitter, agn_templates::Array{<:QSIntensity,3}, psf_norm::Array{<:Real,3})
 
     @info """\n
     BEGINNING NUCELAR TEMPLATE FITTING ROUTINE FOR $(cube_fitter.name)
@@ -1604,11 +1604,21 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, agn_templates::Arra
     # copy the main log file
     cp(joinpath(@__DIR__, "..", "loki.main.log"), joinpath("output_$(cube_fitter.name)", "loki.main.log"), force=true)
 
+    λ_init = cube_fitter.cube.λ
+    I_sum_init, σ_sum_init, templates_init, area_sr_init = get_total_integrated_intensities(cube_fitter)
+
+    # Perform a cubic spline fit, also obtaining the line mask
+    mask_lines_init, I_spline_init, _ = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init, cube_fitter.linemask_overrides)
+    mask_bad_init = iszero.(I_sum_init) .| iszero.(σ_sum_init)
+    mask_init = mask_lines_init .| mask_bad_init
+    mask_chi2_init = mask_bad_init
+    σ_sum_init  .= calculate_statistical_errors(I_sum_init, I_spline_init, mask_init)
+    σ_sum_init .*= nanmedian(cube_data.I./I_sum_init)
+
     @info "===> Beginning nuclear spectrum fitting... <==="
     # Add a minimum uncertainty to prevent the statistical uncertainties on the model from being close to 0 due to it being
     # a smooth model rather than actual data
-    p_out, p_err, np_ssp = fit_spaxel(cube_fitter, cube_data, CartesianIndex(1,1); use_ap=true, 
-        σ_min=nanminimum(ustrip.(cube_fitter.cube.σ))*unit(cube_fitter.cube.σ[1]))
+    p_out, p_err, np_ssp = fit_spaxel(cube_fitter, cube_data, CartesianIndex(1,1); use_ap=true, σ_min=σ_sum_init)
     if !isnothing(p_out)
         out_params[1, 1, :] .= ustrip.(p_out)
         out_errs[1, 1, :, :] .= ustrip.(p_err)
@@ -1661,13 +1671,15 @@ end
 function post_fit_nuclear_template!(cube_fitter::CubeFitter, hdu_param::FITS, hdu_model::FITS, template_name::String)
 
     # get the AGN templates
-    agn_templates = read(hdu_model["TEMPLATES.$(uppercase(template_name))"])
+    ftype = typeof(1.0)
+    agn_templates = ftype.(read(hdu_model["TEMPLATES.$(uppercase(template_name))"]))
     # shift back into the rest frame
     if eltype(cube_fitter.cube.I) <: QPerFreq
         agn_templates ./= (1 .+ cube_fitter.z)
     elseif eltype(cube_fitter.cube.I) <: QPerWave
         agn_templates .*= (1 .+ cube_fitter.z)
     end
+    agn_templates = agn_templates .* unit(cube_fitter.cube.I[1])
 
     # get the PSF normalization
     psf_norm = copy(cube_fitter.cube.psf_model)                              # PSF model (integrates to 1)
@@ -1694,6 +1706,7 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, param_maps::ParamMa
     elseif eltype(cube_fitter.cube.I) <: QPerWave
         agn_templates .*= (1 .+ cube_fitter.z)
     end
+    agn_templates = agn_templates .* unit(cube_fitter.cube.I[1])
 
     # get the PSF normalization
     psf_norm = copy(cube_fitter.cube.psf_model)                              # PSF model (integrates to 1)

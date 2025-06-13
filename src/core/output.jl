@@ -12,7 +12,7 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
 
     firsti = findfirst(index->any(isfinite.(out_params[index, :])), spaxels)
     spax = make_normalized_spaxel(cube_data, firsti, cube_fitter; use_ap=aperture, 
-    use_vorbins=!isnothing(cube_fitter.cube.voronoi_bins))
+        use_vorbins=!isnothing(cube_fitter.cube.voronoi_bins))
     spax_model = spax
     if length(cube_fitter.spectral_region.gaps) > 0
         spax_model = get_model_spaxel(cube_fitter, spax, nothing)
@@ -249,7 +249,7 @@ function assign_qso3d_outputs(param_maps::ParamMaps, cube_model::CubeModel, cube
     psf_norm::Array{<:Real,3})
 
     param_maps_3d = generate_parammaps(cube_fitter; do_1d=false)
-    cube_model_3d = generate_cubemodel(cube_fitter; do_1d=false)
+    cube_model_3d = generate_cubemodel(cube_fitter, size(cube_fitter.cube.I); do_1d=false)
     fopt = fit_options(cube_fitter)
     lines = model(cube_fitter).lines
     dust_features = model(cube_fitter).dust_features

@@ -367,18 +367,22 @@ function create_cube_data_postnuctemp(cube_fitter::CubeFitter, agn_templates::Ar
     cube = cube_fitter.cube
 
     # Get the AGN model over the whole cube
-    I_agn = nansum(ustrip.(agn_templates), dims=(1,2)) ./ nansum(.~cube.mask, dims=(1,2)) .* unit(agn_templates[1])
+    if size(agn_templates)[1:2] == (1,1)
+        I_agn = agn_templates
+    else
+        I_agn = nansum(ustrip.(agn_templates), dims=(1,2)) ./ nansum(.~cube.mask, dims=(1,2)) .* unit(agn_templates[1])
+    end
     # errors will be overwritten by statistical errors
     σ_agn = nanmedian(ustrip.(I_agn)) .* ones(Float64, size(I_agn)) .* unit(agn_templates[1])  
     templates = Array{eltype(I_agn),4}(undef, size(I_agn)..., 0)
     area_sr = cube_fitter.cube.Ω .* nansum(.~cube.mask, dims=(1,2))
 
-    I, σ, templates = fill_bad_pixels(I_agn, σ_agn, templates)
+    I, σ, t_out = fill_bad_pixels(I_agn[1,1,:], σ_agn[1,1,:], templates[1,1,:,:])
 
     # Create a "spaxel" and fill in the bad data
     I_agn[1,1,:] .= I
     σ_agn[1,1,:] .= σ
-    templates[1,1,:,:] .= templates
+    templates[1,1,:,:] .= t_out
 
     cube_data = (λ=cube_fitter.cube.λ, I=I_agn, σ=σ_agn, templates=templates, area_sr=area_sr)
 
