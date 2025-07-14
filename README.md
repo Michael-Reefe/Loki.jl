@@ -72,7 +72,7 @@ Recommended system specs are 16 GB of RAM and at least 4 CPU cores for the best 
 
 ### Julia Requirements
 
-The current development version has been tested on Julia 1.10.4. To install within a unique project environment (recommended), first clone the repository:
+The current development version has been tested on Julia 1.10.9. It is recommended that you use the same version for this project, as I cannot guarantee it will work with earlier or later versions. To install within a unique project environment (recommended), first clone the repository:
 
 ```bash
 git clone https://github.com/Michael-Reefe/Loki.jl
@@ -87,7 +87,7 @@ julia> ]
 (Loki) pkg> precompile
 ```
 
-The combined installation and precompilation of all dependencies can take a few minutes (roughly). The Julia package dependencies are listed in the `Project.toml` file and will be installed automatically. Once installed, back out of package mode with backspace, and then you can start using the package simply with:
+The combined installation and precompilation of all dependencies can take a few minutes (roughly). The Julia package dependencies are listed in the `Project.toml` (and `Manifest.toml`) files and will be installed automatically. Once installed, back out of package mode with backspace, and then you can start using the package simply with:
 
 ```
 julia> using Loki
@@ -126,7 +126,7 @@ Alternatively, you can set `ENV["PYTHON"] = ""` which will link PyCall to a new,
 
 - [matplotlib](https://matplotlib.org/) (v3.7.2)
 - [lineid_plot](https://github.com/phn/lineid_plot) (v0.6)
-- [fsps](https://github.com/dfm/python-fsps) (v0.4.3, only required for optical spectra fitting)
+- [fsps](https://github.com/dfm/python-fsps) (v0.4.3)
 - [vorbin](https://pypi.org/project/vorbin/) (v3.1.5)
 
 ### LaTeX
@@ -1016,17 +1016,19 @@ statistics.dof                    	2524.0                	0.0                   
 Also saved in this folder, if stellar populations are a part of the continuum, are the weights of each SSP in the fit.  These are saved as binary ".ssp" files, not meant to be read other than by the code itself.
 
 ### iv. Spaxel Plots
-Located in the `spaxel_plots` folder are plots of the 1D spectra of each spaxel, including the data, model, each model component, and the residuals, either as PDFs or HTML files depending on the plotting backend. Example plots are shown below for the initial summed spaxel fit of NGC 7469:
+Located in the `spaxel_plots` folder are plots of the 1D spectra of each spaxel, including the data, model, each model component, and the residuals, either as PDFs or HTML files depending on the plotting backend. Example plots are shown below for some spaxels of NGC 7469:
 
-![](./figures/NGC7469_initial_fit_pyplot.png)
+![](./figures/NGC7469_spaxel_34_13.png)
 
-In the matplotlib-generated plot, the data is in black and the full model is in orange. The individual model components are also shown. The magenta dashed line is the stellar continuum, the gray solid lines are the dust continua, and the light green line is the warm silicate emission. The extinction curve is not visible in this spectrum, but it is plotted as a gray dotted line using the logarithmic vertical axis on the right-hand side of the plot. The summed-up, extincted continuum is the thick solid gray line. The PAHs are shown in light blue, and the emission lines are shown in purple. The residuals are shown in the bottom plot, along with the reduced $\chi^2$ of the fit in the legend.  The bottom axis of the plot shows the rest-frame wavelength, while the top axis labels prominent emission lines.
+![](./figures/NGC7469_spaxel_25_27.png)
+
+In the matplotlib-generated plot, the data is in black and the full model is in orange. The individual model components are also shown. The gray solid lines are the dust continua. The dark green line is the PSF template. The extinction curve is not visible in this spectrum, but it is plotted as a gray dotted line using the logarithmic vertical axis on the right-hand side of the plot. The summed-up, extincted continuum is the thick solid gray line. The PAHs are shown in light blue, and the emission lines are shown in purple. The residuals are shown in the bottom plot, along with the reduced $\chi^2$ of the fit in the legend.  The bottom axis of the plot shows the rest-frame wavelength, while the top axis labels prominent emission lines.  The plots above for NGC 7469 demonstrate the importance of using the PSF template in data cubes that have bright point sources---the PSF template is the only way to capture the sharp jumps in continuum level between channels (the channel boundaries are demarcated by blue triangles along the top of the plot).
 
 ![](./figures/NGC7469_initial_fit_plotly.png)
 
-The plotly-generated plot is similar to the matplotlib-generated one, but not completely the same. The matplotlib-generated plots are intended to be publication quality, whereas the plotly-generated plots are more for data inspection purposes since they are interactive. As such, there are minor differences in what is plotted (other than unimportant differences like color choices or line styles): in the matplotlib plots, the quantity plotted is $I_\nu / \lambda$ (specific intensity per unit frequency / wavelength) as a function of wavelength, whereas the plotly plots simply plot $I_\nu$ (specific intensity per unit frequency) as a function of wavelength. The plotly plots also show each individual Drude profile for the PAH features, whereas the matplotlib plots just show the summed PAH spectrum. The residuals are also omitted from the plotly plots.
+The plotly-generated plot, shown above, is similar to the matplotlib-generated one, but not completely the same. The matplotlib-generated plots are intended to be publication quality, whereas the plotly-generated plots are more for data inspection purposes since they are interactive. As such, there are minor differences in what is plotted (other than unimportant differences like color choices or line styles): in the matplotlib plots, the quantity plotted will be either $\nu I_\nu$ or $\lambda I_\lambda$ (depending on the units of the input data) as a function of wavelength, whereas the plotly plots simply plot $I_\nu$ or $I_\lambda$ (again, depending on the input units) as a function of wavelength. The plotly plots also show each individual Drude profile for the PAH features, whereas the matplotlib plots just show the summed PAH spectrum. The residuals are also omitted from the plotly plots.
 
-If one specifies a `plot_range` argument in the CubeFitter, a `zoomed_plots` folder will also be created with 1D spectra of each zoomed-in region that one specifies. These can be useful for examining the fits of certain emission lines in more detail.
+If one specifies a `plot_range` argument in the CubeFitter, a `zoomed_plots` folder will also be created with 1D spectra of each zoomed-in region that one specifies. These can be useful for examining the fits of certain emission lines in more detail.  This is useful because, by default, plotly plots are not generated for each spaxel, only for the initial fit (because they are relatively large files).
 
 ### v. Stellar Grids
 
@@ -1037,7 +1039,7 @@ If fitting stellar populations, you will also produce "stellar grid" plots which
 The color scales of both quantities are logarithmic.  The example shown is a prototypical "red and dead" elliptical galaxy with an old stellar population.  The smoothness of the weights is thanks to the regularization process.
 
 ### vi. Parameter Maps
-If performing a full fit to each spaxel in a cube, 2D parameter maps for each model parameter will be generated in the `param_maps` directory (sorted into sub-directories based on the types of parameters) showing the spatial distribution of the parameter over the galaxy. Physical scale bars showing the spatial extend in both arcseconds and pc/kpc/Mpc are shown in the bottom-left corner of each plot. A circle the size of the FWHM of the point-spread function (PSF) is also shown in the bottom-right corner of each plot. Finally, the color bar is shown in the right of each plot. The function that's used to generate these plots, `plot_parameter_map`, is highly flexible and can be used on existing figure/axes objects with the `modify_ax=(fig, ax)` keyword argument. The color scale can also be manually set with the `colorscale_limits=(vmin, vmax)` argument. The function was created this way with the intention of allowing the user flexibility to re-plot desired quantities after making adjustments and/or making a grid of subplots. However, by default, each quantity is plotted individually, except for lines that have multiple components, for which some combined plots will be created showing the quantities for each component side-by-side. Some examples for NGC 7469 are shown below.
+If performing a full fit to each spaxel in a cube, 2D parameter maps for each model parameter will be generated in the `param_maps` directory (sorted into sub-directories based on the types of parameters) showing the spatial distribution of the parameter over the galaxy. Physical scale bars showing the spatial extend in both arcseconds and pc/kpc/Mpc are shown in the bottom-left corner of each plot. A circle the size of the FWHM of the point-spread function (PSF) is also shown in the bottom-right corner of each plot. Finally, the color bar is shown in the right of each plot. The function that's used to generate these plots, `plot_parameter_map`, is highly flexible and can be used on existing figure/axes objects with the `modify_ax=(fig, ax)` keyword argument. The color scale can also be manually set with the `colorscale_limits=(vmin, vmax)` argument. The function was created this way with the intention of allowing the user flexibility to re-plot desired quantities after making adjustments and/or making a grid of subplots. However, by default, each quantity is plotted individually, except for lines that have multiple components, for which some combined plots will be created showing the quantities for each component side-by-side. Some examples for NGC 7469 are shown below. Note that some maps appear to have "holes" at the center: this is a side-effect of the PSF subtraction. The brightest spaxels at the centroid of the PSF may be over-subtracted and thus appear as zeros or NaNs in the final parameter maps.
 
 \*Note that all parameter maps shown below are purely for demonstrational purposes
 
@@ -1048,10 +1050,6 @@ Dust continuum amplitude for the $T = 90$ K component. Notice that the color sca
 Optical depth at 9.7 μm:
 
 ![](./figures/NGC7469_extinction_tau97.png)
-
-PAH 8.61 μm amplitude:
-
-![](./figures/NGC7469_PAH_8.61_amp.png)
 
 PAH 8.61 μm total flux:
 
@@ -1068,10 +1066,6 @@ PAH 8.61 μm FWHM. Once again notice that the observed FWHMs will be a factor of
 PAH 8.61 μm equivalent width. Once again keep in mind the widths are reported in the observed frame:
 
 ![](./figures/NGC7469_PAH_8.61_eqw.png)
-
-H<sub>2</sub> 0-0 S(3) amplitude:
-
-![](./figures/NGC7469_H200_S3_amp.png)
 
 H<sub>2</sub> 0-0 S(3) flux:
 
@@ -1173,11 +1167,11 @@ No.  Name                 Ver Type         Cards   Dimensions       Format
 They can be loaded in the same manner as the parameter maps, bearing in mind that there are now 3 dimensions to index for each HDU instead of 2. The "WAVELENGTH" HDU is an exception, being a table with one entry ("wave") that gives the 1-dimensional wavelength array that corresponds to the third axis of all the other HDUs. This was necessary because the wavelength arrays fitted by the code may not strictly be linear, especially when fitting multi-channel data, and trying to represent this with a 3D WCS is not possible. This is why the included WCS information in these outputs is strictly 2-dimensional, covering the 2 spatial dimensions of the cubes.
 
 ### ix. Line Tests
-If any line tests are performed and the `plot_line_test` option is enabled, they will be stored in the `line_tests` directory. They will be fairly simple plots showing the spectrum immediately around the line, and the models with 1, 2, ... up to N components. There will be an annotation showing the chi^2 ratio and the final number of profiles that will be fit for the line.
+If any line tests are performed and the `plot_line_test` option is enabled, they will be stored in the `line_tests` directory. They will be fairly simple plots showing the spectrum immediately around the line, and the models with 1, 2, ... up to N components. There will be an annotation showing the F-test results and the final number of profiles that will be fit for the line.
 
-An example of one of these plots is shown below for an [O III] λ5008 line that fairly obviously needs two profiles to be fit well
+An example of one of these plots is shown below for an [S IV] λ10.511μm line that fairly obviously needs two profiles to be fit well
 
-![OIII_test](./figures/OIII_test.png)
+![SIV_test](./figures/SIV_test.png)
 
 ### x. Units
 The units of outputs for different quantities are listed here. When relevant, output quantities are all given in the *observed* frame (this applies to both the parameter maps and the full 3D models):
@@ -1237,9 +1231,9 @@ obs = from_fits(["file_1.fits", "file_2.fits", ...], redshift)
 ```julia
 correct!(obs)
 ```
-4. To combine data from multiple channels/bands, use the `combine_channels!` function, which takes a number of smaller subroutines and combines them into one procedure for combining data for multiple channels. This procedure handles: 1. (optional) adjusting the WCS parameters in the header of each channel such that the centroids match on the overlapping parts of the spectrum, which may aid in refining the WCS parameters provided by the JWST pipeline. This may be enabled with the `adjust_wcs_headerinfo` keyword argument. 2. Reprojecting all of the channels onto the same 2D spaxel grid, which is done with interpolation, the order of which can be adjusted with the `order` keyword argument (default is linear). 3. (optional) extract the data from each spaxel using an aperture (i.e. a tophat kernel) to suppress resampling artifacts produced by the 3D drizzle algorithm. The size of the aperture may be adjusted using the `extract_from_ap` keyword argument, in units of the PSF FWHM. 4. (optional) rescale the data so that the continuum is continuous between channels. Sometimes there are discontinuous jumps in flux between the channels caused by differences in the PSF shape and size between the channels. NOTE: DO NOT rescale the data without knowing what you are doing -- if the jumps are purely caused by differences in the PSF, then it is not correct to simply rescale the data, the PSF should be included in the model (which LOKI has the capability to do). ONLY apply rescaling if the jumps are minor and the PSF is not believed to be a major contributor, otherwise it's best to model the PSF. This is controlled with the `rescale_channels` argument, which can be set to a specific ``reference'' wavelength which is used to select a channel/band which is used as the reference point that all other channels are rescaled to match. 5. The data is resampled in the wavelength direction in the regions where the channels overlap to a median resolution, while conserving flux. There are additional keyword arguments that can be used to adjust how the data is combined with even finer detail, which can be looked up using the code documentation itself. I.e., in the julia terminal, type `?combine_channels!`.
+4. To combine data from multiple channels/bands, use the `combine_channels!` function, which takes a number of smaller subroutines and combines them into one procedure for combining data for multiple channels. This procedure handles: 1. (optional) adjusting the WCS parameters in the header of each channel such that the centroids match on the overlapping parts of the spectrum, which may aid in refining the WCS parameters provided by the JWST pipeline. This may be enabled with the `adjust_wcs_headerinfo` keyword argument. 2. Reprojecting all of the channels onto the same 2D spaxel grid, which is done with interpolation, the order of which can be adjusted with the `order` keyword argument (default is linear). 3. (optional) extract the data from each spaxel using an aperture (i.e. a tophat kernel) to suppress resampling artifacts produced by the 3D drizzle algorithm. The size of the aperture may be adjusted using the `extract_from_ap` keyword argument, in units of the PSF FWHM. 4. The data is resampled in the wavelength direction in the regions where the channels overlap to a median resolution, while conserving flux. There are additional keyword arguments that can be used to adjust how the data is combined with even finer detail, which can be looked up using the code documentation itself. I.e., in the julia terminal, type `?combine_channels!`.
 ```julia 
-combine_channels!(obs, [1,2,3], out_id=0, order=1, adjust_wcs_headerinfo=true, rescale_channels=nothing, extract_from_ap=0.)
+combine_channels!(obs, [1,2,3], out_id=0, order=1, adjust_wcs_headerinfo=true, extract_from_ap=0.)
 ```
 5. (Optional) It is often desirable to rotate the cubes to be aligned with the sky axes rather than the IFU axes, which can be achieved using the `rotate_to_sky_axes!` function:
 ```julia
@@ -1269,11 +1263,20 @@ fit_cube!(cube_fitter, ap)
 
 If one wishes to model the PSF from a bright point source and include it in the model to separate it from the host galaxy emission, there are some additional utility functions that one can utilize:
 
-`generate_psf_model!(obs)`: This function acts on an observation object and generates a PSF model cube that has been resized to match the size of the observation, shifted such that the centroids are aligned, background annulus subtracted, and interpolated over the spectral leak artifact at 12.2 microns. For this function to work, the input observation data MUST be aligned to the IFU axes, not the sky axes.
+```julia
+generate_psf_model!(obs)
+```
+This function acts on an observation object and generates a PSF model cube that has been resized to match the size of the observation, shifted such that the centroids are aligned, background annulus subtracted, and interpolated over the spectral leak artifact at 12.2 microns. For this function to work, the input observation data MUST be aligned to the IFU axes, not the sky axes.
 
-`splinefit_psf_model!(obs.channels[0], 100)`: To be used strictly after the `generate_psf_model` function, this function takes the PSF model generated by the previous function and fits a cubic spline to it, with a knot spacing given by the second argument (in pixels), since the PSF is expected to vary gradually in the wavelength dimension. This function should be applied between steps 4 and 5 in the above roadmap. This function is not required if one wishes to keep the more noisy PSF model generated in the previous step.
+```julia
+splinefit_psf_model!(obs.channels[0], 100)
+```
+To be used strictly after the `generate_psf_model` function, this function takes the PSF model generated by the previous function and fits a cubic spline to it, with a knot spacing given by the second argument (in pixels), since the PSF is expected to vary gradually in the wavelength dimension. This function should be applied between steps 4 and 5 in the above roadmap. This function is not required if one wishes to keep the more noisy PSF model generated in the previous step.
 
-`generate_nuclear_template(obs.channels[0], 0.)`: This function, applied between steps 7-8 above, takes the PSF model and combines it with the spectrum of the brightest spaxel in the data cube (or, if the second argument defining the aperture radius in units of the PSF FWHM is > 0, it takes an integrated spectrum around the brightest point). This creates a 3D cube that is formatted such that it can be inputted directly into the CubeFitter object with the `templates` argument.
+```julia
+generate_nuclear_template(obs.channels[0], 0.)
+```
+This function, applied between steps 7-8 above, takes the PSF model and combines it with the spectrum of the brightest spaxel in the data cube (or, if the second argument defining the aperture radius in units of the PSF FWHM is > 0, it takes an integrated spectrum around the brightest point). This creates a 3D cube that is formatted such that it can be inputted directly into the CubeFitter object with the `templates` argument.
 
 ---
 

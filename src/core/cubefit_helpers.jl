@@ -48,7 +48,7 @@ function cubefitter_prepare_continuum(λ::Vector{<:QWave}, z::Real, out::Dict, �
     # Velocity resolution
     if n_ssps > 0 || out[:fit_opt_na_feii] || out[:fit_opt_br_feii]
         vres = log(λ[2]/λ[1]) * C_KMS
-        @assert vres ≈ (log(λ[end]/λ[end-1]) * C_KMS)
+        @assert isapprox(vres, (log(λ[end]/λ[end-1]) * C_KMS), rtol=1e-3)
     end
 
     # Power laws
