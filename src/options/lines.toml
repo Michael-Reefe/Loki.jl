@@ -11,15 +11,9 @@ tie_voigt_mixing = true     # tie the Voigt mixing ratios of all lines
 kinematic_group_H2 = [
     "H200_"
 ]
-acomp_1_kinematic_group_H2 = [
-    "H200_"
-]
 
 # Atomic hydrogen recombination lines
 # kinematic_group_Balmer = [
-#     "HI_H_"
-# ]
-# acomp_1_kinematic_group_Balmer = [
 #     "HI_H_"
 # ]
 # # Case B recombination amplitude ratios for (Hzeta, Hepsilon, Hdelta, Hgamma, Hbeta, Halpha)
@@ -31,7 +25,6 @@ acomp_1_kinematic_group_H2 = [
 # HI_H_delta = 0.256
 # HI_H_epsilon = 0.158
 # HI_H_zeta = 0.105
-
 # [tie_acomp_1_amp_Balmer]
 # HI_H_alpha = 2.87
 # HI_H_beta = 1.0
