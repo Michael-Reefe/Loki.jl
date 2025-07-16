@@ -134,9 +134,9 @@ function __init__()
         copy!(py_fsps, pyimport("fsps"))
     catch
         @warn "Could not find the Python FSPS Library! Optical spectra modeling will not be possible."
-        Conda.pip_interop(true)
-        Conda.pip("install", "fsps")
-        copy!(py_fsps, pyimport("fsps"))
+        # Conda.pip_interop(true)
+        # Conda.pip("install", "fsps")
+        # copy!(py_fsps, pyimport("fsps"))
     end
     # Astroquery
     try

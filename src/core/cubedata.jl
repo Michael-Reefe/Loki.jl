@@ -1507,8 +1507,13 @@ function from_fits(filenames::Vector{String}, z::Real=0.; user_mask=nothing, for
     for (i, filepath) ∈ enumerate(filenames)
         cube = from_fits(filepath, z)
         # checks for JWST-formatted individual channel/band cubes
-        if (format == :MIRI) && (cube.band in keys(bands)) && (cube.channel in string.(1:4))    
-            channels[Symbol(bands[cube.band] * cube.channel)] = cube
+        if (format == :MIRI) && (cube.band in keys(bands)) && (
+            (cube.channel in string.(1:4)) ||
+            (cube.channel in "A" .* string.(1:4)) || 
+            (cube.channel in "B" .* string.(1:4)) || 
+            (cube.channel in "C" .* string.(1:4))
+            )
+            channels[Symbol(bands[cube.band] * cube.channel[end:end])] = cube
             continue
         end
         # otherwise just use the channel number

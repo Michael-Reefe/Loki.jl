@@ -1260,6 +1260,10 @@ fit_cube!(cube_fitter)
 ap = make_aperture(obs.channels[0], :Circular, "23:03:15.610", "+8:52:26.10", 0.5, auto_centroid=true, scale_psf=false)
 fit_cube!(cube_fitter, ap)
 ```
+In a similar vein, one can set up voronoi bins by first calling the "voronoi_rebin!" function.  This should be done before creating the CubeFitter object and calling fit_cube!.  There is only one additional argument to voronoi_rebin!, which specifies the target signal to noise ratio that you'd like to bin to:
+```julia
+voronoi_rebin!(obs.channels[0], target_SNR)
+```
 
 If one wishes to model the PSF from a bright point source and include it in the model to separate it from the host galaxy emission, there are some additional utility functions that one can utilize:
 
