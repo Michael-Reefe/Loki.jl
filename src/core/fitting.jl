@@ -274,7 +274,7 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter, split_fla
         ptot[lock_2] .= p2fix
         model_pah_residuals(s, ptot, punits_2, comps["total_extinction_gas"], cube_fitter)[spaxel_mask]
     end
- 
+
     res_2 = cmpfit(s.λ[spaxel_mask], (s.I.-I_cont)[spaxel_mask], s.σ[spaxel_mask], fit_step2, p2free, parinfo=parinfo_2, config=config)
     res_2 = repeat_fit_jitter(s.λ[spaxel_mask], (s.I.-I_cont)[spaxel_mask], s.σ[spaxel_mask], fit_step2, p2free, lb_2, ub_2, parinfo_2, config, res_2, 
         "continuum (step 2)", s.coords; check_cont_snr=true)
@@ -1027,7 +1027,7 @@ of a crash.
     use_ap or use_vorbins is true.
 """
 function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, coords::CartesianIndex; use_ap::Bool=false,
-    use_vorbins::Bool=false, σ_min::Vector=zeros(eltype(cube_data.σ), length(cube_data.σ)))
+    use_vorbins::Bool=false, σ_min::Vector=zeros(eltype(cube_data.σ), size(cube_data.σ)[end]))
 
     # Check if the fit has already been performed
     fopt = fit_options(cube_fitter)
@@ -1183,7 +1183,7 @@ end
 
 # Helper function that loops over previously fit spaxels and adds their results into
 # the out_params and out_errs
-function spaxel_loop_previous(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxels::Vector{CartesianIndex{2}}, 
+function spaxel_loop_previous(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxels::Vector, 
     vorbin::Bool, out_params::AbstractArray{<:Real,3}, out_errs::AbstractArray{<:Real,4}, out_np_ssp::AbstractArray{Int,2})
 
     _m2 = falses(length(spaxels))
@@ -1219,7 +1219,7 @@ end
 
 
 # Helper function that loops over spaxels using pmap to fit them in parallel
-function spaxel_loop_pmap!(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxels::Vector{CartesianIndex{2}},
+function spaxel_loop_pmap!(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxels::Vector,
     vorbin::Bool, out_params::AbstractArray{<:Real,3}, out_errs::AbstractArray{<:Real,4}, 
     out_np_ssp::AbstractArray{Int,2})
 
@@ -1254,7 +1254,7 @@ end
 
 # Helper function that loops over spaxels using distributed to fit them in parallel
 function spaxel_loop_distributed!(cube_fitter::CubeFitter, cube_data::NamedTuple,
-    spaxels::Vector{CartesianIndex{2}}, vorbin::Bool, out_params::AbstractArray{<:Real,3}, 
+    spaxels::Vector, vorbin::Bool, out_params::AbstractArray{<:Real,3}, 
     out_errs::AbstractArray{<:Real,4}, out_np_ssp::AbstractArray{Int,2})
 
     @showprogress @distributed for index ∈ spaxels
@@ -1282,7 +1282,7 @@ end
 
 
 # Helper function that loops over spaxels, fitting them in sequence (not parallel)
-function spaxel_loop_serial!(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxels::Vector{CartesianIndex{2}},
+function spaxel_loop_serial!(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxels::Vector,
     vorbin::Bool, out_params::AbstractArray{<:Real,3}, out_errs::AbstractArray{<:Real,4}, out_np_ssp::AbstractArray{Int,2})
 
     prog = Progress(length(spaxels))

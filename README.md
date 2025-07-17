@@ -70,32 +70,83 @@ This package has been developed and tested on macOS operating systems. The curre
 
 Recommended system specs are 16 GB of RAM and at least 4 CPU cores for the best performance. For running the software without any multiprocessing, the minimum requirements are 4 GB of RAM and 1 CPU core.
 
-### Julia Requirements
+### Installation Guide
 
-The current development version has been tested on Julia 1.10.9. It is recommended that you use the same version for this project, as I cannot guarantee it will work with earlier or later versions. To install within a unique project environment (recommended), first clone the repository:
+This guide will walk you through step-by-step on how to do a fresh installation of LOKI from scratch.  You can follow along here and decide how to set up your installation to best fit your needs.
+
+#### Step 1: Python dependencies
+
+LOKI is built with Julia, but it interfaces with some python libraries that don't have good Julia alternatives using the [PyCall.jl](https://github.com/JuliaPy/PyCall.jl) package.  These are, namely:
+
+- [matplotlib](https://matplotlib.org/) (v3.7.2)
+- [lineid_plot](https://github.com/phn/lineid_plot) (v0.6)
+- [vorbin](https://pypi.org/project/vorbin/) (v3.1.5)
+- [fsps](https://github.com/dfm/python-fsps) (v0.4.7)
+
+The first step is to set up a python environment with these packages installed so that LOKI can access them.  For example, here's one way you could set that up using a conda environment:
 
 ```bash
-git clone https://github.com/Michael-Reefe/Loki.jl
+$ conda create -n loki_env python=3.9
+$ conda activate loki_env
+$ conda install matplotlib==3.7.2
+$ pip install lineid_plot vorbin
 ```
 
-Then execute the following commands within the julia terminal:
+Then, installing FSPS requires a little additional setup, as shown below.  Note that you can skip installing FSPS if you don't plan on using stellar populations in your models.
 
-```
-julia> ]
-(@v1.10) pkg> activate Loki.jl
-(Loki) pkg> instantiate
-(Loki) pkg> precompile
+```bash
+$ export SPS_HOME="/path/to/download/fsps"
+$ git clone https://github.com/cconroy20/fsps.git $SPS_HOME
+$ pip install fsps
 ```
 
-The combined installation and precompilation of all dependencies can take a few minutes (roughly). The Julia package dependencies are listed in the `Project.toml` (and `Manifest.toml`) files and will be installed automatically. Once installed, back out of package mode with backspace, and then you can start using the package simply with:
+I would also recommend that you add the line that defines the `SPS_HOME` environment variable into your .bashrc file (or whatever the equivalent is for your terminal) so that it persists for future sessions.
 
+Once you've set up your environment, you should note down the location of the python binary, as we'll need it for later.  You can quickly check this with:
+
+```bash
+$ which python
 ```
+
+#### Step 2: Julia dependencies
+
+Next we'll need to install Julia itself. The current development version of LOKI has been tested on Julia 1.10.9. It is recommended that you use the same version for this project, as I cannot guarantee it will work with earlier or later versions. You can set this up by following the official installation instructions at https://julialang.org/install, and then setting Julia 1.10.9 as the default version:
+
+```bash
+$ curl -fsSL https://install.julialang.org | sh
+$ juliaup add 1.10.9
+$ juliaup default 1.10.9
+```
+
+Then, we can install LOKI itself by simply cloning the git repository and activating the project:
+
+```bash
+$ git clone https://github.com/Michael-Reefe/Loki.jl
+$ julia
+```
+```julia
+julia> using Pkg
+julia> Pkg.activate("Loki.jl")
+julia> Pkg.instantiate()
+julia> Pkg.precompile()
+```
+
+The combined installation and precompilation of all dependencies can take a few minutes (roughly).  The Julia package dependencies will be installed automatically (they are listed in the `Project.toml` and `Manifest.toml` files). Once this is done, we now need to link PyCall (which will have been installed) with the python environment we created earlier:
+
+```julia
+julia> using PyCall
+julia> ENV["PYTHON"] = "path/to/python/binary"
+julia> Pkg.build("PyCall")
 julia> using Loki
 ```
 
-Note: the first time you do this, it will also attempt to install the python dependencies. If you want to set up your own python environment for this, refer to the next section BEFORE running this command. Otherwise, run the above command to allow them to attempt to install automatically.
+#### Step 3: LaTeX
 
-In the future, when running julia, make sure you always activate the project before trying to import Loki. For example:
+Finally, LOKI assumes you have a local installation of LaTeX that can be used with matplotlib to generate nicely formatted axis labels and annotations.  Common LaTeX distributions include [TeX Live](https://www.tug.org/texlive/) and [MiKTeX](https://miktex.org/about). If you have no particular preference, I personally use the mac distribution of TeX Live, which can be found [here](https://www.tug.org/mactex/mactex-download.html).  
+
+#### How to import LOKI
+
+And that's that! In the future, when running Julia, make sure you always activate the project before trying to import Loki. For example:
 
 ```julia
 using Pkg
@@ -103,37 +154,33 @@ Pkg.activate("path/to/Loki.jl")
 using Loki
 ```
 
+(note that the path should point to the *folder* that contains the Loki.jl repository, not the actual file that is under `src/Loki.jl`. The ".jl" on the name is just a Julia package naming convention).
+
 Or simply start julia with the `project` command-line argument, which activates the project automatically:
 
+```bash
+$ julia --project=path/to/Loki.jl example_file.jl
 ```
-julia --project=path/to/Loki.jl example_file.jl
-```
 
-If you plan on utilizing the multiprocessing capabilities of LOKI, make sure you prepend your using statement by an `@everywhere` macro (from the `Distributed` module) to include it in all running processes! If using multiprocessing on hardware with limited RAM, you may also want to include the `--heap-size-hint` command line argument to limit the memory usage of each julia process. Limiting each process to 4 GB has little to no effect on the performance, in my experience.
-
-### Python Requirements
-
-LOKI utilizes the PyCall package (https://github.com/JuliaPy/PyCall.jl) to run some python routines that do not currently have good Julia alternatives. As such, some additional setup is required to ensure that you have the right python packages installed in the PyCall environment. To set up PyCall, open a julia REPL in your desired project environment and input the following commands, replacing "path/to/python/binary" with the actual path to the python binary for the python environment you want to link with PyCall:
+If you plan on utilizing the multiprocessing capabilities of LOKI, make sure you prepend your using statement by an `@everywhere` macro (from the `Distributed` module) to include it in all running processes! If using multiprocessing on hardware with limited RAM, you may also want to include the `--heap-size-hint` command line argument to limit the memory usage of each julia process. Limiting each process to 4 GB has little to no effect on the performance, in my experience.  This would look like:
 
 ```julia
-julia> using Pkg
-julia> using PyCall
-julia> ENV["PYTHON"] = "path/to/python/binary"
-julia> Pkg.build("PyCall")
+using Distributed
+procs = addprocs(Sys.CPU_THREADS, exeflags="--heap-size-hint=4G")
+
+@everywhere begin
+    using Pkg
+    Pkg.activate("path/to/Loki.jl")
+    using Loki
+end
+
+# do stuff
+
+rmprocs(procs)
 ```
+The `rmprocs` function kills the worker processes - make sure you call it once you've finished doing all of your multiprocessing computations.
 
-Alternatively, you can set `ENV["PYTHON"] = ""` which will link PyCall to a new, self-contained conda environment managed by PyCall. If you choose this option, the python dependencies for LOKI should be automatically installed to the PyCall environment upon your first time running the LOKI package (as explained above). Otherwise, if you've linked it with a preexisting environment, make sure you manually install the following python dependencies with pip or conda:
-
-- [matplotlib](https://matplotlib.org/) (v3.7.2)
-- [lineid_plot](https://github.com/phn/lineid_plot) (v0.6)
-- [fsps](https://github.com/dfm/python-fsps) (v0.4.3)
-- [vorbin](https://pypi.org/project/vorbin/) (v3.1.5)
-
-### LaTeX
-
-Finally, LOKI assumes you have an installation of LaTeX that can be used with matplotlib to generate nicely formatted axis labels and annotations.  Common LaTeX distributions include [TeX Live](https://www.tug.org/texlive/) and [MiKTeX](https://miktex.org/about). Whichever you choose, you should also make sure that you have the siunitx package installed, since some of LOKI's plotting functionality makes use of it. It's fairly standard and it comes with both of the aforementioned distributions by default.
-
----
+Now that you've (hopefully) got LOKI installed, to get started you might want to check out the example guide in [Section V](#v-examples), and/or the example jupyter notebooks under the `examples/` directory.  These are good places to get an initial feel for how the code works and the workflow of using it.  Once you feel more confident about the general structure, you can look at the other sections in this README, which go over in detail all of the options that you may or may not want to change, and give an overview of the output directory and files.  GL;HF!
 
 ## III. Usage
 

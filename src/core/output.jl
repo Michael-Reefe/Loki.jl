@@ -11,6 +11,9 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
     spaxels = CartesianIndices(size(out_params)[1:2])
 
     firsti = findfirst(index->any(isfinite.(out_params[index, :])), spaxels)
+    if !isnothing(cube_fitter.cube.voronoi_bins)
+        firsti = CartesianIndex(cube_fitter.cube.voronoi_bins[firsti])
+    end
     spax = make_normalized_spaxel(cube_data, firsti, cube_fitter; use_ap=aperture, 
         use_vorbins=!isnothing(cube_fitter.cube.voronoi_bins))
     spax_model = spax
@@ -63,7 +66,11 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
         # Set the 2D parameter map outputs
         # First re-evaluate the model and grab the normalizations we need
         pc = cube_fitter.n_params_cont + 1
-        spax = make_normalized_spaxel(cube_data, index, cube_fitter; use_ap=aperture, 
+        iindex = index
+        if !isnothing(cube_fitter.cube.voronoi_bins)
+            iindex = CartesianIndex(cube_fitter.cube.voronoi_bins[index])
+        end
+        spax = make_normalized_spaxel(cube_data, iindex, cube_fitter; use_ap=aperture, 
             use_vorbins=!isnothing(cube_fitter.cube.voronoi_bins))
         spax_model = copy(spax)
         if length(cube_fitter.spectral_region.gaps) > 0
@@ -1015,7 +1022,7 @@ function write_fits_full_model(cube_fitter::CubeFitter, cube_data::NamedTuple, c
             write_key(f["CONTINUUM.DUST.$i"], "BUNIT", Iunit)
         end
         if fopt.fit_sil_emission
-            write(f, Float32.(permutedims(ustrip.(cube_model.hot_dust, (2,3,1)))); name="CONTINUUM.HOT_DUST") # Hot dust model
+            write(f, Float32.(permutedims(ustrip.(cube_model.hot_dust), (2,3,1))); name="CONTINUUM.HOT_DUST") # Hot dust model
             write_key(f["CONTINUUM.HOT_DUST"], "BUNIT", Iunit)
         end
         for (q, tp) ∈ enumerate(cube_fitter.template_names)

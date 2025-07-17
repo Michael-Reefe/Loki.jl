@@ -174,7 +174,7 @@ end
 
 
 function make_normalized_spaxel(cube_data::NamedTuple, coords::CartesianIndex, cube_fitter::CubeFitter;
-    use_ap::Bool=false, use_vorbins::Bool=false, σ_min::Vector=zeros(eltype(cube_data.σ), length(cube_data.σ)))
+    use_ap::Bool=false, use_vorbins::Bool=false, σ_min::Vector=zeros(eltype(cube_data.σ), size(cube_data.σ)[end]))
 
     fopt = fit_options(cube_fitter)
 

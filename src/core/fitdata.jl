@@ -508,7 +508,7 @@ function collect_cont_fit_results(res_1::CMPFit.Result, p1fix_tied::Vector{<:Rea
     result_stellar = nothing
     if fopt.fit_stellar_continuum
         _, _, norms = model_continuum(spaxel, spaxel.N, ustrip.(popt), [punit_1[1:end-2]; punit_2], cube_fitter, 
-            fopt.use_pah_templates, true, true, true)
+            false, true, true, true)
         result_stellar = calculate_stellar_parameters(cube_fitter, norms, spaxel.N)
     end
     spaxel_model = copy(spaxel)

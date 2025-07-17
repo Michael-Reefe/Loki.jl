@@ -744,6 +744,16 @@ function log_rebin!(cube::DataCube, z::Real, factor::Integer=1)
             ch_mask = Spline1D(ustrip.(cube.λ), cube.spectral_region.channel_masks[i], k=1)(ustrip.(λ_out)) .> 0
             cube.spectral_region.channel_masks[i] = ch_mask
         end
+        # this is a dumb lazy way to do it so we have to make sure there's no pixels where more than one channel mask is set 
+        for i in eachindex(λ_out)
+            chmaski = [cube.spectral_region.channel_masks[j][i] for j in eachindex(cube.spectral_region.channel_masks)]
+            if sum(chmaski) > 1
+                ind = findfirst(chmaski)
+                for k in ind+1:length(chmaski)
+                    cube.spectral_region.channel_masks[k][i] = 0
+                end
+            end
+        end
         # set them back into the cube object
         cube.λ = λ_out
         cube.I = I_out
@@ -1010,7 +1020,7 @@ function voronoi_rebin!(cube::DataCube, target_SN::Real)
     x = x[.~mask]
     y = y[.~mask]
     # make sure signals are nonnegative
-    signal = clamp.(signal, 0*unit(signal), Inf*unit(signal))
+    signal = clamp.(signal, 0*unit(signal[1]), Inf*unit(signal[1]))
     # perform voronoi rebinning
     bin_numbers, = voronoi2Dbinning(x, y, ustrip.(signal), ustrip.(noise), target_SN, 1.0, WeightedVoronoi())
     # reformat bin numbers as a 2D array so that we don't need the x/y vectors anymore
@@ -2115,22 +2125,22 @@ function resample_channel_wavelengths!(λ_out::Vector{<:QWave}, jumps::Vector{<:
                 psf_resamp = resample_flux_permuted3D(λ_resamp, λ_out[i1:i2][ss], psf_out[:, :, (i1:i2)[ss]])
             end
             # replace overlapping regions in outputs
-            λ_con = [λ_con; λ_out[prev_i2:i1-1]; λ_resamp]
-            I_con = cat(I_con, I_out[:, :, prev_i2:i1-1], I_resamp, dims=3)
-            σ_con = cat(σ_con, σ_out[:, :, prev_i2:i1-1], σ_resamp, dims=3)
-            mask_con = cat(mask_con, mask_out[:, :, prev_i2:i1-1], mask_resamp, dims=3)
+            λ_con = [λ_con; λ_out[prev_i2+1:i1-1]; λ_resamp]
+            I_con = cat(I_con, I_out[:, :, prev_i2+1:i1-1], I_resamp, dims=3)
+            σ_con = cat(σ_con, σ_out[:, :, prev_i2+1:i1-1], σ_resamp, dims=3)
+            mask_con = cat(mask_con, mask_out[:, :, prev_i2+1:i1-1], mask_resamp, dims=3)
             if do_psf_model
-                psf_con = cat(psf_con, psf_out[:, :, prev_i2:i1-1], psf_resamp, dims=3)
+                psf_con = cat(psf_con, psf_out[:, :, prev_i2+1:i1-1], psf_resamp, dims=3)
             end
             prev_i2 = i2
         end
 
-        λ_out = [λ_con; λ_out[prev_i2:end]]
-        I_out = cat(I_con, I_out[:, :, prev_i2:end], dims=3)
-        σ_out = cat(σ_con, σ_out[:, :, prev_i2:end], dims=3)
-        mask_out = cat(mask_con, mask_out[:, :, prev_i2:end], dims=3)
+        λ_out = [λ_con; λ_out[prev_i2+1:end]]
+        I_out = cat(I_con, I_out[:, :, prev_i2+1:end], dims=3)
+        σ_out = cat(σ_con, σ_out[:, :, prev_i2+1:end], dims=3)
+        mask_out = cat(mask_con, mask_out[:, :, prev_i2+1:end], dims=3)
         if do_psf_model
-            psf_out = cat(psf_con, psf_out[:, :, prev_i2:end], dims=3)
+            psf_out = cat(psf_con, psf_out[:, :, prev_i2+1:end], dims=3)
         end
     end
 
@@ -2157,6 +2167,14 @@ function resample_channel_wavelengths!(λ_out::Vector{<:QWave}, jumps::Vector{<:
     else
         @warn "The wavelength dimension has not be resampled to be linear when concatenating multiple full channels! " *
               "Only overlapping regions between channels have been resampled to a median resolution!"
+    end
+
+    # fix some weirdness that may happen to the pixel mask at channel boundaries
+    dmask = diff(sumdim(mask_out, (1,2)))
+    dmask = [dmask[1]; dmask]
+    bad = findall(dmask .> 100)
+    for b in bad[bad .> 1]
+        mask_out[:,:,b] .= mask_out[:,:,b-1]
     end
 
     λ_out, I_out, σ_out, mask_out, psf_out
@@ -2329,10 +2347,16 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
         obs.channels[channels[output_wcs_frame]].θ_sky, psf_fwhm_out, 
         lsf_fwhm_out, wcs_optimal_3d, "MULTIPLE", "MULTIPLE",
         user_mask, gap_mask, obs.rest_frame, obs.z, obs.masked, obs.vacuum_wave, 
-        obs.log_binned, obs.dereddened, obs.sky_aligned,
+        false, obs.dereddened, obs.sky_aligned,
         obs.channels[channels[output_wcs_frame]].voronoi_bins, format, 
         instrument_channel_edges
     )
+
+    # redo log binning if necessary
+    if obs.log_binned
+        @info "Redoing logarithmic wavelength binning..."
+        log_rebin!(obs)
+    end
 
     @info "Done!"
 end
