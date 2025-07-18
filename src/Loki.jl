@@ -97,6 +97,10 @@ const channel_boundaries = [5.7, 6.58, 7.58, 8.72, 10.075, 11.625, 13.39, 15.49,
 const channel_edges = [4.90, 5.74, 5.66, 6.63, 6.53, 7.65, 7.51, 8.77, 8.67, 10.13, 10.02, 11.70, 11.55, 
                        13.47, 13.34, 15.57, 15.41, 17.98, 17.70, 20.95, 20.69, 24.48, 24.40, 27.90] .* u"μm"
 
+# NIRSPEC channel boundaries
+const channel_boundaries_nir = [0.97, 1.775, 3.02] .* u"μm"
+const channel_edges_nir = [0.9, 1.27, 0.97, 1.89, 1.66, 3.17, 2.87, 5.27] .* u"μm"
+const chip_gaps_nir = [(1.40780, 1.48580) .* u"μm", (2.36067, 2.49153) .* u"μm", (3.98276, 4.20323) .* u"μm"]
 
 # Have to import certain python modules within the __init__ function so that it works after precompilation,
 # so these PyNULL constants are just placeholders before that happens

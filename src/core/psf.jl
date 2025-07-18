@@ -8,24 +8,26 @@ in the `psf_model_dir` directory, which are then averaged and shifted such that 
 may also be interpolated over the 12.22 um region to correct for the spectral leak artifact. The final PSF model outputs are normalized such that each wavelength slice 
 integrates to 1.  The DataCube object is modified in-place with the PSF model, and the PSF model is also returned by the function.
 """
-function generate_psf_model!(cube::DataCube, psf_model_dir::String=""; interpolate_leak_artifact::Bool=true, z::Real=0.)
+function generate_psf_model!(cube::DataCube, instrument::String, psf_model_dir::String=""; interpolate_leak_artifact::Bool=true, z::Real=0.)
 
     # Load in data from observations of bright stars (HD 163466, HD 37962, 16 Cyg B)
     hdus = []
-    if psf_model_dir == ""
+    if (instrument == "MIRI") && (psf_model_dir == "")
         psf_model_dir = joinpath(@__DIR__, "..", "templates", "psfs_stars")
+    elseif (instrument == "NIRSPEC") && (psf_model_dir == "")
+        psf_model_dir = joinpath(@__DIR__, "..", "templates", "psfs_stars_nirspec")
+    else 
+        error("generate_psf_model! is only supported for MIRI/MRS or NIRSPEC/IFU observations!")
     end
     files = glob(joinpath("**", "*.fits"), psf_model_dir)
-    bands = Dict("SHORT" => 'A', "MEDIUM" => 'B', "LONG" => 'C')
     for file ∈ sort(files)
-        m = match(Regex("(.+?)(ch$(cube.channel)[-_.]?$(cube.band))(.+?).fits?", "i"), file)
+        m = match(Regex("(.+?)($(cube.channel)[-_.]?$(cube.band))(.+?).fits?", "i"), file)
         if !isnothing(m)
             push!(hdus, FITS(file))
         end
     end
 
     # Make sure the input cube is aligned to the IFU axes and not the sky axes
-    chband = Symbol("$(bands[cube.band])$(cube.channel)")
     @assert !cube.sky_aligned "Must input an IFU-aligned datacube, not a sky-aligned one! (The cubes can be rotated later)"
 
     @info "Loading $(length(hdus)) PSF models from $psf_model_dir..."
@@ -134,36 +136,40 @@ function generate_psf_model!(cube::DataCube, psf_model_dir::String=""; interpola
 
     # Interpolate over the 12.22 μm region to account for the JWST spectral leak artifact,
     # which is very prominent for blue sources such as these stars
-    if interpolate_leak_artifact && (chband == :A3)
-        @info "Interpolating over the 12.22um spectral leak artifact"
+    if instrument == "MIRI"
+        bands = Dict("SHORT" => 'A', "MEDIUM" => 'B', "LONG" => 'C')
+        chband = Symbol("$(bands[cube.band])$(cube.channel)")
+        if interpolate_leak_artifact && (chband == :A3)
+            @info "Interpolating over the 12.22um spectral leak artifact"
 
-        # Get the OBSERVED frame wavelengths
-        λ = copy(cube.λ)
-        if cube.rest_frame
-            if iszero(z)
-                error("The input cube is already in the rest frame. Please input the redshift using the keyword argument `z` so that the " * 
-                      "observed-frame wavelengths can be recalculated, or input a cube that is in the observed frame.")
+            # Get the OBSERVED frame wavelengths
+            λ = copy(cube.λ)
+            if cube.rest_frame
+                if iszero(z)
+                    error("The input cube is already in the rest frame. Please input the redshift using the keyword argument `z` so that the " * 
+                        "observed-frame wavelengths can be recalculated, or input a cube that is in the observed frame.")
+                end
+                λ .*= (1 .+ z)
             end
-            λ .*= (1 .+ z)
-        end
 
-        for c ∈ CartesianIndices(size(psf)[1:2])
+            for c ∈ CartesianIndices(size(psf)[1:2])
 
-            # Get indices to the left/right of the 12.22 μm leak
-            lind = argmin(abs.(λ .- 11.93u"μm"))
-            rind = argmin(abs.(λ .- 12.39u"μm"))
-            # Create widely spaced knots for the interpolation
-            Δλ = 0.1u"μm"
-            knots1 = λ[2]:Δλ:λ[lind]
-            knots2 = λ[rind]:Δλ:λ[end-1]
-            knots = [knots1; knots2]
-            # Only use the data to the left/right of the leak
-            λinterp = [λ[1:lind]; λ[rind:length(λ)]]
-            psfinterp = [psf[c, 1:lind]; psf[c, rind:length(λ)]]
-            interp = Spline1D(ustrip(λinterp), psfinterp, ustrip(knots), k=3, bc="extrapolate")
+                # Get indices to the left/right of the 12.22 μm leak
+                lind = argmin(abs.(λ .- 11.93u"μm"))
+                rind = argmin(abs.(λ .- 12.39u"μm"))
+                # Create widely spaced knots for the interpolation
+                Δλ = 0.1u"μm"
+                knots1 = λ[2]:Δλ:λ[lind]
+                knots2 = λ[rind]:Δλ:λ[end-1]
+                knots = [knots1; knots2]
+                # Only use the data to the left/right of the leak
+                λinterp = [λ[1:lind]; λ[rind:length(λ)]]
+                psfinterp = [psf[c, 1:lind]; psf[c, rind:length(λ)]]
+                interp = Spline1D(ustrip(λinterp), psfinterp, ustrip(knots), k=3, bc="extrapolate")
 
-            # Fill in the data in the leak region with the interpolation
-            psf[c, lind:rind] .= interp(ustrip(λ[lind:rind]))
+                # Fill in the data in the leak region with the interpolation
+                psf[c, lind:rind] .= interp(ustrip(λ[lind:rind]))
+            end
         end
     end
 
@@ -185,7 +191,7 @@ function generate_psf_model!(obs::Observation, psf_model_dir::String=""; interpo
     centroid_4c_4b::Bool=false)
 
     for ch in keys(obs.channels)
-        generate_psf_model!(obs.channels[ch], psf_model_dir; interpolate_leak_artifact=interpolate_leak_artifact, z=obs.z)
+        generate_psf_model!(obs.channels[ch], obs.instrument, psf_model_dir; interpolate_leak_artifact=interpolate_leak_artifact, z=obs.z)
     end
 
     # if centroid_4c_4b is true: do not trust the channel 4C centroiding

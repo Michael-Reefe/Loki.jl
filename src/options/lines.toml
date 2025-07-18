@@ -457,7 +457,32 @@ latex = "[Ni $\\textsc{iii}$]"
 annotate = true
 unit = "angstrom"
 
-####################################### MIR LINES ##################################################
+####################################### IR LINES ##################################################
+
+# Paschen Series (Hydrogen, n -> 3) Lines
+[lines.HI_Pa_alpha]
+wave = 1.8756133
+latex = "Pa$\\alpha$"
+annotate = true 
+unit = "um"
+
+[lines.HI_Pa_beta]
+wave = 1.2821587
+latex = "Pa$\\beta$"
+annotate = true
+unit = "um"
+
+[lines.HI_Pa_gamma]
+wave = 1.0941090
+latex = "Pa$\\gamma$"
+annotate = true 
+unit = "um"
+
+[lines.HI_Pa_delta]
+wave = 1.0052128
+latex = "Pa$\\delta$"
+annotate = true 
+unit = "um"
 
 # Brackett Series (Hydrogen, n -> 4) Lines
 [lines.HI_Br_alpha]
@@ -476,6 +501,12 @@ unit = "um"
 wave = 2.1661
 latex = "Br$\\gamma$"
 annotate = true
+unit = "um"
+
+[lines.HI_Br_delta]
+wave = 1.9450871
+latex = "Br$\\delta$"
+annotate = true 
 unit = "um"
 
 # Pfund Series (Hydrogen, n -> 5) Lines
@@ -538,6 +569,13 @@ unit = "um"
 wave = 4.673
 latex = "Hu$\\varepsilon$"
 annotate = false
+unit = "um"
+
+# Helium Lines
+[lines.HeI_1083m]
+wave = 1.083331
+latex = "He $\\textsc{i}$"
+annotate = true
 unit = "um"
 
 # Argon Lines

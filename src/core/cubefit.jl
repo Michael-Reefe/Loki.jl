@@ -77,6 +77,7 @@ curve is "calzetti".
 - `fit_covering_frac`: Whether or not to fit a dust covering fraction in the attenuation profile. Only applies if the
 extinction curve is "calzetti".
 - `tie_template_amps`: If true, the template amplitudes in each channel are tied to the same value. Otherwise they may have separate
+- `nirspec_mask_chip_gaps`: If true, will mask data between the gaps in the NIRSpec chips.
 normalizations in each channel. By default this is false.
 - `decompose_lock_column_densities`: If true and if using the "decompose" extinction profile, then the column densities for
 pyroxene and forsterite (N_pyr and N_for) will be locked to their values after the initial fit to the integrated spectrum over all 
@@ -120,6 +121,7 @@ mutable struct FittingOptions{T<:Real,S<:Integer} <: Options
     tie_template_amps::Bool
     lock_hot_dust::Bool
     F_test_ext::Bool
+    nirspec_mask_chip_gaps::Bool
     decompose_lock_column_densities::Bool
     n_bootstrap::S
     random_seed::S
@@ -413,6 +415,7 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
             out[:tie_template_amps],
             out[:lock_hot_dust],
             out[:F_test_ext],
+            out[:nirspec_mask_chip_gaps],
             out[:decompose_lock_column_densities],
             out[:n_bootstrap],
             out[:random_seed],
@@ -555,6 +558,10 @@ function cubefitter_add_default_options!(cube::DataCube, out::Dict)
     # check for F test for extinction
     if !haskey(out, :F_test_ext)
         out[:F_test_ext] = false
+    end
+
+    if !haskey(out, :nirspec_mask_chip_gaps)
+        out[:nirspec_mask_chip_gaps] = false
     end
 
 end

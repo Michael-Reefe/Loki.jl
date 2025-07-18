@@ -212,6 +212,23 @@ function get_total_integrated_intensities(cube_fitter::CubeFitter; shape::Union{
     for s in 1:cube_fitter.n_templates
         templates[:,s] .= sumdim(ustrip.(cube_fitter.templates), (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2)) .* Iunit
     end
+
+    # Mask out the chip gaps in NIRSPEC observations 
+    if fit_options(cube_fitter).nirspec_mask_chip_gaps
+        λobs = cube_fitter.cube.λ .* (1 .+ cube_fitter.z)
+        for chip_gap in chip_gaps_nir
+            mask = (chip_gap[1] .< λobs .< chip_gap[2])
+            I[mask] .= NaN .* Iunit
+            σ[mask] .= NaN .* Iunit
+            edges = findall(diff(mask) .≠ 0)
+            if length(edges) > 0
+                area_sr[mask] .= area_sr[max(edges[1]-1,1)]
+            end
+            for s in 1:cube_fitter.n_templates
+                templates[mask,s] .= NaN .* Iunit
+            end
+        end
+    end
     I, σ, templates = fill_bad_pixels(I, σ, templates)
 
     if !isnothing(shape)
@@ -262,6 +279,27 @@ function get_aperture_integrated_intensities(cube_fitter::CubeFitter, shape::Tup
             Ft_ap = photometry(aperture[z], Ftz).aperture_sum
             templates[1,1,z,s] = Ft_ap / area_sr[1,1,z]
         end
+    end
+
+    # Mask out the chip gaps in NIRSPEC observations 
+    if fit_options(cube_fitter).nirspec_mask_chip_gaps
+        λobs = cube_fitter.cube.λ .* (1 .+ cube_fitter.z)
+        for chip_gap in chip_gaps_nir
+            mask = (chip_gap[1] .< λobs .< chip_gap[2])
+            I[1,1,mask] .= NaN .* unit(I[1])
+            σ[1,1,mask] .= NaN .* unit(I[1])
+            edges = findall(diff(mask) .≠ 0)
+            if length(edges) > 0
+                area_sr[1,1,mask] .= area_sr[1,1,max(edges[1]-1,1)]
+            end
+            for s in 1:cube_fitter.n_templates
+                templates[1,1,mask,s] .= NaN .* unit(I[1])
+            end
+        end
+        I, σ, templates = fill_bad_pixels(I[1,1,:], σ[1,1,:], templates[1,1,:,:])
+        I = reshape(I, shape...)
+        σ = reshape(σ, shape...)
+        templates = reshape(templates, shape..., cube_fitter.n_templates)
     end
 
     I, σ, templates, area_sr

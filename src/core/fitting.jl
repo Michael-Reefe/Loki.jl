@@ -1141,6 +1141,17 @@ function fit_stack!(cube_fitter::CubeFitter)
     mask_chi2_init = mask_bad_init
     σ_sum_init .= calculate_statistical_errors(I_sum_init, I_spline_init, mask_init)
 
+    # Mask out the chip gaps in NIRSPEC observations 
+    # (they would technically work considering we are measuring surface brightness and not flux, but in practice it doesn't because 
+    # we are covering up regions that may drastically differ in brightness across different spatial regions in the cube, so it leads 
+    # to aritifical dips in the continuum)
+    if fit_options(cube_fitter).nirspec_mask_chip_gaps
+        λobs = λ_init .* (1 .+ cube_fitter.z)
+        for chip_gap in chip_gaps_nir
+            mask_bad_init .|= (chip_gap[1] .< λobs .< chip_gap[2])
+        end
+    end
+
     # Get the normalization
     norm = abs(nanmaximum(ustrip.(I_sum_init))) .* unit(I_sum_init[1])
     norm = norm ≠ 0. ? norm : 1.
