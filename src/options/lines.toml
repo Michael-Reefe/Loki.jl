@@ -939,10 +939,10 @@ default = "Voigt"
 # of profile it should be. Can add an arbitrary number of additional components.
 [acomps]
 
-H2 = ["Voigt"]
-lo = ["Voigt"]
-med = ["Voigt"]
-hi = ["Voigt"]
+# H2 = ["Voigt"]
+# lo = ["Voigt"]
+# med = ["Voigt"]
+# hi = ["Voigt"]
 
 # optional: add [parameters] keywords to specify individual line priors that 
 # are different from the defaults
