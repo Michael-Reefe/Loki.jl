@@ -336,7 +336,7 @@ function get_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, Î
 
     # Templates
     if fopt.fit_temp_multexp
-        inds = fast_indexin("continuum.templates.amp_" .* string.(1:4), pnames)
+        inds = fast_indexin("templates.amp_" .* string.(1:4), pnames)
         pâ‚€[inds] .= 0.25
     end
 

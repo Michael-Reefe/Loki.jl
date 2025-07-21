@@ -1,6 +1,6 @@
 # LOKI: Likelihood Optimization of gas Kinematics in IFUs
 
-### A Julia package for fitting and plotting IFU spectra in the mid-infrared or optical
+### A Julia package for fitting and plotting IFU spectra in the infrared, optical, and ultraviolet.
 
 ---
 ## Table of Contents
@@ -48,7 +48,7 @@ As a brief overview, all components that may be included in a model based on the
 - Warm silicate dust emission at $T \in$ 800-1600 K from an AGN torus using the simplified radiative transfer model of [Gallimore et al. (2010)](https://ui.adsabs.harvard.edu/abs/2010ApJS..187..172G)
 - Emission lines from hydrogen recombination, molecular H<sub>2</sub>, and ionized species, modeled using Gaussian, Lorentzian, Gauss-Hermite, or pseudo-Voigt profiles.
 
-Templates for the point-spread function (PSF) may also be included in the model with fitted normalizations. These may be used, for example, to model out and subtract the contamination from a nuclear quasar spectrum dispersed by the PSF. The code contains routines for creating templates in such a scenario. PSF templates are provided in the `src/templates/psfs_stars` directory, which have been created using observations of the bright calibration star 16 Cyg B. There are also templates generated from models using `webbpsf` in the `src/templates/webbpsf` directory.
+Templates for the point-spread function (PSF) may also be included in the model with fitted normalizations. These may be used, for example, to model out and subtract the contamination from a nuclear quasar spectrum dispersed by the PSF. The code contains routines for creating templates in such a scenario. PSF templates are provided for MIRI in the `src/templates/psfs_stars` directory, which have been created using observations of the bright calibration star 16 Cyg B, and for NIRSpec in the `src/templates/psfs_stars_nirspec` directory, which have been created using the star P330E. There are also templates generated from models using `webbpsf` in the `src/templates/webbpsf` directory.
 
 Note that the code is very flexible and many of these continuum options can be changed, adjusted, or added/removed to fit one's individual needs. Be cautious, however, as certain model components should not be used together with each other (for example, a power law should not be used in conjunction with the warm silicate dust emission component, since they model the same thing). The code uses the [MPFIT](https://pages.physics.wisc.edu/~craigm/idl/cmpfit.html) ([Markwardt 2009](https://ui.adsabs.harvard.edu/abs/2009ASPC..411..251M)) implementation of the Levenberg-Marquardt (LM) least-squares minimization routine, as well as the simulated annealing (SA) global minimization method as implemented by [Optim.jl](https://github.com/JuliaNLSolvers/Optim.jl), and optionally may estimate uncertainties using bootstrapping. Depending on how the code is configured, the fitting procedure may be performed in multiple steps (up to 3). By default, the configuration contains three steps:
 1. The emission lines are masked and the continuum + PAH features are fit; the PAHs use templates
@@ -118,7 +118,13 @@ $ juliaup add 1.10.9
 $ juliaup default 1.10.9
 ```
 
-Then, we can install LOKI itself by simply cloning the git repository and activating the project:
+Then, we can install LOKI itself by simply cloning the git repository and activating the project. Before we do this, note that if you'd like to install the PSF templates and the data files needed to run the example notebooks, you'll need to have Git Large File Storage (LFS) set up as well.  You can follow the instructions at https://git-lfs.com to install it.  Make sure after installing you've set it up to talk with git by running:
+
+```bash
+git lfs install
+```
+
+Then we can clone the repository and install it:
 
 ```bash
 $ git clone https://github.com/Michael-Reefe/Loki.jl
@@ -424,6 +430,10 @@ Oftentimes one may desire to sort the components of lines fit with more than 1 p
 
 A boolean option that, if enabled, locks the hottest dust continuum component to 0 in the MIR. By default, this option is enabled if there are any templates in the fit, and disabled if there are no templates, but it can be overriden to whatever the user wants. The idea
 is that an AGN template should be used to fit the hotter dust components and the other dust components should be from the host galaxy.
+
+`nirspec_mask_chip_gaps`
+
+This is a boolean option that, if enabled, will forcefully mask out the full extent of the chip gaps in NIRSpec spectra.  This will make sure that when fitting any integrated regions larger than a single spaxel (i.e. apertures, voronoi bins, or the initial integrated fit over the whole FOV) the chip gap regions will be fully masked out.  This is necessary because the wavelengths of the chip gaps vary based on the position in the IFU, so when making integrated spectra, in regions where some spaxels are masked and others aren't, it can create artifical dips or peaks in the continuum.  The "nirspec_mask_chip_gaps" options masks out the maximum extent of the chip gaps over all of the IFU positions (but again, only when fitting regions larger than a single spaxel).  Note: this option must be enabled *manually* and is always off by default.  This is because certain NIRSpec configurations (i.e. with the medium-resolution gratings) do not have chip gaps and so it is beneficial to keep this option disabled.
 
 ### ii. IR Continuum and PAH Options
 These options are found in `src/options/infrared.toml`
@@ -1259,7 +1269,7 @@ The units of outputs for different quantities are listed here. When relevant, ou
 ---
 
 ## V. Examples
-Please see `examples/example.ipynb` for a full example notebook for MIR data.
+Please see `examples` folder for a bunch of example notebooks for using MIRI/MRS data, NIRSpec/IFU data, and non-JWST data.
 
 The main steps one must follow to fit a cube using LOKI are as follows:
 1. Load in the LOKI module following the instructions in [Installation](#ii-installation). Then include it in your code:

@@ -222,7 +222,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
 
     if haskey(s.aux, "templates") && haskey(s.aux, "channel_masks") && size(s.aux["templates"], 2) > 0
         temp_norm, dp = get_normalized_templates(λ, params, s.aux["templates"], s.aux["channel_masks"], 
-        fopt.fit_temp_multexp, pᵢ)
+            fopt.fit_temp_multexp, pᵢ)
         for i in axes(temp_norm, 2)
             comps["templates_$i"] = temp_norm[:,i]
         end

@@ -187,6 +187,9 @@ function get_continuum_for_line_fit(spaxel::Spaxel, cube_fitter::CubeFitter, I_c
             if contains(comp, "templates_")
                 temp_cont .+= comps_cont[comp]
             end
+            if comp == "SSPs"
+                temp_cont .+= comps_cont[comp] .* comps_cont["total_extinction_stars"]
+            end
         end
         # do cubic spline fit to the template-subtracted data
         _, notemp_cont = continuum_cubic_spline(spaxel.λ, spaxel.I .- temp_cont, zeros(eltype(line_cont), length(line_cont)), 

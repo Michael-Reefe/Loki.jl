@@ -1572,8 +1572,13 @@ function from_fits(filenames::Vector{String}, z::Real=0.; user_mask=nothing)
             channels[Symbol(bands[cube.band] * cube.channel[end:end])] = cube
             continue
         end
-        if (format == :NIRSPEC) && (cube.band in gratings_nir) && (cube.channel in filters_nir)
-            channels[Symbol(cube.band * "_" * cube.channel)] = cube
+        if (format == :NIRSPEC) && (cube.band in gratings_nir) && (
+            (cube.channel in filters_nir) || 
+            (cube.channel in ("G140M_F070LP", "G140M_F100LP", "G235M_F170LP", "G395M_F290LP")) ||
+            (cube.channel in ("G140H_F070LP", "G140H_F100LP", "G235H_F170LP", "G395H_F290LP")) || 
+            (cube.channel == "PRISM_CLEAR")
+            )
+            channels[Symbol(cube.band * "_" * split(cube.channel, "_")[end])] = cube
             continue
         end
         try
@@ -1994,7 +1999,8 @@ This is essentially convolving the data with a tophat kernel, and it may be nece
 - `channels=nothing`: The list of channels to be rebinned. If nothing, rebin all channels.
 - `ap_r::Real`: The size of the aperture to extract from at each spaxel, in units of the PSF FWHM.
 """
-function extract_from_aperture!(obs::Observation, channels::Vector, ap_r::Real; output_wcs_frame::Integer=1)
+function extract_from_aperture!(obs::Observation, channels::Vector, ap_r::Real; output_wcs_frame::Integer=1,
+    conical::Bool=false)
 
     pixel_scale = uconvert(u"arcsecond", sqrt(obs.channels[channels[output_wcs_frame]].Ω))
 
@@ -2009,7 +2015,11 @@ function extract_from_aperture!(obs::Observation, channels::Vector, ap_r::Real; 
         @info "Channel $ch_in: Extracting from an aperture of size $ap_r x FWHM..."
         @showprogress for wi in axes(obs.channels[ch_in].I, 3)
             # aperture radius in units of the PSF FWHM
-            ap_size = ap_r * obs.channels[ch_in].psf[wi] / pixel_scale
+            if conical
+                ap_size = ap_r * obs.channels[ch_in].psf[wi] / pixel_scale
+            else
+                ap_size = ap_r * maximum(obs.channels[ch_in].psf) / pixel_scale
+            end
 
             for c ∈ CartesianIndices(size(obs.channels[ch_in].I)[1:2])
                 aperture_spax = CircularAperture(c.I..., ap_size)
