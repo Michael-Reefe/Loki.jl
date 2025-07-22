@@ -197,11 +197,11 @@ Now that you've (hopefully) got LOKI installed, to get started you might want to
 Otherwise, if you don't use VSCode, you can run jupyter through Julia via:
 
 ```bash
-julia -e "using IJulia; notebook()"
+julia --project=path/to/Loki.jl -e "using IJulia; notebook()"
 ```
 or to use JupyterLab:
 ```bash 
-julia -e "using IJulia; jupyterlab()"
+julia --project=path/to/Loki.jl -e "using IJulia; jupyterlab()"
 ```
 
 Once you feel more confident about the general structure, you can look at the other sections in this README, which go over in detail all of the options that you may or may not want to change, and give an overview of the output directory and files.  GL;HF!
