@@ -9,7 +9,8 @@ tie_voigt_mixing = true     # tie the Voigt mixing ratios of all lines
 
 # Tie molecular Hydrogen lines
 kinematic_group_H2 = [
-    "H200_"
+    "H200_",
+    "H210_"
 ]
 
 # Atomic hydrogen recombination lines
@@ -40,6 +41,7 @@ kinematic_group_lo = [
     "ArII_",
     "NeII_",
     "FeII_",
+    "OI_",
     "OII_",
     "SII_",
     "SIII_",
@@ -457,7 +459,32 @@ latex = "[Ni $\\textsc{iii}$]"
 annotate = true
 unit = "angstrom"
 
-####################################### MIR LINES ##################################################
+####################################### IR LINES ##################################################
+
+# Paschen Series (Hydrogen, n -> 3) Lines
+[lines.HI_Pa_alpha]
+wave = 1.8756133
+latex = "Pa$\\alpha$"
+annotate = true 
+unit = "um"
+
+[lines.HI_Pa_beta]
+wave = 1.2821587
+latex = "Pa$\\beta$"
+annotate = true
+unit = "um"
+
+[lines.HI_Pa_gamma]
+wave = 1.0941090
+latex = "Pa$\\gamma$"
+annotate = true 
+unit = "um"
+
+[lines.HI_Pa_delta]
+wave = 1.0052128
+latex = "Pa$\\delta$"
+annotate = true 
+unit = "um"
 
 # Brackett Series (Hydrogen, n -> 4) Lines
 [lines.HI_Br_alpha]
@@ -476,6 +503,12 @@ unit = "um"
 wave = 2.1661
 latex = "Br$\\gamma$"
 annotate = true
+unit = "um"
+
+[lines.HI_Br_delta]
+wave = 1.9450871
+latex = "Br$\\delta$"
+annotate = true 
 unit = "um"
 
 # Pfund Series (Hydrogen, n -> 5) Lines
@@ -540,6 +573,13 @@ latex = "Hu$\\varepsilon$"
 annotate = false
 unit = "um"
 
+# Helium Lines
+[lines.HeI_1083m]
+wave = 1.083331
+latex = "He $\\textsc{i}$"
+annotate = true
+unit = "um"
+
 # Argon Lines
 [lines.ArVI_4529m]
 wave = 4.529520
@@ -579,6 +619,18 @@ annotate = true
 unit = "um"
 
 # Iron Lines
+[lines.FeII_1252m]
+wave = 1.257
+latex = "[Fe $\\textsc{ii}$]"
+annotate = true 
+unit = "um"
+
+[lines.FeII_1644m]
+wave = 1.644
+latex = "[Fe $\\textsc{ii}$]"
+annotate = true 
+unit = "um"
+
 # [lines.FeII_4889m]
 # wave = 4.889137
 # latex = "[Fe $\\textsc{ii}$]"
@@ -647,6 +699,12 @@ unit = "um"
 # unit = "um"
 
 # Magnesium Lines
+[lines.MgVII_3027m]
+wave = 3.027
+latex = "[Mg $\\textsc{vii}$]"
+annotate = true 
+unit = "um"
+
 [lines.MgIV_4867m]
 wave = 4.486680
 latex = "[Mg $\\textsc{iv}$]"
@@ -723,6 +781,12 @@ annotate = false
 unit = "um"
 
 # Oxygen Lines
+[lines.OI_1129m]
+wave = 1.129
+latex = "[O $\\textsc{i}$]"
+annotate = true 
+unit = "um"
+
 [lines.OIV_25890m]
 wave = 25.890300
 latex = "[O $\\textsc{iv}$]"
@@ -757,6 +821,60 @@ annotate = true
 unit = "um"
 
 # Molecular Hydrogen Lines
+[lines.H210_S5]
+wave = 1.8358
+latex = "H$_2$ 1-0 $S(5)$"
+annotate = false
+unit = "um"
+
+[lines.H210_S4]
+wave = 1.8920
+latex = "H$_2$ 1-0 $S(4)$"
+annotate = false 
+unit = "um"
+
+[lines.H210_S3]
+wave = 1.9576
+latex = "H$_2$ 1-0 $S(3)$"
+annotate = false 
+unit = "um"
+
+[lines.H210_S2]
+wave = 2.0338
+latex = "H$_2$ 1-0 $S(2)$"
+annotate = true
+unit = "um"
+
+[lines.H210_S1]
+wave = 2.1218
+latex = "H$_2$ 1-0 $S(1)$"
+annotate = true 
+unit = "um"
+
+[lines.H210_S0]
+wave = 2.2235
+latex = "H$_2$ 1-0 $S(0)$"
+annotate = true 
+unit = "um"
+
+[lines.H200_S11]
+wave = 4.1810
+latex = "H$_2$ 0-0 $S(11)$"
+annotate = true 
+unit = "um"
+
+[lines.H200_S10]
+wave = 4.4096
+latex = "H$_2$ 0-0 $S(10)$"
+annotate = true 
+unit = "um"
+
+[lines.H200_S9]
+wave = 4.6947
+latex = "H$_2$ 0-0 $S(9)$"
+annotate = true 
+unit = "um"
+
 [lines.H200_S8]
 wave = 5.05312
 latex = "H$_2$ 0-0 $S(8)$"

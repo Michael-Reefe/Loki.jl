@@ -14,6 +14,20 @@ using the "correct" function.  The data should then be handed off to the structs
 @inline mrs_lsf(λ::Quantity) = uconvert(u"km/s", C_KMS / (4603 - 128*(λ/u"μm") + 10^(-7.4*(λ/u"μm"))))
 @inline mrs_psf(λ::Quantity) = (0.033*ustrip(λ/u"μm") + 0.016) * u"arcsecond"
 
+# Equivalent functions for NIRSpec
+
+@inline nirspec_lsf(λ::Quantity, grating::String) = if grating in ["G140M", "G235M", "G395M"]
+    C_KMS / 1000.0
+elseif grating in ["G140H", "G235H", "G395H"]
+    C_KMS / 2700.0
+else
+    C_KMS / 100.0
+end
+# guesstimated based on the NIRSpec docs claim that the PSF ranges from 0.03-0.16" here: 
+# https://jwst-docs.stsci.edu/jwst-near-infrared-spectrograph/nirspec-observing-strategies/nirspec-dithering-recommended-strategies#gsc.tab=0
+@inline nirspec_psf(λ::Quantity) = (0.03 + 0.13*(λ/u"μm" - 0.90)/4.37) * u"arcsecond"
+
+
 # very simple parser; bound to not work in all cases but that's a lotta work
 function fits_unitstr_to_unitful(unit_string::String)
     unit_string = replace(unit_string, "u" => "μ", "." => "*")
@@ -246,8 +260,19 @@ function from_fits(filename::String, z::Union{Real,Nothing}=nothing)::DataCube
     name = hdr0["TARGNAME"]           # name of the target
     ra = hdr0["TARG_RA"] * u"°"       # right ascension in deg
     dec = hdr0["TARG_DEC"] * u"°"     # declination in deg
-    channel = string(hdr0["CHANNEL"]) # MIRI channel (1-4)
-    band = hdr0["BAND"]               # MIRI band (long,med,short,multiple)
+
+    # format type
+    format = Symbol(hdr0["INSTRUME"])
+    if format == :MIRI
+        channel = string(hdr0["CHANNEL"]) # MIRI channel (1-4)
+        band = hdr0["BAND"]               # MIRI band (long,med,short,multiple)
+    elseif (format == :NIRSPEC) && haskey(hdr0, "FILTER") && haskey(hdr0, "GRATING")
+        channel = hdr0["FILTER"]  # NIRSpec filter (F070LP, F100LP, F170LP, F290LP, CLEAR)
+        band = hdr0["GRATING"]    # NIRSpec grating (G140H/M, G235H/M, G395H/M, PRISM)
+    else
+        channel = string(hdr0["CHANNEL"]) 
+        band = hdr0["BAND"]               
+    end
 
     # Sky rotation angle
     cosθ = -hdr["PC1_1"]    # negative because of the flipped RA axis (RA increases to the left)
@@ -279,16 +304,33 @@ function from_fits(filename::String, z::Union{Real,Nothing}=nothing)::DataCube
     psf = try
         read(hdu["AUX"], "psf") * u"arcsecond"
     catch
-        mrs_psf.(λ)
+        if format == :MIRI
+            mrs_psf.(λ)
+        elseif format == :NIRSPEC
+            nirspec_psf.(λ)
+        else
+            error("File $filename does not have a specified PSF FWHM!")
+        end
     end
     lsf = try
         read(hdu["AUX"], "lsf") * u"km/s"
     catch
-        mrs_lsf.(λ)
+        if format == :MIRI
+            mrs_lsf.(λ)
+        elseif format == :NIRSPEC 
+            nirspec_lsf.(λ, band)
+        else 
+            error("File $filename does not have a specified LSF FWHM!")
+        end
     end
 
     n_channels = nothing
+    # MIRI 
     if band in ("SHORT", "MEDIUM", "LONG")
+        n_channels = 1
+    end
+    # NIRSPEC
+    if band in ("G140M", "G235M", "G395M", "G140H", "G235H", "G395H", "PRISM")
         n_channels = 1
     end
 
@@ -335,9 +377,6 @@ function from_fits(filename::String, z::Union{Real,Nothing}=nothing)::DataCube
     catch
         nothing
     end
-
-    # format type
-    format = Symbol(hdr0["INSTRUME"])
 
     DataCube(λ, Iν, σI, mask, psf_model, Ω, ra, dec, θ_sky, psf, lsf, wcs, channel, band, nothing, gaps, 
         rest_frame, redshift, masked, vacuum_wave, log_binned, dereddened, sky_aligned, nothing, format, nothing)
@@ -557,6 +596,9 @@ function get_n_channels(_λ::Vector{<:QWave}, rest_frame::Bool, z::Union{Real,No
     if format == :MIRI
         ch_edge_sort = sort(channel_edges)
         ch_bounds = channel_boundaries
+    elseif format == :NIRSPEC 
+        ch_edge_sort = sort(channel_edges_nir)
+        ch_bounds = channel_boundaries_nir
     else
         if isnothing(instrument_channel_edges) 
             @warn "The DataCube format is not JWST! Please manually input the channel edges (if any), otherwise it will be assumed " *
@@ -1488,7 +1530,7 @@ Create an Observation object from a series of fits files with IFU cubes in diffe
 - `user_mask`: An optional vector of tuples specifying regions to be masked out
 - `format`: The format of the FITS files 
 """
-function from_fits(filenames::Vector{String}, z::Real=0.; user_mask=nothing, format=:MIRI)
+function from_fits(filenames::Vector{String}, z::Real=0.; user_mask=nothing)
 
     # Grab object information from the FITS header of the first file
     channels = Dict{Any,DataCube}()
@@ -1498,6 +1540,7 @@ function from_fits(filenames::Vector{String}, z::Real=0.; user_mask=nothing, for
     ra = hdr["TARG_RA"] * u"°"
     dec = hdr["TARG_DEC"] * u"°"
     inst = hdr["INSTRUME"]
+    format = Symbol(inst)
     redshift = z
     if haskey(hdr, "REDSHIFT")
         redshift = hdr["REDSHIFT"]
@@ -1513,6 +1556,9 @@ function from_fits(filenames::Vector{String}, z::Real=0.; user_mask=nothing, for
 
     bands = Dict("SHORT" => "A", "MEDIUM" => "B", "LONG" => "C")
 
+    gratings_nir = ["G140M", "G235M", "G395M", "G140H", "G235H", "G395H", "PRISM"]
+    filters_nir = ["F070LP", "F100LP", "F170LP", "F290LP", "CLEAR"]
+
     # Loop through the files and call the individual DataCube method of the from_fits function
     for (i, filepath) ∈ enumerate(filenames)
         cube = from_fits(filepath, z)
@@ -1526,8 +1572,23 @@ function from_fits(filenames::Vector{String}, z::Real=0.; user_mask=nothing, for
             channels[Symbol(bands[cube.band] * cube.channel[end:end])] = cube
             continue
         end
-        # otherwise just use the channel number
-        channels[parse(Int, cube.channel)] = cube
+        if (format == :NIRSPEC) && (cube.band in gratings_nir) && (
+            (cube.channel in filters_nir) || 
+            (cube.channel in ("G140M_F070LP", "G140M_F100LP", "G235M_F170LP", "G395M_F290LP")) ||
+            (cube.channel in ("G140H_F070LP", "G140H_F100LP", "G235H_F170LP", "G395H_F290LP")) || 
+            (cube.channel == "PRISM_CLEAR")
+            )
+            channels[Symbol(cube.band * "_" * split(cube.channel, "_")[end])] = cube
+            continue
+        end
+        try
+            # otherwise just use the channel number
+            channels[parse(Int, cube.channel)] = cube
+            continue
+        catch
+            # fall back on the channel label itself
+            channels[cube.channel] = cube
+        end
     end
 
     from_cubes(name, redshift, collect(values(channels)), collect(keys(channels)), inst=inst)
@@ -1716,7 +1777,7 @@ sub-channels.
 """
 function adjust_wcs_alignment!(obs::Observation, channels; box_size_as::Float64=1.5)
 
-    @assert obs.instrument == "MIRI" "Adjust WCS alignment is currently only supported for MIRI/MRS observations!"
+    @assert obs.instrument in ("MIRI", "NIRSPEC") "Adjust WCS alignment is currently only supported for MIRI/MRS or NIRSPEC/IFU observations!"
     @info "Aligning World Coordinate Systems for channels $channels..."
 
     # Prepare array of centroids for each channel
@@ -1938,7 +1999,8 @@ This is essentially convolving the data with a tophat kernel, and it may be nece
 - `channels=nothing`: The list of channels to be rebinned. If nothing, rebin all channels.
 - `ap_r::Real`: The size of the aperture to extract from at each spaxel, in units of the PSF FWHM.
 """
-function extract_from_aperture!(obs::Observation, channels::Vector, ap_r::Real; output_wcs_frame::Integer=1)
+function extract_from_aperture!(obs::Observation, channels::Vector, ap_r::Real; output_wcs_frame::Integer=1,
+    conical::Bool=false)
 
     pixel_scale = uconvert(u"arcsecond", sqrt(obs.channels[channels[output_wcs_frame]].Ω))
 
@@ -1953,7 +2015,11 @@ function extract_from_aperture!(obs::Observation, channels::Vector, ap_r::Real; 
         @info "Channel $ch_in: Extracting from an aperture of size $ap_r x FWHM..."
         @showprogress for wi in axes(obs.channels[ch_in].I, 3)
             # aperture radius in units of the PSF FWHM
-            ap_size = ap_r * obs.channels[ch_in].psf[wi] / pixel_scale
+            if conical
+                ap_size = ap_r * obs.channels[ch_in].psf[wi] / pixel_scale
+            else
+                ap_size = ap_r * maximum(obs.channels[ch_in].psf) / pixel_scale
+            end
 
             for c ∈ CartesianIndices(size(obs.channels[ch_in].I)[1:2])
                 aperture_spax = CircularAperture(c.I..., ap_size)
@@ -2232,11 +2298,17 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
         channels = [Symbol("A" * string(channels)), Symbol("B" * string(channels)), Symbol("C" * string(channels))]
         concat_type = :sub
     end
+    if (obs.instrument == "NIRSPEC") && isnothing(channels)
+        error("Please specify at least two channels(grating/filter combos) to combine.")
+    end
+    if (obs.instrument == "NIRSPEC") && !(typeof(channels) <: Vector)
+        error("Please specify at least two channels(grating/filter combos) to combine.")
+    end
     # Check that channels and channel edges aren't still nothing
     if isnothing(channels)
         error("It appears that this isn't a MIRI/MRS cube. Please explicitly specify the channels to be combined.")
     end
-    if isnothing(instrument_channel_edges) && (obs.instrument != "MIRI")
+    if isnothing(instrument_channel_edges) && (obs.instrument != "MIRI") && (obs.instrument != "NIRSPEC")
         error("It appears that this isn't a MIRI/MRS cube. Please explicity specify the edges of each channel for this instrument.")
     end
 

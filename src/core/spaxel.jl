@@ -199,6 +199,17 @@ function make_normalized_spaxel(cube_data::NamedTuple, coords::CartesianIndex, c
     # Add systematic error in quadrature
     σ .= sqrt.(σ.^2 .+ (fopt.sys_err .* I).^2)
 
+    # Mask out the chip gaps in NIRSPEC observations 
+    # (they will be captured by default in individual spaxels with the 3D cube mask, but special care needs to be taken 
+    # when integrating over an aperture or a voronoi bin, since there may be slices where some spaxels are in the gap and 
+    # others aren't; to be safe, we just mask out the full possible range of chip gap positions)
+    if (use_ap || use_vorbins) && fit_options(cube_fitter).nirspec_mask_chip_gaps
+        λobs = λ .* (1 .+ cube_fitter.z)
+        for chip_gap in chip_gaps_nir
+            mask_bad .|= (chip_gap[1] .< λobs .< chip_gap[2])
+        end
+    end
+
     # Use a fixed normalization for the line fits so that the bootstrapped amplitudes are consistent with each other
     norm = Float64(abs(nanmaximum(ustrip.(I)))) * unit(I[1])
     norm = norm ≠ 0. ? norm : 1.

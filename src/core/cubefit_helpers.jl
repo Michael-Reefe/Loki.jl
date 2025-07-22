@@ -336,7 +336,7 @@ function get_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, �
 
     # Templates
     if fopt.fit_temp_multexp
-        inds = fast_indexin("continuum.templates.amp_" .* string.(1:4), pnames)
+        inds = fast_indexin("templates.amp_" .* string.(1:4), pnames)
         p₀[inds] .= 0.25
     end
 
@@ -745,7 +745,11 @@ function get_line_initial_values_limits_locks_from_estimation(cube_fitter::CubeF
                 end
                 # fwhm is ~the intensity-weighted average of the velocities
                 ind_fwhm = fast_indexin("lines.$(ln_name).$(j).fwhm", pnames)
-                fwhm_full = 2.355*sqrt(clamp(sum(I[region].*vel[region].^2) / sum(I[region]), 0.0u"km^2/s^2", Inf*u"km^2/s^2"))
+                if sum(I[region]) > 0.
+                    fwhm_full = 2.355*sqrt(clamp(sum(I[region].*vel[region].^2) / sum(I[region]), 0.0u"km^2/s^2", Inf*u"km^2/s^2"))
+                else
+                    fwhm_full = 0.0*u"km/s"
+                end
                 fwhm_intr2 = clamp(fwhm_full^2 - cube_fitter.lsf(λ[region][mx])^2, 0.0u"km^2/s^2", Inf*u"km^2/s^2")
                 if isone(j) || !lines.config.rel_fwhm
                     p₀[ind_fwhm] = clamp(sqrt(fwhm_intr2), plims[ind_fwhm]...)
