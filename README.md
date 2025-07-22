@@ -118,7 +118,13 @@ $ juliaup add 1.10.9
 $ juliaup default 1.10.9
 ```
 
-Then, we can install LOKI itself by simply cloning the git repository and activating the project. Before we do this, note that if you'd like to install the PSF templates and the data files needed to run the example notebooks, you'll need to have Git Large File Storage (LFS) set up as well.  You can follow the instructions at https://git-lfs.com to install it.  Make sure after installing you've set it up to talk with git by running:
+Then, we can install LOKI itself by simply cloning the git repository and activating the project. Before we do this, note that if you'd like to install the PSF templates and the data files needed to run the example notebooks, you'll need to have Git Large File Storage (LFS) set up as well.  You can follow the instructions at https://git-lfs.com to install it.  This is easy if you are on mac and have homebrew, as you can just do:
+
+```bash
+brew install git-lfs
+```
+
+And make sure after installing you've set it up to talk with git by running:
 
 ```bash
 git lfs install
@@ -186,7 +192,19 @@ rmprocs(procs)
 ```
 The `rmprocs` function kills the worker processes - make sure you call it once you've finished doing all of your multiprocessing computations.
 
-Now that you've (hopefully) got LOKI installed, to get started you might want to check out the example guide in [Section V](#v-examples), and/or the example jupyter notebooks under the `examples/` directory.  These are good places to get an initial feel for how the code works and the workflow of using it.  Once you feel more confident about the general structure, you can look at the other sections in this README, which go over in detail all of the options that you may or may not want to change, and give an overview of the output directory and files.  GL;HF!
+Now that you've (hopefully) got LOKI installed, to get started you might want to check out the example guide in [Section V](#v-examples), and/or the example jupyter notebooks under the `examples/` directory.  These are good places to get an initial feel for how the code works and the workflow of using it.  If you want to run the jupyter notebooks using VSCode, make sure you: (1) Get the Julia extension, (2) Set your Julia environment to the Loki.jl folder (check the blue bar at the bottom, where it says "Julia env: ___"), and (3) Set jupyter's kernel to Julia 1.10.  
+
+Otherwise, if you don't use VSCode, you can run jupyter through Julia via:
+
+```bash
+julia -e "using IJulia; notebook()"
+```
+or to use JupyterLab:
+```bash 
+julia -e "using IJulia; jupyterlab()"
+```
+
+Once you feel more confident about the general structure, you can look at the other sections in this README, which go over in detail all of the options that you may or may not want to change, and give an overview of the output directory and files.  GL;HF!
 
 ## III. Usage
 
