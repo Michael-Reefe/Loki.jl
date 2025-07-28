@@ -1038,24 +1038,30 @@ end
 
 
 """
-    voronoi_rebin!(cube, target_SN)
+    voronoi_rebin!(cube, target_SN[, window])
 
 Calculate Voronoi bins for the cube such that each bin has a signal to noise ratio roughly equal to `target_SN`.
 Modifies the cube object in-place with the `voronoi_bins` attribute, which is a 2D array that gives unique integer
 labels to each voronoi bin.
 """
-function voronoi_rebin!(cube::DataCube, target_SN::Real)
+function voronoi_rebin!(cube::DataCube, target_SN::Real, window::Union{Tuple{QWave,QWave},Nothing}=nothing)
 
     @info "Performing Voronoi rebinning with target S/N=$target_SN"
 
     # Get the signal and noise 
-    signal = dropdims(nanmedian(ustrip.(cube.I), dims=3), dims=3) .* unit(cube.I[1])
-    noise = dropdims(nanmedian(ustrip.(cube.σ), dims=3), dims=3) .* unit(cube.σ[1])
+    if isnothing(window)
+        signal = dropdims(nanmedian(ustrip.(cube.I), dims=3), dims=3) .* unit(cube.I[1])
+        noise = dropdims(nanmedian(ustrip.(cube.σ), dims=3), dims=3) .* unit(cube.σ[1])
+    else
+        snmask = window[1] .< cube.λ .< window[2]
+        signal = dropdims(nansum(ustrip.(cube.I)[:,:,snmask], dims=3), dims=3) .* unit(cube.I[1])
+        noise = sqrt.(dropdims(nansum(ustrip.(cube.σ)[:,:,snmask].^2, dims=3), dims=3)) .* unit(cube.σ[1])
+    end
     # x/y coordinate arrays
     x = [i for i in axes(signal,1), _ in axes(signal,2)]
     y = [j for _ in axes(signal,1), j in axes(signal,2)]
     # mask out bad spaxels
-    mask = (.~isfinite.(signal)) .| (.~isfinite.(noise))
+    mask = (.~isfinite.(signal)) .| (.~isfinite.(noise)) .| (iszero.(signal)) .| (iszero.(noise))
     # flatten arrays
     signal = signal[.~mask]
     noise = noise[.~mask]
@@ -1063,6 +1069,7 @@ function voronoi_rebin!(cube::DataCube, target_SN::Real)
     y = y[.~mask]
     # make sure signals are nonnegative
     signal = clamp.(signal, 0*unit(signal[1]), Inf*unit(signal[1]))
+    noise = clamp.(noise, 0*unit(noise[1]), Inf*unit(noise[1]))
     # perform voronoi rebinning
     bin_numbers, = voronoi2Dbinning(x, y, ustrip.(signal), ustrip.(noise), target_SN, 1.0, WeightedVoronoi())
     # reformat bin numbers as a 2D array so that we don't need the x/y vectors anymore
