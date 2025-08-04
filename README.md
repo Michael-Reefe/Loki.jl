@@ -152,10 +152,6 @@ julia> Pkg.build("PyCall")
 julia> using Loki
 ```
 
-#### Step 3: LaTeX
-
-Finally, LOKI assumes you have a local installation of LaTeX that can be used with matplotlib to generate nicely formatted axis labels and annotations.  Common LaTeX distributions include [TeX Live](https://www.tug.org/texlive/) and [MiKTeX](https://miktex.org/about). If you have no particular preference, I personally use the mac distribution of TeX Live, which can be found [here](https://www.tug.org/mactex/mactex-download.html).  
-
 #### How to import LOKI
 
 And that's that! In the future, when running Julia, make sure you always activate the project before trying to import Loki. For example:
@@ -937,7 +933,7 @@ unit = "um"
 # Argon lines
 [lines.ArII_6985m]
 wave = 6.985274
-latex = "[Ar $\\textsc{ii}$]"
+latex = "[Ar II]"
 annotate = true
 unit = "um"
 
@@ -951,7 +947,7 @@ unit = "um"
 # Nitrogen lines
 [lines.NII_6550A]
 wave = 6549.859
-latex = "[N $\\textsc{ii}$]"
+latex = "[N II]"
 annotate = true
 unit = "angstrom"
 ```

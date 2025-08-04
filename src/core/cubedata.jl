@@ -1119,10 +1119,12 @@ function get_physical_scales(shape::Tuple, Ω::typeof(1.0u"sr"), cosmo::Union{Co
         scalebar_text_dist = ""
     end
 
-    scalebar_text_ang = L"$\ang[angle-symbol-over-decimal]{;;%$(ustrip(θ_as))}$"
+    # scalebar_text_ang = L"$\ang[angle-symbol-over-decimal]{;;%$(ustrip(θ_as))}$"
+    scalebar_text_ang = L"$%$(ustrip(θ_as))''$"
     if θ_as > 60u"arcsecond"
         θ_as = round(u"arcminute", θ_as, digits=1)  # convert to arcminutes
-        scalebar_text_ang = L"$\ang[angle-symbol-over-decimal]{;%$(ustrip(θ_as));}$"
+        # scalebar_text_ang = L"$\ang[angle-symbol-over-decimal]{;%$(ustrip(θ_as));}$"
+        scalebar_text_ang = L"$%$(ustrip(θ_as))''$"
     end
 
     pix_as, n_pix, scalebar_text_dist, scalebar_text_ang
