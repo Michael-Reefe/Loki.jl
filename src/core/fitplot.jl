@@ -750,7 +750,19 @@ function plot_stellar_grids(result::StellarResult, cube_fitter::CubeFitter, labe
 
     all_ages = log10.(ustrip.(uconvert.(u"yr", cube_fitter.ssps.ages)))
     all_logzs = cube_fitter.ssps.logzs
-    halfpix = [diff(all_ages)[1]/2, diff(all_logzs)[1]/2]
+    halfpix = [0., 0.]
+
+    if (length(all_ages) > 1)
+        halfpix[1] = diff(all_ages)[1]/2 
+    else
+        halfpix[1] = 0.1
+    end
+
+    if (length(all_logzs) > 1)
+        halfpix[2] = diff(all_logzs)[1]/2
+    else
+        halfpix[2] = 0.1
+    end
 
     # luminosity fractions and mass fractions
     logw = log10.(result.lfracs)

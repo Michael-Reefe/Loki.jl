@@ -175,6 +175,14 @@ function parse_options()
     # Convert keys to symbols
     options = Dict(Symbol(k) => v for (k, v) ∈ options)
 
+    # Convert SSP keys into a nested NamedTuple object
+    options[:ssps] = (age=(min=options[:ssps]["age"]["min"], 
+                           max=options[:ssps]["age"]["max"],
+                           num=options[:ssps]["age"]["num"]),
+                     logz=(min=options[:ssps]["logz"]["min"],
+                           max=options[:ssps]["logz"]["max"],
+                           num=options[:ssps]["logz"]["num"]))
+
     # Convert cosmology keys into a proper cosmology object
     options[:cosmology] = cosmology(h=options[:cosmology]["h"], 
                                     OmegaM=options[:cosmology]["omega_m"],
@@ -406,7 +414,7 @@ end
 
 
 """
-    generate_stellar_populations(λ, lsf, z, Ω, cosmo, name)
+    generate_stellar_populations(λ, lsf, z, Ω, cosmo, ssp_options, name)
 
 Prepare a 3D grid of Simple Stellar Population (SSP) templates over age, metallicity, and wavelength.
 Each template will be cropped around the region of interest given by `λ` (in microns), and degraded 
@@ -421,7 +429,7 @@ Returns 1D arrays for the wavelengths, ages, and metals that the templates are e
 occupied.
 """
 function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unitful.Units, lsf::Vector{typeof(1.0u"km/s")}, 
-    z::Real, cosmo::Cosmology.AbstractCosmology, name::String; photometry_filters::Vector{String}=String[])
+    z::Real, cosmo::Cosmology.AbstractCosmology, ssp_options::NamedTuple, name::String; photometry_filters::Vector{String}=String[])
 
     # Make sure λ is logarithmically binned
     @assert isapprox((λ[2]/λ[1]), (λ[end]/λ[end-1]), rtol=1e-6) "Input spectrum must be logarithmically binned to fit with stellar populations!"
@@ -483,8 +491,8 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
     dL = luminosity_dist(u"cm", cosmo, z)
 
     # Generate templates over a range of ages and metallicities
-    ages = exp.(range(log(0.001), log(13.7), 40)) .* u"Gyr"        # logarithmically spaced from 1 Myr to 15 Gyr
-    logzs = range(-2.3, 0.4, 10)                                   # linearly spaced from log(Z/Zsun) = [M/H] = -2.3 to 0.4
+    ages = exp.(range(log(ssp_options.age.min), log(ssp_options.age.max), ssp_options.age.num)) .* u"Gyr"  # logarithmically spaced from 1 Myr to 15 Gyr
+    logzs = range(ssp_options.logz.min, ssp_options.logz.max, ssp_options.logz.num)                        # linearly spaced from log(Z/Zsun) = [M/H] = -2.3 to 0.4
     output_units = intensity_units*u"sr"/u"Msun"
     ssp_templates = zeros(typeof(1.0*output_units), length(ssp_lnλ), length(ages), length(logzs))
     n_temp = size(ssp_templates, 2) * size(ssp_templates, 3)

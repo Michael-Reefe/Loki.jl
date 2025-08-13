@@ -383,6 +383,18 @@ If set to true, for the emission line fit, a cubic spline fit to the continuum w
 This option is a bit complicated to explain, but essentially, the situation is as follows. If you're using templates for the PSF and the PSF templates take up most of the amplitude of the continuum, it can cause the extinction to be driven unphysically high since it has a small effect. If this happens, the code tries to automatically redo the fit with the extinction locked to 0. If you set `F_test_ext = true`, then when this happens, the code will perform an F-test on the fit with the extinction locked to 0 vs the fit with the extinction unlocked and determine if the extinction is actually statistically significant, and it will only use the results with the extinction if there is a significant statistical improvement in the fit.
 
 ```toml
+[ssps.age]
+min = 0.001 
+max = 13.7 
+num = 40
+[ssps.logz]
+min = -2.3
+max = 0.4
+num = 10
+```
+The SSP options determine how the grid of Simple Stellar Populations (SSPs) is generated.  You can set a minimum, maximum, and number of grid points for the ages (in Gyr) and the metallicities (in log(Z/Zsun)).  Note that both quantities are logarithmically spaced in the grid, even though the ages are measured in linear Gyr while the metallicities are measured in the logarithmic quantity by default.  The total number of SSPs generated will be the multiplation of both "nums", which by default is 400.  Note that these options are only used if fitting a stellar continuum.
+
+```toml
 [cosmology]
 h = 0.7           # Hubble constant (in km s^-1 Mpc^-1) / 100
 omega_m = 0.27    # matter density parameter

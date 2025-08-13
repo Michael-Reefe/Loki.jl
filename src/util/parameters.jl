@@ -9,6 +9,7 @@ related quantities.
 const QUnitless = typeof(NoUnits)
 const QLength = Quantity{<:Real, u"𝐋"}
 const QTemp = typeof(1.0u"K")
+const QAge = Quantity{<:Real, u"𝐓"}
 
 const Qum = typeof(1.0u"μm")
 const QAng = typeof(1.0u"angstrom")
