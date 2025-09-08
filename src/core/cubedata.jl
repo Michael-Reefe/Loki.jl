@@ -884,8 +884,22 @@ function interpolate_nans!(cube::DataCube)
         if sum(filt) > 0
             @debug "NaNs found in spaxel $index -- interpolating"
 
-            finite = isfinite.(I)
+            # Literal edge cases
+            if !isfinite(I[1])
+                iind = findfirst(isfinite.(I))
+                I[1:iind-1] .= I[iind]
+                σ[1:iind-1] .= σ[iind].*100
+            end
+            if !isfinite(I[end])
+                find = findlast(isfinite.(I))
+                I[find+1:end] .= I[find]
+                σ[find+1:end] .= σ[find].*100
+            end
+            cube.I[index, :] .= I .* unit(cube.I[1])
+            cube.σ[index, :] .= σ .* unit(cube.σ[1])
+
             scale = 7
+            finite = isfinite.(I)
 
             # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
             λknots = λ[finite][(1+scale):scale:(length(λ[finite])-scale)]
@@ -897,6 +911,7 @@ function interpolate_nans!(cube::DataCube)
                 end
             end
             λknots = λknots[good]
+
 
             # ONLY replace NaN values, keep the rest of the data as-is
             cube.I[index, filt] .= Spline1D(λ[isfinite.(I)], I[isfinite.(I)], λknots, k=1, bc="extrapolate")(λ[filt]) .* unit(cube.I[1])
@@ -1026,6 +1041,9 @@ function calculate_statistical_errors!(cube::DataCube,
         end
         @debug "Statistical uncertainties for spaxel $spaxel: ($(σ_stat[1]) - $(σ_stat[end]))"
         # σ = hypot.(σ, σ_stat)
+
+        # Inflate errors on the "bad" pixels
+        σ_stat[mask_bad] .*= 100
 
         # Replace the cube's error with the statistical errors
         if median

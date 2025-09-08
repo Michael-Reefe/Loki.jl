@@ -47,13 +47,15 @@ function fill_bad_pixels(I::Vector{<:Number}, σ::Vector{<:Number}, templates::U
         end
     end
 
-    bad = findall(.~isfinite.(I) .| .~isfinite.(σ))
     # Replace with the average of the points to the left and right
+    bad = findall(.~isfinite.(I) .| .~isfinite.(σ))
     l = length(I)
     for badi in bad
         lind = findfirst(isfinite, I[max(badi-1,1):-1:1])
         rind = findfirst(isfinite, I[min(badi+1,l):end])
         I[badi] = (I[max(badi-1,1):-1:1][lind] + I[min(badi+1,l):end][rind]) / 2
+        lind = findfirst(isfinite, σ[max(badi-1,1):-1:1])
+        rind = findfirst(isfinite, σ[min(badi+1,l):end])
         σ[badi] = (σ[max(badi-1,1):-1:1][lind] + σ[min(badi+1,l):end][rind]) / 2
     end
     @assert all(isfinite.(I) .& isfinite.(σ)) "Error: Non-finite values found in the summed intensity/error arrays!"

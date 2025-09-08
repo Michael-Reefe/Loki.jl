@@ -1149,6 +1149,7 @@ function fit_stack!(cube_fitter::CubeFitter)
         λobs = λ_init .* (1 .+ cube_fitter.z)
         for chip_gap in chip_gaps_nir
             mask_bad_init .|= (chip_gap[1] .< λobs .< chip_gap[2])
+            σ_sum_init[mask_bad_init] .= maximum(σ_sum_init) .* 100.   # Inflate errors over the chip gap
         end
     end
 
