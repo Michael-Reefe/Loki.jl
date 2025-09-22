@@ -19,9 +19,11 @@ function generate_psf_model!(cube::DataCube, instrument::String, psf_model_dir::
     else 
         error("generate_psf_model! is only supported for MIRI/MRS or NIRSPEC/IFU observations!")
     end
-    files = glob(joinpath("**", "*.fits"), psf_model_dir)
+
+    # search for all .fits.gz files (the files are stored as compressed gzip files to save brandwidth on github)
+    files = glob(joinpath("**", "*.fits.gz"), psf_model_dir)
     for file ∈ sort(files)
-        m = match(Regex("(.+?)($(cube.channel)[-_.]?$(cube.band))(.+?).fits?", "i"), file)
+        m = match(Regex("(.+?)($(cube.channel)[-_.]?$(cube.band))(.+?).fits.gz?", "i"), file)
         if !isnothing(m)
             push!(hdus, FITS(file))
         end

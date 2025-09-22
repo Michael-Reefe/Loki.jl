@@ -1,3 +1,2 @@
 # Reclassify .pro files as IDL
 *.pro linguist-language=IDL
-*.fits filter=lfs diff=lfs merge=lfs -text

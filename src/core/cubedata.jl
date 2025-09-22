@@ -898,6 +898,18 @@ function interpolate_nans!(cube::DataCube)
             cube.I[index, :] .= I .* unit(cube.I[1])
             cube.σ[index, :] .= σ .* unit(cube.σ[1])
 
+            if !isnothing(psf)
+                if !isfinite(psf[1])
+                    iind = findfirst(isfinite.(psf))
+                    psf[1:iind-1] .= psf[iind]
+                end
+                if !isfinite(psf[end])
+                    find = findlast(isfinite.(psf))
+                    psf[find+1:end] .= psf[find]
+                end
+                cube.psf_model[index, :] .= psf .* unit(cube.psf_model[1])
+            end
+
             scale = 7
             finite = isfinite.(I)
 

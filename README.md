@@ -118,19 +118,7 @@ $ juliaup add 1.10.9
 $ juliaup default 1.10.9
 ```
 
-Then, we can install LOKI itself by simply cloning the git repository and activating the project. Before we do this, note that if you'd like to install the PSF templates and the data files needed to run the example notebooks, you'll need to have Git Large File Storage (LFS) set up as well.  You can follow the instructions at https://git-lfs.com to install it.  This is easy if you are on mac and have homebrew, as you can just do:
-
-```bash
-brew install git-lfs
-```
-
-And make sure after installing you've set it up to talk with git by running:
-
-```bash
-git lfs install
-```
-
-Then we can clone the repository and install it:
+Then, we can install LOKI itself by simply cloning the git repository and activating the project.  Please note that cloning the repository may take a few minutes due to the large template and example data files.
 
 ```bash
 $ git clone https://github.com/Michael-Reefe/Loki.jl
