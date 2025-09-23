@@ -154,9 +154,8 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         conv_na_feii = zeros(nλ, 1)
         for (gi, gap_mask) in enumerate(gap_masks)
             # split if the spectrum has a few separated regions
-            sig_inst = cube_fitter.lsf(nanmedian(λ[gap_mask])) / sigtofwhm 
             conv_na_feii[gap_mask, 1] .= convolve_losvd(cube_fitter.feii.na_fft, cube_fitter.feii.vsysts[gi], 
-                params[pᵢ+1]*u"km/s", params[pᵢ+2]*u"km/s", s.vres, sig_inst, sum(gap_mask), temp_fft=true, 
+                params[pᵢ+1]*u"km/s", params[pᵢ+2]*u"km/s", s.vres, sum(gap_mask), temp_fft=true, 
                 npad_in=cube_fitter.feii.npad)
         end
         # These templates also need the solid angle divided out
@@ -171,9 +170,8 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         unit_check(punits[pᵢ+2], u"km/s")
         conv_br_feii = zeros(nλ, 1)
         for (gi, gap_mask) in enumerate(gap_masks)
-            sig_inst = cube_fitter.lsf(nanmedian(λ[gap_mask])) / sigtofwhm
             conv_br_feii[gap_mask, 1] .= convolve_losvd(cube_fitter.feii.br_fft, cube_fitter.feii.vsysts[gi], 
-                params[pᵢ+1]*u"km/s", params[pᵢ+2]*u"km/s", s.vres, sig_inst, sum(gap_mask), temp_fft=true, 
+                params[pᵢ+1]*u"km/s", params[pᵢ+2]*u"km/s", s.vres, length(λ), temp_fft=true, 
                 npad_in=cube_fitter.feii.npad)
         end
         conv_br_feii[:, 1] ./= s.area_sr
@@ -349,9 +347,8 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         conv_na_feii = zeros(nλ, 1)
         for (gi, gap_mask) in enumerate(gap_masks)
             # split if the spectrum has a few separated regions
-            sig_inst = cube_fitter.lsf(nanmedian(λ[gap_mask])) / sigtofwhm
             conv_na_feii[gap_mask, 1] .= convolve_losvd(cube_fitter.feii.na_fft, cube_fitter.feii.vsysts[gi], 
-                params[pᵢ+1]*u"km/s", params[pᵢ+2]*u"km/s", s.vres, sig_inst, sum(gap_mask), temp_fft=true, 
+                params[pᵢ+1]*u"km/s", params[pᵢ+2]*u"km/s", s.vres, sum(gap_mask), temp_fft=true, 
                 npad_in=cube_fitter.feii.npad)
         end
         # These templates also need the solid angle divided out
@@ -364,9 +361,8 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         unit_check(punits[pᵢ+2], u"km/s")
         conv_br_feii = zeros(nλ, 1)
         for (gi, gap_mask) in enumerate(gap_masks)
-            sig_inst = cube_fitter.lsf(nanmedian(λ[gap_mask])) / sigtofwhm
             conv_br_feii[gap_mask, 1] .= convolve_losvd(cube_fitter.feii.br_fft, cube_fitter.feii.vsysts[gi], 
-                params[pᵢ+1]*u"km/s", params[pᵢ+2]*u"km/s", s.vres, sig_inst, sum(gap_mask), temp_fft=true, 
+                params[pᵢ+1]*u"km/s", params[pᵢ+2]*u"km/s", s.vres, length(λ), temp_fft=true, 
                 npad_in=cube_fitter.feii.npad)
         end
         conv_br_feii[:, 1] ./= s.area_sr

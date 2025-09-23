@@ -24,9 +24,6 @@ const Bλ_2_AA = Bν_2_AA
 # Wein's law constant of proportionality in μm*K
 const b_Wein = 2897.771955*u"μm*K"
 
-# Conversion between FWHM and dispersion
-const sigtofwhm = 2*√(2log(2))
-
 # A few other random constants
 const o_peak = 10.0178u"μm"
 
@@ -572,7 +569,7 @@ end
 
 
 """
-    convolve_losvd(templates, vsyst, v, σ, σ_inst, npix)
+    convolve_losvd(templates, vsyst, v, σ, npix)
 
 Convolve a set of stellar population templates with a line-of-sight velocity distribution (LOSVD)
 to produce templates according to the fitted stellar kinematics. Uses the Fourier Transforms of 
@@ -583,7 +580,7 @@ the specific implementation is different. See:
 - Cappellari (2017): http://adsabs.harvard.edu/abs/2017MNRAS.466..798C
 - Sexton et al. (2021): https://ui.adsabs.harvard.edu/abs/2021MNRAS.500.2871S/abstract 
 """
-function convolve_losvd(_templates::AbstractArray{T}, vsyst::S, v::S, σ::S, vres::S, σ_inst::S,
+function convolve_losvd(_templates::AbstractArray{T}, vsyst::S, v::S, σ::S, vres::S, 
     npix::U; temp_fft::Bool=false, npad_in::U=0) where {T<:Number,S<:Number,U<:Integer}
 
     if temp_fft
@@ -622,7 +619,7 @@ function convolve_losvd(_templates::AbstractArray{T}, vsyst::S, v::S, σ::S, vre
 
     # Remember to normalize velocities and sigmas by the velocity resolution
     V = (vsyst + v)/vres
-    Σ = hypot(σ, σ_inst)/vres
+    Σ = σ/vres
     ω = range(0, π, n_ft)
 
     # Calculate the analytic Fourier transform of the LOSVD: See Cappellari (2017) eq. (38)
@@ -661,8 +658,7 @@ end
 
 # perform non-negative least squares fitting on the stellar template grids 
 function stellar_populations_nnls(s::Spaxel, contin::Vector{<:Real}, ext_stars::Vector{<:Real}, 
-    stel_vel::QVelocity, stel_sig::QVelocity, cube_fitter::CubeFitter; do_gaps::Bool=true, 
-    mask_lines::Bool=true)
+    stel_vel::QVelocity, stel_sig::QVelocity, cube_fitter::CubeFitter; do_gaps::Bool=true, mask_lines::Bool=true)
 
     # prepare buffer arrays for NNLS
     nλ = length(s.λ)
@@ -681,9 +677,8 @@ function stellar_populations_nnls(s::Spaxel, contin::Vector{<:Real}, ext_stars::
     gap_masks = do_gaps ? get_gap_masks(s.λ, cube_fitter.spectral_region.gaps) : [trues(length(s.λ))]
     for (gi, gap_mask) in enumerate(gap_masks)
         # split if the spectrum has a few separated regions
-        sig_inst = cube_fitter.lsf(nanmedian(s.λ[gap_mask])) / sigtofwhm
         A[(1:nλ)[gap_mask], :] .= convolve_losvd(ustrip.(cube_fitter.ssps.templates), 
-            cube_fitter.ssps.vsysts[gi], stel_vel, stel_sig, s.vres, sig_inst, sum(gap_mask))
+            cube_fitter.ssps.vsysts[gi], stel_vel, stel_sig, s.vres, sum(gap_mask))
     end
 
     # divide out the solid angle and apply the extinction
@@ -731,7 +726,7 @@ full-width at half-maximum `FWHM`
 """
 @inline function Gaussian(x, A, μ, FWHM) 
     # Reparametrize FWHM as dispersion σ
-    σ = FWHM / sigtofwhm
+    σ = FWHM / (2√(2log(2)))
     A * exp(-(x-μ)^2 / (2σ^2))
 end
 
@@ -748,7 +743,7 @@ function GaussHermite(x, A, μ, FWHM, h₃, h₄)
 
     h = [h₃, h₄]
     # Reparametrize FWHM as dispersion σ
-    σ = FWHM / sigtofwhm
+    σ = FWHM / (2√(2log(2)))
     # Gaussian exponential argument w
     w = (x - μ) / σ
     # Normalized Gaussian
@@ -791,7 +786,7 @@ https://docs.mantidproject.org/nightly/fitting/fitfunctions/PseudoVoigt.html
 function Voigt(x, A, μ, FWHM, η)
 
     # Reparametrize FWHM as dispersion σ
-    σ = FWHM / sigtofwhm
+    σ = FWHM / (2√(2log(2))) 
     # Normalized Gaussian
     G = 1/√(2π * σ^2) * exp(-(x-μ)^2 / (2σ^2))
     # Normalized Lorentzian
