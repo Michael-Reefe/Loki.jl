@@ -50,6 +50,14 @@ As a brief overview, all components that may be included in a model based on the
 
 Templates for the point-spread function (PSF) may also be included in the model with fitted normalizations. These may be used, for example, to model out and subtract the contamination from a nuclear quasar spectrum dispersed by the PSF. The code contains routines for creating templates in such a scenario. PSF templates are provided for MIRI in the `src/templates/psfs_stars` directory, which have been created using observations of the bright calibration star 16 Cyg B, and for NIRSpec in the `src/templates/psfs_stars_nirspec` directory, which have been created using the star P330E. There are also templates generated from models using `webbpsf` in the `src/templates/webbpsf` directory.
 
+A note on the stellar population templates: These have been generated from a highly modified version of FSPS in order to achieve high resolution throughout the UV, optical, and infrared (to allow for flexibility with fitting spectra in the rest-frame IR, optical, or UV).  The logic of the stellar population synthesis has not been modified, but the stellar spectral templates have been replaced with high-resolution alternatives.  Normal stars below 10,000 K use the BT-Settl grid of atmospheres ([Allard, Homeier, & Freytag 2011](https://ui.adsabs.harvard.edu/abs/2011ASPC..448...91A/abstract)), while those above 10,000 K use TLUSTY atmospheres ([Brown, Ferguson, & Davidsen 1996](https://ui.adsabs.harvard.edu/abs/1996ApJ...472..327B/abstract)).  Wolf-Rayet stars use PoWR atmospheres ([Hamann & Gräfener 2004](https://ui.adsabs.harvard.edu/abs/2004A%26A...427..697H/abstract), [Sander, Hamann, & Todt 2012](https://ui.adsabs.harvard.edu/abs/2012A%26A...540A.144S/abstract)).  The MIST isochrones are used for the stellar evolution ([Dotter 2016](https://ui.adsabs.harvard.edu/abs/2016ApJS..222....8D/abstract), [Choi et al. 2016](https://ui.adsabs.harvard.edu/abs/2016ApJ...823..102C/abstract)).  I assume a Salpeter IMF and a delta-function star formation history at each age.  No dust extinction is applied to these models, as this is applied separately within Loki.  Because all of the stellar templates are theoretical model atmospheres, the nominal spectral resolution is infinite, and no broadening is applied (instrumental broadening is done by Loki when reading in the templates). The final wavelength sampling I've chosen for these templates is:
+- $0.2~\mathring{\rm A}$ ($800~\mathring{\rm A}-1800~\mathring{\rm A}$)
+- $0.5~\mathring{\rm A}$ ($1800~\mathring{\rm A}-9000~\mathring{\rm A}$)
+- $5~\mathring{\rm A}$ ($9000~\mathring{\rm A}-5~{\rm \mu m}$)
+- $50~\mathring{\rm A}$ ($5~{\rm \mu m}-30~{\rm \mu m}$)
+
+Outside of these ranges, the templates extend down to $90~\mathring{\rm A}$ in the X-rays and up to $10^6~\mathring{\rm A}$ in the radio, but at a very low resolution.
+
 Note that the code is very flexible and many of these continuum options can be changed, adjusted, or added/removed to fit one's individual needs. Be cautious, however, as certain model components should not be used together with each other (for example, a power law should not be used in conjunction with the warm silicate dust emission component, since they model the same thing). The code uses the [MPFIT](https://pages.physics.wisc.edu/~craigm/idl/cmpfit.html) ([Markwardt 2009](https://ui.adsabs.harvard.edu/abs/2009ASPC..411..251M)) implementation of the Levenberg-Marquardt (LM) least-squares minimization routine, as well as the simulated annealing (SA) global minimization method as implemented by [Optim.jl](https://github.com/JuliaNLSolvers/Optim.jl), and optionally may estimate uncertainties using bootstrapping. Depending on how the code is configured, the fitting procedure may be performed in multiple steps (up to 3). By default, the configuration contains three steps:
 1. The emission lines are masked and the continuum + PAH features are fit; the PAHs use templates
 2. The continuum is subtracted and the PAHs are fit with a series of Drude profiles
@@ -76,12 +84,10 @@ This guide will walk you through step-by-step on how to do a fresh installation 
 
 #### Step 1: Python dependencies
 
-LOKI is built with Julia, but it interfaces with some python libraries that don't have good Julia alternatives using the [PyCall.jl](https://github.com/JuliaPy/PyCall.jl) package.  These are, namely:
+LOKI is built with Julia, but it interfaces with some python plotting libraries that don't have good Julia alternatives using the [PyCall.jl](https://github.com/JuliaPy/PyCall.jl) package.  These are, namely:
 
 - [matplotlib](https://matplotlib.org/) (v3.7.2)
 - [lineid_plot](https://github.com/phn/lineid_plot) (v0.6)
-- [vorbin](https://pypi.org/project/vorbin/) (v3.1.5)
-- [fsps](https://github.com/dfm/python-fsps) (v0.4.7)
 
 The first step is to set up a python environment with these packages installed so that LOKI can access them.  For example, here's one way you could set that up using a conda environment:
 
@@ -89,18 +95,8 @@ The first step is to set up a python environment with these packages installed s
 $ conda create -n loki_env python=3.9
 $ conda activate loki_env
 $ conda install matplotlib==3.7.2
-$ pip install lineid_plot vorbin
+$ pip install lineid_plot
 ```
-
-Then, installing FSPS requires a little additional setup, as shown below.  Note that you can skip installing FSPS if you don't plan on using stellar populations in your models.
-
-```bash
-$ export SPS_HOME="/path/to/download/fsps"
-$ git clone https://github.com/cconroy20/fsps.git $SPS_HOME
-$ pip install fsps
-```
-
-I would also recommend that you add the line that defines the `SPS_HOME` environment variable into your .bashrc file (or whatever the equivalent is for your terminal) so that it persists for future sessions.
 
 Once you've set up your environment, you should note down the location of the python binary, as we'll need it for later.  You can quickly check this with:
 
