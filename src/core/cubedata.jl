@@ -2473,6 +2473,190 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
 end
 
 
+# A little helper function that takes the FITS header keyword RADESYS and 
+# converts it into a type of coordinate object that SkyCoords.jl can understand
+function string_to_coordframe(sframe::String)
+    if sframe == "ICRS"
+        ICRSCoords
+    elseif sframe == "FK5"
+        # FK5 uses an equinox of 2000
+        FK5Coords{2000}
+    elseif sframe == "FK4"
+        # use FK5 with an equinox of 1950
+        FK5Coords{1950}
+    else
+        @warn "Could not recognize RADESYS of FITS header: $(sframe).  Assuming ICRS."
+        ICRSCoords
+    end
+end
+
+
+"""
+    get_optimal_2dwcs(observations; frame, refpoint, resolution, projection)
+
+Given 2 or more datacubes of one object, find the optimal WCS projection that
+will cover the full range of all datacubes.
+"""
+function get_optimal_2dwcs(cubes::Vector{<:DataCube}; frame::Union{String,Nothing}=nothing, refpoint=nothing,
+    resolution=nothing, projection::String="TAN")
+
+    # First we need to create an optimal output WCS to reproject all of the inputs onto.
+    # This code is heavily inspired (copied) by the python reproject.mosaicking package's "find_optimal_celestial_wcs" function 
+    n_cubes = length(cubes)
+    @assert n_cubes ≥ 2 "Please input at least two cubes to compute an optimal WCS for!"
+
+    # Keep track of all corners, reference coordinates of those corners, and resolutions 
+    corners = []
+    references = []
+    resolutions = []
+
+    out_sframe = cubes[1].wcs.radesys
+    out_frame = string_to_coordframe(out_sframe)
+    if !isnothing(frame)
+        out_sframe = frame
+        out_frame = string_to_coordframe(frame)
+    end
+
+    for (i, cube) in enumerate(cubes)
+
+        wcs = cube.wcs
+        nx, ny = (cube.nx, cube.ny)
+
+        # Get the reference frame and units of the WCS 
+        sframe = wcs.radesys
+        frame_i = string_to_coordframe(sframe)
+        s_units = wcs.cunit[1:2]
+        units_i = Unitful.FreeUnits[]
+        for i in 1:2
+            ui = nothing
+            try
+                ui = uparse(s_units, unit_context=[Unitful, UnitfulAstro])
+            catch
+                if s_units[i] in ("deg", "")
+                    ui = u"°"
+                elseif s_units[i] == "arcsec" 
+                    ui = u"arcsecond"
+                elseif s_units[i] == "arcmin" 
+                    ui = u"arcminute"
+                elseif s_units[i] == "radian"
+                    ui = u"rad"
+                else
+                    error("Could not parse CUNIT in FITS header: $(s_units[i])")
+                end
+            end
+            push!(units_i, ui)
+        end
+
+        # pixel coordinates of the corners
+        xc = [0.5, nx+0.5, nx+0.5, 0.5]
+        yc = [0.5, 0.5, ny+0.5, ny+0.5]
+        wc = ones(Float64, 4)  # (we dont care about the wavelength axis)
+
+        # get the coordinates of the corners in the world frame
+        wc = pix_to_world(wcs, Matrix([xc yc wc]'))
+        for i in axes(wc, 2)
+            sc = frame_i((wc[1:2,i].*units_i)...)   # this creates a SkyCoords.jl object
+            fc = convert(out_frame, sc)          # transform to the ouptut frame 
+            push!(corners, fc)
+        end
+
+        # now we need the reference coordinate for this image in the frame of the first image
+        xp, yp, _ = wcs.crpix
+        wp = pix_to_world(wcs, [xp, yp, 1.])
+        sp = frame_i((wp[1:2].*units_i)...)
+        push!(references, convert(out_frame, sp))
+
+        # finally, we need the resolution of the image
+        if any(wcs.pc .> 0) && any(wcs.cdelt .> 0)
+            pccd = wcs.pc * diagm(wcs.cdelt)   # matrix multiplication!
+        elseif any(wcs.cd .> 0)
+            pccd = wcs.cd
+        elseif any(wcs.cdelt .> 0)
+            pccd = diagm(wcs.cdelt)
+        else
+            error("Could not find CDELT+PC or CD entries in WCS")
+        end
+        pixel_scales = sqrt.(sum(pccd.^2, dims=1))'
+        append!(resolutions, pixel_scales[1:2].*units_i)
+    end
+
+    # If no reference point is explicitly given, just default to the mean of all the reference points
+    if isnothing(refpoint)
+        refpoint = out_frame(
+            mean([references[i].ra  for i in eachindex(references)]),
+            mean([references[i].dec for i in eachindex(references)])
+        )
+    end
+    refpoint = convert(out_frame, refpoint)
+
+    # If no resolution is specified, use the minimum of the input resolutions
+    if isnothing(resolution)
+        resolution = minimum(resolutions)
+    end
+
+    # Construct the output WCS
+    wcs_out = WCSTransform(2;
+        crval=ustrip.(uconvert.(u"°", [refpoint.ra, refpoint.dec])),
+        cdelt=ustrip.(uconvert.(u"°", [-1*resolution, resolution])),
+        crpix=[1., 1.],  # temporary
+        ctype=["RA--", "DEC-"] .* projection,
+        cunit=["deg", "deg"],
+        pc=diagm(ones(2))
+    )
+
+    # Figure out where all of the corners are in the output WCS projection
+    corners_sorted = zeros(2, length(corners))
+    for i in axes(corners_sorted, 2)
+        corners_sorted[:,i] .= (corners[i].ra, corners[i].dec)
+    end
+    pp = world_to_pix(wcs_out, ustrip.(uconvert.(u"°", corners_sorted)))
+    xp = pp[1,:]
+    yp = pp[2,:]
+
+    xmin, xmax = extrema(xp)
+    ymin, ymax = extrema(yp)
+
+    # Update crpix, remembering that the bottom-left corner should be at (0.5, 0.5) since the first pixel is centered at (1,1)
+    setproperty!(wcs_out, :crpix, [(1-xmin)+0.5, (1-ymin)+0.5])
+
+    # this is stupid but it's the only way that works for some reason...it has to be set *last* as changing any other property 
+    # causes it to go back to being blank
+    setproperty!(wcs_out, :radesys, out_sframe)
+
+    naxis1 = round(Int, xmax - xmin)
+    naxis2 = round(Int, ymax - ymin)
+
+    return wcs_out, (naxis1, naxis2)
+end
+
+
+"""
+    combine_observations(observations; frame, refpoint, resolution, projection)
+
+Given 2 or more observations of one object, combine them into a single Observation object.
+This requires that all input Observation objects contain the same observed channels.
+This procedure will, for each channel that the Observations share:
+    1) Reproject all of the observations of this channel onto a common 3D grid
+    2) Median-combine the individual observations into a single output cube
+"""
+# function combine_observations(observations::Vector{Observation}; frame::Union{String,Nothing}=nothing,
+#     refpoint=nothing, resolution=nothing, projection::String="TAN")
+
+#     # Input checking
+#     n_obs = length(observations)
+#     @assert n_obs ≥ 2 "Please input at least two Observations to combine!"
+#     channels = keys(observations[1].channels)
+#     for obs in observations[2:end]
+#         @assert keys(obs) == channels "Please ensure all input Observations have all of the same channels"
+#     end
+
+#     for channel in channels
+
+#     end
+
+# end
+
+
 """
     fshift(array, Δx, Δy)
 
