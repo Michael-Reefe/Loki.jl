@@ -1049,13 +1049,13 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, coords::Cart
     # if there are any NaNs, skip over the spaxel
     if any(.!isfinite.(cube_data.I[coords, :]))
         @debug "Non-finite values found in the intensity! Not fitting spaxel $coords"
-        return nothing, nothing
+        return nothing, nothing, nothing
     end
     for t in 1:cube_fitter.n_templates
         if any(.~isfinite.(cube_data.templates[coords, :, t]))
             # If a template is fully NaN/Inf, we can't fit 
             @debug "Non-finite values found in the templates! Not fitting spaxel $coords"
-            return nothing, nothing
+            return nothing, nothing, nothing
         end
     end
 
@@ -1063,6 +1063,13 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, coords::Cart
     spax = make_normalized_spaxel(cube_data, coords, cube_fitter; use_ap=use_ap, use_vorbins=use_vorbins, σ_min=σ_min)
     # Overwrite the raw errors with the updated errors
     # cube_data.σ[coords, :] .= spax.σ .* spax.N
+
+    # Check that there is enough data within the masked region
+    spaxel_mask = .~get_vector_mask(spax; lines=true, user_mask=cube_fitter.cube.spectral_region.mask)
+    if length(spax.I[spaxel_mask]) < 10
+        @debug "The masked region is too small to contain enough data to fit! Not fitting spaxel $coords"
+        return nothing, nothing, nothing
+    end
 
     # This log should be entirely handled by 1 process, since each spaxel is entirely handled by 1 process
     # so there should be no problems w.ith I/O race conditions
