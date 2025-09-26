@@ -1113,7 +1113,7 @@ function calculate_statistical_errors!(cube::DataCube,
         # σ = hypot.(σ, σ_stat)
 
         # Inflate errors on the "bad" pixels
-        σ_stat[mask_bad] .*= 100
+        σ_stat[mask_bad] .= nanmaximum(ustrip.(σ_stat)) .* 100 .* unit(σ_stat[1])
 
         # Replace the cube's error with the statistical errors
         if median
@@ -1132,7 +1132,8 @@ Calculate Voronoi bins for the cube such that each bin has a signal to noise rat
 Modifies the cube object in-place with the `voronoi_bins` attribute, which is a 2D array that gives unique integer
 labels to each voronoi bin.
 """
-function voronoi_rebin!(cube::DataCube, target_SN::Real, window::Union{Tuple{QWave,QWave},Nothing}=nothing)
+function voronoi_rebin!(cube::DataCube, target_SN::Real, window::Union{Tuple{QWave,QWave},Nothing}=nothing,
+    bin_strategy::BinningStrategy=WeightedVoronoi())
 
     @info "Performing Voronoi rebinning with target S/N=$target_SN"
 
@@ -1159,7 +1160,7 @@ function voronoi_rebin!(cube::DataCube, target_SN::Real, window::Union{Tuple{QWa
     signal = clamp.(signal, 0*unit(signal[1]), Inf*unit(signal[1]))
     noise = clamp.(noise, 0*unit(noise[1]), Inf*unit(noise[1]))
     # perform voronoi rebinning
-    bin_numbers, = voronoi2Dbinning(x, y, ustrip.(signal), ustrip.(noise), target_SN, 1.0, WeightedVoronoi())
+    bin_numbers, = voronoi2Dbinning(x, y, ustrip.(signal), ustrip.(noise), target_SN, 1.0, bin_strategy)
     # reformat bin numbers as a 2D array so that we don't need the x/y vectors anymore
     voronoi_bins = zeros(Int, size(cube.I)[1:2])
     for i in eachindex(bin_numbers)
@@ -1583,6 +1584,9 @@ function save_fits(path::String, obs::Observation, channels::Vector)
             end
             if key == "CUNIT3"
                 val = wave_unit_str
+            end
+            if key in ("CRPIX3", "CRVAL3", "CDELT3")
+                val = 1.
             end
             push!(hdr1_vals, val)
             comment = strip(m[3])

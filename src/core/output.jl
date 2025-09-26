@@ -832,9 +832,9 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
         # Get the name (giving the shape of the aperture: circular, elliptical, or rectangular)
         ap_shape = string(eltype(aperture))
   
-        aperture_keys = ["AP_SHAPE", "AP_X", "AP_Y"]
+        aperture_keys = String["AP_SHAPE", "AP_X", "AP_Y"]
         aperture_vals = Any[ap_shape, aperture[1].x, aperture[1].y]
-        aperture_comments = ["The shape of the spectrum extraction aperture", "The x coordinate of the aperture",
+        aperture_comments = String["The shape of the spectrum extraction aperture", "The x coordinate of the aperture",
             "The y coordinate of the aperture"]
 
         # Get the properties, i.e. radius for circular 
@@ -905,11 +905,11 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
     hdr1_vals_3d = Any[ustrip(cube_fitter.cube.Ω), ustrip(uconvert(u"arcsecond^2", cube_fitter.cube.Ω))]
     hdr1_vals_2d = copy(hdr1_vals_3d)
             
-    hdr0_comments = cat(String["Target name", "Target redshift", "Channel", "Band",
+    hdr0_comments = Vector{String}(cat(["Target name", "Target redshift", "Channel", "Band",
                                "Right ascension of target (deg.)", "Declination of target (deg.)",
                                "rotation angle to sky axes", "number of individual wavelength channels/bands in the data", 
                                "data in rest frame?", "data masked?", "vacuum wavelengths?", "log binned?", "dereddened?", "data model", 
-                               "Number of data axes"], aperture_comments, dims=1)
+                               "Number of data axes"], aperture_comments, dims=1))
     hdr1_comments_3d = String["Nominal pixel area in steradians", "Nominal pixel area in arcsec^2"]
     hdr1_comments_2d = copy(hdr1_comments_3d)
     
@@ -932,6 +932,9 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
         end
         if key == "CUNIT3"
             val = wave_unit_str
+        end
+        if key in ("CRPIX3", "CRVAL3", "CDELT3")
+            val = 1.
         end
         push!(hdr1_vals_3d, val)
         comment = strip(m[3])
@@ -1066,6 +1069,21 @@ function write_fits_full_model(cube_fitter::CubeFitter, cube_data::NamedTuple, c
     λunit = replace(string(unit(cube_data.λ[1])), 'μ' => 'u')
     Iunit = replace(string(unit(cube_data.I[1])), 'μ' => 'u', "Å" => "angstrom")
 
+    if !isnothing(cube_fitter.cube.voronoi_bins)
+        out_data = ones(eltype(cube_data.I), size(cube_fitter.cube.I)).*NaN
+        out_err  = ones(eltype(cube_data.σ), size(cube_fitter.cube.I)).*NaN
+        for spaxel in CartesianIndices(size(out_data)[1:2])
+            vbin = cube_fitter.cube.voronoi_bins[spaxel]
+            if vbin > 0
+                out_data[spaxel, :] .= cube_data.I[vbin, :]   # no division by npix is necessary since these are intensities
+                out_err[spaxel, :]  .= cube_data.σ[vbin, :]
+            end
+        end
+    else
+        out_data = cube_data.I
+        out_err  = cube_data.σ
+    end
+
     # Create the 3D intensity model FITS file
     FITS(joinpath("output_$(cube_fitter.name)", 
                   "$(cube_fitter.name)_$(nuc_temp_fit ? "nuc_model" : "full_model")$(qso3d ? "_3d" : "").fits"), 
@@ -1074,10 +1092,10 @@ function write_fits_full_model(cube_fitter::CubeFitter, cube_data::NamedTuple, c
         @debug "Writing 3D model FITS HDUs"
         # Permute the wavelength axis here back to the third axis to be consistent with conventions
 
-        write(f, Vector{Int}(), header=hdr0)                                                           # Primary HDU (empty)
-        write(f, Float32.(ustrip.(cube_data.I) .* restframe_factor); name="DATA", header=hdr1_3d)      # Raw data 
-        write(f, Float32.(ustrip.(cube_data.σ) .* restframe_factor); name="ERROR")                     # Error in the raw data
-        write(f, Float32.(ustrip.(permutedims(cube_model.model, (2,3,1)))); name="MODEL")                       # Full intensity model
+        write(f, Vector{Int}(), header=hdr0)                                                        # Primary HDU (empty)
+        write(f, Float32.(ustrip.(out_data) .* restframe_factor); name="DATA", header=hdr1_3d)      # Raw data 
+        write(f, Float32.(ustrip.(out_err)  .* restframe_factor); name="ERROR")                     # Error in the raw data
+        write(f, Float32.(ustrip.(permutedims(cube_model.model, (2,3,1)))); name="MODEL")           # Full intensity model
         write_key(f["DATA"], "BUNIT", Iunit)
         write_key(f["ERROR"], "BUNIT", Iunit)
         write_key(f["MODEL"], "BUNIT", Iunit) 
@@ -1139,6 +1157,10 @@ function write_fits_full_model(cube_fitter::CubeFitter, cube_data::NamedTuple, c
             lnu = uppercase("$line")
             write(f, Float32.(permutedims(ustrip.(cube_model.lines[:, :, :, k]), (2,3,1))); name="LINES.$lnu")  # Emission line profiles
             write_key(f["LINES.$lnu"], "BUNIT", Iunit)
+        end
+
+        if !isnothing(cube_fitter.cube.voronoi_bins)
+            write(f, cube_fitter.cube.voronoi_bins; name="VORONOI_BINS")  # Voronoi bin indices
         end
         
         write(f, ["wave"], [reshape(ustrip.(cube_data.λ) .* (1 .+ cube_fitter.z), (1, length(cube_data.λ), 1))],  # wavelength vector
