@@ -185,7 +185,7 @@ export DataCube,   # DataCube struct
        generate_psf_model!,
        splinefit_psf_model!,
        adjust_wcs_alignment!, 
-       reproject_channels!, 
+       reproject_cubes!, 
        extract_from_aperture!,
        resample_channel_wavelengths!,
        combine_channels!,
@@ -245,6 +245,7 @@ export DataCube,   # DataCube struct
 # Include all of the files that we need to create the module
 
 include("util/parameters.jl")
+include("util/wcs_utils.jl")
 include("core/cubedata.jl")
 include("core/cubefit.jl")
 include("core/cubefit_helpers.jl")
