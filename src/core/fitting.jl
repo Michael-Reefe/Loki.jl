@@ -1066,7 +1066,7 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, coords::Cart
 
     # Check that there is enough data within the masked region
     spaxel_mask = .~get_vector_mask(spax; lines=true, user_mask=cube_fitter.cube.spectral_region.mask)
-    if length(spax.I[spaxel_mask]) < 10
+    if length(spax.I[spaxel_mask]) < (cube_fitter.n_params_cont + cube_fitter.n_params_lines)
         @debug "The masked region is too small to contain enough data to fit! Not fitting spaxel $coords"
         return nothing, nothing, nothing
     end
