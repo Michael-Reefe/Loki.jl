@@ -189,6 +189,8 @@ export DataCube,   # DataCube struct
        extract_from_aperture!,
        resample_channel_wavelengths!,
        combine_channels!,
+       get_optimal_2dwcs,
+       combine_observations,
        generate_nuclear_template,
 
        # ParamMaps and CubeModel structs

@@ -206,3 +206,77 @@ function string_to_coordframe(sframe::String)
         ICRSCoords
     end
 end
+
+
+
+# calculate the rotation angle of the data relative to the sky coordinates, given a WCS
+function get_sky_rotation_angle(wcs::WCSTransform)
+
+    if any(wcs.pc .> 0)
+        # PC is a rotation matrix
+        cosθ =  wcs.pc[1,1]    
+        sinθ = -wcs.pc[1,2]    # negative because of how the rotation matrix is defined
+    elseif any(wcs.cd .> 0)
+        # same as the PC case except the rotation matrix is also scaled by cdelt (matrix multiplication)
+        cdelt1 = sqrt(wcs.cd[1,1]^2 + wcs.cd[2,1]^2)
+        cdelt2 = sqrt(wcs.cd[1,2]^2 + wcs.cd[2,2]^2)
+        cosθ =  wcs.cd[1,1]/cdelt1
+        sinθ = -wcs.cd[1,2]/cdelt2
+    else
+        return 0. * u"rad"
+    end
+
+    # flipped RA axis (RA increases to the left)
+    # sometimes this is handled with a negative CDELT1, in which case no fix is necessary,
+    # and other times CDELT1 > 0 and PC1_1 < 0 (or CD1_1 < 0), in which case we need a sign flip
+    if occursin("RA", wcs.ctype[1]) && (wcs.cdelt[1] > 0)
+        cosθ *= -1
+    end
+
+    atan(sinθ, cosθ) * u"rad"
+end
+
+
+# Utility function to calculate pixel resolutions in each axis from a WCS
+function get_pixel_resolutions(wcs::WCSTransform)
+
+    if any(wcs.pc .> 0) && any(wcs.cdelt .> 0)
+        pccd = wcs.pc * diagm(wcs.cdelt)   # matrix multiplication!
+    elseif any(wcs.cd .> 0)
+        pccd = wcs.cd
+    elseif any(wcs.cdelt .> 0)
+        pccd = diagm(wcs.cdelt)
+    else
+        error("Could not find CDELT, PC, or CD entries in WCS")
+    end
+
+    sqrt.(sum(pccd.^2, dims=1))'
+end
+
+
+# Utility function to parse WCS "CUNIT" keywords into Unitful objects
+function parse_cunits(wcs::WCSTransform)
+    s_units = wcs.cunit
+    units_i = Unitful.FreeUnits[]
+    for i in 1:length(s_units)
+        ui = nothing
+        s_unitsi = fits_unitstr_to_unitful(s_units[i])
+        try
+            ui = uparse(s_unitsi, unit_context=[Unitful, UnitfulAstro])
+        catch
+            if s_unitsi in ("deg", "")
+                ui = u"°"
+            elseif s_unitsi == "arcsec" 
+                ui = u"arcsecond"
+            elseif s_unitsi == "arcmin" 
+                ui = u"arcminute"
+            elseif s_unitsi == "radian"
+                ui = u"rad"
+            else
+                error("Could not parse CUNIT in FITS header: $(s_units[i])")
+            end
+        end
+        push!(units_i, ui)
+    end
+    units_i
+end

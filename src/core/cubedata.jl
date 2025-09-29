@@ -30,7 +30,7 @@ end
 
 # very simple parser; bound to not work in all cases but that's a lotta work
 function fits_unitstr_to_unitful(unit_string::String)
-    unit_string = replace(unit_string, "u" => "μ", "." => "*")
+    unit_string = replace(unit_string, "um" => "μm", "." => "*")
     i = 1
     while i ≤ lastindex(unit_string)
         # insert an exponent before each number in the string
@@ -45,33 +45,6 @@ function fits_unitstr_to_unitful(unit_string::String)
     unit_string
 end
 
-
-# calculate the rotation angle of the data relative to the sky coordinates, given a WCS
-function get_sky_rotation_angle(wcs::WCSTransform)
-
-    if any(wcs.pc .> 0)
-        # PC is a rotation matrix
-        cosθ =  wcs.pc[1,1]    
-        sinθ = -wcs.pc[1,2]    # negative because of how the rotation matrix is defined
-    elseif any(wcs.cd .> 0)
-        # same as the PC case except the rotation matrix is also scaled by cdelt (matrix multiplication)
-        cdelt1 = sqrt(wcs.cd[1,1]^2 + wcs.cd[2,1]^2)
-        cdelt2 = sqrt(wcs.cd[1,2]^2 + wcs.cd[2,2]^2)
-        cosθ =  wcs.cd[1,1]/cdelt1
-        sinθ = -wcs.cd[1,2]/cdelt2
-    else
-        return 0. * u"rad"
-    end
-
-    # flipped RA axis (RA increases to the left)
-    # sometimes this is handled with a negative CDELT1, in which case no fix is necessary,
-    # and other times CDELT1 > 0 and PC1_1 < 0 (or CD1_1 < 0), in which case we need a sign flip
-    if occursin("RA", wcs.ctype[1]) && (wcs.cdelt[1] > 0)
-        cosθ *= -1
-    end
-
-    atan(sinθ, cosθ) * u"rad"
-end
 
 ############################## DATACUBE STRUCTURE AND FUNCTIONS ####################################
 
@@ -625,7 +598,7 @@ function from_data(Ω::typeof(1.0u"sr"), z::Real, λ::AbstractVector{<:Quantity}
     end
     _dereddened = dereddened
     if isnothing(dereddened)
-        @warn "Assuming input intensities are not reddening-corrected; if they are already reddening-correct, " * 
+        @warn "Assuming input intensities are not reddening-corrected; if they are already reddening-corrected, " * 
               "please provide the keyword dereddened=true"
         _dereddened = false
     end
@@ -981,7 +954,6 @@ function interpolate_nans!(cube::DataCube)
                 end
             end
             λknots = λknots[good]
-
 
             # ONLY replace NaN values, keep the rest of the data as-is
             cube.I[index, filt] .= Spline1D(λ[isfinite.(I)], I[isfinite.(I)], λknots, k=1, bc="extrapolate")(λ[filt]) .* unit(cube.I[1])
@@ -2049,27 +2021,7 @@ function get_optimal_2dwcs(cubes::Vector{<:DataCube}; frame::Union{String,Nothin
         # Get the reference frame and units of the WCS 
         sframe = wcs.radesys
         frame_i = string_to_coordframe(sframe)
-        s_units = wcs.cunit[1:2]
-        units_i = Unitful.FreeUnits[]
-        for i in 1:2
-            ui = nothing
-            try
-                ui = uparse(s_units, unit_context=[Unitful, UnitfulAstro])
-            catch
-                if s_units[i] in ("deg", "")
-                    ui = u"°"
-                elseif s_units[i] == "arcsec" 
-                    ui = u"arcsecond"
-                elseif s_units[i] == "arcmin" 
-                    ui = u"arcminute"
-                elseif s_units[i] == "radian"
-                    ui = u"rad"
-                else
-                    error("Could not parse CUNIT in FITS header: $(s_units[i])")
-                end
-            end
-            push!(units_i, ui)
-        end
+        units_i = parse_cunits(wcs)[1:2]
 
         # pixel coordinates of the corners
         xc = [0.5, nx+0.5, nx+0.5, 0.5]
@@ -2091,16 +2043,7 @@ function get_optimal_2dwcs(cubes::Vector{<:DataCube}; frame::Union{String,Nothin
         push!(references, convert(out_frame, sp))
 
         # finally, we need the resolution of the image
-        if any(wcs.pc .> 0) && any(wcs.cdelt .> 0)
-            pccd = wcs.pc * diagm(wcs.cdelt)   # matrix multiplication!
-        elseif any(wcs.cd .> 0)
-            pccd = wcs.cd
-        elseif any(wcs.cdelt .> 0)
-            pccd = diagm(wcs.cdelt)
-        else
-            error("Could not find CDELT, PC, or CD entries in WCS")
-        end
-        pixel_scales = sqrt.(sum(pccd.^2, dims=1))'
+        pixel_scales = get_pixel_resolutions(wcs)
         append!(resolutions, pixel_scales[1:2].*units_i)
     end
 
@@ -2733,16 +2676,42 @@ end
 
 
 """
-    combine_observations(observations; frame, refpoint, resolution, projection)
+    combine_observations(observations; frames, refpoints, resolutions, projections, channels,
+        order, instrument_channel_edges)
 
-Given 2 or more observations of one object, combine them into a single Observation object.
+Given 2 or more observations of one object, combine them into a single mosaicked Observation object.
 This requires that all input Observation objects contain the same observed channels.
 This procedure will, for each channel that the Observations share:
     1) Reproject all of the observations of this channel onto a common 3D grid
     2) Median-combine the individual observations into a single output cube
+
+The output WCS, by default, is calculated to contain the full field of view of all observations, at the
+highest resolution of any individual observation in the list.
+
+# Arguments 
+- `observations`: A list of the observation objects which should be combined
+- `frames`: A list of coordinate frames (i.e. ICRSCoords, FK5Coords, ...) for the output WCS in each channel.
+    Defaults to the coordinate frame of the first cube in each channel.
+- `refpoints`: A list of reference points for the output WCS's CRVAL keywords (must be a list of SkyCoords).
+    Defaults to the mean of the reference points of all the input cubes in each channel.
+- `resolutions`: A list of resolutions for the output WCS's CDELT keywords (must be a list of quantities with angular units).
+    Defaults to the smallest resolution of the cubes in each channel.
+- `projections`: A list of projection types for the output WCS's CTYPE keywords. 
+    Always defaults to "TAN" (tangent).
+- `channels`: A list specifying which channels should be combined for the output observation.
+    Defaults to all channels in the first input cube (which must also exist in all other cubes).
+- `order`: The order of interpolation to be used during the reprojection. 
+    Defaults to 1 (linear).
+- `instrument_channel_edges`: If the input cubes are not from JWST MIRI or NIRSpec, one should provide a list of wavelengths
+    which specify the boundaries of the channels of the given instrument.  If there is only one channel, or the channel distinction
+    is not important to the user, one can simply input the minimum and maximum wavelength of the given cubes.
+- `name_out`: A string specifying the name of the output observation object.
+    Defaults to "[name of obs 1]_[name of obs 2]_...[name of obs N]_mosaicked"
 """
 function combine_observations(observations::Vector{Observation}; frames=nothing,
-    refpoints=nothing, resolutions=nothing, projections=nothing, channels=nothing)
+    refpoints=nothing, resolutions=nothing, projections=nothing, channels=nothing,
+    order::Integer=1, instrument_channel_edges::Union{Vector{<:QWave},Nothing}=nothing,
+    name_out::Union{String,Nothing}=nothing)
 
     # Input checking
     n_obs = length(observations)
@@ -2754,25 +2723,154 @@ function combine_observations(observations::Vector{Observation}; frames=nothing,
         @assert all([haskey(obs.channels, channel) for obs in observations]) "Please ensure all " *
             "input Observations have all of the requested channels to combine"
     end
+    @assert all([obs.instrument .== observations[1].instrument for obs in observations]) "Observations \"instrument\" attribute do not match!"
+    @assert all([obs.rest_frame .== observations[1].rest_frame for obs in observations]) "Observations \"rest_frame\" attribute do not match!"
+    @assert all([obs.z .== observations[1].z for obs in observations]) "Observations \"z\" attribute do not match!"
+    @assert all([obs.masked .== observations[1].masked for obs in observations]) "Observations \"masked\" attribute do not match!"
+    @assert all([obs.vacuum_wave .== observations[1].vacuum_wave for obs in observations]) "Observations \"vacuum_wave\" attribute do not match!"
+    @assert all([obs.log_binned .== observations[1].log_binned for obs in observations]) "Observations \"log_binned\" attribute do not match!"
+    @assert all([obs.dereddened .== observations[1].dereddened for obs in observations]) "Observations \"dereddened\" attribute do not match!"
+    @assert all([obs.sky_aligned .== observations[1].sky_aligned for obs in observations]) "Observations \"sky_aligned\" attribute do not match!"
+
+    if isnothing(instrument_channel_edges) && (observations[1].instrument != "MIRI") && (observations[1].instrument != "NIRSPEC")
+        error("It appears that this isn't a MIRI/MRS cube. Please explicity specify the edges of each channel for this instrument.")
+    end
+
+    ra_all = []
+    dec_all = []
+    channels_out = Dict{Any,DataCube}()
 
     for (i, channel) in enumerate(channels)
 
         @info "Channel: $channel"
         cubes = [obs.channels[channel] for obs in observations]
+        band = cubes[1].band
+        gaps = cubes[1].spectral_region.gaps
+        # more input checking
+        for cube in cubes
+            @assert cube.band == band "Please ensure all input Observations for channel $channel are in the same band!"
+            @assert isnothing(cube.voronoi_bins) "Cannot combine voronoi binned cubes! (channel $channel)"
+            @assert length(cube.spectral_region.mask) == 0 "Cannot combine cubes with user masks already applied -- " *
+                "please apply them at the end (channel $channel)"
+            @assert cube.spectral_region.gaps == gaps "Cannot combine cubes with different gaps in their spectra, all cubes in " *
+                "channel $channel should have the same wavelength vector"
+        end
 
-        @info "Calculating optimal WCS to project onto"
+        # Get optional arguments
         frame = isnothing(frames) ? nothing : frames[i]
         refpoint = isnothing(refpoints) ? nothing : refpoints[i]
         resolution = isnothing(resolutions) ? nothing : resolutions[i]
         projection = isnothing(projections) ? "TAN" : projections[i]
-        wcs_out, shape_out = get_optimal_2dwcs(cubes; frame=frame, refpoint=refpoint, 
-            resolution=resolution, projection=projection)
 
         @info "Reprojecting all channels onto the optimal WCS"
+        reproject_cubes!(cubes; order=order, output_wcs_frame=0, enforce_all_cubes_out=false, frame=frame,
+            refpoint=refpoint, resolution=resolution, projection=projection)
 
+        # Prepare the values in each cube to be combined
+        λ_out = cubes[1].λ
+        psf1d_out = cubes[1].psf
+        lsf1d_out = cubes[1].lsf
+        I_all = zeros(eltype(cubes[1].I), (size(cubes[1].I)..., n_obs))
+        σ_all = zeros(eltype(cubes[1].σ), (size(cubes[1].σ)..., n_obs))
+        mask_all = zeros(eltype(cubes[1].mask), (size(cubes[1].mask)..., n_obs))
+        psfs_all = nothing
+        do_psf = all([!isnothing(cube.psf_model) for cube in cubes])
+        if do_psf
+            psfs_all = zeros(eltype(cubes[1].psf_model), (size(cubes[1].psf_model)..., n_obs))
+        end
+        for (j, cube) in enumerate(cubes)
+            if !(λ_out == cube.λ) 
+                @warn "Cubes for channel $channel have differing wavelength vectors! They will be resampled in the wavelength axis"
+                I_all[:,:,:,j], σ_all[:,:,:,j], mask_all[:,:,:,j] = resample_flux_permuted3D(λ_out, cube.λ, cube.I, cube.σ, cube.mask)
+                if do_psf
+                    psfs_all[:,:,:,j] = resample_flux_permuted3D(λ_out, cube.λ, cube.psf_model)
+                end
+            else
+                I_all[:,:,:,j] .= cube.I
+                σ_all[:,:,:,j] .= cube.σ
+                mask_all[:,:,:,j] .= cube.mask
+                if do_psf
+                    psfs_all[:,:,:,j] .= cube.psf_model
+                end
+            end
+        end
+        
+        # Combine cubes, weighting by the errors, ignoring NaNs and 0s
+        I_all[iszero.(I_all) .| mask_all] .*= NaN
+        σ_all[iszero.(σ_all) .| mask_all] .*= NaN
+
+        # Expand the masked edges by 1 pixel to prevent edge effects
+        # if pad_mask
+        #     new_mask = zeros(eltype(mask_all), size(mask_all))
+        #     for cube_i in axes(new_mask, 4)
+        #         for wave_i in axes(new_mask, 3)
+        #             for xi in axes(new_mask, 1)
+        #                 for yi in axes(new_mask, 2)
+        #                     xs = max(1,xi-1):min(xi+1,size(new_mask,1))
+        #                     ys = max(1,yi-1):min(yi+1,size(new_mask,2))
+        #                     new_mask[xi, yi, wave_i, cube_i] = any(mask_all[xs, ys, wave_i, cube_i])
+        #                 end
+        #             end
+        #         end
+        #     end
+        #     mask_all = new_mask
+        # end
+
+        weights = dropdims(nansum(ustrip.(1 ./ σ_all.^2), dims=4), dims=4)
+        I_out = dropdims(nansum(ustrip.(I_all ./ σ_all.^2), dims=4), dims=4) ./ weights .* unit(I_all[1])
+        σ_out = sqrt.(1 ./ weights) .* unit(σ_all[1])
+        # Take the minimum of the masks -- so that at least one of the input cubes must be good
+        mask_out = BitArray(dropdims(nanminimum(mask_all, dims=4), dims=4))
+        mask_out .|= .~isfinite.(I_out) .| .~isfinite.(σ_out)
+        psf_out = nothing
+        # Combine the PSF models
+        if do_psf
+            psfs_all[iszero.(psfs_all) .| mask_all] .*= NaN
+            psf_out = dropdims(nansum(ustrip.(psfs_all ./ σ_all.^2), dims=4), dims=4) ./ weights .* unit(psfs_all[1])
+            mask_out .|= .~isfinite.(psf_out)
+        end
+
+        # Get a few ancillary parameters 
+        wcs_out = cubes[1].wcs
+        cunits = parse_cunits(wcs_out)
+        pixel_scales = get_pixel_resolutions(wcs_out)
+        Ω_out = uconvert(u"sr", prod((pixel_scales.*cunits)[1:2]))
+        α_out, δ_out = uconvert.(u"°", wcs_out.crval[1:2].*cunits[1:2])
+        θ_out = get_sky_rotation_angle(wcs_out)
+
+        channels_out[channel] = DataCube(
+            λ_out, I_out, σ_out, mask_out, psf_out, Ω_out, α_out, δ_out, θ_out, psf1d_out, lsf1d_out, wcs_out, string(channel),
+            string(band), nothing, gaps, observations[1].rest_frame, observations[1].z, observations[1].masked,
+            observations[1].vacuum_wave, observations[1].log_binned, observations[1].dereddened, observations[1].sky_aligned,
+            nothing, Symbol(observations[1].instrument), instrument_channel_edges
+        )
+        push!(ra_all, α_out)
+        push!(dec_all, δ_out)
 
     end
 
+    if isnothing(name_out)
+        name_out = ""
+        for obs in observations
+            name_out *= obs.name * "_"
+        end
+        name_out *= "_mosaicked"
+    end
+
+    Observation(
+        channels_out, 
+        name_out, 
+        observations[1].z, 
+        nanmean(ustrip.(uconvert.(u"°", ra_all)))*u"°",
+        nanmean(ustrip.(uconvert.(u"°", dec_all)))*u"°",
+        observations[1].instrument,
+        observations[1].rest_frame,
+        observations[1].masked,
+        observations[1].vacuum_wave,
+        observations[1].log_binned,
+        observations[1].dereddened,
+        observations[1].sky_aligned
+    )
 end
 
 
