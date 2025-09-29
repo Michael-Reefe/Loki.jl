@@ -104,7 +104,7 @@ function continuum_cubic_spline(λ::Vector{<:Quantity}, I::Vector{S}, σ::Vector
     end
 
     # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
-    λknots = _λ[1+scale:scale:end-scale]
+    λknots = _λ[.~mask_lines][1+scale:scale:end-scale]
     # Remove any knots that happen to fall within a masked pixel
     good = []
     for i ∈ eachindex(λknots)

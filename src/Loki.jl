@@ -74,12 +74,6 @@ const py_animation::PyObject = PyNULL()
 # Line ID plot package
 const py_lineidplot::PyObject = PyNULL()
 
-# FSPS Library
-const py_fsps::PyObject = PyNULL()
-
-# Astroquery SVO FPS module 
-const py_svo::PyObject = PyNULL()
-
 # Some constants for setting matplotlib font sizes
 const SMALL::UInt8 = 12
 const MED::UInt8 = 14
@@ -132,24 +126,6 @@ function __init__()
         Conda.pip_interop(true)
         Conda.pip("install", "lineid_plot")
         copy!(py_lineidplot, pyimport("lineid_plot"))
-    end
-    # FSPS
-    try
-        copy!(py_fsps, pyimport("fsps"))
-    catch
-        @warn "Could not find the Python FSPS Library! Optical spectra modeling will not be possible."
-        # Conda.pip_interop(true)
-        # Conda.pip("install", "fsps")
-        # copy!(py_fsps, pyimport("fsps"))
-    end
-    # Astroquery
-    try
-        copy!(py_svo, pyimport("astroquery.svo_fps"))
-    catch
-        # @warn "Could not find the Python astroquery library! Photometry modeling will not be possible."
-        # Conda.pip_interop(true)
-        # Conda.pip("install", "astroquery")
-        # copy!(py_astroquery, pyimport("astroquery"))
     end
 
     # Matplotlib settings to make plots look pretty :)
@@ -209,10 +185,12 @@ export DataCube,   # DataCube struct
        generate_psf_model!,
        splinefit_psf_model!,
        adjust_wcs_alignment!, 
-       reproject_channels!, 
+       reproject_cubes!, 
        extract_from_aperture!,
        resample_channel_wavelengths!,
        combine_channels!,
+       get_optimal_2dwcs,
+       combine_observations,
        generate_nuclear_template,
 
        # ParamMaps and CubeModel structs
@@ -269,6 +247,7 @@ export DataCube,   # DataCube struct
 # Include all of the files that we need to create the module
 
 include("util/parameters.jl")
+include("util/wcs_utils.jl")
 include("core/cubedata.jl")
 include("core/cubefit.jl")
 include("core/cubefit_helpers.jl")

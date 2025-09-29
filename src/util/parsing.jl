@@ -387,32 +387,6 @@ function read_dust_κ(x::Real, y::Real, a::QLength, λunit::Unitful.Units)
 end
 
 
-# Get the transmission function for a photometric filter by querying the SVO archive
-function get_transmission(filter::String, z::Real)
-    # grab the filter transmission curve from SVO's archive (astroquery uses caching so this is fast after the first time)
-    tbl = py_svo.SvoFps.get_transmission_data(filter)
-    t_λ = tbl.columns["Wavelength"] .* u"angstrom"
-    t_T = tbl.columns["Transmission"]
-    # de-redshift
-    t_λ ./= (1 .+ z)
-    return t_λ, t_T
-end
-
-
-# Get the average wavelength and flux within a photometric filter
-function calculate_photometry(t_λ::Vector{<:QWave}, t_T::Vector{<:Real}, λ::Vector{<:QWave}, spectrum::Vector{<:Number})
-    # make sure the input spectrum covers the appropriate wavelengths (after de-redshifting it)
-    @assert all(λ[1] .≤ t_λ .≤ λ[end]) "The input spectrum does not cover the given filter!"
-    # resample the spectrum onto the same grid
-    region = t_λ[1] .≤ λ .≤ t_λ[end]
-    t_I = resample_conserving_flux(ustrip.(t_λ), ustrip.(λ[region]), ustrip.(spectrum[region]); fill=0.0) .* unit(spectrum[region][1])
-    # integrate weighted by the response function to get the average flux within the filter
-    λ_avg = NumericalIntegration.integrate(t_λ, t_T.*t_λ.^2) / NumericalIntegration.integrate(t_λ, t_T.*t_λ)
-    I_avg = NumericalIntegration.integrate(t_λ, t_I.*t_T.*t_λ) / NumericalIntegration.integrate(t_λ, t_T.*t_λ)
-    uconvert(unit(λ[1]), λ_avg), uconvert(unit(spectrum[1]), I_avg)
-end
-
-
 """
     generate_stellar_populations(λ, lsf, z, Ω, cosmo, ssp_options, name)
 
@@ -438,28 +412,20 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
     if isfile(joinpath("output_$name", "stellar_templates.loki"))
         @info "Loading pre-generated stellar templates from binary file"
         out = deserialize(joinpath("output_$name", "stellar_templates.loki"))
-        return out.λ, out.age, out.logz, out.templates, out.phot_λ, out.phot_t
+        return out.λ, out.age, out.logz, out.templates
     end
 
-    @debug "Initializing FSPS"
-    # Dummy population
-    ssp0 = py_fsps.StellarPopulation()
-    # Get the wavelength grid that FSPS uses
-    ssp_λ0 = ssp0.wavelengths*u"angstrom"
-    # Convert to the same units as the input wavelength vector
+    @debug "Loading in full resolution stellar templates"
+    stellar_templates = FITS(joinpath(@__DIR__, "..", "templates", "loki.stellar_templates.fits.gz"))
+
+    # Read in wavelengths and convert them to the input spectrum's wavelength units
+    ssp_λ0 = read(stellar_templates["AXES"], "WAVE") .* u"angstrom"
     wave_unit = unit(λ[1])
     ssp_λ0 = uconvert.(wave_unit, ssp_λ0)
 
-    # Prepare photometric band calculations
-    λ_phot_bands = Dict{String, Vector{typeof(1.0u"angstrom")}}()
-    T_phot_bands = Dict{String, Vector{Float64}}()
-    for filt in photometry_filters
-        λ_phot_bands[filt], T_phot_bands[filt] = get_transmission(filt, z)
-    end
-
     # Cut off the templates a little bit before/after the input spectrum
-    λleft = 0.98*min(minimum(λ), minimum([minimum(λ_phot_bands[filt]) for filt in photometry_filters], init=Inf*wave_unit))
-    λright = 1.02*max(maximum(λ), maximum([maximum(λ_phot_bands[filt]) for filt in photometry_filters], init=-Inf*wave_unit))
+    λleft  = 0.98minimum(λ)
+    λright = 1.02maximum(λ)
 
     @assert (λleft ≥ minimum(ssp_λ0)) && (λright ≤ maximum(ssp_λ0)) "The extended input spectrum range of ($λleft, $λright) " * 
         "is outside the FSPS template range of ($(minimum(ssp_λ0)), $(maximum(ssp_λ0))). Please adjust the input spectrum accordingly."
@@ -473,9 +439,8 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
     
     # LSF FWHM of the input spectrum in wavelength units, interpolated at the locations of the SSP templates
     inp_fwhm = Spline1D(ustrip.(λ), ustrip.(lsf ./ C_KMS .* λ), k=1, bc="nearest")(ustrip.(ssp_λlin)) .* wave_unit
-    # FWHM resolution of the FSPS templates in um
-    ssp_lsf = Spline1D(ustrip.(ssp_λ), abs.(ssp0.resolutions[mask]), k=1, bc="nearest")(ustrip.(ssp_λlin)) .* u"km/s"
-    ssp_fwhm = ssp_lsf ./ C_KMS .* ssp_λlin .* 2√(2log(2))
+    # The FWHM resolution of the stellar templates is essentially negligible, as they are produced from theoretical model atmospheres 
+    ssp_fwhm = 0. * wave_unit
     # Difference in resolutions between the input spectrum and SSP templates, in pixels
     dfwhm = sqrt.(clamp.(inp_fwhm.^2 .- ssp_fwhm.^2, 0.0*wave_unit^2, Inf*wave_unit^2)) ./ Δλ 
 
@@ -491,46 +456,80 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
     dL = luminosity_dist(u"cm", cosmo, z)
 
     # Generate templates over a range of ages and metallicities
-    ages = exp.(range(log(ssp_options.age.min), log(ssp_options.age.max), ssp_options.age.num)) .* u"Gyr"  # logarithmically spaced from 1 Myr to 15 Gyr
-    logzs = range(ssp_options.logz.min, ssp_options.logz.max, ssp_options.logz.num)                        # linearly spaced from log(Z/Zsun) = [M/H] = -2.3 to 0.4
+    ages_out = exp.(range(log(ssp_options.age.min), log(ssp_options.age.max), ssp_options.age.num)) .* u"Gyr"  # logarithmically spaced from 1 Myr to 15 Gyr
+    logzs_out = range(ssp_options.logz.min, ssp_options.logz.max, ssp_options.logz.num)                        # linearly spaced from log(Z/Zsun) = [M/H] = -2.3 to 0.4
+
+    # Compare this with out default set of templates 
+    n_ages = 40
+    n_logzs = 10
+    ages_in = Float64.(read(stellar_templates["AXES"], "AGE")[1:n_ages]) .* u"Gyr"
+    logzs_in = Float64.(read(stellar_templates["AXES"], "LOGZ")[1:n_logzs])
+    input_units = u"Lsun/Msun/Hz"
+    ssp_templates_in = Float64.(read(stellar_templates["TEMPLATES"])) .* input_units
+    ssp_templates_in_resamp = zeros(typeof(1.0*input_units), length(ssp_λlin), length(ages_in), length(logzs_in))
+
     output_units = intensity_units*u"sr"/u"Msun"
-    ssp_templates = zeros(typeof(1.0*output_units), length(ssp_lnλ), length(ages), length(logzs))
-    n_temp = size(ssp_templates, 2) * size(ssp_templates, 3)
-
-    # Prepare photometric band calculations
-    ssp_phot_λ = zeros(eltype(ssp_lnλ), length(photometry_filters), length(ages), length(logzs))
-    ssp_phot_I = zeros(typeof(1.0*output_units), length(photometry_filters), length(ages), length(logzs))
-
-    @info "Generating $n_temp simple stellar population templates with FSPS with " * 
-        "ages ∈ ($(minimum(ages)), $(maximum(ages))), log(Z/Zsun) ∈ ($(minimum(logzs)), $(maximum(logzs)))"
-
+    ssp_templates_out = zeros(typeof(1.0*output_units), length(ssp_λlin), length(ages_out), length(logzs_out))
+    n_temp = size(ssp_templates_out, 2) * size(ssp_templates_out, 3)
     peraa = typeof(1.0*intensity_units) <: QPerWave
-    prog = Progress(n_temp; showspeed=true)
-    for (z_ind, logz) in enumerate(logzs)
-        # Create a simple stellar population (delta function SFH) with a Salpeter IMF and no attenuation
-        ssp = py_fsps.StellarPopulation(zcontinuous=1, logzsol=logz, imf_type=0, sfh=0)
-        for (age_ind, age) in enumerate(ages)
-            # Evaluate the stellar population at the given age
-            _, ssp_L = ssp.get_spectrum(tage=ustrip(age), peraa=peraa)
-            ssp_L = ssp_L .* u"Lsun/Msun" ./ (peraa ? u"angstrom" : u"Hz")
-            # Convert Lsun/Msun/Ang to [flux units]/Msun
-            ssp_flux = uconvert.(output_units, ssp_L ./ (4π .* dL.^2))
-            # Get the photometric values
-            for ip in axes(ssp_phot_I, 1)
-                ssp_phot_λ[ip, age_ind, z_ind], ssp_phot_I[ip, age_ind, z_ind] = calculate_photometry(
-                    λ_phot_bands[photometry_filters[ip]], T_phot_bands[photometry_filters[ip]], ssp_λ0, ssp_flux)
-            end
-            # Resample onto the linear wavelength grid
-            ssp_flux = Spline1D(ustrip.(ssp_λ), ustrip.(ssp_flux[mask]), k=1, bc="nearest")(ustrip.(ssp_λlin)) .* unit(ssp_flux[1])
-            # Convolve with gaussian kernels to degrade the spectrum to match the input spectrum's resolution
-            ssp_flux = convolveGaussian1D(ssp_flux, dfwhm)
-            # Resample again, this time onto the logarithmic wavelength grid
-            ssp_flux = Spline1D(ustrip.(ssp_λlin), ustrip.(ssp_flux), k=1, bc="nearest")(ustrip.(ssp_lnλ)) .* unit(ssp_flux[1])
-            # Add to the templates array
-            ssp_templates[:, age_ind, z_ind] .= ssp_flux
+
+    ssp_templates_final = zeros(typeof(1.0*output_units), length(ssp_lnλ), length(ages_out), length(logzs_out))
+
+    @assert round(ssp_options.age.min, digits=3) ≥ round(ustrip(minimum(ages_in)), digits=3) "Minimum age is $(round(ustrip(minimum(ages_in)), digits=3)) Gyr"
+    @assert round(ssp_options.age.max, digits=3) ≤ round(ustrip(maximum(ages_in)), digits=3) "Maximum age is $(round(ustrip(maximum(ages_in)), digits=3)) Gyr"
+    @assert round(ssp_options.logz.min, digits=3) ≥ round(minimum(logzs_in), digits=3) "Minimum logz is $(round(minimum(logzs_in), digits=3))"
+    @assert round(ssp_options.logz.max, digits=3) ≤ round(maximum(logzs_in), digits=3) "Maximum logz is $(round(maximum(logzs_in), digits=3))"
+
+    @info "Generating $n_temp simple stellar population templates with " * 
+        "ages ∈ ($(minimum(ages_out)), $(maximum(ages_out))), log(Z/Zsun) ∈ ($(minimum(logzs_out)), $(maximum(logzs_out)))"
+    
+    # First, resample all of the input templates onto the output wavelength grid
+    @info "Resampling wavelengths..."
+    prog = Progress(length(ages_in)*length(logzs_in); showspeed=true)
+    for (z_ind, logz) in enumerate(logzs_in)
+        for (age_ind, age) in enumerate(ages_in)
+            ssp_templates_in_resamp[:, age_ind, z_ind] = Spline1D(ustrip.(ssp_λ), ustrip.(ssp_templates_in[z_ind, age_ind, mask]), 
+                k=1, bc="nearest")(ustrip.(ssp_λlin)) .* input_units
             next!(prog)
         end
     end
+
+    # Then, do a 2D interpolation over age/metallicity
+    @info "Resampling ages/logzs..."
+    prog = Progress(length(ssp_λlin); showspeed=true)
+    for (w_ind, wi) in enumerate(ssp_λlin)
+        interpolator = Spline2D(ustrip.(ages_in), ustrip.(logzs_in), ustrip.(ssp_templates_in_resamp[w_ind, :, :]), kx=1, ky=1)
+        for (z_ind, logz) in enumerate(logzs_out)
+            for (age_ind, age) in enumerate(ages_out)
+                # Get the interpolated luminosity
+                ssp_L = interpolator(ustrip(age), ustrip(logz)) * input_units
+                if peraa 
+                    # if necessary, convert to per-wavelength 
+                    ssp_L = uconvert(input_units*u"Hz"/unit(wi), ssp_L * C_KMS / wi^2)
+                end
+                # Convert Lsun/Msun/[Hz,Ang] to [flux units]/Msun
+                ssp_flux = uconvert(output_units, ssp_L / (4π*dL^2))
+                # Insert into templates array
+                ssp_templates_out[w_ind, age_ind, z_ind] = ssp_flux
+            end
+        end
+        next!(prog)
+    end
+
+    # Finally, do some instrumental broadening and resample onto the logarithmic wavelength grid
+    @info "Applying instrumental broadening..."
+    prog = Progress(n_temp; showspeed=true)
+    for (z_ind, logz) in enumerate(logzs_out)
+        for (age_ind, age) in enumerate(ages_out)
+            ssp_F = ssp_templates_out[:, age_ind, z_ind]
+            ssp_F = convolveGaussian1D(ssp_F, dfwhm)
+            ssp_F = Spline1D(ustrip.(ssp_λlin), ustrip.(ssp_F), k=1, bc="nearest")(ustrip.(ssp_lnλ)) .* output_units
+            ssp_templates_final[:, age_ind, z_ind] .= ssp_F
+            next!(prog)
+        end
+    end
+
+    close(stellar_templates)
 
     # NOTICE: We store the SSPs in units of FLUX per solar mass and not INTENSITY per solar mass.
     #         But the rest of the code works in intensities; this makes the normalized fitted amplitude parameter 
@@ -543,10 +542,9 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
     #         to get the result back in units of Msun.
 
     # save for later
-    serialize(joinpath("output_$name", "stellar_templates.loki"), (λ=ssp_lnλ, age=ages, logz=logzs, templates=ssp_templates,
-        phot_λ=ssp_phot_λ, phot_t=ssp_phot_I))
+    serialize(joinpath("output_$name", "stellar_templates.loki"), (λ=ssp_lnλ, age=ages_out, logz=logzs_out, templates=ssp_templates_final))
 
-    ssp_lnλ, ages, logzs, ssp_templates, ssp_phot_λ, ssp_phot_I
+    ssp_lnλ, ages_out, logzs_out, ssp_templates_final
 end
 
 

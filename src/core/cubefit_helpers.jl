@@ -17,7 +17,7 @@ function cubefitter_prepare_continuum(λ::Vector{<:QWave}, z::Real, out::Dict, �
     n_ssps = 0
     if out[:fit_stellar_continuum]
         # Create the simple stellar population templates with FSPS
-        ssp_λ, ages, metals, ssp_templates, _, _ = generate_stellar_populations(λ, Iunit, cube.lsf, z, out[:cosmology], out[:ssps], name)
+        ssp_λ, ages, metals, ssp_templates = generate_stellar_populations(λ, Iunit, cube.lsf, z, out[:cosmology], out[:ssps], name)
         # flatten template array
         ssp_temp_flat = reshape(ssp_templates, size(ssp_templates,1), :)
         # 2nd axis ordering: (age1_z1, age2_z1, age3_z1, ..., age1_z2, age2_z2, age3_z2, ...)

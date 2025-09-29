@@ -50,6 +50,14 @@ As a brief overview, all components that may be included in a model based on the
 
 Templates for the point-spread function (PSF) may also be included in the model with fitted normalizations. These may be used, for example, to model out and subtract the contamination from a nuclear quasar spectrum dispersed by the PSF. The code contains routines for creating templates in such a scenario. PSF templates are provided for MIRI in the `src/templates/psfs_stars` directory, which have been created using observations of the bright calibration star 16 Cyg B, and for NIRSpec in the `src/templates/psfs_stars_nirspec` directory, which have been created using the star P330E. There are also templates generated from models using `webbpsf` in the `src/templates/webbpsf` directory.
 
+A note on the stellar population templates: These have been generated from a highly modified version of FSPS in order to achieve high resolution throughout the UV, optical, and infrared (to allow for flexibility with fitting spectra in the rest-frame IR, optical, or UV).  The logic of the stellar population synthesis has not been modified, but the stellar spectral templates have been replaced with high-resolution alternatives.  Normal stars below 10,000 K use the BT-Settl grid of atmospheres ([Allard, Homeier, & Freytag 2011](https://ui.adsabs.harvard.edu/abs/2011ASPC..448...91A/abstract)), while those above 10,000 K use TLUSTY atmospheres ([Brown, Ferguson, & Davidsen 1996](https://ui.adsabs.harvard.edu/abs/1996ApJ...472..327B/abstract)).  Wolf-Rayet stars use PoWR atmospheres ([Hamann & Gräfener 2004](https://ui.adsabs.harvard.edu/abs/2004A%26A...427..697H/abstract), [Sander, Hamann, & Todt 2012](https://ui.adsabs.harvard.edu/abs/2012A%26A...540A.144S/abstract)).  The MIST isochrones are used for the stellar evolution ([Dotter 2016](https://ui.adsabs.harvard.edu/abs/2016ApJS..222....8D/abstract), [Choi et al. 2016](https://ui.adsabs.harvard.edu/abs/2016ApJ...823..102C/abstract)).  I assume a Salpeter IMF and a delta-function star formation history at each age.  No dust extinction is applied to these models, as this is applied separately within Loki.  Because all of the stellar templates are theoretical model atmospheres, the nominal spectral resolution is infinite, and no broadening is applied (instrumental broadening is done by Loki when reading in the templates). The final wavelength sampling I've chosen for these templates is:
+- $0.2~\mathring{\rm A}$ ($800~\mathring{\rm A}-1800~\mathring{\rm A}$)
+- $0.5~\mathring{\rm A}$ ($1800~\mathring{\rm A}-9000~\mathring{\rm A}$)
+- $5~\mathring{\rm A}$ ($9000~\mathring{\rm A}-5~{\rm \mu m}$)
+- $50~\mathring{\rm A}$ ($5~{\rm \mu m}-30~{\rm \mu m}$)
+
+Outside of these ranges, the templates extend down to $90~\mathring{\rm A}$ in the X-rays and up to $10^6~\mathring{\rm A}$ in the radio, but at a very low resolution.
+
 Note that the code is very flexible and many of these continuum options can be changed, adjusted, or added/removed to fit one's individual needs. Be cautious, however, as certain model components should not be used together with each other (for example, a power law should not be used in conjunction with the warm silicate dust emission component, since they model the same thing). The code uses the [MPFIT](https://pages.physics.wisc.edu/~craigm/idl/cmpfit.html) ([Markwardt 2009](https://ui.adsabs.harvard.edu/abs/2009ASPC..411..251M)) implementation of the Levenberg-Marquardt (LM) least-squares minimization routine, as well as the simulated annealing (SA) global minimization method as implemented by [Optim.jl](https://github.com/JuliaNLSolvers/Optim.jl), and optionally may estimate uncertainties using bootstrapping. Depending on how the code is configured, the fitting procedure may be performed in multiple steps (up to 3). By default, the configuration contains three steps:
 1. The emission lines are masked and the continuum + PAH features are fit; the PAHs use templates
 2. The continuum is subtracted and the PAHs are fit with a series of Drude profiles
@@ -76,12 +84,10 @@ This guide will walk you through step-by-step on how to do a fresh installation 
 
 #### Step 1: Python dependencies
 
-LOKI is built with Julia, but it interfaces with some python libraries that don't have good Julia alternatives using the [PyCall.jl](https://github.com/JuliaPy/PyCall.jl) package.  These are, namely:
+LOKI is built with Julia, but it interfaces with some python plotting libraries that don't have good Julia alternatives using the [PyCall.jl](https://github.com/JuliaPy/PyCall.jl) package.  These are, namely:
 
 - [matplotlib](https://matplotlib.org/) (v3.7.2)
 - [lineid_plot](https://github.com/phn/lineid_plot) (v0.6)
-- [vorbin](https://pypi.org/project/vorbin/) (v3.1.5)
-- [fsps](https://github.com/dfm/python-fsps) (v0.4.7)
 
 The first step is to set up a python environment with these packages installed so that LOKI can access them.  For example, here's one way you could set that up using a conda environment:
 
@@ -89,18 +95,8 @@ The first step is to set up a python environment with these packages installed s
 $ conda create -n loki_env python=3.9
 $ conda activate loki_env
 $ conda install matplotlib==3.7.2
-$ pip install lineid_plot vorbin
+$ pip install lineid_plot
 ```
-
-Then, installing FSPS requires a little additional setup, as shown below.  Note that you can skip installing FSPS if you don't plan on using stellar populations in your models.
-
-```bash
-$ export SPS_HOME="/path/to/download/fsps"
-$ git clone https://github.com/cconroy20/fsps.git $SPS_HOME
-$ pip install fsps
-```
-
-I would also recommend that you add the line that defines the `SPS_HOME` environment variable into your .bashrc file (or whatever the equivalent is for your terminal) so that it persists for future sessions.
 
 Once you've set up your environment, you should note down the location of the python binary, as we'll need it for later.  You can quickly check this with:
 
@@ -1284,8 +1280,16 @@ The units of outputs for different quantities are listed here. When relevant, ou
 
 ## V. Examples
 Please see `examples` folder for a bunch of example notebooks for using MIRI/MRS data, NIRSpec/IFU data, and non-JWST data.
+- If you're interested in fitting MIRI/MRS data, extracting a spectrum from an aperture, see [example_MIRI_aperture.ipynb](./examples/example_MIRI_aperture.ipynb)
+- If you're interested in fitting NIRSpec data, extracting a spectrum from an aperture, see [example_NIRSpec_aperture.ipynb](./examples/example_NIRSpec_aperture.ipynb)
+- If you're interested in fitting MIRI/MRS data, fitting one spaxel at a time, and using PSF models to decompose a bright nuclear point-source from extended host galaxy emission, see [example_MIRI_psf_model.ipynb](./examples/example_MIRI_psf_model.ipynb) (and also [example_MIRI_qso_model.ipynb](./examples/example_MIRI_qso_model.ipynb), which shows you how to take the results of your first fit and use them to reconstruct the spectrum of the bright nuclear point source and fit it)
+- If you're interested in fitting NIRSpec data, fitting one spaxel at a time, see [example_NIRSpec_cube.ipynb](./examples/example_NIRSpec_cube.ipynb). (Note: the procedure for PSF decomposition is the same for MIRI and NIRSpec, so you can see the corresponding MIRI example notebook for information on how to do this)
+- If you're interested in using voronoi binning to bin spaxels into roughly equal S/N spectra, see [example_MIRI_vorbin.ipynb](./examples/example_MIRI_vorbin.ipynb)
+- If you're interested in combining data from multiple observations of the same object to create a mosaick, see [example_MIRI_mosaicking.ipynb](./examples/example_MIRI_mosaicking.ipynb)
+- Finally, if you're interested in fitting non-JWST data, see [example_other_formats.ipynb](./examples/example_other_formats.ipynb)
+- Note that all of the notebooks will also show you how to load in data products straight from the STSci pipeline and prepare it to be fit, which include things like shifting it to the rest frame, applying a de-reddening correction, logarithmically binning the wavelengths, masking out bad pixels, etc., which can all be done with Loki. Most examples will also show you how to combine data from multiple channels, and the one on mosaicking in particular will show you how to combine data from multiple observations.
 
-The main steps one must follow to fit a cube using LOKI are as follows:
+For a more general overview of the control flow of using Loki, from loading in the data to producing final fitting products, the main steps are as follows:
 1. Load in the LOKI module following the instructions in [Installation](#ii-installation). Then include it in your code:
 ```julia
 using Loki
@@ -1294,19 +1298,66 @@ using Distributed
 addprocs(Sys.CPU_THREADS)
 @everywhere using Loki
 ```
-2. Load in the data you want to fit from a FITS file using LOKI's "from_fits" function, which takes a list of strings that give the file paths to each FITS file that should be read, along with a float value giving the redshift of the object. This converts the data into an `Observation` object.
+2. (a) Load in the data you want to fit from a FITS file using LOKI's "from_fits" function, which takes a list of strings that give the file paths to each FITS file that should be read, along with a float value giving the redshift of the object. This converts the data into an `Observation` object.  The "from_fits" function should work for most, if not all, MIRI/MRS and NIRSpec/IFU data products from the STSci pipeline, but it likely won't work for all fits files, especially those from other instruments which use different formatting conventions.
 ```julia
 obs = from_fits(["file_1.fits", "file_2.fits", ...], redshift)
 ```
-3. Convert the data to the rest-frame and mask out bad pixels using the "correct!" function on the `Observation` object.
+Note that if you only have a single cube/channel you want to fit, you can omit the list syntax, i.e.:
+```julia
+cube = from_fits("file.fits", redshift)
+```
+But note that this will now return a `DataCube` object rather than an `Observation` object (an `Observation` is essentially just a collection of `DataCube` objects for different channels). In the rest of the examples below, you can replace any instances of `obs.channels[X]` with `cube`.  Some functions, like `combine_channels!` and `combine_observations`, only work on `Observation` objects.  If you ever get an error that says something like "no method matching \<function name\>(arguments)", it means that your arguments are the wrong datatype, so be careful about checking whether a function needs an `Observation`, a `DataCube`, or something else.
+
+2. (b) Alternatively, if you have some non-standard data products (i.e. data which has been pre-processed by some other pipeline, or data from another instrument), you can load in your data manually using the "from_data" function.  It may be best to see this function being used in practice, which is done in the [example_other_formats.ipynb](./examples/example_other_formats.ipynb) notebook.  
+```julia
+cube = from_data(Ω, z, λ, I[, σ; mask, α, δ, θ_sky, psf_fwhm, psf_model, R, wcs, channel, band, user_mask, gaps, rest_frame, masked, vacuum_wave, log_binned, dereddened, sky_aligned, instrument_channel_edges]) 
+```
+The *required* arguments for this function are:
+- `Ω`: the solid angle covered by each pixel (with angular units)
+- `z`: the redshift 
+- `λ`: the 1D wavelength vector (with length units)
+- `I`: the 3D intensity (with intensity units)
+
+And the *optional* arguments for this function are:
+- `σ`: a 3D error cube (with intensity units)
+- `mask`: a 3D bitarray, where a 1 represents a bad data point which should be masked out
+- `α`: the RA of the target (with angular units)
+- `δ`: the dec of the target (with angular units)
+- `θ_sky`: the position angle of the cube (with angular units)
+- `psf_fwhm`: a vector giving the FWHM of the PSF at each wavelength slice (with angular units)
+- `psf_model`: a 3D cube with the normalized PSF model at each wavelength slice
+- `R`: a vector giving the spectral resolution at each wavelength (or it may be a single value)
+- `wcs`: a WCSTransform object from WCS.jl (included with Loki) defining the world coordinate system of the input cubes
+- `channel`: a string with the channel name (i.e. for MIRI, "1", "2", "3", or "4")
+- `band`: a string with the band/sub-channel name (i.e. for MIRI, "SHORT", "MEDIUM", or "LONG")
+- `user_mask`: a vector of wavelength pairs specifying regions that should be masked out (with length units)
+- `gaps`: a vector of wavelength pairs specifying regions that have no data (note: not masked out/bad data, but if there is literally a hole in the spectrum) (with length units)
+- `rest_frame`: whether or not the spectrum is in the rest frame (boolean)
+- `masked`: whether or not bad pixels have been masked out (boolean)
+- `vacuum_wave`: whether or not the wavelengths are in vacuum (true) or air (false) (boolean)
+- `log_binned`: whether or not the wavelength vector is logarithmically spaced (boolean)
+- `dereddened`: wether or not a reddening correction has been applied to the spectrum (boolean)
+- `sky_aligned`: whether or not the cube is aligned with the sky axes (boolean)
+- `instrument_channel_edges`: a vector of wavelengths which mark the boundaries between channels of the instrument
+
+In general, when not providing an optional argument where some assumption needs to be made, a warning will be printed letting the user know.  For example, if no psf_fwhm is provided, it is assumed to be 3 spatial pixels, and it is initialized as such using the Ω argument.  If possible, I would recommend, at the minimum, providing σ, psf_fwhm, and R. R is particularly important, as it is used to calculate the instrument line broadening, and it will therefore affect the fitting results for any line widths or stellar velocity dispersions.  The default assumption if R is not provided is to assume the wavelength vector is sampled at 3 times the spectral resolution, so in pseudo-code, R = λ/(3*diff(λ)).
+
+Keep in mind that the "from_data" function returns a `DataCube` object rather than an `Observation` object, because the "from_data" function only works on one channel at a time (just like in the "from_fits" example where we only input one fits file).  If you ever need to convert a `DataCube` or a set of `DataCube`s into an `Observation`, one can use the "from_cubes" function.  For JWST observations, `inst` should be "MIRI" or "NIRSpec":
+```julia
+obs = from_cubes("name_of_observation", z, [cube_1, cube_2, ..., cube_n], ["channel 1", "channel 2", ..., "channel n"]; inst="Instrument")
+```
+
+The arguments here are: a label for the observation object, the redshift of the target, the list of DataCubes, the list of channel identifiers for each `DataCube`, and optionally a name for the instrument used to collect the data.  Before doing this, I'd highly recommend that you make sure any pre-processing steps that have or haven't been done on the `DataCube`s have been applied equally to all of the ones that you are combining into an `Observation`.  That is, they should either *all* be in the rest frame or *none* of them should be in the rest frame.  And similarly for the other corrections that Loki can apply.
+
+3. Convert the data to the rest-frame, mask out bad pixels, apply a reddening correction, and logarithmically rebin the wavelength vector using the "correct!" function on the `Observation` object.  Note that if you loaded your data in manually with the "from_data" function, the optional boolean arguments (rest_frame, masked, vacuum_wave, log_binned, dereddened) will control which corrections are applied during this step (i.e. any booleans that are true will cause that step to be skipped).  Otherwise, for JWST MIRI/NIRSpec data, Loki knows which corrections need to be applied.  Note that you need an `Observation` object,  not a `DataCube` object, to use this function, so if you have a `DataCube`, you'll want to convert it to an `Observation` first using the "from_cubes" function (see above).
 ```julia
 correct!(obs)
 ```
-4. To combine data from multiple channels/bands, use the `combine_channels!` function, which takes a number of smaller subroutines and combines them into one procedure for combining data for multiple channels. This procedure handles: 1. (optional) adjusting the WCS parameters in the header of each channel such that the centroids match on the overlapping parts of the spectrum, which may aid in refining the WCS parameters provided by the JWST pipeline. This may be enabled with the `adjust_wcs_headerinfo` keyword argument. 2. Reprojecting all of the channels onto the same 2D spaxel grid, which is done with interpolation, the order of which can be adjusted with the `order` keyword argument (default is linear). 3. (optional) extract the data from each spaxel using an aperture (i.e. a tophat kernel) to suppress resampling artifacts produced by the 3D drizzle algorithm. The size of the aperture may be adjusted using the `extract_from_ap` keyword argument, in units of the PSF FWHM. 4. The data is resampled in the wavelength direction in the regions where the channels overlap to a median resolution, while conserving flux. There are additional keyword arguments that can be used to adjust how the data is combined with even finer detail, which can be looked up using the code documentation itself. I.e., in the julia terminal, type `?combine_channels!`.
+4. To combine data from multiple channels/bands, use the `combine_channels!` function, which takes a number of smaller subroutines and combines them into one procedure for combining data for multiple channels. This procedure handles: 1. (optional) adjusting the WCS parameters in the header of each channel such that the centroids match on the overlapping parts of the spectrum, which may aid in refining the WCS parameters provided by the JWST pipeline. This may be enabled with the `adjust_wcs_headerinfo` keyword argument. 2. Reprojecting all of the channels onto the same 2D spaxel grid, which is done with interpolation, the order of which can be adjusted with the `order` keyword argument (default is linear). 3. (optional) extract the data from each spaxel using an aperture (i.e. a tophat kernel) to suppress resampling artifacts produced by the 3D drizzle algorithm. The size of the aperture may be adjusted using the `extract_from_ap` keyword argument, in units of the PSF FWHM. 4. The data is resampled in the wavelength direction in the regions where the channels overlap to a median resolution, while conserving flux. There are additional keyword arguments that can be used to adjust how the data is combined with even finer detail, which can be looked up using the code documentation itself. I.e., in the julia terminal, type `?` to enter help mode and then type `combine_channels!`.  The only non-keyword arguments are the `Observation` object itself and the list of channels to be combined.  Note that the channels *must* be listed in order from shortest to longest wavelength coverage.
 ```julia 
 combine_channels!(obs, [1,2,3], out_id=0, order=1, adjust_wcs_headerinfo=true, extract_from_ap=0.)
 ```
-5. (Optional) It is often desirable to rotate the cubes to be aligned with the sky axes rather than the IFU axes, which can be achieved using the `rotate_to_sky_axes!` function:
+5. (Optional) It is often desirable to rotate the cubes to be aligned with the sky axes rather than the IFU axes, which can be achieved using the `rotate_to_sky_axes!` function. Depending on how you reduced your JWST data products, your cubes may already be aligned to the sky axes, in which case this function won't do anything.  But please note that if you wish to use the PSF decomposition functionality of Loki, you will need to provide cubes aligned with the IFU axes.  This is necessary in order to generate PSF models that are appropriately aligned and rotated with the observations.  One can then rotate to the sky axes with this function *after* generating the PSF models (see the relevant functions for that below), which will rotate both the observations and the PSF models by the same amount.
 ```julia
 rotate_to_sky_axes!(obs.channels[0])
 ```
@@ -1314,11 +1365,11 @@ rotate_to_sky_axes!(obs.channels[0])
 ```julia
 interpolate_nans!(obs.channels[0])
 ```
-7. The errors in the cube can be replaced with the "statistical errors", which are calculated as the standard deviation of the residuals between the flux and a cubic spline fit to the flux (with emission lines masked out) within a small window (60 pixels) around each pixel.  This is performed with the "calculate_statistical_errors!" function.
+7. The errors in the cube can be replaced with the "statistical errors", which are calculated as the standard deviation of the residuals between the flux and a cubic spline fit to the flux (with emission lines masked out) within a small window (60 pixels) around each pixel.  This is performed with the "calculate_statistical_errors!" function.  I included this functionality because the errors provided by the STSci pipeline initially seemed to be very underestimated, so I have provided this as a way to calculate more reasonable errors based on the scatter in the data.  However, this step is totally optional, and if you trust the errors in your cube, you can skip it!
 ```julia
 calculate_statistical_errors!(obs.channels[0])
 ```
-8. Create the CubeFitter object, which contains all of the fitting data and options for fitting a cube. Here you can overwrite any options from the `options.toml` file, which will otherwise be the defaults when creating any CubeFitter object:
+8. Create the CubeFitter object, which contains all of the fitting data and options for fitting a cube. Here you can overwrite any options from the `options.toml` file, which will otherwise be the defaults when creating any CubeFitter object.  For more info on these options, see the [Usage](#iii-usage) section.
 ```julia
 cube_fitter = CubeFitter(obs.channels[0], obs.z, name; parallel=true, plot_spaxels=:pyplot, plot_maps=true, save_fits=true)
 ```
@@ -1331,17 +1382,19 @@ fit_cube!(cube_fitter)
 ap = make_aperture(obs.channels[0], :Circular, "23:03:15.610", "+8:52:26.10", 0.5, auto_centroid=true, scale_psf=false)
 fit_cube!(cube_fitter, ap)
 ```
-In a similar vein, one can set up voronoi bins by first calling the "voronoi_rebin!" function.  This should be done before creating the CubeFitter object and calling fit_cube!.  The arguments for voronoi_rebin! specify the target signal to noise ratio that you'd like to bin to (target_SNR) and, optionally, a wavelength window you'd like to restrict the SNR calculation to (formatted as a tuple of wavelengths, including units):
+In a similar vein, one can set up voronoi bins by first calling the "voronoi_rebin!" function.  This should be done before creating the CubeFitter object and calling fit_cube!.  The arguments for voronoi_rebin! specify the target signal to noise ratio that you'd like to bin to (target_SNR), an optional wavelength window you'd like to restrict the SNR calculation to (formatted as a tuple of wavelengths, including units), and an optional specification of the binning strategy (which can be InitialVoronoi(), CentroidalVoronoi() or WeightedVoronoi()):
 ```julia
-voronoi_rebin!(obs.channels[0], target_SNR, window)
+voronoi_rebin!(obs.channels[0], target_SNR, window=nothing, bin_strategy=WeightedVoronoi())
 ```
+***IMPORTANT NOTE WHEN VORONOI BINNING***:
+When generating output model cubes from a voronoi binned run, the dimensionality of the original unbinned cube is preserved, and each pixel that is a part of one voronoi bin will have its value set to the value of that bin.  A separate extension named "VORONOI_BINS" is included which contains a 2D map that specifies the bin index for each pixel. For quantities that do not depend on the solid angle of the pixels (i.e. intensities), this procedure is unproblematic.  However, for quantities that *do* depend on the solid angle of the pixels (i.e. fluxes), it must be kept in mind that a single pixels' value represents the value for the *whole* bin, not for just that pixel.  The difference can be immediately seen by comparing an emission line's flux map to its corresponding amplitude map. In this case, to get a physically accurate emission map, one must either look at the *amplitude* map, or divide the fluxes of each pixel by the number of pixels in that bin, which Loki does not do when producing voronoi-binned flux maps.
 
 If one wishes to model the PSF from a bright point source and include it in the model to separate it from the host galaxy emission, there are some additional utility functions that one can utilize:
 
 ```julia
 generate_psf_model!(obs)
 ```
-This function acts on an observation object and generates a PSF model cube that has been resized to match the size of the observation, shifted such that the centroids are aligned, background annulus subtracted, and interpolated over the spectral leak artifact at 12.2 microns. For this function to work, the input observation data MUST be aligned to the IFU axes, not the sky axes.
+This function acts on an observation object and generates a PSF model cube that has been resized to match the size of the observation, shifted such that the centroids are aligned, background annulus subtracted, and interpolated over the spectral leak artifact at 12.2 microns. For this function to work, the input observation data MUST be aligned to the IFU axes, not the sky axes, and each `DataCube` in the observation MUST only cover a SINGLE channel/band combination (i.e. for MIRI: channel 1-short, channel 3-medium, etc.; for NIRSpec: G140H-F100LP, G235H-F170LP, G395H-F290LP, etc.).
 
 ```julia
 splinefit_psf_model!(obs.channels[0], 100)
@@ -1349,9 +1402,15 @@ splinefit_psf_model!(obs.channels[0], 100)
 To be used strictly after the `generate_psf_model` function, this function takes the PSF model generated by the previous function and fits a cubic spline to it, with a knot spacing given by the second argument (in pixels), since the PSF is expected to vary gradually in the wavelength dimension. This function should be applied between steps 4 and 5 in the above roadmap. This function is not required if one wishes to keep the more noisy PSF model generated in the previous step.
 
 ```julia
-generate_nuclear_template(obs.channels[0], 0.)
+nuc_temp = generate_nuclear_template(obs.channels[0], 0.)
 ```
 This function, applied between steps 7-8 above, takes the PSF model and combines it with the spectrum of the brightest spaxel in the data cube (or, if the second argument defining the aperture radius in units of the PSF FWHM is > 0, it takes an integrated spectrum around the brightest point). This creates a 3D cube that is formatted such that it can be inputted directly into the CubeFitter object with the `templates` argument.
+
+Finally, if one has *multiple* observations of the same target, with potentially different pointings, these observations can be mosaicked and combined into a single Observation object, which can then be used with the rest of the code like normal.  The relevant function for this is `combine_observations`.  For each channel in the `channels` argument, this function will: 1. Calculate an optimal celestial WCS to project the cubes onto, which covers the full FOV of all the input cubes and uses the highest resolution of any individual cube.  2. If the wavelength vectors of any of the cubes don't exactly match, they will be resampled onto the wavelength vector of the first cube in the list.  3. At each wavelength slice, reproject all of the cubes for this channel onto the optimal WCS, using interpolation (the order of which is controlled by the `order` argument, just like in `combine_channels!`).  3. Combine the cubes in the spots where they overlap using a weighted average (where the weights = 1/errors^2).  A new observation object is then created and output, containing all of the channels which were requested to be combined.  Additionally, by default the edges of the final field of view will be padded by 1 pixel to prevent artifacts that can crop up in the resampling and combining process.  This can be disabled with the "pad_mask" keyword argument.
+
+```julia
+obs_mosaick = combine_observations([obs_1, obs_2, ..., obs_n]; channels=[:A1,:A2,:A3], order=1, pad_mask=true, name_out="<target>_mosaicked")
+```
 
 ---
 

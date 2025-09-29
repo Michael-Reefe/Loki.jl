@@ -500,7 +500,13 @@ function plot_spaxel_fit_pyplot(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_
         mkdir(out_folder)
     end
     # Save figure as PDF, yay for vector graphics!
-    plt.savefig(joinpath(out_folder, isnothing(label) ? "levmar_fit_spaxel.pdf" : "$label.pdf"), dpi=300, bbox_inches="tight")
+    try
+        plt.savefig(joinpath(out_folder, isnothing(label) ? "levmar_fit_spaxel.pdf" : "$label.pdf"), dpi=300, bbox_inches="tight")
+    catch
+        # if that fails for some reason, fall back to saving a PNG
+        @warn "Could not save $(isnothing(label) ? "levmar_fit_spaxel" : label) as a PDF.  Attempting to save as a PNG instead."
+        plt.savefig(joinpath(out_folder, isnothing(label) ? "levmar_fit_spaxel.png" : "$label.png"), dpi=300, bbox_inches="tight")
+    end
     plt.close()
 end
 
@@ -818,7 +824,13 @@ function plot_stellar_grids(result::StellarResult, cube_fitter::CubeFitter, labe
         mkdir(out_folder)
     end
     # Save figure as PDF, yay for vector graphics!
-    plt.savefig(joinpath(out_folder, "$label.stellar_grid.pdf"), dpi=300, bbox_inches="tight")
+    try
+        plt.savefig(joinpath(out_folder, "$label.stellar_grid.pdf"), dpi=300, bbox_inches="tight")
+    catch
+        # if that fails for some reason, fall back to saving a PNG
+        @warn "Could not save $label.stellar_grid as a PDF.  Attempting to save as a PNG instead."
+        plt.savefig(joinpath(out_folder, "$label.stellar_grid.png"), dpi=300, bbox_inches="tight")
+    end
     plt.close()
 
 end

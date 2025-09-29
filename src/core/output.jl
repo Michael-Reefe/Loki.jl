@@ -832,9 +832,9 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
         # Get the name (giving the shape of the aperture: circular, elliptical, or rectangular)
         ap_shape = string(eltype(aperture))
   
-        aperture_keys = ["AP_SHAPE", "AP_X", "AP_Y"]
+        aperture_keys = String["AP_SHAPE", "AP_X", "AP_Y"]
         aperture_vals = Any[ap_shape, aperture[1].x, aperture[1].y]
-        aperture_comments = ["The shape of the spectrum extraction aperture", "The x coordinate of the aperture",
+        aperture_comments = String["The shape of the spectrum extraction aperture", "The x coordinate of the aperture",
             "The y coordinate of the aperture"]
 
         # Get the properties, i.e. radius for circular 
@@ -891,33 +891,130 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
     end
 
     # Header information
-    hdr = FITSHeader(
-        Vector{String}(cat(["TARGNAME", "REDSHIFT", "CHANNEL", "BAND", "PIXAR_SR", "RA", "DEC", "WCSAXES",
-            "CDELT1", "CDELT2", "CTYPE1", "CTYPE2", "CRPIX1", "CRPIX2", "CRVAL1", "CRVAL2", "CUNIT1", "CUNIT2", 
-            "PC1_1", "PC1_2", "PC2_1", "PC2_2"], aperture_keys, dims=1)),
+    hdr0_keys = Vector{String}(cat(["TARGNAME", "REDSHIFT", "CHANNEL", "BAND", "TARG_RA", "TARG_DEC",
+                        "ROTANGLE", "NCHAN", "RESTFRAM", "MASKED", "VACWAVE", "LOGBIN", "DERED", "DATAMODL", "NAXIS"],
+                        aperture_keys, dims=1))
+    hdr1_keys_3d =  String["PIXAR_SR", "PIXAR_A2"]
+    hdr1_keys_2d = copy(hdr1_keys_3d)
+        
+    hdr0_vals = cat(Any[cube_fitter.name, cube_fitter.z, string(cube_fitter.cube.channel), string(cube_fitter.cube.band), 
+                    ustrip(cube_fitter.cube.α), ustrip(cube_fitter.cube.δ), ustrip(cube_fitter.cube.θ_sky), 
+                    nchannels(cube_fitter.cube.spectral_region), cube_fitter.cube.rest_frame, cube_fitter.cube.masked, 
+                    cube_fitter.cube.vacuum_wave, cube_fitter.cube.log_binned, cube_fitter.cube.dereddened, "IFUCubeModel", 0],
+                    aperture_vals, dims=1)
+    hdr1_vals_3d = Any[ustrip(cube_fitter.cube.Ω), ustrip(uconvert(u"arcsecond^2", cube_fitter.cube.Ω))]
+    hdr1_vals_2d = copy(hdr1_vals_3d)
+            
+    hdr0_comments = Vector{String}(cat(["Target name", "Target redshift", "Channel", "Band",
+                               "Right ascension of target (deg.)", "Declination of target (deg.)",
+                               "rotation angle to sky axes", "number of individual wavelength channels/bands in the data", 
+                               "data in rest frame?", "data masked?", "vacuum wavelengths?", "log binned?", "dereddened?", "data model", 
+                               "Number of data axes"], aperture_comments, dims=1))
+    hdr1_comments_3d = String["Nominal pixel area in steradians", "Nominal pixel area in arcsec^2"]
+    hdr1_comments_2d = copy(hdr1_comments_3d)
+    
+    wave_unit_str = string(unit(cube_fitter.cube.λ[1]))
+    wave_unit_str = replace(wave_unit_str, "Å" => "angstrom", 'μ' => 'u', ' ' => '.', '*' => '.')
 
-        cat([cube_fitter.name, cube_fitter.z, cube_fitter.cube.channel, cube_fitter.cube.band, ustrip(cube_fitter.cube.Ω), 
-         ustrip(cube_fitter.cube.α), ustrip(cube_fitter.cube.δ), cube_fitter.cube.wcs.naxis-1],
-         cube_fitter.cube.wcs.cdelt[1:2], cube_fitter.cube.wcs.ctype[1:2], cube_fitter.cube.wcs.crpix[1:2],
-         cube_fitter.cube.wcs.crval[1:2], cube_fitter.cube.wcs.cunit[1:2], reshape(cube_fitter.cube.wcs.pc[1:2,1:2], (4,)), 
-         aperture_vals, dims=1),
+    # WCS information to add to header -- do separately for 3D and 2D cases
+    wcsstr_3d = WCS.to_header(cube_fitter.cube.wcs)
+    for m in eachmatch(r"(.{8})\=(.+?)\ \/\ (.{45})", wcsstr_3d)
+        key = strip(m[1])
+        push!(hdr1_keys_3d, key)
+        val = strip(m[2])
+        if occursin("\'", val)
+            val = replace(val, "\'" => "")
+        else
+            val = parse(Float64, val)
+        end
+        if key == "CTYPE3"
+            val = "WAVE-TAB"   # overwrite to make sure we output as a tabular wavelength
+        end
+        if key == "CUNIT3"
+            val = wave_unit_str
+        end
+        if key in ("CRPIX3", "CRVAL3", "CDELT3")
+            val = 1.
+        end
+        push!(hdr1_vals_3d, val)
+        comment = strip(m[3])
+        push!(hdr1_comments_3d, comment)
+    end
+    wcsstr_2d = WCS.to_header(shrink_wcs_dimensions(cube_fitter.cube.wcs))
+    for m in eachmatch(r"(.{8})\=(.+?)\ \/\ (.{45})", wcsstr_2d)
+        key = strip(m[1])
+        push!(hdr1_keys_2d, key)
+        val = strip(m[2])
+        if occursin("\'", val)
+            val = replace(val, "\'" => "")
+        else
+            val = parse(Float64, val)
+        end
+        push!(hdr1_vals_2d, val)
+        comment = strip(m[3])
+        push!(hdr1_comments_2d, comment)
+    end
 
-        Vector{String}(cat(["Target name", "Target redshift", "MIRI channel", "MIRI band",
-        "Solid angle per pixel (sr)", "Right ascension of target (deg.)", "Declination of target (deg.)",
-        "number of World Coordinate System axes", 
-        "first axis increment per pixel", "second axis increment per pixel", 
-        "first axis coordinate type", "second axis coordinate type", 
-        "axis 1 coordinate of the reference pixel", "axis 2 coordinate of the reference pixel", 
-        "first axis value at the reference pixel", "second axis value at the reference pixel", 
-        "first axis units", "second axis units", 
-        "linear transformation matrix element", "linear transformation matrix element", 
-        "linear transformation matrix element", "linear transformation matrix element"], 
-        aperture_comments, dims=1))
-    )
+    # Fill in the rest of the PC elements with defaults if they weren't included in the
+    # to_header formulation of the WCS
+    if any(cube_fitter.cube.wcs.pc .> 0)
+        for i in 1:3
+            for j in 1:3
+                if !("PC$(i)_$(j)" in hdr1_keys_3d)
+                    pcij = i == j ? 1. : 0.
+                    push!(hdr1_keys_3d, "PC$(i)_$(j)")
+                    push!(hdr1_vals_3d, pcij)
+                    push!(hdr1_comments_3d, "Coordinate transformation matrix element")
+                end
+            end
+        end
+        for i in 1:2
+            for j in 1:2
+                if !("PC$(i)_$(j)" in hdr1_keys_2d)
+                    pcij = i == j ? 1. : 0.
+                    push!(hdr1_keys_2d, "PC$(i)_$(j)")
+                    push!(hdr1_vals_2d, pcij)
+                    push!(hdr1_comments_2d, "Coordinate transformation matrix element")
+                end
+            end
+        end
+    end
+
+    # Add MJD-OBS = MJD-AVG because for some reason the JWST cubes dont have it, and it is necessary
+    # for astropy's wcs module to perform pixel/world coordinate transforms with tabular wavelength data
+    if ("MJD-OBS" ∉ hdr1_keys_3d)
+        for alternate in ("MJD-AVG", "MJD-BEG", "MJD-END")
+            if alternate in hdr1_keys_3d
+                push!(hdr1_vals_3d, hdr1_vals_3d[findfirst(hdr1_keys_3d .== alternate)]) 
+                push!(hdr1_keys_3d, "MJD-OBS")
+                push!(hdr1_comments_3d, "[d] MJD of observation")
+                break
+            end
+        end
+    end
+    if ("MJD-OBS" ∉ hdr1_keys_2d)
+        for alternate in ("MJD-AVG", "MJD-BEG", "MJD-END")
+            if alternate in hdr1_keys_2d
+                push!(hdr1_vals_2d, hdr1_vals_2d[findfirst(hdr1_keys_2d .== alternate)]) 
+                push!(hdr1_keys_2d, "MJD-OBS")
+                push!(hdr1_comments_2d, "[d] MJD of observation")
+                break
+            end
+        end
+    end
+
+    # Since we are using a WAVE-TAB header, extra values need to be added
+    append!(hdr1_keys_3d, ["PS3_0", "PS3_1"])
+    append!(hdr1_vals_3d, ["WAVELENGTH", "wave"])
+    append!(hdr1_comments_3d, ["Coordinate table extension name", "Coordinate table column name"])
+
+    hdr0 = FITSHeader(hdr0_keys, hdr0_vals, hdr0_comments)
+    hdr1_3d = FITSHeader(hdr1_keys_3d, hdr1_vals_3d, hdr1_comments_3d)
+    hdr1_2d = FITSHeader(hdr1_keys_2d, hdr1_vals_2d, hdr1_comments_2d)
 
     oopt = out_options(cube_fitter)
     if oopt.save_full_model
-        write_fits_full_model(cube_fitter, cube_data, cube_model, hdr, nuc_temp_fit; qso3d=qso3d)
+        write_fits_full_model(cube_fitter, cube_data, cube_model, hdr0, hdr1_3d, nuc_temp_fit; qso3d=qso3d)
     end
 
     # Create the 2D parameter map FITS file for the parameters and the errors
@@ -928,7 +1025,7 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
 
             @debug "Writing 2D parameter map FITS HDUs"
 
-            write(f, Vector{Int}())  # Primary HDU (empty)
+            write(f, Vector{Int}(), header=hdr0)  # Primary HDU (empty)
 
             # Loop through parameters and write them to the fits file along with the header and units
             for (i, parameter) ∈ enumerate(param_maps.parameters.names)
@@ -946,13 +1043,13 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
                 end
                 data = ustrip.(param_data[:, :, i])
                 name_i = uppercase(parameter)
-                write(f, data; name=name_i, header=hdr)
+                write(f, data; name=name_i, header=hdr1_2d)
                 write_key(f[name_i], "BUNIT", units)
             end
               
             # Add another HDU for the voronoi bin map, if applicable
             if !isnothing(cube_fitter.cube.voronoi_bins)
-                write(f, cube_fitter.cube.voronoi_bins; name="VORONOI_BINS", header=hdr)
+                write(f, cube_fitter.cube.voronoi_bins; name="VORONOI_BINS", header=hdr1_2d)
             end
         end
     end
@@ -961,7 +1058,7 @@ end
 
 # Helper function for writing the output for a MIR cube model
 function write_fits_full_model(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel,
-    hdr::FITSHeader, nuc_temp_fit::Bool; qso3d::Bool=false)
+    hdr0::FITSHeader, hdr1_3d::FITSHeader, nuc_temp_fit::Bool; qso3d::Bool=false)
 
     fopt = fit_options(cube_fitter)
     if eltype(cube_data.I) <: QPerFreq
@@ -972,6 +1069,21 @@ function write_fits_full_model(cube_fitter::CubeFitter, cube_data::NamedTuple, c
     λunit = replace(string(unit(cube_data.λ[1])), 'μ' => 'u')
     Iunit = replace(string(unit(cube_data.I[1])), 'μ' => 'u', "Å" => "angstrom")
 
+    if !isnothing(cube_fitter.cube.voronoi_bins)
+        out_data = ones(eltype(cube_data.I), size(cube_fitter.cube.I)).*NaN
+        out_err  = ones(eltype(cube_data.σ), size(cube_fitter.cube.I)).*NaN
+        for spaxel in CartesianIndices(size(out_data)[1:2])
+            vbin = cube_fitter.cube.voronoi_bins[spaxel]
+            if vbin > 0
+                out_data[spaxel, :] .= cube_data.I[vbin, :]   # no division by npix is necessary since these are intensities
+                out_err[spaxel, :]  .= cube_data.σ[vbin, :]
+            end
+        end
+    else
+        out_data = cube_data.I
+        out_err  = cube_data.σ
+    end
+
     # Create the 3D intensity model FITS file
     FITS(joinpath("output_$(cube_fitter.name)", 
                   "$(cube_fitter.name)_$(nuc_temp_fit ? "nuc_model" : "full_model")$(qso3d ? "_3d" : "").fits"), 
@@ -980,10 +1092,10 @@ function write_fits_full_model(cube_fitter::CubeFitter, cube_data::NamedTuple, c
         @debug "Writing 3D model FITS HDUs"
         # Permute the wavelength axis here back to the third axis to be consistent with conventions
 
-        write(f, Vector{Int}())                                                                        # Primary HDU (empty)
-        write(f, Float32.(ustrip.(cube_data.I) .* restframe_factor); name="DATA", header=hdr)          # Raw data 
-        write(f, Float32.(ustrip.(cube_data.σ) .* restframe_factor); name="ERROR")                     # Error in the raw data
-        write(f, Float32.(ustrip.(permutedims(cube_model.model, (2,3,1)))); name="MODEL")                       # Full intensity model
+        write(f, Vector{Int}(), header=hdr0)                                                        # Primary HDU (empty)
+        write(f, Float32.(ustrip.(out_data) .* restframe_factor); name="DATA", header=hdr1_3d)      # Raw data 
+        write(f, Float32.(ustrip.(out_err)  .* restframe_factor); name="ERROR")                     # Error in the raw data
+        write(f, Float32.(ustrip.(permutedims(cube_model.model, (2,3,1)))); name="MODEL")           # Full intensity model
         write_key(f["DATA"], "BUNIT", Iunit)
         write_key(f["ERROR"], "BUNIT", Iunit)
         write_key(f["MODEL"], "BUNIT", Iunit) 
@@ -1046,8 +1158,13 @@ function write_fits_full_model(cube_fitter::CubeFitter, cube_data::NamedTuple, c
             write(f, Float32.(permutedims(ustrip.(cube_model.lines[:, :, :, k]), (2,3,1))); name="LINES.$lnu")  # Emission line profiles
             write_key(f["LINES.$lnu"], "BUNIT", Iunit)
         end
+
+        if !isnothing(cube_fitter.cube.voronoi_bins)
+            write(f, cube_fitter.cube.voronoi_bins; name="VORONOI_BINS")  # Voronoi bin indices
+        end
         
-        write(f, ["wave"], [ustrip.(cube_data.λ) .* (1 .+ cube_fitter.z)],                                   # wavelength vector
+        write(f, ["wave"], [reshape(ustrip.(cube_data.λ) .* (1 .+ cube_fitter.z), (1, length(cube_data.λ), 1))],  # wavelength vector
             hdutype=TableHDU, name="WAVELENGTH", units=Dict(:wave => λunit))
+        write_key(f["WAVELENGTH"], "TDIM2", "(1,$(length(cube_data.λ)))", "Wavetable dimension")
     end
 end
