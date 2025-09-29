@@ -2240,10 +2240,10 @@ function extract_from_aperture!(obs::Observation, channels::Vector, ap_r::Real; 
 
     for ch_in ∈ channels
         mm = .~isfinite.(obs.channels[ch_in].I) .| .~isfinite.(obs.channels[ch_in].σ)
-        obs.channels[ch_in].I[mm] .*= 0.
-        obs.channels[ch_in].σ[mm] .*= 0.
+        obs.channels[ch_in].I[mm] .= zero(eltype(obs.channels[ch_in].I))
+        obs.channels[ch_in].σ[mm] .= zero(eltype(obs.channels[ch_in].σ))
         if !isnothing(obs.channels[ch_in].psf_model)
-            obs.channels[ch_in].psf_model[mm] .*= 0.
+            obs.channels[ch_in].psf_model[mm] .= zero(eltype(obs.channels[ch_in].psf_model))
         end
 
         @info "Channel $ch_in: Extracting from an aperture of size $ap_r x FWHM..."
@@ -2683,7 +2683,8 @@ Given 2 or more observations of one object, combine them into a single mosaicked
 This requires that all input Observation objects contain the same observed channels.
 This procedure will, for each channel that the Observations share:
     1) Reproject all of the observations of this channel onto a common 3D grid
-    2) Median-combine the individual observations into a single output cube
+    2) Combine the individual observations into a single output cube using a weighted average 
+        (where the weights are 1/errors^2)
 
 The output WCS, by default, is calculated to contain the full field of view of all observations, at the
 highest resolution of any individual observation in the list.
@@ -2702,6 +2703,8 @@ highest resolution of any individual observation in the list.
     Defaults to all channels in the first input cube (which must also exist in all other cubes).
 - `order`: The order of interpolation to be used during the reprojection. 
     Defaults to 1 (linear).
+- `pad_mask`: If true, pads the edges of the IFU footprint by 1 extra pixel, to cut out any edge artifacts that can arise
+    from the resampling and combining process. Default is true.
 - `instrument_channel_edges`: If the input cubes are not from JWST MIRI or NIRSpec, one should provide a list of wavelengths
     which specify the boundaries of the channels of the given instrument.  If there is only one channel, or the channel distinction
     is not important to the user, one can simply input the minimum and maximum wavelength of the given cubes.
@@ -2710,7 +2713,7 @@ highest resolution of any individual observation in the list.
 """
 function combine_observations(observations::Vector{Observation}; frames=nothing,
     refpoints=nothing, resolutions=nothing, projections=nothing, channels=nothing,
-    order::Integer=1, instrument_channel_edges::Union{Vector{<:QWave},Nothing}=nothing,
+    order::Integer=1, pad_mask::Bool=true, instrument_channel_edges::Union{Vector{<:QWave},Nothing}=nothing,
     name_out::Union{String,Nothing}=nothing)
 
     # Input checking
@@ -2727,6 +2730,7 @@ function combine_observations(observations::Vector{Observation}; frames=nothing,
     @assert all([obs.rest_frame .== observations[1].rest_frame for obs in observations]) "Observations \"rest_frame\" attribute do not match!"
     @assert all([obs.z .== observations[1].z for obs in observations]) "Observations \"z\" attribute do not match!"
     @assert all([obs.masked .== observations[1].masked for obs in observations]) "Observations \"masked\" attribute do not match!"
+    @assert observations[1].masked "Please only input masked Observations to combine_observations! (use correct! or apply_mask!)"
     @assert all([obs.vacuum_wave .== observations[1].vacuum_wave for obs in observations]) "Observations \"vacuum_wave\" attribute do not match!"
     @assert all([obs.log_binned .== observations[1].log_binned for obs in observations]) "Observations \"log_binned\" attribute do not match!"
     @assert all([obs.dereddened .== observations[1].dereddened for obs in observations]) "Observations \"dereddened\" attribute do not match!"
@@ -2800,21 +2804,21 @@ function combine_observations(observations::Vector{Observation}; frames=nothing,
         σ_all[iszero.(σ_all) .| mask_all] .*= NaN
 
         # Expand the masked edges by 1 pixel to prevent edge effects
-        # if pad_mask
-        #     new_mask = zeros(eltype(mask_all), size(mask_all))
-        #     for cube_i in axes(new_mask, 4)
-        #         for wave_i in axes(new_mask, 3)
-        #             for xi in axes(new_mask, 1)
-        #                 for yi in axes(new_mask, 2)
-        #                     xs = max(1,xi-1):min(xi+1,size(new_mask,1))
-        #                     ys = max(1,yi-1):min(yi+1,size(new_mask,2))
-        #                     new_mask[xi, yi, wave_i, cube_i] = any(mask_all[xs, ys, wave_i, cube_i])
-        #                 end
-        #             end
-        #         end
-        #     end
-        #     mask_all = new_mask
-        # end
+        if pad_mask
+            new_mask = zeros(eltype(mask_all), size(mask_all))
+            for cube_i in axes(new_mask, 4)
+                for wave_i in axes(new_mask, 3)
+                    for xi in axes(new_mask, 1)
+                        for yi in axes(new_mask, 2)
+                            xs = max(1,xi-1):min(xi+1,size(new_mask,1))
+                            ys = max(1,yi-1):min(yi+1,size(new_mask,2))
+                            new_mask[xi, yi, wave_i, cube_i] = any(mask_all[xs, ys, wave_i, cube_i])
+                        end
+                    end
+                end
+            end
+            mask_all = new_mask
+        end
 
         weights = dropdims(nansum(ustrip.(1 ./ σ_all.^2), dims=4), dims=4)
         I_out = dropdims(nansum(ustrip.(I_all ./ σ_all.^2), dims=4), dims=4) ./ weights .* unit(I_all[1])
@@ -2828,6 +2832,13 @@ function combine_observations(observations::Vector{Observation}; frames=nothing,
             psfs_all[iszero.(psfs_all) .| mask_all] .*= NaN
             psf_out = dropdims(nansum(ustrip.(psfs_all ./ σ_all.^2), dims=4), dims=4) ./ weights .* unit(psfs_all[1])
             mask_out .|= .~isfinite.(psf_out)
+        end
+
+        # Reapply masks
+        I_out[mask_out] .*= NaN
+        σ_out[mask_out] .*= NaN
+        if do_psf
+            psf_out[mask_out] .*= NaN
         end
 
         # Get a few ancillary parameters 
