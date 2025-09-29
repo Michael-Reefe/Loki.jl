@@ -1,8 +1,6 @@
 To-do list:
 
-- Allow WAVE-TAB handling in WCS parameters for non-uniform wavelength grid inputs
-
-- Make a combine_observations function to combine multiple data cubes of the same channel(s) with some pointing offset
-
 - Allow parallelization with bootstrapping (but maybe make it mutually exclusive with spaxel parallelization...?)
 
+- Implement an argument that allows the user to pass in a mask that manually determines the number of line components 
+  that should be fit for each spaxel.
