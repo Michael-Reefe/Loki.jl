@@ -107,6 +107,9 @@ mutable struct FittingOptions{T<:Real,S<:Integer} <: Options
     sil_abs_map::Union{Array{T,3},Nothing}
     fit_stellar_continuum::Bool
     ssp_regularize::T
+    stellar_template_type::String
+    custom_stellar_template_wave::Union{Vector{T},Nothing}
+    custom_stellar_templates::Union{Array{T,2},Nothing}
     fit_sil_emission::Bool
     fit_ch_abs::Bool
     fit_temp_multexp::Bool
@@ -303,11 +306,20 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
         cubefitter_add_default_options!(cube, out)
         # Set up the extinction map and PAH template boolean map 
         ebv_map, sil_abs_map = cubefitter_prepare_extinction_maps(out, cube)
+        # Set up potential custom stellar templates 
+        custom_stellar_template_wave, custom_stellar_templates = cubefitter_prepare_custom_stellar_templates(out, cube)
         # Set up the output directories
         cubefitter_prepare_output_directories(name, out)
         # add the user mask, if given
         if !isnothing(out[:user_mask])
             append!(spectral_region.mask, out[:user_mask])
+        end
+        # Disable regularization for any non-SSP stellar templates
+        if haskey(out, :stellar_template_type) && (out[:stellar_template_type] != "ssp")
+            if out[:ssp_regularize] != 0.0
+                @warn "Setting ssp_regularize=0.0 since stellar_template_type is not \"ssp\""
+                out[:ssp_regularize] = 0.0
+            end
         end
 
         #############################################################
@@ -319,7 +331,8 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
 
         # Create the model parameters, stellar and iron templates, and count various parameters
         model_parameters, ssps, feii, n_ssps, n_power_law, n_dust_cont, n_dust_feat, n_abs_feat, n_templates, vres =
-            cubefitter_prepare_continuum(λ, z, out, λunit, Iunit, spectral_region, name, cube)
+            cubefitter_prepare_continuum(λ, z, out, λunit, Iunit, spectral_region, name, cube, custom_stellar_template_wave,
+            custom_stellar_templates)
         lines, n_lines, n_acomps, n_fit_comps = cubefitter_prepare_lines(out, λunit, Iunit, cube, spectral_region)
 
         # Count total parameters
@@ -401,6 +414,9 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
             sil_abs_map,
             out[:fit_stellar_continuum],
             out[:ssp_regularize],
+            out[:stellar_template_type],
+            custom_stellar_template_wave,
+            custom_stellar_templates,
             out[:fit_sil_emission],
             out[:fit_ch_abs],
             out[:fit_temp_multexp],
@@ -586,6 +602,39 @@ function cubefitter_prepare_extinction_maps(out::Dict, cube::DataCube)
         end
     end
     ebv_map, sil_abs_map
+end
+
+
+# Helper function to prepare custom stellar templates
+function cubefitter_prepare_custom_stellar_templates(out::Dict, cube::DataCube)
+    temp_λ = nothing
+    temps = nothing
+    λunit = unit(cube.λ[1])
+    Iunit = unit(cube.I[1])
+    if haskey(out, :custom_stellar_template_wave) && !isnothing(out[:custom_stellar_template_wave])
+        temp_λ = out[:custom_stellar_template_wave]
+        @assert ndims(temp_λ) == 1 "Please input a 1-dimensional wavelength vector for the stellar templates"
+        try
+            temp_λ = uconvert.(λunit, temp_λ)
+        catch
+            error("Please input custom_stellar_template_wave in units that can be converted into $(λunit)")
+        end
+        temp_λ = ustrip.(temp_λ)
+    end
+    if haskey(out, :custom_stellar_templates) && !isnothing(out[:custom_stellar_templates])
+        temps = out[:custom_stellar_templates]
+        @assert ndims(temps) == 2 "Please input a 2-dimensional array for the stellar templates"
+        @assert size(temps, 1) == size(temp_λ, 1) "Please ensure the first axis of custom_stellar_templates matches " *
+            "the first axis of custom_stellar_template_wave"
+        try
+            temps = match_fluxunits.(temps, 1.0Iunit, temp_λ.*λunit)
+        catch
+            error("Please input custom_stellar_templates in units that can be converted into $(Iunit)" *
+            " (Note: the normalization does not matter, but per-unit-frequency or per-unit-wavelength does matter)")
+        end
+        temps = ustrip.(temps)
+    end
+    temp_λ, temps
 end
 
 

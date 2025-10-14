@@ -447,28 +447,38 @@ function calculate_stellar_parameters(cube_fitter::CubeFitter, norms::Dict, N::N
 
     stellar_N = norms["continuum.stellar_norm"]
     weights = reshape(norms["continuum.stellar_weights"], p_dims...)
-    f = N / stellar_N   
-    unit_check(unit(f), u"Msun")  # should have units of Msun
-    # stellar mass that each SSP template contributes
-    masses = weights .* f .* restframe_factor
-    # total mass
-    mtot = sum(masses)
-    mfracs = masses ./ mtot
 
-    # renormalize weights so they represent fractions of the bolometric luminosity
-    Lbol = reshape(nansum(ustrip.(cube_fitter.ssps.templates), dims=1), p_dims...) 
-    wl = weights .* Lbol
-    wl ./= sum(wl)
+    if fit_options(cube_fitter).stellar_template_type == "ssp"
+        f = N / stellar_N   
+        unit_check(unit(f), u"Msun")  # should have units of Msun
+        # stellar mass that each SSP template contributes
+        masses = weights .* f .* restframe_factor
+        # total mass
+        mtot = sum(masses)
+        mfracs = masses ./ mtot
 
-    # detect "peaks" in the age/logz axes and report their values
-    w = weights ./ sum(weights)
-    minds = findlocalmaxima(w)
-    # cut off after 10 so we dont get TOO excessive here
-    if length(minds) > 10
-        minds = minds[1:10]
+        # renormalize weights so they represent fractions of the bolometric luminosity
+        Lbol = reshape(nansum(ustrip.(cube_fitter.ssps.templates), dims=1), p_dims...) 
+        wl = weights .* Lbol
+        wl ./= sum(wl)
+
+        # detect "peaks" in the age/logz axes and report their values
+        w = weights ./ sum(weights)
+        minds = findlocalmaxima(w)
+        # cut off after 10 so we dont get TOO excessive here
+        if length(minds) > 10
+            minds = minds[1:10]
+        end
+        ages = [cube_fitter.ssps.ages[m.I[1]] for m in minds]
+        logzs = [cube_fitter.ssps.logzs[m.I[2]] for m in minds]
+    else
+        # cannot constrain masses, ages, or metallicities if not using SSPs
+        mtot = NaN * u"Msun"
+        mfracs = weights .* NaN
+        wl = weights .* NaN 
+        ages = Vector{eltype(cube_fitter.ssps.ages)}()
+        logzs = Vector{eltype(cube_fitter.ssps.logzs)}()
     end
-    ages = [cube_fitter.ssps.ages[m.I[1]] for m in minds]
-    logzs = [cube_fitter.ssps.logzs[m.I[2]] for m in minds]
 
     StellarResult(stellar_N, mtot, mfracs, wl, weights, ages, logzs)
 end

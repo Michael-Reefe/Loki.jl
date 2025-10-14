@@ -698,12 +698,9 @@ function stellar_populations_nnls(s::Spaxel, contin::Vector{<:Real}, ext_stars::
     end
     # perform a non-negative least-squares fit
     if !haskey(s.aux, "stellar_weights") || isnothing(s.aux["stellar_weights"])
-        ml_extended = falses(length(b))
-        # if doing a joint fit, DONT mask out the lines
-        if mask_lines
-            ml_extended[1:nλ] .= s.mask_lines
-        end
-        weights = nonneg_lsq(A[.~ml_extended, :], b[.~ml_extended], alg=:fnnls)  # mask out the emission lines!
+        spaxel_mask_extended = falses(length(b))
+        spaxel_mask_extended[1:nλ] .= get_vector_mask(s; lines=mask_lines, user_mask=cube_fitter.cube.spectral_region.mask)
+        weights = nonneg_lsq(A[.~spaxel_mask_extended, :], b[.~spaxel_mask_extended], alg=:fnnls)  # mask out the emission lines!
     else
         weights = reshape(s.aux["stellar_weights"], cube_fitter.n_ssps, 1)
     end

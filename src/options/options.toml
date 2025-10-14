@@ -168,17 +168,78 @@ subtract_cubic_spline = false
 # will only use the results with the extinction if there is a significant statistical improvement in the fit.
 F_test_ext = false
 
+# Stellar template type
+# - "ssp" (default): Fit the stellar continuum using simple stellar populations (SSPs)
+# - "stars"        : Fit the stellar continuum using single star templates (model atmospheres)
+# - "custom"       : Fit the stellar continuum using custom (user-input) templates
+#
+# When to use which option?
+# - "ssp" is good for getting stellar mass, age, and metalllicity estimates, as it is the only fitting mode
+#   that allows for the estimation of these parameters.  It has a wide usable wavelength coverage, from ~1800 A in
+#   the FUV to ~30 um in the MIR, at an acceptable resolution. However, it is a bit more restrictive than the other 
+#   options in terms of the flexibility of the stellar continuum, so fitting quality results may vary.
+#
+# - "stars" is the highest resolution option, but is limited in wavelength from ~6000 A to ~5.5 um. This option
+#   allows for high-quality fits to stellar spectra, and in particular stellar velocities, in the red-optical to NIR, 
+#   designed to be ideal for JWST/NIRSpec.  However, it does not allow for the estimation of stellar masses, ages, or
+#   metallicities.
+#
+# - "custom" is for use-cases where you have your own templates which are more tailor-made for your specific
+#   use case which you'd like to use.
+#
+stellar_template_type = "ssp"
+
 # SSP options: Controls the grid spacing for the simple stellar populations over age and metallicity
+# Obviously, this only matters if the "stellar_template_type" is set to "ssp"
+[ssps]
+
 # (Ages are in Gyr)
 [ssps.age]
 min = 0.001
 max = 13.7 
 num = 40
+
 # (Metallicities are in log(Z/Zsun))
 [ssps.logz]
 min = -2.3
 max = 0.4
 num = 10
+
+# Single Star options: Limit the single star templates in Teff, logg, Z, or alpha enhancement.
+# This functionality is provided because, by default, there are many thousands of single star templates,
+# and marginalizing over *all* of them is not only unnecessary, but will severely slow down fitting in 
+# the single star mode.
+# Obviously, this only matters if the "stellar_template_type" is set to "stars" 
+[stars]
+
+# (boolean options for whether or not to include additional templates for 
+# Wolf-Rayet stars and thermally pulsing AGB stars)
+use_wr = false
+use_tpagb = false
+
+# (effective temperature)
+[stars.teff]
+min = 2000.0
+max = 7000.0
+
+# (gravity)
+[stars.logg]
+min = -0.5
+max = +5.0
+
+# (metallicity)
+[stars.logz]
+min = -2.0
+max = +0.5
+
+# (alpha enhancement)
+# (note: the grids do NOT have fully orthogonal coverage in metallicity 
+#  and alpha, so I would recommend not changing the limits on alpha; for
+#  example, the Z=-2 stars only have alpha=+0.4, while the Z=0 stars
+#  only have alpha=0 and a few alpha=+0.2)
+[stars.alpha]
+min = +0.0
+max = +0.6
 
 # cosmology options: Controls the cosmology used for distance / luminosity calculations.
 # If h is set to 1, the distances in plot scale bars will be shown with h^-1 units.

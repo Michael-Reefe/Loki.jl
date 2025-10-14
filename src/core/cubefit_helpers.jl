@@ -2,7 +2,8 @@
 # Helper function for preparing continuum and dust feature parameters for 
 # a CubeFitter object
 function cubefitter_prepare_continuum(λ::Vector{<:QWave}, z::Real, out::Dict, λunit::Unitful.Units, 
-    Iunit::Unitful.Units, region::SpectralRegion, name::String, cube::DataCube)
+    Iunit::Unitful.Units, region::SpectralRegion, name::String, cube::DataCube, 
+    custom_stellar_template_wave::Union{Nothing,Vector{<:Real}}, custom_stellar_templates::Union{Nothing,Array{<:Real,2}})
 
     # Construct the ModelParameters object
     model_parameters = construct_model_parameters(out, λunit, Iunit, region, z)
@@ -17,7 +18,8 @@ function cubefitter_prepare_continuum(λ::Vector{<:QWave}, z::Real, out::Dict, �
     n_ssps = 0
     if out[:fit_stellar_continuum]
         # Create the simple stellar population templates with FSPS
-        ssp_λ, ages, metals, ssp_templates = generate_stellar_populations(λ, Iunit, cube.lsf, z, out[:cosmology], out[:ssps], name)
+        ssp_λ, ages, metals, ssp_templates = generate_stellar_populations(λ, Iunit, cube.lsf, z, out[:stellar_template_type], 
+            out[:cosmology], out[:ssps], out[:stars], name, out[:user_mask], custom_stellar_template_wave, custom_stellar_templates)
         # flatten template array
         ssp_temp_flat = reshape(ssp_templates, size(ssp_templates,1), :)
         # 2nd axis ordering: (age1_z1, age2_z1, age3_z1, ..., age1_z2, age2_z2, age3_z2, ...)

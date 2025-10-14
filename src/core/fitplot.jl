@@ -754,6 +754,12 @@ end
 
 function plot_stellar_grids(result::StellarResult, cube_fitter::CubeFitter, label::String)
 
+    st_type = fit_options(cube_fitter).stellar_template_type
+    if st_type ≠ "ssp"
+        @debug "NOTE: Skipping stellar grid plots because stellar_template_type is $(st_type)"
+        return 
+    end
+
     all_ages = log10.(ustrip.(uconvert.(u"yr", cube_fitter.ssps.ages)))
     all_logzs = cube_fitter.ssps.logzs
     halfpix = [0., 0.]

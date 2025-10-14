@@ -182,6 +182,18 @@ function parse_options()
                      logz=(min=options[:ssps]["logz"]["min"],
                            max=options[:ssps]["logz"]["max"],
                            num=options[:ssps]["logz"]["num"]))
+    
+    # Same for single star options 
+    options[:stars] = (teff=(min=options[:stars]["teff"]["min"],
+                             max=options[:stars]["teff"]["max"]),
+                       logg=(min=options[:stars]["logg"]["min"],
+                             max=options[:stars]["logg"]["max"]),
+                       logz=(min=options[:stars]["logz"]["min"],
+                             max=options[:stars]["logz"]["max"]),
+                       alpha=(min=options[:stars]["alpha"]["min"],
+                              max=options[:stars]["alpha"]["max"]),
+                       use_wr=options[:stars]["use_wr"],
+                       use_tpagb=options[:stars]["use_tpagb"])
 
     # Convert cosmology keys into a proper cosmology object
     options[:cosmology] = cosmology(h=options[:cosmology]["h"], 
@@ -388,7 +400,8 @@ end
 
 
 """
-    generate_stellar_populations(λ, lsf, z, Ω, cosmo, ssp_options, name)
+    generate_stellar_populations(λ, lsf, z, Ω, cosmo, ssp_options, stars_options, name,
+        custom_template_wave, custom_templates)
 
 Prepare a 3D grid of Simple Stellar Population (SSP) templates over age, metallicity, and wavelength.
 Each template will be cropped around the region of interest given by `λ` (in microns), and degraded 
@@ -403,7 +416,9 @@ Returns 1D arrays for the wavelengths, ages, and metals that the templates are e
 occupied.
 """
 function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unitful.Units, lsf::Vector{typeof(1.0u"km/s")}, 
-    z::Real, cosmo::Cosmology.AbstractCosmology, ssp_options::NamedTuple, name::String; photometry_filters::Vector{String}=String[])
+    z::Real, template_type::String, cosmo::Cosmology.AbstractCosmology, ssp_options::NamedTuple, stars_options::NamedTuple, 
+    name::String, user_mask::Union{Nothing,Vector{<:Tuple}}, custom_template_wave::Union{Nothing,Vector{<:Real}}, 
+    custom_templates::Union{Nothing,Array{<:Real,2}})
 
     # Make sure λ is logarithmically binned
     @assert isapprox((λ[2]/λ[1]), (λ[end]/λ[end-1]), rtol=1e-6) "Input spectrum must be logarithmically binned to fit with stellar populations!"
@@ -416,10 +431,88 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
     end
 
     @debug "Loading in full resolution stellar templates"
-    stellar_templates = FITS(joinpath(@__DIR__, "..", "templates", "loki.stellar_templates.fits.gz"))
+    if template_type == "ssp"
 
-    # Read in wavelengths and convert them to the input spectrum's wavelength units
-    ssp_λ0 = read(stellar_templates["AXES"], "WAVE") .* u"angstrom"
+        stellar_templates = FITS(joinpath(@__DIR__, "..", "templates", "ssps", "loki.ssps.fits.gz"))
+
+        # Read in wavelengths
+        ssp_λ0 = read(stellar_templates["AXES"], "WAVE") .* u"angstrom"
+
+    elseif template_type == "stars"
+
+        stellar_templates = FITS[]
+
+        # cool stars (~<10,000 K)
+        # zcools = ["-4.0", "-3.0", "-2.0", "-1.5", "-1.0", "-0.5", "-0.0", "+0.5", "+1.0"]
+        # αcools = ["-0.20", "-0.00", "+0.20", "+0.40", "+0.60", "+0.80", "+1.00", "+1.20"]
+        zcools = ["-4.00", "-3.50", "-3.00", "-2.50", "-2.00", "-1.50", "-1.00", "-0.50", "-0.00", "+0.30", "+0.50"]
+        αcools = ["-0.00", "+0.20", "+0.40", "+0.60"]
+        for zcool in zcools
+            for αcool in αcools
+                if !((stars_options.logz.min ≤ parse(Float64, zcool) ≤ stars_options.logz.max) && 
+                     (stars_options.alpha.min ≤ parse(Float64, αcool) ≤ stars_options.alpha.max))
+                     continue
+                end
+                fpath = joinpath(@__DIR__, "..", "templates", "single_stars", "cool", "loki.single_star_cool_z$(zcool)_alpha$(αcool).fits.gz")
+                if isfile(fpath)
+                    @debug "Reading $fpath"
+                    push!(stellar_templates, FITS(fpath))
+                end
+            end
+        end
+        # hot stars (~>10,000 K)
+        zhots  = ["-2.0", "-1.0", "+0.0"]
+        for zhot in zhots
+            if !(stars_options.logz.min ≤ parse(Float64, zhot) ≤ stars_options.logz.max)
+                continue
+            end
+            fpath = joinpath(@__DIR__, "..", "templates", "single_stars", "hot", "loki.single_star_hot_z$(zhot).fits.gz")
+            if isfile(fpath)
+                @debug "Reading $fpath"
+                push!(stellar_templates, FITS(fpath))
+            end
+        end
+        # wolf-rayet stars (C-rich and N-rich)
+        zwrs = ["sSMC", "SMC", "LMC", "MW"]
+        logzwrs = log10.([1/14, 1/7, 1/2, 1.])
+        if stars_options.use_wr
+            for (logzwr,zwr) in zip(logzwrs,zwrs)
+                if !(stars_options.logz.min ≤ logzwr ≤ stars_options.logz.max)
+                    continue 
+                end
+                fpath = joinpath(@__DIR__, "..", "templates", "single_stars", "wr", "loki.single_star_wc_z$(zwr).fits.gz")
+                if isfile(fpath)
+                    @debug "Reading $path"
+                    push!(stellar_templates, FITS(fpath))
+                end
+                fpath = joinpath(@__DIR__, "..", "templates", "single_stars", "wr", "loki.single_star_wn_z$(zwr).fits.gz")
+                if isfile(fpath)
+                    @debug "Reading $fpath"
+                    push!(stellar_templates, FITS(fpath))
+                end
+            end
+        end
+        # TP-AGB stars
+        if stars_options.use_tpagb
+            fpath = joinpath(@__DIR__, "..", "templates", "single_stars", "tpagb", "loki.single_star_tpagb.fits.gz")
+            if isfile(fpath)
+                @debug "Reading $fpath"
+                push!(stellar_templates, FITS(fpath))
+            end
+        end
+        @assert length(stellar_templates) > 0 "No stellar templates exist within the specified Teff, logg, logz, and alpha ranges!"
+
+        # Read in wavelengths
+        ssp_λ0 = read(stellar_templates[1]["WAVE"], "WAVE") .* u"angstrom"
+
+    elseif template_type == "custom"
+
+        wave_unit = unit(λ[1])
+        ssp_λ0 = custom_template_wave .* wave_unit
+
+    end
+
+    # Convert to the input spectrum's wavelength units
     wave_unit = unit(λ[1])
     ssp_λ0 = uconvert.(wave_unit, ssp_λ0)
 
@@ -427,8 +520,16 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
     λleft  = 0.98minimum(λ)
     λright = 1.02maximum(λ)
 
-    @assert (λleft ≥ minimum(ssp_λ0)) && (λright ≤ maximum(ssp_λ0)) "The extended input spectrum range of ($λleft, $λright) " * 
-        "is outside the FSPS template range of ($(minimum(ssp_λ0)), $(maximum(ssp_λ0))). Please adjust the input spectrum accordingly."
+    if (λleft < minimum(ssp_λ0)) || (λright > maximum(ssp_λ0)) 
+        if template_type == "custom"
+            @warn "The extended input spectrum range of ($λleft, $λright) " * 
+            "is outside the template range of ($(minimum(ssp_λ0)), $(maximum(ssp_λ0))). Unexpected results may occur at the edges!"
+        else
+            error("The extended input spectrum range of ($λleft, $λright) " * 
+            "is outside the template range of ($(minimum(ssp_λ0)), $(maximum(ssp_λ0))). Please adjust the input spectrum, or use" *
+            "different templates.")
+        end
+    end
 
     # Mask to a range around the input spectrum
     mask = λleft .< ssp_λ0 .< λright
@@ -456,33 +557,73 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
     dL = luminosity_dist(u"cm", cosmo, z)
 
     # Generate templates over a range of ages and metallicities
-    ages_out = exp.(range(log(ssp_options.age.min), log(ssp_options.age.max), ssp_options.age.num)) .* u"Gyr"  # logarithmically spaced from 1 Myr to 15 Gyr
-    logzs_out = range(ssp_options.logz.min, ssp_options.logz.max, ssp_options.logz.num)                        # linearly spaced from log(Z/Zsun) = [M/H] = -2.3 to 0.4
+    if template_type == "ssp"
+        ages_out = exp.(range(log(ssp_options.age.min), log(ssp_options.age.max), ssp_options.age.num)) .* u"Gyr"  # logarithmically spaced from 1 Myr to 15 Gyr
+        logzs_out = range(ssp_options.logz.min, ssp_options.logz.max, ssp_options.logz.num)                        # linearly spaced from log(Z/Zsun) = [M/H] = -2.3 to 0.4
 
-    # Compare this with out default set of templates 
-    n_ages = 40
-    n_logzs = 10
-    ages_in = Float64.(read(stellar_templates["AXES"], "AGE")[1:n_ages]) .* u"Gyr"
-    logzs_in = Float64.(read(stellar_templates["AXES"], "LOGZ")[1:n_logzs])
-    input_units = u"Lsun/Msun/Hz"
-    ssp_templates_in = Float64.(read(stellar_templates["TEMPLATES"])) .* input_units
-    ssp_templates_in_resamp = zeros(typeof(1.0*input_units), length(ssp_λlin), length(ages_in), length(logzs_in))
+        # Compare this with out default set of templates 
+        n_ages = 40
+        n_logzs = 10
+        ages_in = Float64.(read(stellar_templates["AXES"], "AGE")[1:n_ages]) .* u"Gyr"
+        logzs_in = Float64.(read(stellar_templates["AXES"], "LOGZ")[1:n_logzs])
+        input_units = u"Lsun/Msun/Hz"
+        ssp_templates_in = Float64.(read(stellar_templates["TEMPLATES"])) .* input_units
 
-    output_units = intensity_units*u"sr"/u"Msun"
-    ssp_templates_out = zeros(typeof(1.0*output_units), length(ssp_λlin), length(ages_out), length(logzs_out))
-    n_temp = size(ssp_templates_out, 2) * size(ssp_templates_out, 3)
+        output_units = intensity_units*u"sr"/u"Msun"
+        ssp_templates_out = zeros(typeof(1.0*output_units), length(ssp_λlin), length(ages_out), length(logzs_out))
+        n_temp = size(ssp_templates_out, 2) * size(ssp_templates_out, 3)
+
+        @assert round(ssp_options.age.min, digits=3) ≥ round(ustrip(minimum(ages_in)), digits=3) "Minimum age is $(round(ustrip(minimum(ages_in)), digits=3)) Gyr"
+        @assert round(ssp_options.age.max, digits=3) ≤ round(ustrip(maximum(ages_in)), digits=3) "Maximum age is $(round(ustrip(maximum(ages_in)), digits=3)) Gyr"
+        @assert round(ssp_options.logz.min, digits=3) ≥ round(minimum(logzs_in), digits=3) "Minimum logz is $(round(minimum(logzs_in), digits=3))"
+        @assert round(ssp_options.logz.max, digits=3) ≤ round(maximum(logzs_in), digits=3) "Maximum logz is $(round(maximum(logzs_in), digits=3))"
+
+        @info "Generating $n_temp simple stellar population templates with " * 
+            "ages ∈ ($(minimum(ages_out)), $(maximum(ages_out))), log(Z/Zsun) ∈ ($(minimum(logzs_out)), $(maximum(logzs_out)))"
+    
+    elseif template_type == "stars"
+
+        input_units = u"erg/s/cm^2/Hz/sr"
+        output_units = intensity_units*u"sr"/u"Msun" 
+        wave_full = read(stellar_templates[1]["WAVE"], "WAVE") .* u"angstrom"
+        nwave = length(wave_full)
+
+        # read in the single star templates
+        ssp_templates_in = zeros(typeof(1.0input_units), (0,nwave))
+        logg_in = zeros(0)
+        logt_in = zeros(0)
+        for i in eachindex(stellar_templates)
+            temp_in = read(stellar_templates[i]["SPEC"], "SPEC") .* input_units
+            ssp_templates_in = cat(ssp_templates_in, temp_in, dims=1)
+            logg_in = cat(logg_in, read(stellar_templates[i]["AXES"], "LOGG"), dims=1)
+            logt_in = cat(logt_in, read(stellar_templates[i]["AXES"], "LOGT"), dims=1)
+        end
+        # remove all templates that dont fall within the LOGG/LOGT range
+        gt_mask = (stars_options.logg.min .≤ logg_in .≤ stars_options.logg.max) .&
+                  (stars_options.teff.min .≤ (10 .^ logt_in) .≤ stars_options.teff.max)
+        ssp_templates_in = ssp_templates_in[gt_mask,:]
+        @assert size(ssp_templates_in, 2) > 0 "No stellar templates exist within the specified Teff, logg, logz, and alpha ranges!"
+
+        ages_in = ages_out = ones(size(ssp_templates_in, 1)) .* NaN .* u"Gyr"
+        logzs_in = logzs_out = [NaN]
+        ssp_templates_in = reshape(ssp_templates_in, (length(logzs_in), length(ages_in), nwave))
+
+    elseif template_type == "custom"
+
+        input_units = intensity_units 
+        output_units = intensity_units*u"sr"/u"Msun"
+        ssp_templates_in = custom_templates .* input_units
+        ages_in = ages_out = ones(size(ssp_templates_in, 2)) .* NaN .* u"Gyr"
+        logzs_in = logzs_out = [NaN]
+        ssp_templates_in = reshape(ssp_templates_in, (length(custom_template_wave), length(ages_in), length(logzs_in)))
+        ssp_templates_in = permutedims(ssp_templates_in, (3,2,1))
+
+    end
+
+    ssp_templates_in_resamp = zeros(typeof(1.0*input_units), length(ssp_λlin), length(ages_in), length(logzs_in)) 
+    ssp_templates_final = zeros(typeof(1.0*output_units), length(ssp_lnλ), length(ages_out), length(logzs_out))
     peraa = typeof(1.0*intensity_units) <: QPerWave
 
-    ssp_templates_final = zeros(typeof(1.0*output_units), length(ssp_lnλ), length(ages_out), length(logzs_out))
-
-    @assert round(ssp_options.age.min, digits=3) ≥ round(ustrip(minimum(ages_in)), digits=3) "Minimum age is $(round(ustrip(minimum(ages_in)), digits=3)) Gyr"
-    @assert round(ssp_options.age.max, digits=3) ≤ round(ustrip(maximum(ages_in)), digits=3) "Maximum age is $(round(ustrip(maximum(ages_in)), digits=3)) Gyr"
-    @assert round(ssp_options.logz.min, digits=3) ≥ round(minimum(logzs_in), digits=3) "Minimum logz is $(round(minimum(logzs_in), digits=3))"
-    @assert round(ssp_options.logz.max, digits=3) ≤ round(maximum(logzs_in), digits=3) "Maximum logz is $(round(maximum(logzs_in), digits=3))"
-
-    @info "Generating $n_temp simple stellar population templates with " * 
-        "ages ∈ ($(minimum(ages_out)), $(maximum(ages_out))), log(Z/Zsun) ∈ ($(minimum(logzs_out)), $(maximum(logzs_out)))"
-    
     # First, resample all of the input templates onto the output wavelength grid
     @info "Resampling wavelengths..."
     prog = Progress(length(ages_in)*length(logzs_in); showspeed=true)
@@ -494,26 +635,35 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
         end
     end
 
-    # Then, do a 2D interpolation over age/metallicity
-    @info "Resampling ages/logzs..."
-    prog = Progress(length(ssp_λlin); showspeed=true)
-    for (w_ind, wi) in enumerate(ssp_λlin)
-        interpolator = Spline2D(ustrip.(ages_in), ustrip.(logzs_in), ustrip.(ssp_templates_in_resamp[w_ind, :, :]), kx=1, ky=1)
-        for (z_ind, logz) in enumerate(logzs_out)
-            for (age_ind, age) in enumerate(ages_out)
-                # Get the interpolated luminosity
-                ssp_L = interpolator(ustrip(age), ustrip(logz)) * input_units
-                if peraa 
-                    # if necessary, convert to per-wavelength 
-                    ssp_L = uconvert(input_units*u"Hz"/unit(wi), ssp_L * C_KMS / wi^2)
+    # Then, do a 2D interpolation over age/metallicity (only if using actual SSPs)
+    if template_type == "ssp"
+        @info "Resampling ages/logzs..."
+        prog = Progress(length(ssp_λlin); showspeed=true)
+        for (w_ind, wi) in enumerate(ssp_λlin)
+            interpolator = Spline2D(ustrip.(ages_in), ustrip.(logzs_in), ustrip.(ssp_templates_in_resamp[w_ind, :, :]), kx=1, ky=1)
+            for (z_ind, logz) in enumerate(logzs_out)
+                for (age_ind, age) in enumerate(ages_out)
+                    # Get the interpolated luminosity
+                    ssp_L = interpolator(ustrip(age), ustrip(logz)) * input_units
+                    if peraa 
+                        # if necessary, convert to per-wavelength 
+                        ssp_L = uconvert(input_units*u"Hz"/unit(wi), ssp_L * C_KMS / wi^2)
+                    end
+                    # Convert Lsun/Msun/[Hz,Ang] to [flux units]/Msun
+                    ssp_flux = uconvert(output_units, ssp_L / (4π*dL^2))
+                    # Insert into templates array
+                    ssp_templates_out[w_ind, age_ind, z_ind] = ssp_flux
                 end
-                # Convert Lsun/Msun/[Hz,Ang] to [flux units]/Msun
-                ssp_flux = uconvert(output_units, ssp_L / (4π*dL^2))
-                # Insert into templates array
-                ssp_templates_out[w_ind, age_ind, z_ind] = ssp_flux
             end
+            next!(prog)
         end
-        next!(prog)
+    else
+        temp_out = ssp_templates_in_resamp
+        if peraa 
+            temp_out = uconvert.(input_units*u"Hz"/unit(ssp_λlin[1]), ssp_templates_in_resamp .* C_KMS ./ ssp_λlin.^2)
+        end
+        ssp_templates_out = uconvert.(output_units, temp_out.*u"sr"/u"Msun")
+        n_temp = size(ssp_templates_out, 2) * size(ssp_templates_out, 3)
     end
 
     # Finally, do some instrumental broadening and resample onto the logarithmic wavelength grid
@@ -529,16 +679,41 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
         end
     end
 
-    close(stellar_templates)
+    # Normalize if not using SSPs 
+    if template_type != "ssp"
 
-    # NOTICE: We store the SSPs in units of FLUX per solar mass and not INTENSITY per solar mass.
-    #         But the rest of the code works in intensities; this makes the normalized fitted amplitude parameter 
-    #         for the SSPs have units of 1/sr.  
-    # WHY?  : Simply because this makes the fitted amplitude parameter be closer to 1 numerically. Typical solar masses 
-    #         for galaxies range from ~10^7 - 10^12 Msun, whereas typical solid angles for observed spectra are 
-    #         on the order of <1 arcsec^2 ~ 10^-11 sr.  In other words, these factors conspire to make the fitted 
+        @info "Normalizing templates..."
+
+        for (z_ind, logz) in enumerate(logzs_out)
+            for (age_ind, age) in enumerate(ages_out)
+                temp_i = ssp_templates_final[:, age_ind, z_ind]
+                if !peraa 
+                    temp_i = temp_i .* uconvert(wave_unit/u"s", C_KMS) ./ ssp_lnλ.^2
+                end
+                norm = NumericalIntegration.integrate(ustrip.(ssp_lnλ), ustrip.(temp_i), Trapezoidal())
+                ssp_templates_final[:, age_ind, z_ind] ./= norm
+            end
+        end
+
+    end
+
+    if template_type == "ssp"
+        close(stellar_templates)
+    elseif template_type == "stars"
+        for i in eachindex(stellar_templates)
+            close(stellar_templates[i])
+        end
+    # elseif template_type == "custom"
+    end
+
+    # notice: we store the ssps in units of flux per solar mass and not intensity per solar mass.
+    #         but the rest of the code works in intensities; this makes the normalized fitted amplitude parameter 
+    #         for the ssps have units of 1/sr.  
+    # why?  : simply because this makes the fitted amplitude parameter be closer to 1 numerically. typical solar masses 
+    #         for galaxies range from ~10^7 - 10^12 msun, whereas typical solid angles for observed spectra are 
+    #         on the order of <1 arcsec^2 ~ 10^-11 sr.  in other words, these factors conspire to make the fitted 
     #         amplitude close to 1.
-    # SO?   : Because of this, we will have to multiply the solid angle factor back in at the end of the fitting process
+    # so?   : because of this, we will have to multiply the solid angle factor back in at the end of the fitting process
     #         to get the result back in units of Msun.
 
     # save for later

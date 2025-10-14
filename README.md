@@ -309,8 +309,8 @@ This boolean option determines whether or not to include absorption from CH and 
 
 `fit_temp_multexp = false`
 
-This option, if enabled, will apply 4 multiplicative exponential profiles onto all of the input templates. This option can be utilized if one does not know the spatial or spectral shape of the PSF model ahead of time, with the hope that the flexibility afforded by these profiles will allow any generic PSF shape to be modeled. The exponential profiles obtained from [Rupke et al. (2017)](https://arxiv.org/pdf/1708.05139.pdf) equation 2:
-$$a_1e^{-b_1\bar{\lambda}},~a_2e^{-b_2(1-\bar{\lambda})},~a_3(1-e^{-b_3\bar{\lambda}}),~{\rm and}~a_4(1-e^{-b_4(1-\bar{\lambda})})$$ 
+This option, if enabled, will apply 4 multiplicative exponential profiles onto all of the input templates. This option can be utilized if one does not know the spatial or spectral shape of the PSF model ahead of time, with the hope that the flexibility afforded by these profiles will allow any generic PSF shape to be modeled. The exponential profiles obtained from [Rupke et al. (2017)](https://arxiv.org/pdf/1708.05139.pdf) equation 2: 
+$$a_1e^{-b_1\bar{\lambda}},~a_2e^{-b_2(1-\bar{\lambda})},~a_3(1-e^{-b_3\bar{\lambda}}),~{\rm and}~a_4(1-e^{-b_4(1-\bar{\lambda})})$$
 
 `use_pah_templates = true`
 
@@ -366,17 +366,59 @@ If set to true, for the emission line fit, a cubic spline fit to the continuum w
 
 This option is a bit complicated to explain, but essentially, the situation is as follows. If you're using templates for the PSF and the PSF templates take up most of the amplitude of the continuum, it can cause the extinction to be driven unphysically high since it has a small effect. If this happens, the code tries to automatically redo the fit with the extinction locked to 0. If you set `F_test_ext = true`, then when this happens, the code will perform an F-test on the fit with the extinction locked to 0 vs the fit with the extinction unlocked and determine if the extinction is actually statistically significant, and it will only use the results with the extinction if there is a significant statistical improvement in the fit.
 
+`stellar_template_type = "ssp"`
+
+This options determines the mode of stellar template usage.  There are three options: "ssp" (the default), "stars", and "custom".
+- "ssp": Use a grid of simple stellar populations at different ages and metallicities. This option is good for getting stellar mass, age, and metalllicity estimates, as it is the only fitting mode that allows for the estimation of these parameters.  It has a wide usable wavelength coverage, from ~900 A in the FUV to ~30 um in the MIR, at an acceptable resolution. However, it is a bit more restrictive than the other  options in terms of the flexibility of the stellar continuum, so fitting quality results may vary.
+- "stars": Use a grid of single-star spectra at different effective temperatures, gravities, and metallicities.  This is the highest resolution option, but is limited in wavelength from ~6000 A to ~5.5 um. This option allows for high-quality fits to stellar spectra, and in particular stellar velocities, in the red-optical to NIR, designed to be ideal for JWST/NIRSpec.  However, it does not allow for the estimation of stellar masses, ages, or metallicities.
+- "custom": Use a user-supplied set of templates.  This option is for use-cases where you have your own templates which are more tailor-made for your specific use case which you'd like to use.
+
 ```toml
+[ssps]
+
 [ssps.age]
 min = 0.001 
 max = 13.7 
 num = 40
+
 [ssps.logz]
 min = -2.3
 max = 0.4
 num = 10
 ```
-The SSP options determine how the grid of Simple Stellar Populations (SSPs) is generated.  You can set a minimum, maximum, and number of grid points for the ages (in Gyr) and the metallicities (in log(Z/Zsun)).  Note that both quantities are logarithmically spaced in the grid, even though the ages are measured in linear Gyr while the metallicities are measured in the logarithmic quantity by default.  The total number of SSPs generated will be the multiplation of both "nums", which by default is 400.  Note that these options are only used if fitting a stellar continuum.
+The SSP options determine how the grid of Simple Stellar Populations (SSPs) is generated.  You can set a minimum, maximum, and number of grid points for the ages (in Gyr) and the metallicities (in log(Z/Zsun)).  Note that both quantities are logarithmically spaced in the grid, even though the ages are measured in linear Gyr while the metallicities are measured in the logarithmic quantity by default.  The total number of SSPs generated will be the multiplation of both "nums", which by default is 400.  Note that these options are only relevant if "stellar_template_type" is "ssp".
+
+```toml
+[stars]
+
+# (boolean options for whether or not to include additional templates for 
+# Wolf-Rayet stars and TP-AGB stars)
+use_wr = false
+use_tpagb = false
+
+# (effective temperature)
+[stars.teff]
+min = 0.0
+max = 10000.0
+
+# (gravity)
+[stars.logg]
+min = -0.5
+max = +6.0
+
+# (metallicity)
+[stars.logz]
+min = -4.0
+max = +0.5
+
+# (alpha enhancement)
+[stars.alpha]
+min = +0.0
+max = +0.6
+```
+
+The stars options, like the ssps options, determine how the grid of single star templates is generated.  Limits can be placed on the effective temperatures, gravitites, metallicities, and alpha enhancements of the templates to be used.  One can also set with boolean options whether to include special templates for Wolf-Rayet stars and TP-AGB stars.  Note that these are only relevant if "stellar_template_type" is "stars."
+
 
 ```toml
 [cosmology]
@@ -427,6 +469,11 @@ the third axis runs over the olivine, pyroxene, and forsterite column densities.
 `custom_ext_template`
 
 This allows the user to provide a 1D template for the normalized optical depth $\tau$ as a function of wavelength. It should be normalized such that the value at 9.7 $\mu$m is 1, to fit with the normalization of the other extinction curves and allow the $\tau_{9.7}$ fitting parameter to be interpreted as intended.
+
+`custom_stellar_template_wave`,
+`custom_stellar_templates`
+
+If "stellar_template_type" is custom, then the user must provide the additional arguments "custom_stellar_template_wave" and "custom_stellar_templates".  The former is the 1D wavelength vector that all of the stellar templates must be sampled on, and the latter is a 2D array with all of the templates themselves (the first axis should be the wavelength axis, and the second axis should iterate over the individual templates). Both must have appropriate units.
 
 `pah_template_map`
 
