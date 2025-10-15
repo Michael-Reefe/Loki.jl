@@ -212,33 +212,101 @@ num = 10
 # Obviously, this only matters if the "stellar_template_type" is set to "stars" 
 [stars]
 
+# This option determines which library to use for "cool" stars (Teff < 10,000 K).
+# There are two options:
+#   - "phoenix_btsettl" (default): The PHOENIX BT-Settl grid of models by Allard et al. 2012
+#   - "phoenix_husser"           : The PHOENIX grid of models by Husser et al. 2013
+#
+# Which one should you use?  Well, there isn't one clear answer, which is why I provide both.
+# Some notable differences:
+#   - The Husser grids do not extend past 5.5 microns, while the BT-Settl grids do (at a low resolution).
+#     Otherwise, they have been resampled onto the same wavelength grid with the same resolution.
+#   - The BT-Settl grids extend to lower Teff than the Husser grids, and are specialized for
+#     modeling cool stars, including the transition to brown dwarfs and planets.  They go all the way 
+#     down to 400 K, while the Husser grids only go to 2300 K.
+#   - The Husser grids have more complete coverage in alpha enhancement, ranging from -0.2 to +1.2 over
+#     a broad range of metallicites.  The BT-Settl models instead opt for only providing grid points at 
+#     the most common alpha values -- so lower metallicity stars only have alpha=+0.4, while solar metallicity
+#     stars only have alpha=0.  This is important when selecting limits on alpha!  
+#     ***DO NOT RESTRICT ALPHA VALUES WHEN USING THE BT-SETTL GRIDS*** otherwise you may unintentionally
+#     eliminate the majority of your parameter space.
+cool_lib = "phoenix_btsettl"
+
 # (boolean options for whether or not to include additional templates for 
-# Wolf-Rayet stars and thermally pulsing AGB stars)
+# Wolf-Rayet stars and/or thermally pulsing AGB stars)
 use_wr = false
 use_tpagb = false
 
 # (effective temperature)
+# absolute minimum:
+#   BT-Settl:    400 K
+#   Husser  :  2,300 K
+#   TLUSTY  : 10,000 K
+# absolute maximum:
+#   BT-Settl:  10,000 K
+#   Husser  :  10,000 K
+#   TLUSTY  : 250,000 K
+# --------
+# Note: I have manually cut off the "cool" libraries
+# at 10,000 K and supplemented them with the hot TLUSTY 
+# library, which extends from 10,000 K up to 250,000 K.
+# The TLUSTY stars are always included alongside whichever
+# cool library you choose, as they cover different parameter
+# spaces.  I provide this mostly as a convenience for those
+# looking to fit optical/UV spectra, but these hotter stars
+# should be essentially negligible for those working with
+# NIR or longer wavelength data, so the default temperature
+# cutoff is a modest 7000 K.
 [stars.teff]
 min = 2000.0
 max = 7000.0
 
 # (gravity)
+# absolute minimum:
+#   BT-Settl: -0.5
+#   Husser  :  0.0
+#   TLUSTY  : +2.0
+# absolute maximum:
+#   BT-Settl: +6.0
+#   Husser  : +6.0
+#   TLUSTY  : +8.5
 [stars.logg]
 min = -0.5
 max = +5.0
 
 # (metallicity)
+# absolute minimum:
+#   BT-Settl: -4.0
+#   Husser  : -4.0
+#   TLUSTY  : -2.0
+# absolute maximum:
+#   BT-Settl: +0.5
+#   Husser  : +1.0
+#   TLUSTY  :  0.0
 [stars.logz]
 min = -2.0
 max = +0.5
 
 # (alpha enhancement)
-# (note: the grids do NOT have fully orthogonal coverage in metallicity 
-#  and alpha, so I would recommend not changing the limits on alpha; for
-#  example, the Z=-2 stars only have alpha=+0.4, while the Z=0 stars
-#  only have alpha=0 and a few alpha=+0.2)
+# absolute minimum:
+#   BT-Settl: -0.2
+#   Husser  : -0.2
+#   TLUSTY  :  0.0
+# absolute maximum:
+#   BT-Settl: +0.6
+#   Husser  : +1.2
+#   TLUSTY  :  0.0
+# --------
+# Note: If using BT-Settl grids, I STRONGLY suggest you
+# keep the limits at -0.2 to +0.6, because they do not have
+# fully independent coverage across metallicity and alpha.
+# For example, the logz=-2 grids only have alpha=+0.4,
+# whereas the logz=+0.3 grids only have alpha=0.
+# The Husser grids DO have full independent coverage (for
+# the most part), so feel free to edit these however you
+# like when using the Husser grids.
 [stars.alpha]
-min = +0.0
+min = -0.2
 max = +0.6
 
 # cosmology options: Controls the cosmology used for distance / luminosity calculations.

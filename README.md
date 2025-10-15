@@ -50,13 +50,15 @@ As a brief overview, all components that may be included in a model based on the
 
 Templates for the point-spread function (PSF) may also be included in the model with fitted normalizations. These may be used, for example, to model out and subtract the contamination from a nuclear quasar spectrum dispersed by the PSF. The code contains routines for creating templates in such a scenario. PSF templates are provided for MIRI in the `src/templates/psfs_stars` directory, which have been created using observations of the bright calibration star 16 Cyg B, and for NIRSpec in the `src/templates/psfs_stars_nirspec` directory, which have been created using the star P330E. There are also templates generated from models using `webbpsf` in the `src/templates/webbpsf` directory.
 
-A note on the stellar population templates: These have been generated from a highly modified version of FSPS in order to achieve high resolution throughout the UV, optical, and infrared (to allow for flexibility with fitting spectra in the rest-frame IR, optical, or UV).  The logic of the stellar population synthesis has not been modified, but the stellar spectral templates have been replaced with high-resolution alternatives.  Normal stars below 10,000 K use the BT-Settl grid of atmospheres ([Allard, Homeier, & Freytag 2011](https://ui.adsabs.harvard.edu/abs/2011ASPC..448...91A/abstract)), while those above 10,000 K use TLUSTY atmospheres ([Brown, Ferguson, & Davidsen 1996](https://ui.adsabs.harvard.edu/abs/1996ApJ...472..327B/abstract)).  Wolf-Rayet stars use PoWR atmospheres ([Hamann & Gräfener 2004](https://ui.adsabs.harvard.edu/abs/2004A%26A...427..697H/abstract), [Sander, Hamann, & Todt 2012](https://ui.adsabs.harvard.edu/abs/2012A%26A...540A.144S/abstract)).  The MIST isochrones are used for the stellar evolution ([Dotter 2016](https://ui.adsabs.harvard.edu/abs/2016ApJS..222....8D/abstract), [Choi et al. 2016](https://ui.adsabs.harvard.edu/abs/2016ApJ...823..102C/abstract)).  I assume a Salpeter IMF and a delta-function star formation history at each age.  No dust extinction is applied to these models, as this is applied separately within Loki.  Because all of the stellar templates are theoretical model atmospheres, the nominal spectral resolution is infinite, and no broadening is applied (instrumental broadening is done by Loki when reading in the templates). The final wavelength sampling I've chosen for these templates is:
+A note on the stellar population templates: These have been generated from a highly modified version of FSPS in order to achieve high resolution throughout the UV, optical, and infrared (to allow for flexibility with fitting spectra in the rest-frame IR, optical, or UV).  The logic of the stellar population synthesis has not been modified, but the stellar spectral templates have been replaced with high-resolution alternatives.  Normal stars below 10,000 K use the BT-Settl grid of atmospheres ([Allard, Homeier, & Freytag 2012](https://ui.adsabs.harvard.edu/abs/2012RSPTA.370.2765A/abstract)), while those above 10,000 K use TLUSTY atmospheres ([Brown, Ferguson, & Davidsen 1996](https://ui.adsabs.harvard.edu/abs/1996ApJ...472..327B/abstract)).  Wolf-Rayet stars use PoWR atmospheres ([Hamann & Gräfener 2004](https://ui.adsabs.harvard.edu/abs/2004A%26A...427..697H/abstract), [Sander, Hamann, & Todt 2012](https://ui.adsabs.harvard.edu/abs/2012A%26A...540A.144S/abstract)), and thermally pulsing AGB stars use models from [Lançon & Mouhcine 2002](https://ui.adsabs.harvard.edu/abs/2002A%26A...393..167L/abstract).  The MIST isochrones are used for the stellar evolution ([Dotter 2016](https://ui.adsabs.harvard.edu/abs/2016ApJS..222....8D/abstract), [Choi et al. 2016](https://ui.adsabs.harvard.edu/abs/2016ApJ...823..102C/abstract)).  I assume a Salpeter IMF and a delta-function star formation history at each age.  No dust extinction is applied to these models, as this is applied separately within Loki.  Because all of the stellar templates are theoretical model atmospheres, the nominal spectral resolution is infinite, and no broadening is applied (instrumental broadening is done by Loki when reading in the templates). The final wavelength sampling I've chosen for these templates is:
 - $0.2~\mathring{\rm A}$ ($800~\mathring{\rm A}-1800~\mathring{\rm A}$)
 - $0.5~\mathring{\rm A}$ ($1800~\mathring{\rm A}-9000~\mathring{\rm A}$)
 - $5~\mathring{\rm A}$ ($9000~\mathring{\rm A}-5~{\rm \mu m}$)
 - $50~\mathring{\rm A}$ ($5~{\rm \mu m}-30~{\rm \mu m}$)
 
 Outside of these ranges, the templates extend down to $90~\mathring{\rm A}$ in the X-rays and up to $10^6~\mathring{\rm A}$ in the radio, but at a very low resolution.
+
+I've also included templates of individual stars, which use the same grids as above (BT-Settl/Phoenix, TLUSTY, PoWR, Lançon & Mouhcine; although one can also choose to swap out the BT-Settl grids for the [Husser et al. 2013](https://ui.adsabs.harvard.edu/abs/2013A%26A...553A...6H/abstract) Phoenix grids, each of which have their pros and cons).  This is in case one wishes to fit the stellar continuum without assuming anything about the stellar populations (i.e. the IMF, evolutionary tracks, star formation history, etc.).  This is useful for getting higher quality fits to the continuum, as it is more flexible, and better stellar velocities.  However, fitting with these templates does not allow for the estimation of stellar masses, ages, or metallicities. The wavelength range of these templates is similar to the SSPs, but the resolution is enhanced in the NIR (to $2~\mathring{\rm A}$) and degraded in the MIR (to $100~\mathring{\rm A}$) to optimize for the fitting regions that have the most prominent absorption lines for fitting stellar kinematics. One can configure the code to switch between these modes (see the "stellar_template_type" option in [Usage](#iii-usage)).  Or, if none of the provided templates are sufficient, the user can input their own custom templates to best suit their situation.
 
 Note that the code is very flexible and many of these continuum options can be changed, adjusted, or added/removed to fit one's individual needs. Be cautious, however, as certain model components should not be used together with each other (for example, a power law should not be used in conjunction with the warm silicate dust emission component, since they model the same thing). The code uses the [MPFIT](https://pages.physics.wisc.edu/~craigm/idl/cmpfit.html) ([Markwardt 2009](https://ui.adsabs.harvard.edu/abs/2009ASPC..411..251M)) implementation of the Levenberg-Marquardt (LM) least-squares minimization routine, as well as the simulated annealing (SA) global minimization method as implemented by [Optim.jl](https://github.com/JuliaNLSolvers/Optim.jl), and optionally may estimate uncertainties using bootstrapping. Depending on how the code is configured, the fitting procedure may be performed in multiple steps (up to 3). By default, the configuration contains three steps:
 1. The emission lines are masked and the continuum + PAH features are fit; the PAHs use templates
@@ -391,6 +393,9 @@ The SSP options determine how the grid of Simple Stellar Populations (SSPs) is g
 ```toml
 [stars]
 
+# Option to decide which grid of templates to use for "cool" stars (Teff < 10,000 K)
+cool_lib = "phoenix_husser"
+
 # (boolean options for whether or not to include additional templates for 
 # Wolf-Rayet stars and TP-AGB stars)
 use_wr = false
@@ -398,26 +403,30 @@ use_tpagb = false
 
 # (effective temperature)
 [stars.teff]
-min = 0.0
-max = 10000.0
+min = 2000.0
+max = 7000.0
 
 # (gravity)
 [stars.logg]
-min = -0.5
+min = +0.0
 max = +6.0
 
 # (metallicity)
 [stars.logz]
-min = -4.0
+min = -2.0
 max = +0.5
 
 # (alpha enhancement)
 [stars.alpha]
 min = +0.0
-max = +0.6
+max = +0.0
 ```
 
-The stars options, like the ssps options, determine how the grid of single star templates is generated.  Limits can be placed on the effective temperatures, gravitites, metallicities, and alpha enhancements of the templates to be used.  One can also set with boolean options whether to include special templates for Wolf-Rayet stars and TP-AGB stars.  Note that these are only relevant if "stellar_template_type" is "stars."
+The stars options, like the ssps options, determine how the grid of single star templates is generated.  The first option, `"cool_lib"`, determines which grid of templates to use for "cool" stars (with $T_{\rm eff} < 10,000$ K).  There are two options: "phoenix_btsettl" and "phoenix_husser".
+- "phoenix_btsettl": Uses BT-Settl grid of PHOENIX models by [Allard et al. 2012](https://ui.adsabs.harvard.edu/abs/2012RSPTA.370.2765A/abstract). These are optimized for low-temperature stellar atmospheres and include a model for clouds, bridging the gap between stars, brown dwarfs, and even planet atmospheres. They have wavelength coverage across the full electromagnetic spectrum.
+- "phoenix_husser": Uses the grid of PHOENIX models by [Husser et al. 2013](https://ui.adsabs.harvard.edu/abs/2013A%26A...553A...6H/abstract). These do not go to as low temperatures as BT-Settl, and they do not have wavelength coverage past 5.5 ${\rm \mu m}$, but they have a more complete coverage in metallicity-alpha space.
+
+Limits can be placed on the effective temperatures, gravitites, metallicities, and alpha enhancements of the templates to be used.  One can also set with boolean options whether to include special templates for Wolf-Rayet stars and thermally pulsing AGB stars.  Note that these options are only relevant if "stellar_template_type" is "stars."
 
 
 ```toml

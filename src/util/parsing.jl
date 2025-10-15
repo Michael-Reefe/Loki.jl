@@ -193,7 +193,8 @@ function parse_options()
                        alpha=(min=options[:stars]["alpha"]["min"],
                               max=options[:stars]["alpha"]["max"]),
                        use_wr=options[:stars]["use_wr"],
-                       use_tpagb=options[:stars]["use_tpagb"])
+                       use_tpagb=options[:stars]["use_tpagb"],
+                       cool_lib=options[:stars]["cool_lib"])
 
     # Convert cosmology keys into a proper cosmology object
     options[:cosmology] = cosmology(h=options[:cosmology]["h"], 
@@ -443,17 +444,15 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
         stellar_templates = FITS[]
 
         # cool stars (~<10,000 K)
-        # zcools = ["-4.0", "-3.0", "-2.0", "-1.5", "-1.0", "-0.5", "-0.0", "+0.5", "+1.0"]
-        # αcools = ["-0.20", "-0.00", "+0.20", "+0.40", "+0.60", "+0.80", "+1.00", "+1.20"]
         zcools = ["-4.00", "-3.50", "-3.00", "-2.50", "-2.00", "-1.50", "-1.00", "-0.50", "-0.00", "+0.30", "+0.50"]
-        αcools = ["-0.00", "+0.20", "+0.40", "+0.60"]
+        αcools = ["-0.20", "-0.00", "+0.20", "+0.40", "+0.60", "+0.80", "+1.00", "+1.20"]
         for zcool in zcools
             for αcool in αcools
                 if !((stars_options.logz.min ≤ parse(Float64, zcool) ≤ stars_options.logz.max) && 
                      (stars_options.alpha.min ≤ parse(Float64, αcool) ≤ stars_options.alpha.max))
                      continue
                 end
-                fpath = joinpath(@__DIR__, "..", "templates", "single_stars", "cool", "loki.single_star_cool_z$(zcool)_alpha$(αcool).fits.gz")
+                fpath = joinpath(@__DIR__, "..", "templates", "single_stars", stars_options.cool_lib, "loki.single_star_cool_z$(zcool)_alpha$(αcool).fits.gz")
                 if isfile(fpath)
                     @debug "Reading $fpath"
                     push!(stellar_templates, FITS(fpath))
@@ -466,7 +465,7 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
             if !(stars_options.logz.min ≤ parse(Float64, zhot) ≤ stars_options.logz.max)
                 continue
             end
-            fpath = joinpath(@__DIR__, "..", "templates", "single_stars", "hot", "loki.single_star_hot_z$(zhot).fits.gz")
+            fpath = joinpath(@__DIR__, "..", "templates", "single_stars", "tlusty_brown", "loki.single_star_hot_z$(zhot).fits.gz")
             if isfile(fpath)
                 @debug "Reading $fpath"
                 push!(stellar_templates, FITS(fpath))
@@ -480,12 +479,12 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
                 if !(stars_options.logz.min ≤ logzwr ≤ stars_options.logz.max)
                     continue 
                 end
-                fpath = joinpath(@__DIR__, "..", "templates", "single_stars", "wr", "loki.single_star_wc_z$(zwr).fits.gz")
+                fpath = joinpath(@__DIR__, "..", "templates", "single_stars", "powr", "loki.single_star_wc_z$(zwr).fits.gz")
                 if isfile(fpath)
                     @debug "Reading $path"
                     push!(stellar_templates, FITS(fpath))
                 end
-                fpath = joinpath(@__DIR__, "..", "templates", "single_stars", "wr", "loki.single_star_wn_z$(zwr).fits.gz")
+                fpath = joinpath(@__DIR__, "..", "templates", "single_stars", "powr", "loki.single_star_wn_z$(zwr).fits.gz")
                 if isfile(fpath)
                     @debug "Reading $fpath"
                     push!(stellar_templates, FITS(fpath))
@@ -494,7 +493,7 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
         end
         # TP-AGB stars
         if stars_options.use_tpagb
-            fpath = joinpath(@__DIR__, "..", "templates", "single_stars", "tpagb", "loki.single_star_tpagb.fits.gz")
+            fpath = joinpath(@__DIR__, "..", "templates", "single_stars", "tpagb_lw", "loki.single_star_tpagb.fits.gz")
             if isfile(fpath)
                 @debug "Reading $fpath"
                 push!(stellar_templates, FITS(fpath))
@@ -718,6 +717,12 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
 
     # save for later
     serialize(joinpath("output_$name", "stellar_templates.loki"), (λ=ssp_lnλ, age=ages_out, logz=logzs_out, templates=ssp_templates_final))
+
+    n_temp = prod(size(ssp_templates_final)[2:3])
+    if n_temp > 1000
+        @warn "There are $(n_temp) stellar templates that will be marginalized over -- that's a lot!! This is just a warning to let you know " *
+              "that it might take a while to fit.  You might want to try reducing your parameter space in Teff, logg, metallicity, or alpha."
+    end
 
     ssp_lnλ, ages_out, logzs_out, ssp_templates_final
 end
