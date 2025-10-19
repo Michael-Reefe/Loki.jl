@@ -770,7 +770,7 @@ function default_line_parameters(out::Dict, lines::Dict, λunit::Unitful.Units, 
 end
 
 
-function override_line_parameters!(lines::Dict, prefix::String, fit_profiles::FitProfiles)
+function override_line_parameters!(lines::Dict, line::String, prefix::String, fit_profiles::FitProfiles)
 
     # Check if there are any specific override values present in the options file,
     # and if so, use them
@@ -887,6 +887,12 @@ function construct_line_parameters(out::Dict, λunit::Unitful.Units, Iunit::Unit
                 acomp_profiles[line] = vcat(Symbol.(lines["acomps"][group_name]), [nothing for _ in 1:(lines["n_acomps"]-length(lines["acomps"][group_name]))])
             end
         end
+        if isnothing(group_name) && haskey(lines, "acomps")
+            # if it's not in a group, check if this individual line has a key 
+            if haskey(lines["acomps"], line)
+                acomp_profiles[line] = vcat(Symbol.(lines["acomps"][line]), [nothing for _ in 1:(lines["n_acomps"]-length(lines["acomps"][line]))])
+            end
+        end
     end
 
     # Create buffers
@@ -920,7 +926,7 @@ function construct_line_parameters(out::Dict, λunit::Unitful.Units, Iunit::Unit
         """
 
         fit_profiles, composite = default_line_parameters(out, lines, λunit, Iunit, prefix, prof_out, acomp_prof_out)
-        override_line_parameters!(lines, prefix, fit_profiles)
+        override_line_parameters!(lines, line, prefix, fit_profiles)
 
         @debug "Profile: $(profiles[line])"
 

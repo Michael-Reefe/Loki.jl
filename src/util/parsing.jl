@@ -419,7 +419,7 @@ occupied.
 function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unitful.Units, lsf::Vector{typeof(1.0u"km/s")}, 
     z::Real, template_type::String, cosmo::Cosmology.AbstractCosmology, ssp_options::NamedTuple, stars_options::NamedTuple, 
     name::String, user_mask::Union{Nothing,Vector{<:Tuple}}, custom_template_wave::Union{Nothing,Vector{<:Real}}, 
-    custom_templates::Union{Nothing,Array{<:Real,2}})
+    custom_template_R::Union{Nothing,Vector{<:Real}}, custom_templates::Union{Nothing,Array{<:Real,2}})
 
     # Make sure λ is logarithmically binned
     @assert isapprox((λ[2]/λ[1]), (λ[end]/λ[end-1]), rtol=1e-6) "Input spectrum must be logarithmically binned to fit with stellar populations!"
@@ -539,8 +539,14 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
     
     # LSF FWHM of the input spectrum in wavelength units, interpolated at the locations of the SSP templates
     inp_fwhm = Spline1D(ustrip.(λ), ustrip.(lsf ./ C_KMS .* λ), k=1, bc="nearest")(ustrip.(ssp_λlin)) .* wave_unit
-    # The FWHM resolution of the stellar templates is essentially negligible, as they are produced from theoretical model atmospheres 
-    ssp_fwhm = 0. * wave_unit
+    if template_type == "custom"
+        # LSF FWHM of the template spectra in wavelength units, interpolated onto the same linear wavelength grid 
+        ssp_fwhm = Spline1D(ustrip.(ssp_λ0), ustrip.(ssp_λ0 ./ custom_template_R), k=1, bc="nearest")(ustrip.(ssp_λlin)) .* wave_unit
+    else
+        # The FWHM resolution of the included stellar templates is essentially negligible, 
+        # as they are produced from theoretical model atmospheres 
+        ssp_fwhm = 0. * wave_unit
+    end
     # Difference in resolutions between the input spectrum and SSP templates, in pixels
     dfwhm = sqrt.(clamp.(inp_fwhm.^2 .- ssp_fwhm.^2, 0.0*wave_unit^2, Inf*wave_unit^2)) ./ Δλ 
 

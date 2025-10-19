@@ -869,11 +869,12 @@ function all_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter; init::Bool=false, us
     pah_amp = estimate_pah_template_amplitude(cube_fitter, s.λ, comps_cont)
 
     # Create a fit result object
-    result_cont = SpaxelFitResult(pnames_cont, popt_cont, [perr_cont perr_cont], 
-        [lbfree_cont_tied.*punits_cont ubfree_cont_tied.*punits_cont], lock_cont, tie_vec_cont)
+    bounds_cont = [[plim[1] for plim in plims_cont].*punits_cont [plim[2] for plim in plims_cont].*punits_cont]
+    result_cont = SpaxelFitResult(pnames_cont, popt_cont, [perr_cont perr_cont], bounds_cont, lock_cont, tie_vec_cont)
     pretty_print_results(result_cont)
-    result_lines = SpaxelFitResult(names_lines, popt_lines, [perr_lines perr_lines], 
-        [lbfree_lines_tied.*punits_lines, ubfree_lines_tied.*punits_lines], lock_lines, tie_vec_lines)
+
+    bounds_lines = [[plim[1] for plim in plims_lines].*punits_lines [plim[2] for plim in plims_lines].*punits_lines]
+    result_lines = SpaxelFitResult(names_lines, popt_lines, [perr_lines perr_lines], bounds_lines, lock_lines, tie_vec_lines)
     pretty_print_results(result_lines)
 
     if init
@@ -883,7 +884,13 @@ function all_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter; init::Bool=false, us
             pah_amp, [0. 0.; 0. 0.], [-Inf Inf; -Inf Inf], falses(2), Union{Tie,Nothing}[nothing, nothing])
         write_fit_results_csv(cube_fitter, "init_fit_cont", result_cont)
         write_fit_results_csv(cube_fitter, "init_fit_pahtemp", result_pahamp)
-        write_fit_results_csv(cube_fitter, "init_fit_lines", result_lines)
+        write_fit_results_csv(cube_fitter, "init_fit_line", result_lines)
+
+        # Save results to the cube_fitter and to files
+        # Clean up the initial parameters to be more amenable to individual spaxel fits
+        popt_lines = clean_line_parameters(cube_fitter, popt_lines, ustrip.(bounds_lines[:,1]), ustrip.(bounds_lines[:,2]))
+        cube_fitter.p_init_cont[:] .= popt_cont
+        cube_fitter.p_init_line[:] .= popt_lines
     end
 
     result_cont, result_lines, I_cont, I_lines, comps_cont, norms, comps_lines, n_free_cont, n_free_lines, pah_amp, result_stellar, s_model
@@ -1431,7 +1438,7 @@ function fit_cube!(cube_fitter::CubeFitter)
     out_errs = out_errs .* repeat(reshape(out_units, (1,1,length(out_units),1)), outer=[shape[1],shape[2],1,2])
 
     # Create the ParamMaps and CubeModel structs containing the outputs
-    param_maps, cube_model = assign_outputs(out_params, out_errs, out_np_ssp, cube_fitter, cube_data, false)
+    param_maps, param_units, cube_model = assign_outputs(out_params, out_errs, out_np_ssp, cube_fitter, cube_data, false)
 
     if oopt.plot_maps
         @info "===> Plotting parameter maps... <==="
@@ -1440,7 +1447,11 @@ function fit_cube!(cube_fitter::CubeFitter)
 
     if oopt.save_fits
         @info "===> Writing FITS outputs... <==="
-        write_fits(cube_fitter, cube_data, cube_model, param_maps)
+        write_fits(cube_fitter, cube_data, cube_model, param_maps, param_units)
+    end
+    if oopt.save_tables
+        @info "===> Writing CSV tables... <=== "
+        write_table(cube_fitter, param_maps, param_units)
     end
 
     # Save a copy of the options file used to run the code, so the settings can be referenced/reused
@@ -1550,12 +1561,16 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
     out_errs = out_errs .* repeat(reshape(out_units, (1,1,length(out_units),1)), outer=[shape[1],shape[2],1,2])
 
     # Create the ParamMaps and CubeModel structs containing the outputs
-    param_maps, cube_model = assign_outputs(out_params, out_errs, out_np_ssp, cube_fitter, cube_data, true)
+    param_maps, param_units, cube_model = assign_outputs(out_params, out_errs, out_np_ssp, cube_fitter, cube_data, true)
 
     oopt = out_options(cube_fitter)
     if oopt.save_fits
         @info "===> Writing FITS outputs... <==="
-        write_fits(cube_fitter, cube_data, cube_model, param_maps, aperture=aperture)
+        write_fits(cube_fitter, cube_data, cube_model, param_maps, param_units, aperture=aperture)
+    end
+    if oopt.save_tables
+        @info "===> Writing CSV tables... <=== "
+        write_table(cube_fitter, param_maps, param_units)
     end
 
     # Save a copy of the options file used to run the code, so the settings can be referenced/reused
@@ -1651,7 +1666,7 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, agn_templates::Arra
     out_errs = out_errs .* repeat(reshape(out_units, (1,1,length(out_units),1)), outer=[shape[1],shape[2],1,2])
 
     # Create the ParamMaps and CubeModel structs containing the outputs
-    param_maps, cube_model = assign_outputs(out_params, out_errs, out_np_ssp, cube_fitter, cube_data, true)
+    param_maps, param_units, cube_model = assign_outputs(out_params, out_errs, out_np_ssp, cube_fitter, cube_data, true)
 
     # Create another set of ParamMaps and CubeModels--this time 3D--containing the features fluxes dispersed by the PSF model
     param_maps_3d, cube_model_3d = assign_qso3d_outputs(param_maps, cube_model, cube_fitter, psf_norm)
@@ -1662,10 +1677,14 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, agn_templates::Arra
 
     if oopt.save_fits
         @info "===> Writing 1D FITS outputs... <==="
-        write_fits(cube_fitter, cube_data, cube_model, param_maps, nuc_temp_fit=false, aperture="all")
+        write_fits(cube_fitter, cube_data, cube_model, param_maps, param_units, nuc_temp_fit=false, aperture="all")
 
         @info "===> Writing 3D FITS outputs... <==="
-        write_fits(cube_fitter, cube_data, cube_model_3d, param_maps_3d, nuc_temp_fit=false, qso3d=true)
+        write_fits(cube_fitter, cube_data, cube_model_3d, param_maps_3d, param_units, nuc_temp_fit=false, qso3d=true)
+    end
+    if oopt.save_tables
+        @info "===> Writing CSV tables... <=== "
+        write_table(cube_fitter, param_maps, param_units)
     end
 
     # lock the hot dust component for the rest of the fits

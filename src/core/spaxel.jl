@@ -106,20 +106,22 @@ function interpolate_over_lines!(s::Spaxel, scale::Integer)
     mask_ir = s.mask_lines .& (s.λ .≥ 3.0u"μm")
 
     # Replace the masked lines with a linear interpolation
-    s.I[mask_ir] .= Spline1D(ustrip.(s.λ[.~mask_ir]), s.I[.~mask_ir], ustrip.(λknots), 
-        k=1, bc="extrapolate").(ustrip.(s.λ[mask_ir])) .* unit(s.I[1])
-    s.σ[mask_ir] .= Spline1D(ustrip.(s.λ[.~mask_ir]), s.σ[.~mask_ir], ustrip.(λknots), 
-        k=1, bc="extrapolate").(ustrip.(s.λ[mask_ir])) .* unit(s.σ[1])
+    if (sum(mask_ir) > 0) & (length(λknots) > 0)
+        s.I[mask_ir] .= Spline1D(ustrip.(s.λ[.~mask_ir]), s.I[.~mask_ir], ustrip.(λknots), 
+            k=1, bc="extrapolate").(ustrip.(s.λ[mask_ir])) .* unit(s.I[1])
+        s.σ[mask_ir] .= Spline1D(ustrip.(s.λ[.~mask_ir]), s.σ[.~mask_ir], ustrip.(λknots), 
+            k=1, bc="extrapolate").(ustrip.(s.λ[mask_ir])) .* unit(s.σ[1])
 
-    # Do it for the templates => THIS IS IMPORTANT 
-    # because the templates have the lines built-in, and if interpolate over the lines in the data then we
-    # need to also do it in the templates
-    if haskey(s.aux, "templates") && size(s.aux["templates"], 2) > 0
-        for si in axes(s.aux["templates"], 2)
-            m = .~isfinite.(s.aux["templates"][:, si])
-            s.aux["templates"][mask_ir.|m, si] .= Spline1D(ustrip.(s.λ[.~mask_ir .& .~m]), 
-                ustrip.(s.aux["templates"][.~mask_ir .& .~m, si]), ustrip.(λknots), k=1, 
-                bc="extrapolate")(ustrip.(s.λ[mask_ir .| m]))
+        # Do it for the templates => THIS IS IMPORTANT 
+        # because the templates have the lines built-in, and if interpolate over the lines in the data then we
+        # need to also do it in the templates
+        if haskey(s.aux, "templates") && size(s.aux["templates"], 2) > 0
+            for si in axes(s.aux["templates"], 2)
+                m = .~isfinite.(s.aux["templates"][:, si])
+                s.aux["templates"][mask_ir.|m, si] .= Spline1D(ustrip.(s.λ[.~mask_ir .& .~m]), 
+                    ustrip.(s.aux["templates"][.~mask_ir .& .~m, si]), ustrip.(λknots), k=1, 
+                    bc="extrapolate")(ustrip.(s.λ[mask_ir .| m]))
+            end
         end
     end
 end

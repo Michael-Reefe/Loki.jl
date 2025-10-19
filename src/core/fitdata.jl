@@ -114,6 +114,9 @@ function continuum_cubic_spline(λ::Vector{<:Quantity}, I::Vector{S}, σ::Vector
         end
     end
     λknots = λknots[good]
+    if length(λknots) == 0
+        λknots = [nanmedian(_λ[.~mask_lines])]
+    end
     @debug "Performing cubic spline continuum fit with $(length(λknots)) knots"
 
     # Do a full cubic spline interpolation of the data
@@ -143,8 +146,9 @@ function calculate_statistical_errors(I::Vector{S}, I_spline::Vector{S}, mask::B
     l_mask = sum(.~mask)
     # Statistical uncertainties based on the local RMS of the residuals with a cubic spline fit
     σ_stat = zeros(eltype(I), l_mask)
+    window_size = min(60, l_mask)
     for i in 1:l_mask
-        indices = sortperm(abs.((1:l_mask) .- i))[1:60]
+        indices = sortperm(abs.((1:l_mask) .- i))[1:window_size]
         σ_stat[i] = std(I[.~mask][indices] .- I_spline[.~mask][indices])
     end
     # We insert at the locations of the lines since the cubic spline does not include them

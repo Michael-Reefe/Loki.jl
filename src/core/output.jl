@@ -35,6 +35,10 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
         restframe_factor = 1 / (1 + cube_fitter.z)
     end
 
+    # prepare an array that will hold unit strings for the output    
+    param_units = Vector{String}(undef, size(param_maps.data, 3))
+    param_units .= ""
+
     # Loop over each spaxel and fill in the associated fitting parameters into the ParamMaps and CubeModel
     # I know this is long and ugly and looks stupid but it works for now and I'll make it pretty later
     prog = Progress(length(spaxels); showspeed=true)
@@ -81,7 +85,7 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
 
         I_cont, comps_c, norms = model_continuum(spax_model, spax_model.N, ustrip.(out_params[index, 1:pc-1]), unit.(out_params[index, 1:pc-1]),
             cube_fitter, false, spax_model == spax, true, true)
-
+        
         # Loop through parameters and save them in the parammaps data structure 
         for (pᵢ, pname) in enumerate(param_maps.parameters.names)
 
@@ -163,17 +167,32 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
                 end
             end
             @debug "Output parameter: $pname | Value: $(ustrip(val)) + $(ustrip(err_upp)) - $(ustrip(err_low)) | Units: $(unit(val))"
+            punit = replace(string(unit(val)), "μ" => "u", "Å" => "angstrom")
+            if punit == "NoUnits"
+                punit = ""
+            end
 
             if do_log
+                # edit the unit string to indicate logarithmic units
+                punit = "[" * punit * "]"
                 err_upp = err_upp / (log(10) * val)
-                err_low = err_low / (log(10) * val)
+                err_low = err_low / (log(10) * val) 
                 val = log10(ustrip(val))
+            end
+
+            # a few special cases
+            if split(pname, ".")[end] == "metallicity"
+                punit = "[Fe/H]"
+            end
+            if split(pname, ".")[end] == "E_BV"
+                punit = "mag"
             end
 
             # Set the values
             param_maps.data[index, pᵢ] = val
             param_maps.err_upp[index, pᵢ] = err_upp
             param_maps.err_low[index, pᵢ] = err_low
+            param_units[pᵢ] = punit
         end
 
         # Save marker of the point where the continuum parameters end and the line parameters begin
@@ -247,7 +266,7 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
         end
     end
 
-    param_maps, cube_model
+    param_maps, param_units, cube_model
 end
 
 
@@ -819,9 +838,9 @@ end
 Save the best fit results for the cube into two FITS files: one for the full 3D intensity model of the cube, split up by
 individual model components, and one for 2D parameter maps of the best-fit parameters for each spaxel in the cube.
 """
-function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel, param_maps::ParamMaps;
-    aperture::Union{Vector{<:Aperture.AbstractAperture},String,Nothing}=nothing, nuc_temp_fit::Bool=false,
-    nuc_spax::Union{Nothing,CartesianIndex}=nothing, qso3d::Bool=false)
+function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel, param_maps::ParamMaps,
+    param_units::Vector{String}; aperture::Union{Vector{<:Aperture.AbstractAperture},String,Nothing}=nothing, 
+    nuc_temp_fit::Bool=false, nuc_spax::Union{Nothing,CartesianIndex}=nothing, qso3d::Bool=false)
 
     aperture_keys = []
     aperture_vals = []
@@ -1034,17 +1053,10 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
                     continue
                 end
                 good = isfinite.(param_data[:, :, i])
-                units = "NoUnits"
-                if sum(good) > 0
-                    units = replace(string(unit(param_data[:, :, i][good][1])), 'μ' => 'u', "Å" => "angstrom")
-                end
-                if units == "NoUnits"
-                    units = "-"
-                end
                 data = ustrip.(param_data[:, :, i])
                 name_i = uppercase(parameter)
                 write(f, data; name=name_i, header=hdr1_2d)
-                write_key(f[name_i], "BUNIT", units)
+                write_key(f[name_i], "BUNIT", param_units[i])
             end
               
             # Add another HDU for the voronoi bin map, if applicable
@@ -1168,3 +1180,84 @@ function write_fits_full_model(cube_fitter::CubeFitter, cube_data::NamedTuple, c
         write_key(f["WAVELENGTH"], "TDIM2", "(1,$(length(cube_data.λ)))", "Wavetable dimension")
     end
 end
+
+
+"""
+    write_table(cube_fitter, cube_data, param_maps)
+
+Save the best fit results for the cube into a simple CSV table file for each spaxel, much like the files 
+that are saved in the "spaxel_binaries" folder to save the progress of the fitting results.  But these tables 
+will instead hold the "canonical" outputs of the code, with all quantities in physical units and transformed 
+to the observed frame.
+"""
+function write_table(cube_fitter::CubeFitter, param_maps::ParamMaps, param_units::Vector{String})
+
+    param_names = param_maps.parameters.names
+
+    tblpath = joinpath("output_$(cube_fitter.name)", "output_tables")
+    if !isdir(tblpath)
+        mkdir(tblpath)
+    end
+
+    # loop over spaxels
+    for spaxel in CartesianIndices(size(param_maps.data)[1:2])
+
+        # skip spaxels that aren't fit
+        if all(.~isfinite.(param_maps.data[spaxel,:]))
+            continue
+        end
+
+        # we can immediately get 1d vectors of the parameter values, errors, and units
+        best  = ustrip.(param_maps.data[spaxel,:])
+        err_l = ustrip.(param_maps.err_low[spaxel,:])
+        err_u = ustrip.(param_maps.err_upp[spaxel,:])
+        units = param_units
+
+        # to get the lower/upper limits and locked booleans, we read back in the binary file
+        if !isnothing(cube_fitter.cube.voronoi_bins)
+            bin_index = cube_fitter.cube.voronoi_bins[spaxel]
+            fname = "voronoi_bin_$(bin_index)"
+        else
+            fname = "spaxel_$(spaxel[1])_$(spaxel[2])"
+        end
+        folder = "output_$(cube_fitter.name)"
+        df = CSV.read(joinpath(folder, "spaxel_binaries", "$fname.csv"), DataFrame, delim='\t', stripwhitespace=true)
+        rename!(df, strip.(names(df)))
+
+        # read in the lower/upper bounds, locked vector, and tied vector
+        # bound_l = [strip(b) == "" ? NaN : parse(Float64, b) for b in df[!, "bound_lower"]]
+        # bound_u = [strip(b) == "" ? NaN : parse(Float64, b) for b in df[!, "bound_upper"]]
+        locked_fit  = df[!, "locked"]
+        tied_fit    = df[!, "tied"]
+
+        # pad for the extra non-fit parameters
+        locked = cat(locked_fit, repeat([""], length(best)-length(locked_fit)), dims=1)
+        tied   = cat(tied_fit,   repeat([""], length(best)-length(locked_fit)), dims=1)
+
+        # make a dataframe
+        data = DataFrame(name=param_names, best=best, error_lower=err_l, error_upper=err_u, unit=units, 
+            locked=locked, tied=tied)
+        textwidths = [maximum(textwidth.(string.([data[:, i]; names(data)[i]]))) for i in axes(data, 2)]
+        # convert to a string with nicely padded column widths
+        msg = ""
+        for (i, header) ∈ enumerate(names(data))
+            msg *= rpad(header, textwidths[i]) * "\t"
+        end
+        msg *= "\n"
+        for i ∈ axes(data, 1)
+            for j ∈ axes(data, 2)
+                msg *= rpad(data[i,j], textwidths[j]) * "\t"
+            end
+            msg *= "\n"
+        end
+        @debug msg
+
+        # write the output table
+        open(joinpath(tblpath, "$fname.final.csv"), "w") do f
+            write(f, msg)
+        end
+
+    end
+
+end
+

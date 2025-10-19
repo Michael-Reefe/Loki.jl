@@ -3,7 +3,8 @@
 # a CubeFitter object
 function cubefitter_prepare_continuum(λ::Vector{<:QWave}, z::Real, out::Dict, λunit::Unitful.Units, 
     Iunit::Unitful.Units, region::SpectralRegion, name::String, cube::DataCube, 
-    custom_stellar_template_wave::Union{Nothing,Vector{<:Real}}, custom_stellar_templates::Union{Nothing,Array{<:Real,2}})
+    custom_stellar_template_wave::Union{Nothing,Vector{<:Real}}, custom_stellar_template_R::Union{Nothing,Vector{<:Real}},
+    custom_stellar_templates::Union{Nothing,Array{<:Real,2}})
 
     # Construct the ModelParameters object
     model_parameters = construct_model_parameters(out, λunit, Iunit, region, z)
@@ -19,7 +20,8 @@ function cubefitter_prepare_continuum(λ::Vector{<:QWave}, z::Real, out::Dict, �
     if out[:fit_stellar_continuum]
         # Create the simple stellar population templates with FSPS
         ssp_λ, ages, metals, ssp_templates = generate_stellar_populations(λ, Iunit, cube.lsf, z, out[:stellar_template_type], 
-            out[:cosmology], out[:ssps], out[:stars], name, out[:user_mask], custom_stellar_template_wave, custom_stellar_templates)
+            out[:cosmology], out[:ssps], out[:stars], name, out[:user_mask], custom_stellar_template_wave, custom_stellar_template_R, 
+            custom_stellar_templates)
         # flatten template array
         ssp_temp_flat = reshape(ssp_templates, size(ssp_templates,1), :)
         # 2nd axis ordering: (age1_z1, age2_z1, age3_z1, ..., age1_z2, age2_z2, age3_z2, ...)
@@ -719,63 +721,64 @@ function get_line_initial_values_limits_locks_from_estimation(cube_fitter::CubeF
             end
             # If this is the initial fit, we want to make some educated guesses on the initial values for the parameters,
             # just like for the continuum fit
-            if init
-                # make a velocity vector
-                vel = Doppler_width_v.(λ .- λ₀, λ₀)
-                # choose a window size equal to the linemask width
-                region = abs.(vel) .< cube_fitter.linemask_width
-                I_max, mx = findmax(I[region])
-                I_min = minimum(I[region])
-                # amplitude is ~the max - the min within the window
-                if isone(j)
-                    p₀[ind_amp] = clamp(I_max-I_min, amp_plim...)
-                elseif !lines.config.rel_amp
-                    # make a somewhat random guess that the secondary component is ~20% of the total amplitude
-                    p₀[ind_amp] = clamp(0.2*(I_max-I_min), amp_plim...)
-                    # readjust the first component down a bit
-                    ind_amp1 = fast_indexin("lines.$(ln_name).1.amp", pnames)
-                    p₀[ind_amp1] = clamp(0.8p₀[ind_amp1], amp_plim...)
-                else
-                    p₀[ind_amp] = 0.2
-                end
-                # velocity is ~the velocity at the max ind
-                ind_vel = fast_indexin("lines.$(ln_name).$(j).voff", pnames)
-                if isone(j) || !lines.config.rel_voff
-                    p₀[ind_vel] = clamp(vel[region][mx], plims[ind_vel]...)
-                else
-                    p₀[ind_vel] = clamp(0.0u"km/s", plims[ind_vel]...)
-                end
-                # fwhm is ~the intensity-weighted average of the velocities
-                ind_fwhm = fast_indexin("lines.$(ln_name).$(j).fwhm", pnames)
-                if sum(I[region]) > 0.
-                    fwhm_full = 2.355*sqrt(clamp(sum(I[region].*vel[region].^2) / sum(I[region]), 0.0u"km^2/s^2", Inf*u"km^2/s^2"))
-                else
-                    fwhm_full = 0.0*u"km/s"
-                end
-                fwhm_intr2 = clamp(fwhm_full^2 - cube_fitter.lsf(λ[region][mx])^2, 0.0u"km^2/s^2", Inf*u"km^2/s^2")
-                if isone(j) || !lines.config.rel_fwhm
-                    p₀[ind_fwhm] = clamp(sqrt(fwhm_intr2), plims[ind_fwhm]...)
-                else
-                    p₀[ind_fwhm] = clamp(1.0, plims[ind_fwhm]...)
-                end
+            # if init
+            # make a velocity vector
+            vel = Doppler_width_v.(λ .- λ₀, λ₀)
+            # choose a window size equal to the linemask width
+            region = abs.(vel) .< cube_fitter.linemask_width
+            I_max, mx = findmax(I[region])
+            I_min = minimum(I[region])
+            # amplitude is ~the max - the min within the window
+            if isone(j)
+                p₀[ind_amp] = clamp(I_max-I_min, amp_plim...)
+            elseif !lines.config.rel_amp
+                # make a somewhat random guess that the secondary component is ~20% of the total amplitude
+                p₀[ind_amp] = clamp(0.2*(I_max-I_min), amp_plim...)
+                # readjust the first component down a bit
+                ind_amp1 = fast_indexin("lines.$(ln_name).1.amp", pnames)
+                p₀[ind_amp1] = clamp(0.8p₀[ind_amp1], amp_plim...)
+            else
+                p₀[ind_amp] = 0.2
             end
+            # velocity is ~the velocity at the max ind
+            ind_vel = fast_indexin("lines.$(ln_name).$(j).voff", pnames)
+            if isone(j) || !lines.config.rel_voff
+                p₀[ind_vel] = clamp(vel[region][mx], plims[ind_vel]...)
+            else
+                p₀[ind_vel] = clamp(0.0u"km/s", plims[ind_vel]...)
+            end
+            # fwhm is ~the intensity-weighted average of the velocities
+            ind_fwhm = fast_indexin("lines.$(ln_name).$(j).fwhm", pnames)
+            if sum(I[region]) > 0.
+                fwhm_full = 2.355*sqrt(clamp(sum(I[region].*vel[region].^2) / sum(I[region]), 0.0u"km^2/s^2", Inf*u"km^2/s^2"))
+            else
+                fwhm_full = 0.0*u"km/s"
+            end
+            fwhm_intr2 = clamp(fwhm_full^2 - cube_fitter.lsf(λ[region][mx])^2, 0.0u"km^2/s^2", Inf*u"km^2/s^2")
+            fwhm_intr = clamp(sqrt(fwhm_intr2), 100.0u"km/s", Inf*u"km/s")
+            if isone(j) || !lines.config.rel_fwhm
+                p₀[ind_fwhm] = clamp(fwhm_intr, plims[ind_fwhm]...)
+            else
+                p₀[ind_fwhm] = clamp(1.0, plims[ind_fwhm]...)
+            end
+            # end
         end
     end
 
     # We need to make sure the tied relationships still hold -- if we're doing the initial estimation,
     # the tied velocities and fwhms should be a median of the estimations we did for each individual line
     tie_vec = params.ties
-    if init
-        tie_vec_groups = [isnothing(tv) ? nothing : tv.group for tv in tie_vec]
-        tvu = unique(tie_vec[.~isnothing.(tie_vec)])  # all of the tied groups
-        for tvui in tvu
-            if contains(string(tvui), "voff") || contains(string(tvui), "fwhm")
-                wh = tie_vec_groups .== tvui.group
-                p₀[wh] .= median(p₀[wh])
-            end
-            # amplitudes are more tricky...but they should work themselves out in the next step below
+    # if init
+    tie_vec_groups = [isnothing(tv) ? nothing : tv.group for tv in tie_vec]
+    tvu = unique(tie_vec[.~isnothing.(tie_vec)])  # all of the tied groups
+    for tvui in tvu
+        if contains(string(tvui), "voff") || contains(string(tvui), "fwhm")
+            wh = tie_vec_groups .== tvui.group
+            p₀[wh] .= median(p₀[wh])
         end
+        # amplitudes are more tricky...but they should work themselves out in the next step below
     end
+    # end
 
     tied_pairs, tied_indices = get_tied_pairs(params)
     for tp in tied_pairs

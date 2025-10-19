@@ -17,6 +17,8 @@ abstract type Options end
 specific emission lines of interest).
 - `parallel`: Whether or not to fit multiple spaxels in parallel using multiprocessing
 - `save_fits`: Whether or not to save the final best-fit models and parameters as FITS files
+- `save_tables`: Whether or not to save the final best-fit parameters as CSV tables (note: these are separate from the
+    CSV files that are saved to the "spaxel_binaries" folder during fitting to save progress) 
 - `save_full_model`: Whether or not to save the full 3D best-fit model as a FITS file.
 - `overwrite`: Whether or not to overwrite old fits of spaxels when rerunning
 - `track_memory`: Whether or not to save diagnostic files showing memory usage of the program
@@ -33,6 +35,7 @@ struct OutputOptions <: Options
     parallel::Bool
     parallel_strategy::String
     save_fits::Bool
+    save_tables::Bool
     save_full_model::Bool
     overwrite::Bool
     track_memory::Bool
@@ -109,6 +112,7 @@ mutable struct FittingOptions{T<:Real,S<:Integer} <: Options
     ssp_regularize::T
     stellar_template_type::String
     custom_stellar_template_wave::Union{Vector{T},Nothing}
+    custom_stellar_template_R::Union{Vector{T},Nothing}
     custom_stellar_templates::Union{Array{T,2},Nothing}
     fit_sil_emission::Bool
     fit_ch_abs::Bool
@@ -307,7 +311,8 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
         # Set up the extinction map and PAH template boolean map 
         ebv_map, sil_abs_map = cubefitter_prepare_extinction_maps(out, cube)
         # Set up potential custom stellar templates 
-        custom_stellar_template_wave, custom_stellar_templates = cubefitter_prepare_custom_stellar_templates(out, cube)
+        custom_stellar_template_wave, custom_stellar_template_R, custom_stellar_templates = 
+            cubefitter_prepare_custom_stellar_templates(out, cube)
         # Set up the output directories
         cubefitter_prepare_output_directories(name, out)
         # add the user mask, if given
@@ -332,7 +337,7 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
         # Create the model parameters, stellar and iron templates, and count various parameters
         model_parameters, ssps, feii, n_ssps, n_power_law, n_dust_cont, n_dust_feat, n_abs_feat, n_templates, vres =
             cubefitter_prepare_continuum(λ, z, out, λunit, Iunit, spectral_region, name, cube, custom_stellar_template_wave,
-            custom_stellar_templates)
+            custom_stellar_template_R, custom_stellar_templates)
         lines, n_lines, n_acomps, n_fit_comps = cubefitter_prepare_lines(out, λunit, Iunit, cube, spectral_region)
 
         # Count total parameters
@@ -394,6 +399,7 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
             out[:parallel],
             out[:parallel_strategy],
             out[:save_fits],
+            out[:save_tables],
             out[:save_full_model],
             out[:overwrite],
             out[:track_memory],
@@ -416,6 +422,7 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
             out[:ssp_regularize],
             out[:stellar_template_type],
             custom_stellar_template_wave,
+            custom_stellar_template_R,
             custom_stellar_templates,
             out[:fit_sil_emission],
             out[:fit_ch_abs],
@@ -608,6 +615,7 @@ end
 # Helper function to prepare custom stellar templates
 function cubefitter_prepare_custom_stellar_templates(out::Dict, cube::DataCube)
     temp_λ = nothing
+    temp_R = nothing
     temps = nothing
     λunit = unit(cube.λ[1])
     Iunit = unit(cube.I[1])
@@ -620,6 +628,13 @@ function cubefitter_prepare_custom_stellar_templates(out::Dict, cube::DataCube)
             error("Please input custom_stellar_template_wave in units that can be converted into $(λunit)")
         end
         temp_λ = ustrip.(temp_λ)
+    end
+    if haskey(out, :custom_stellar_template_R) && !isnothing(out[:custom_stellar_template_R])
+        temp_R = out[:custom_stellar_template_R]
+        @assert ndims(temp_R) == 1 "Please input a 1-dimensional resolution vector for the stellar templates"
+        @assert size(temp_R, 1) == size(temp_λ, 1) "Please ensure the custom_stellar_template_R has the same length as the " *
+            "custom_stellar_template_wave"
+        temp_R = ustrip.(temp_R)
     end
     if haskey(out, :custom_stellar_templates) && !isnothing(out[:custom_stellar_templates])
         temps = out[:custom_stellar_templates]
@@ -634,7 +649,7 @@ function cubefitter_prepare_custom_stellar_templates(out::Dict, cube::DataCube)
         end
         temps = ustrip.(temps)
     end
-    temp_λ, temps
+    temp_λ, temp_R, temps
 end
 
 

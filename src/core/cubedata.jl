@@ -662,12 +662,12 @@ function get_n_channels(_λ::Vector{<:QWave}, rest_frame::Bool, z::Union{Real,No
         end
     end
     # filter out small beginning/end sections
-    if sum(channel_masks[1]) < 200
+    if (sum(channel_masks[1]) < 200) && (length(channel_masks) ≥ 2)
         channel_masks[2] .|= channel_masks[1]
         popfirst!(channel_masks)
         n_channels -= 1
     end
-    if sum(channel_masks[end]) < 200
+    if (sum(channel_masks[end]) < 200) && (length(channel_masks) ≥ 2)
         channel_masks[end-1] .|= channel_masks[end]
         pop!(channel_masks)
         n_channels -= 1
@@ -1041,8 +1041,8 @@ The statistical errors are defined as the standard deviation of the residuals be
 fit to the flux, within a small window (60 pixels). Emission lines are masked out during this process.
 """
 function calculate_statistical_errors!(cube::DataCube, 
-    overrides::Union{Vector{Tuple{QLength,QLength}},Nothing}=nothing; 
-    mask_width::typeof(1.0u"km/s")=1000.0u"km/s", median::Bool=false)
+    overrides::Union{Vector{Tuple{T,T}},Nothing}=nothing; 
+    mask_width::typeof(1.0u"km/s")=1000.0u"km/s", median::Bool=false) where {T<:QLength}
 
     λ = cube.λ
 

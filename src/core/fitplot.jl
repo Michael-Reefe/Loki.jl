@@ -275,6 +275,7 @@ function plot_spaxel_fit_pyplot(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_
     else
         min_inten = 0.1nanminimum(I[I .> 0.0*Nunit] ./ norm .* factor_data)
     end
+
     if !logy || !isnothing(range)
         max_inten = isnothing(range) ? 
                     1.3nanmaximum((I ./ norm .* factor_data)[.~mask_lines .& .~mask_bad]) : 
@@ -284,6 +285,16 @@ function plot_spaxel_fit_pyplot(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_
                     1.1nanmaximum(I[.~mask_bad] ./ norm .* factor_data[.~mask_bad]) : 
                     1.1nanmaximum((I ./ norm .* factor_data)[range[1] .< λ_data .< range[2]])
     end
+
+    # for especially narrow plots
+    if !isnothing(range) && ((range[2]-range[1])/range[1]*C_KMS < 10000.0u"km/s")
+        min_inten = 0.9nanminimum((I ./ norm .* factor_data)[range[1] .< λ_data .< range[2]])
+        max_inten = 1.1nanmaximum((I ./ norm .* factor_data)[range[1] .< λ_data .< range[2]])
+    elseif ((nanmaximum(ustrip.(λ_data))-nanminimum(ustrip.(λ_data)))/nanmedian(ustrip.(λ_data))*C_KMS < 10000.0u"km/s")
+        min_inten = 0.9nanminimum(I ./ norm .* factor_data)
+        max_inten = 1.1nanmaximum(I ./ norm .* factor_data)
+    end
+
     # max_resid = 1.1maximum(((I.-I_model) ./ norm .* factor)[.~mask_lines .& .~mask_bad][2:end-1])
     mask_resid = mask_lines .| mask_bad
     for pair in cube_fitter.spectral_region.mask

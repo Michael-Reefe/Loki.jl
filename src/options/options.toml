@@ -16,6 +16,9 @@ plot_maps = true
 # save_fits: Whether or not to save the model parameters and the model itself as FITS files at the end of fitting.
 save_fits = true
 
+# save_tables: Whether or not to save the model parameters as CSV tables at the end of fitting.
+save_tables = true
+
 # lines_allow_negative: Whether or not to allow the amplitudes of emission lines to go negative. Disabled by default.
 # This also changes the units of the output for line amplitudes and fluxes from log10(erg/s/cm2) to erg/s/cm2.
 lines_allow_negative = false

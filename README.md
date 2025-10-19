@@ -9,7 +9,6 @@
 * [Installation](#ii-installation)
     - [Julia Requirements](#julia-requirements)
     - [Python Requirements](#python-requirements)
-    - [LaTeX](#latex)
 * [Usage](#iii-usage)
     - [General Code Options](#i-general-code-options)
     - [MIR Continuum and PAH Options](#ii-mir-continuum-and-pah-options)
@@ -24,8 +23,9 @@
     - [Parameter Maps](#vi-parameter-maps)
     - [Aperture Plots](#vii-aperture-plots)
     - [FITS Files](#viii-fits-files)
-    - [Line Tests](#ix-line-tests)
-    - [Units](#x-units)
+    - [CSV Tables](#ix-csv-tables)
+    - [Line Tests](#x-line-tests)
+    - [Units](#xi-units)
 * [Examples](#v-examples)
 
 
@@ -215,6 +215,10 @@ This boolean option enables or disables plotting 2D maps of each model parameter
 `save_fits = true`
 
 This boolean option enables or disables saving the final model parameters and uncertainties as FITS files at the end of fitting.
+
+`save_tables = true`
+
+This boolean option enables or disables saving the final model parameters and uncertainties as CSV tables at the end of fitting.
 
 `lines_allow_negative = false`
 
@@ -480,9 +484,10 @@ the third axis runs over the olivine, pyroxene, and forsterite column densities.
 This allows the user to provide a 1D template for the normalized optical depth $\tau$ as a function of wavelength. It should be normalized such that the value at 9.7 $\mu$m is 1, to fit with the normalization of the other extinction curves and allow the $\tau_{9.7}$ fitting parameter to be interpreted as intended.
 
 `custom_stellar_template_wave`,
+`custom_stellar_template_R`,
 `custom_stellar_templates`
 
-If "stellar_template_type" is custom, then the user must provide the additional arguments "custom_stellar_template_wave" and "custom_stellar_templates".  The former is the 1D wavelength vector that all of the stellar templates must be sampled on, and the latter is a 2D array with all of the templates themselves (the first axis should be the wavelength axis, and the second axis should iterate over the individual templates). Both must have appropriate units.
+If "stellar_template_type" is custom, then the user must provide the additional arguments "custom_stellar_template_wave", "custom_stellar_template_R", and "custom_stellar_templates".  The first is the 1D wavelength vector that all of the stellar templates must be sampled on, the second is the 1D resolution vector ($R \equiv \lambda/\Delta\lambda$) of the templates which should be the same length as the wavelength vector, and the third is a 2D array with all of the templates themselves (the first axis should be the wavelength axis, and the second axis should iterate over the individual templates). "custom_stellar_template_wave" must have length units, "custom_stellar_template_R" must be unitless, and "custom_stellar_templates" must have intensity units.  Note: if you have theoretical model spectra, or other templates where defining a spectral resolution does not really make sense, you can set "custom_stellar_template_R" to a vector of infinities to effectively disable the instrumental broadening.
 
 `pah_template_map`
 
@@ -1066,6 +1071,9 @@ You may notice at the beginning of the fitting procedure that a series of output
 │   ├── logs
 │   │   ├── loki.spaxel_1_1.log
 │   │   └── ...
+│   ├── output_tables
+│   │   ├── spaxel_1_1.csv
+│   │   └── ...
 │   ├── param_maps
 │   │   ├── absorption_features
 │   │   ├── continuum
@@ -1106,7 +1114,7 @@ The `logs` directory contains log files for the fits of each individual spaxel. 
 Information is always printed out with a timestamp so one can track how long different steps of the code are taking. Logs files are meant to be a quick way to check that fits are converging as expected and there are no obvious bugs. They are *not* meant to be used to compile or analyze fit results (that is done with the output FITS files).
 
 ### iii. CSV Files
-Located in the `spaxel_binaries` folder are CSV files which contain the best-fit parameters of each spaxel fit in a machine-readable table format. These are saved during the fitting process such that in the event of a crash or other interruption during the fitting process, the code can be restarted and pick up where it left off without losing any progress. Like the logs, these files are not necessarily meant to be used to perform any analysis, as all of the data will be compiled and re-saved in FITS format at the end.  But they can be useful for certain purposes.  An example output might look like this (truncated):
+Located in the `spaxel_binaries` folder are CSV files which contain the best-fit parameters of each spaxel fit in a machine-readable table format. These are saved during the fitting process such that in the event of a crash or other interruption during the fitting process, the code can be restarted and pick up where it left off without losing any progress. Like the logs, these files are NOT meant to be used to perform any analysis, as all of the data will be compiled and re-saved at the end.  But they may be useful to the user in certain circumstances.  It's important to note that the parameters saved in these files are INTERNAL LOKI fit parameters, which means that they may be normalized and not in physical units, in the rest frame rather than the observed frame, and any other arbitrary transformation relative to what you might expect.  If you're interested in reading the results of your fits in a table format, I'd recommend you instead use the option "save_tables" and wait until the end of the fitting process to read the tables that will be saved under "output_tables", rather than relying on these intermediary CSV files in the "spaxel_binaries" folder. An example output might look like this (truncated):
 ```
 name                              	best                  	error_lower           	error_upper           	bound_lower	bound_upper	unit      	locked	tied        	
 extinction.E_BV                   	0.0                   	0.0                   	0.0                   	0.0        	1.0        	          	yes   	            	
@@ -1289,14 +1297,17 @@ No.  Name                 Ver Type         Cards   Dimensions       Format
 ```
 They can be loaded in the same manner as the parameter maps, bearing in mind that there are now 3 dimensions to index for each HDU instead of 2. The "WAVELENGTH" HDU is an exception, being a table with one entry ("wave") that gives the 1-dimensional wavelength array that corresponds to the third axis of all the other HDUs. This was necessary because the wavelength arrays fitted by the code may not strictly be linear, especially when fitting multi-channel data, and trying to represent this with a 3D WCS is not possible. This is why the included WCS information in these outputs is strictly 2-dimensional, covering the 2 spatial dimensions of the cubes.
 
-### ix. Line Tests
+### ix. CSV Tables
+As promised, the output best-fit parameters can also be saved in CSV format in addition to FITS format.  They will be found under the "output_tables" folder, assuming you've enabled the "save_tables" boolean option.  If you want to use CSV tables, then these are what you should be using, not the CSV files under "spaxel_binaries".  They have the same format, barring the omission of lower/upper limit values.  Importantly, all of the parameters in these files will have the appropriate scalings and transformations applied to them so that they are in true physical units in the observed frame.
+
+### x. Line Tests
 If any line tests are performed and the `plot_line_test` option is enabled, they will be stored in the `line_tests` directory. They will be fairly simple plots showing the spectrum immediately around the line, and the models with 1, 2, ... up to N components. There will be an annotation showing the F-test results and the final number of profiles that will be fit for the line.
 
 An example of one of these plots is shown below for an [S IV] λ10.511μm line that fairly obviously needs two profiles to be fit well
 
 ![SIV_test](./figures/SIV_test.png)
 
-### x. Units
+### xi. Units
 The units of outputs for different quantities are listed here. When relevant, output quantities are all given in the *observed* frame (this applies to both the parameter maps and the full 3D models):
 
 - Stellar mass: $\log_{10}(M/M_\odot)$
@@ -1413,6 +1424,8 @@ correct!(obs)
 ```julia 
 combine_channels!(obs, [1,2,3], out_id=0, order=1, adjust_wcs_headerinfo=true, extract_from_ap=0.)
 ```
+Protip: `combine_channels!` can also be used to create zoomed-in cutouts in the wavelength dimension, even if you only have one channel!  Just call the function requesting only one channel, and supply the keyword arguments `min_λ` and `max_λ`.  For example: `combine_channels!(obs, [1]; min_λ=10.0u"μm", max_λ=20.0u"μm")`
+
 5. (Optional) It is often desirable to rotate the cubes to be aligned with the sky axes rather than the IFU axes, which can be achieved using the `rotate_to_sky_axes!` function. Depending on how you reduced your JWST data products, your cubes may already be aligned to the sky axes, in which case this function won't do anything.  But please note that if you wish to use the PSF decomposition functionality of Loki, you will need to provide cubes aligned with the IFU axes.  This is necessary in order to generate PSF models that are appropriately aligned and rotated with the observations.  One can then rotate to the sky axes with this function *after* generating the PSF models (see the relevant functions for that below), which will rotate both the observations and the PSF models by the same amount.
 ```julia
 rotate_to_sky_axes!(obs.channels[0])
