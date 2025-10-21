@@ -21,6 +21,8 @@ struct CubeModel{T<:Real,
     absorption_silicates::Array{T, 4}  # (may be just tau_97 or N_oli, N_pyr, N_for)
     abs_ice::Union{Array{T, 3}, Nothing}
     abs_ch::Union{Array{T, 3}, Nothing}
+    apoly::Union{Array{S, 3}, Nothing}
+    mpoly::Union{Array{T, 3}, Nothing}
     stellar::Array{S, 3}
     na_feii::Union{Array{S, 3}, Nothing}
     br_feii::Union{Array{S, 3}, Nothing}
@@ -65,6 +67,8 @@ function generate_cubemodel(cube_fitter::CubeFitter, _shape::Tuple, floattype::D
     absorption_silicates = zeros(floattype, shape2..., fopt.extinction_curve == "decompose" ? 4 : 1)
     abs_ice = fopt.fit_ch_abs ? zeros(floattype, shape2...) : nothing
     abs_ch = fopt.fit_ch_abs ? zeros(floattype, shape2...) : nothing
+    apoly = cube_fitter.apoly_degree ≥ 0 ? zeros(qtype, shape2...) : nothing
+    mpoly = cube_fitter.mpoly_degree ≥ 1 ? zeros(floattype, shape2...) : nothing
     stellar = zeros(qtype, shape2...)
     na_feii = fopt.fit_opt_na_feii ? zeros(qtype, shape2...) : nothing
     br_feii = fopt.fit_opt_br_feii ? zeros(qtype, shape2...) : nothing
@@ -77,7 +81,8 @@ function generate_cubemodel(cube_fitter::CubeFitter, _shape::Tuple, floattype::D
     dust_features = zeros(qtype, shape2..., cube_fitter.n_dust_feat)
     lines = zeros(qtype, shape2..., cube_fitter.n_lines)
 
-    CubeModel(model, extinction_stars, extinction_gas, absorption_silicates, abs_ice, abs_ch, stellar, na_feii, br_feii,
-        power_law, dust_continuum, hot_dust, templates, abs_features, dust_features, lines)
+    CubeModel(model, extinction_stars, extinction_gas, absorption_silicates, abs_ice, abs_ch, apoly, mpoly, 
+        stellar, na_feii, br_feii, power_law, dust_continuum, hot_dust, templates, abs_features, dust_features, 
+        lines)
 end
 

@@ -2,7 +2,7 @@
 
 julia_version = "1.10.9"
 manifest_format = "2.0"
-project_hash = "48b8a0ea06a031a58411e43c757275ee86479bdc"
+project_hash = "d65714c6e14cbd98b1815c65f26080f089563ace"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -995,6 +995,12 @@ git-tree-sha1 = "073f080e733bc6697411901224ed4fd15fefaffa"
 uuid = "6fafb56a-5788-4b4e-91ca-c0cea6611c73"
 version = "0.2.1"
 
+[[deps.Memoize]]
+deps = ["MacroTools"]
+git-tree-sha1 = "2b1dfcba103de714d31c033b5dacc2e4a12c7caa"
+uuid = "c03570c3-d221-55d1-a50c-7939bbd78826"
+version = "0.4.4"
+
 [[deps.MicroCollections]]
 deps = ["Accessors", "BangBang", "InitialValues"]
 git-tree-sha1 = "44d32db644e84c75dab479f1bc15ee76a1a3618f"
@@ -1493,6 +1499,20 @@ weakdeps = ["ChainRulesCore"]
 
     [deps.SpecialFunctions.extensions]
     SpecialFunctionsChainRulesCoreExt = "ChainRulesCore"
+
+[[deps.SpecialPolynomials]]
+deps = ["HypergeometricFunctions", "LinearAlgebra", "Memoize", "Polynomials", "QuadGK", "Requires", "SpecialFunctions"]
+git-tree-sha1 = "01bb8db19fe416cb1b084c9a30496eebbde77788"
+uuid = "a25cea48-d430-424a-8ee7-0d3ad3742e9e"
+version = "0.4.13"
+
+    [deps.SpecialPolynomials.extensions]
+    SpecialPolynomialsFastGaussQuadratureExt = "FastGaussQuadrature"
+    SpecialPolynomialsFastTransformsExt = "FastTransforms"
+
+    [deps.SpecialPolynomials.weakdeps]
+    FastGaussQuadrature = "442a2c76-b920-505d-bb47-c5924d526838"
+    FastTransforms = "057dd010-8810-581a-b7be-e3fc3b93f78c"
 
 [[deps.SpectralResampling]]
 deps = ["LoopVectorization"]

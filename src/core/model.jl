@@ -30,12 +30,13 @@ function get_normalized_templates(λ::Vector{<:QWave}, params::Vector{<:Real}, t
 end
 # the in-place version
 function get_normalized_templates!(contin::Vector{<:Real}, λ::Vector{<:QWave}, params::Vector{<:Real}, 
-    templates::Matrix{<:Real}, channel_masks::Vector{BitVector}, fit_temp_multexp::Bool, pstart::Integer)
+    templates::Matrix{<:Real}, channel_masks::Vector{BitVector}, fit_temp_multexp::Bool, mpoly::Vector{<:Real}, 
+    pstart::Integer)
     # Add generic templates with a normalization parameter
     if fit_temp_multexp
         ex = multiplicative_exponentials(λ, params[pstart:pstart+7])
         for i in axes(templates, 2)
-            contin .+= sum([ex[:,j] .* templates[:,i] for j in axes(ex,2)])
+            contin .+= sum([ex[:,j] .* templates[:,i] for j in axes(ex,2)]) .* mpoly
         end
         dp = 8
     else
@@ -43,7 +44,7 @@ function get_normalized_templates!(contin::Vector{<:Real}, λ::Vector{<:QWave}, 
         for i in axes(templates, 2)
             for ch_mask in channel_masks
                 c = @view contin[ch_mask]
-                c .+= params[pstart+dp] .* templates[ch_mask, i]
+                c .+= params[pstart+dp] .* templates[ch_mask, i] .* mpoly[ch_mask]
                 dp += 1
             end
         end
@@ -131,6 +132,43 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
     comps["total_extinction_stars"] = @. Cf * comps["extinction_stars"] * abs_sil * abs_tot + (1 - Cf)
     comps["total_extinction_gas"] = @. Cf * comps["extinction_gas"] * abs_sil * abs_tot + (1 - Cf)
 
+    ##### 2. POLYNOMIALS    #####
+
+    # Additive polynomials 
+    if cube_fitter.apoly_degree ≥ 0
+        coeffs = params[pᵢ:pᵢ+cube_fitter.apoly_degree]
+        x = range(-1., 1., length=length(λ))
+        if cube_fitter.apoly_type == :Legendre
+            comps["apoly"] = Legendre(coeffs).(x)
+        elseif cube_fitter.apoly_type == :Chebyshev
+            comps["apoly"] = Chebyshev(coeffs).(x)
+        else 
+            error("Unrecognized polynomial type: $(cube_fitter.apoly_type)")
+        end
+        # Additive polynomials are not affected by any dust extinction or 
+        # multiplicative polynomials, since they're meant to model background/
+        # foreground emission or other systematics.
+        contin .+= comps["apoly"]
+        pᵢ += cube_fitter.apoly_degree + 1
+    end
+
+    # Multiplicative polynomials
+    comps["mpoly"] = ones(out_type, length(λ))
+    if cube_fitter.mpoly_degree ≥ 1
+        coeffs = [1.0; params[pᵢ:pᵢ+cube_fitter.mpoly_degree-1]]
+        x = range(-1., 1., length=length(λ))
+        if cube_fitter.mpoly_type == :Legendre 
+            comps["mpoly"] .= Legendre(coeffs).(x)
+        elseif cube_fitter.mpoly_type == :Chebyshev 
+            comps["mpoly"] .= Chebyshev(coeffs).(x)
+        else 
+            error("Unrecognized polynomial type: $(cube_fitter.apoly_type)")
+        end
+        # clamp extreme values
+        comps["mpoly"] .= clamp.(comps["mpoly"], 0.1, 10.)
+        pᵢ += cube_fitter.mpoly_degree
+    end
+
     #############################
 
     # Collect the stellar velocities
@@ -145,7 +183,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
 
     #############################
     
-    ##### 2. FE II EMISSION #####
+    ##### 3. FE II EMISSION #####
 
     gap_masks = get_gap_masks(s.λ, cube_fitter.spectral_region.gaps)
     if fopt.fit_opt_na_feii
@@ -181,29 +219,29 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         pᵢ += 3
     end
 
-    ##### 3. POWER LAWS #####
+    ##### 4. POWER LAWS #####
 
     for j ∈ 1:cube_fitter.n_power_law
         # Reference wavelength at the median wavelength of the input spectrum
         pl = power_law(λ, params[pᵢ+1], median(λ))
         norms["continuum.power_law.$(j).amp"] = maximum(pl)
         comps["power_law_$j"] = params[pᵢ] .* pl./norms["continuum.power_law.$(j).amp"]
-        contin .+= comps["power_law_$j"] .* comps["total_extinction_gas"]
+        contin .+= comps["power_law_$j"] .* comps["total_extinction_gas"] .* comps["mpoly"]
         pᵢ += 2
     end
 
-    ##### 4. THERMAL DUST CONTINUA #####
+    ##### 5. THERMAL DUST CONTINUA #####
 
     for i ∈ 1:cube_fitter.n_dust_cont
         unit_check(punits[pᵢ+1], u"K")
         bb = Blackbody_modified.(λ, params[pᵢ+1]*u"K", N)
         norms["continuum.dust.$(i).amp"] = maximum(bb)
         comps["dust_cont_$i"] = params[pᵢ] .* bb./norms["continuum.dust.$(i).amp"]
-        contin .+= comps["dust_cont_$i"] .* comps["total_extinction_gas"] 
+        contin .+= comps["dust_cont_$i"] .* comps["total_extinction_gas"] .* comps["mpoly"]
         pᵢ += 2
     end
 
-    ##### 5. SILICATE EMISSION #####
+    ##### 6. SILICATE EMISSION #####
 
     if fopt.fit_sil_emission
         # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
@@ -214,11 +252,11 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
             params[pᵢ+5]*λunit, N, cube_fitter)
         norms["continuum.hot_dust.amp"] = maximum(sil_emission)
         comps["hot_dust"] = params[pᵢ] .* sil_emission ./ norms["continuum.hot_dust.amp"]
-        contin .+= comps["hot_dust"] .* abs_tot 
+        contin .+= comps["hot_dust"] .* abs_tot .* comps["mpoly"]
         pᵢ += 6
     end
 
-    ##### 6. PSF TEMPLATES #####
+    ##### 7. PSF TEMPLATES #####
 
     if haskey(s.aux, "templates") && haskey(s.aux, "channel_masks") && size(s.aux["templates"], 2) > 0
         temp_norm, dp = get_normalized_templates(λ, params, s.aux["templates"], s.aux["channel_masks"], 
@@ -226,16 +264,16 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         for i in axes(temp_norm, 2)
             comps["templates_$i"] = temp_norm[:,i]
         end
-        contin .+= sumdim(temp_norm, 2; nan=false)
+        contin .+= sumdim(temp_norm, 2; nan=false) .* comps["mpoly"]
         pᵢ += dp
     end
 
-    ##### 7. PAH EMISSION FEATURES #####
+    ##### 8. PAH EMISSION FEATURES #####
 
     pah_contin = zeros(length(λ))
     if use_pah_templates
-        pah_contin .+= params[pᵢ] .* cube_fitter.dust_interpolators["smith3"](ustrip.(λ)) .* comps["total_extinction_gas"]
-        pah_contin .+= params[pᵢ+1] .* cube_fitter.dust_interpolators["smith4"](ustrip.(λ)) .* comps["total_extinction_gas"]
+        pah_contin .+= params[pᵢ] .* cube_fitter.dust_interpolators["smith3"](ustrip.(λ)) .* comps["total_extinction_gas"] .* comps["mpoly"]
+        pah_contin .+= params[pᵢ+1] .* cube_fitter.dust_interpolators["smith4"](ustrip.(λ)) .* comps["total_extinction_gas"] .* comps["mpoly"]
         pᵢ += 2
     else
         pah_contin, pah_comps = model_pah_residuals(s, params[pᵢ:end], punits[pᵢ:end], comps["total_extinction_gas"], 
@@ -244,12 +282,13 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
     end
     contin .+= pah_contin
 
-    ##### 8. STELLAR POPULATIONS #####
+    ##### 9. STELLAR POPULATIONS #####
 
     if fopt.fit_stellar_continuum
         ssp_contin, norms["continuum.stellar_norm"], norms["continuum.stellar_weights"] = stellar_populations_nnls(
-            s, contin, comps["total_extinction_stars"], stel_vel, stel_sig, cube_fitter; do_gaps=do_gaps, mask_lines=mask_lines)
-        comps["SSPs"] = ssp_contin ./ comps["total_extinction_stars"]   # (save the un-extincted stellar continuum)
+            s, contin, comps["total_extinction_stars"].*comps["mpoly"], stel_vel, stel_sig, cube_fitter; 
+            do_gaps=do_gaps, mask_lines=mask_lines)
+        comps["SSPs"] = ssp_contin ./ (comps["total_extinction_stars"].*comps["mpoly"])   # (save the unmodified stellar continuum)
         contin .+= ssp_contin
     end
 
@@ -323,6 +362,41 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
     @. ext_stars = Cf * ext_stars * abs_sil * abs_tot + (1.0 - Cf)
     @. ext_gas = Cf * ext_gas * abs_sil * abs_tot + (1.0 - Cf)
 
+    ##### 2. POLYNOMIALS    #####
+
+    # Additive polynomials 
+    if cube_fitter.apoly_degree ≥ 0
+        coeffs = params[pᵢ:pᵢ+cube_fitter.apoly_degree]
+        x = range(-1., 1., length=length(λ))
+        if cube_fitter.apoly_type == :Legendre
+            contin .+= Legendre(coeffs).(x)
+        elseif cube_fitter.apoly_type == :Chebyshev
+            contin .+= Chebyshev(coeffs).(x)
+        else 
+            error("Unrecognized polynomial type: $(cube_fitter.apoly_type)")
+        end
+        # Additive polynomials are not affected by any dust extinction or 
+        # multiplicative polynomials, since they're meant to model background/
+        # foreground emission or other systematics.
+        pᵢ += cube_fitter.apoly_degree + 1
+    end
+
+    # Multiplicative polynomials
+    mpoly = ones(out_type, length(λ))
+    if cube_fitter.mpoly_degree ≥ 1
+        coeffs = [1.0; params[pᵢ:pᵢ+cube_fitter.mpoly_degree-1]]
+        x = range(-1., 1., length=length(λ))
+        if cube_fitter.mpoly_type == :Legendre 
+            mpoly .= Legendre(coeffs).(x)
+        elseif cube_fitter.mpoly_type == :Chebyshev 
+            mpoly .= Chebyshev(coeffs).(x)
+        else 
+            error("Unrecognized polynomial type: $(cube_fitter.apoly_type)")
+        end
+        # clamp extreme values
+        mpoly .= clamp.(mpoly, 0.1, 10.)
+        pᵢ += cube_fitter.mpoly_degree
+    end
 
     #############################
 
@@ -338,7 +412,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
 
     #############################
     
-    ##### 2. FE II EMISSION #####
+    ##### 3. FE II EMISSION #####
 
     gap_masks = get_gap_masks(s.λ, cube_fitter.spectral_region.gaps)
     if fopt.fit_opt_na_feii
@@ -370,25 +444,25 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         pᵢ += 3
     end
 
-    ##### 3. POWER LAWS #####
+    ##### 4. POWER LAWS #####
 
     for j ∈ 1:cube_fitter.n_power_law
         # Reference wavelength at the median wavelength of the input spectrum
         pl = power_law(λ, params[pᵢ+1], median(λ))
-        contin .+= params[pᵢ] .* pl./maximum(pl) .* ext_gas
+        contin .+= params[pᵢ] .* pl./maximum(pl) .* ext_gas .* mpoly
         pᵢ += 2
     end
 
-    ##### 4. THERMAL DUST CONTINUA #####
+    ##### 5. THERMAL DUST CONTINUA #####
 
     for i ∈ 1:cube_fitter.n_dust_cont
         unit_check(punits[pᵢ+1], u"K")
         bb = Blackbody_modified.(λ, params[pᵢ+1]*u"K", N)
-        contin .+= params[pᵢ] .* bb./maximum(bb) .* ext_gas
+        contin .+= params[pᵢ] .* bb./maximum(bb) .* ext_gas .* mpoly
         pᵢ += 2
     end
 
-    ##### 5. SILICATE EMISSION #####
+    ##### 6. SILICATE EMISSION #####
 
     if fopt.fit_sil_emission
         # Add Silicate emission from hot dust (amplitude, temperature, covering fraction, warm tau, cold tau)
@@ -397,24 +471,24 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         unit_check(punits[pᵢ+5], λunit)
         sil_emission = silicate_emission(λ, params[pᵢ+1]*u"K", params[pᵢ+2], params[pᵢ+3], params[pᵢ+4], 
             params[pᵢ+5]*λunit, N, cube_fitter)
-        contin .+= params[pᵢ] .* sil_emission./maximum(sil_emission) .* abs_tot
+        contin .+= params[pᵢ] .* sil_emission./maximum(sil_emission) .* abs_tot .* mpoly
         pᵢ += 6
     end
 
-    ##### 6. PSF TEMPLATES #####
+    ##### 7. PSF TEMPLATES #####
 
     if haskey(s.aux, "templates") && haskey(s.aux, "channel_masks") && size(s.aux["templates"], 2) > 0
         # use the in-place version for F A S T  (its not actually that much faster lmao)
         dp = get_normalized_templates!(contin, λ, params, s.aux["templates"], s.aux["channel_masks"], 
-            fopt.fit_temp_multexp, pᵢ)
+            fopt.fit_temp_multexp, mpoly, pᵢ)
         pᵢ += dp
     end
 
-    ##### 7. PAH EMISSION FEATURES #####
+    ##### 8. PAH EMISSION FEATURES #####
 
     if use_pah_templates
-        contin .+= params[pᵢ] .* cube_fitter.dust_interpolators["smith3"](ustrip.(λ)) .* ext_gas
-        contin .+= params[pᵢ+1] .* cube_fitter.dust_interpolators["smith4"](ustrip.(λ)) .* ext_gas
+        contin .+= params[pᵢ] .* cube_fitter.dust_interpolators["smith3"](ustrip.(λ)) .* ext_gas .* mpoly
+        contin .+= params[pᵢ+1] .* cube_fitter.dust_interpolators["smith4"](ustrip.(λ)) .* ext_gas .* mpoly
         pᵢ += 2
     else
         for dcomplex in model(cube_fitter).dust_features.profiles   # <- iterates over PAH complexes
@@ -438,10 +512,10 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         end
     end
 
-    ##### 8. STELLAR POPULATIONS #####
+    ##### 9. STELLAR POPULATIONS #####
 
     if fopt.fit_stellar_continuum
-        contin .+= stellar_populations_nnls(s, contin, ext_stars, stel_vel, stel_sig, cube_fitter; do_gaps=do_gaps, 
+        contin .+= stellar_populations_nnls(s, contin, ext_stars.*mpoly, stel_vel, stel_sig, cube_fitter; do_gaps=do_gaps, 
             mask_lines=mask_lines)[1]
     end
 

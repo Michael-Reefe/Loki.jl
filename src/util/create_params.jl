@@ -243,6 +243,39 @@ function construct_extinction_params!(params::Vector{FitParameter}, pnames::Vect
 end
 
 
+function construct_polynomial_params!(params::Vector{FitParameter}, pnames::Vector{String}, plabels::Vector{String},
+    ptrans::Vector{Vector{Transformation}}, out::Dict, optical::Dict, infrared::Dict, λunit::Unitful.Units, Iunit::Unitful.Units,
+    region::SpectralRegion)
+
+    # Polynomial parameters, which is pretty much just the coefficients (for both additive and multiplicative polynomials)
+    msg = "Polynomials:"
+    prefix = "polynomials."
+
+    # Additive polynomials
+    for apoly_degree in 0:out[:apoly_degree]
+        acoeff = parameter_from_dict(optical["polynomials"]["acoeff"])
+        msg *= "\nacoeff $acoeff"
+        push!(params, acoeff)
+        push!(pnames, prefix * "acoeff.$(apoly_degree)")
+        push!(plabels, L"$c_{{\rm a},%$(apoly_degree)}$")
+        push!(ptrans, [RestframeTransform, NormalizeTransform])
+    end
+
+    # Multiplicative polynomials
+    for mpoly_degree in 1:out[:mpoly_degree]
+        mcoeff = parameter_from_dict(optical["polynomials"]["mcoeff"])
+        msg *= "\nmcoeff $mcoeff"
+        push!(params, mcoeff)
+        push!(pnames, prefix * "mcoeff.$(mpoly_degree)")
+        push!(plabels, L"$c_{{\rm m},%$(mpoly_degree)}$")
+        push!(ptrans, Transformation[])
+    end
+    
+    @debug msg
+
+end
+
+
 function construct_continuum_params!(params::Vector{FitParameter}, pnames::Vector{String}, plabels::Vector{String},
     ptrans::Vector{Vector{Transformation}}, out::Dict, optical::Dict, infrared::Dict, λunit::Unitful.Units, Iunit::Unitful.Units,
     redshift::Real, region::SpectralRegion)
@@ -456,6 +489,7 @@ function construct_continuum_parameters(out::Dict, λunit::Unitful.Units, Iunit:
 
     # Add parameters iteratively
     abs_features = construct_extinction_params!(params, pnames, plabels, ptrans, out, optical, infrared, λunit, Iunit, region)
+    construct_polynomial_params!(params, pnames, plabels, ptrans, out, optical, infrared, λunit, Iunit, region)
     construct_continuum_params!(params, pnames, plabels, ptrans, out, optical, infrared, λunit, Iunit, redshift, region)
     construct_template_params!(params, pnames, plabels, ptrans, out, infrared, region)    
 

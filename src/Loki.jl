@@ -18,6 +18,7 @@ using Dierckx
 using LinearAlgebra
 using FFTW
 using SpecialFunctions
+using SpecialPolynomials
 using NLsolve
 using ImageFiltering
 using ImageTransformations

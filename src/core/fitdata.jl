@@ -187,20 +187,10 @@ function get_continuum_for_line_fit(spaxel::Spaxel, cube_fitter::CubeFitter, I_c
     # default to using the actual fit continuum
     line_cont = copy(I_cont)
     if fopt.subtract_cubic_spline
-        temp_cont = zeros(eltype(line_cont), length(line_cont))
-        # subtract any templates first
-        for comp ∈ keys(comps_cont)
-            if contains(comp, "templates_")
-                temp_cont .+= comps_cont[comp]
-            end
-            if comp == "SSPs"
-                temp_cont .+= comps_cont[comp] .* comps_cont["total_extinction_stars"]
-            end
-        end
-        # do cubic spline fit to the template-subtracted data
-        _, notemp_cont = continuum_cubic_spline(spaxel.λ, spaxel.I .- temp_cont, zeros(eltype(line_cont), length(line_cont)), 
+        # do cubic spline fit to the residuals of the data
+        _, notemp_cont = continuum_cubic_spline(spaxel.λ, spaxel.I .- I_cont, zeros(eltype(line_cont), length(line_cont)), 
             cube_fitter.linemask_overrides; do_err=false)
-        line_cont = temp_cont .+ notemp_cont
+        line_cont .+= notemp_cont
     end
 
     line_cont
@@ -699,7 +689,7 @@ function collect_total_fit_results(spaxel::Spaxel, spaxel_model::Spaxel, cube_fi
     # Renormalize
     I_model = I_model .* spaxel.N
     for comp ∈ keys(comps)
-        if contains(comp, "extinction") || contains(comp, "absorption") 
+        if contains(comp, "extinction") || contains(comp, "absorption") || contains(comp, "mpoly")
             continue
         end
         comps[comp] = comps[comp] .* spaxel.N

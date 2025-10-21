@@ -54,7 +54,7 @@ function plot_spaxel_fit_plotly(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_
     end
     # Individual templates
     for j in 1:cube_fitter.n_templates
-        append!(traces, [PlotlyJS.scatter(x=λ_model, y=ustrip.(comps["templates_$j"]), mode="lines", line=Dict(:color => "green", :width => 1), 
+        append!(traces, [PlotlyJS.scatter(x=λ_model, y=ustrip.(comps["templates_$j"].*comps["mpoly"]), mode="lines", line=Dict(:color => "green", :width => 1), 
             name="Template $j", yaxis="y1")])
     end
 
@@ -83,7 +83,7 @@ function plot_spaxel_fit_plotly(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_
         yaxis_exponentformat="power",
         yaxis2_title=ext_label,
         yaxis2_overlaying="y",
-        yaxis2_range=[-5, 0.],        # for logarithmic axis, the ranges are the LOG of the values
+        yaxis2_range=[-5, 1.],        # for logarithmic axis, the ranges are the LOG of the values
         yaxis2_showexponent="all",
         yaxis2_exponentformat="power",
         yaxis2_type="log",
@@ -96,6 +96,7 @@ function plot_spaxel_fit_plotly(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_
     end
     ext_gas = comps["total_extinction_gas"]
     ext_stars = comps["total_extinction_stars"]
+    mpoly = comps["mpoly"]
 
     # Loop over and plot individual model components
     for comp ∈ keys(comps)
@@ -111,8 +112,14 @@ function plot_spaxel_fit_plotly(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_
         elseif comp == "absorption_for"
             append!(traces, [PlotlyJS.scatter(x=λ_model, y=ustrip.(comps[comp]), mode="lines", 
                 line=Dict(:color => "black", :width => 0.5, :dash => "dash"), name="Forsterite Absorption", yaixs="y2")])
+        elseif comp == "mpoly"
+            append!(traces, [PlotlyJS.scatter(x=λ_model, y=ustrip.(comps[comp]), mode="lines",
+                line=Dict(:color => "brown", :width => 0.5, :dash => "dash"), name="Multiplicative Polynomial", yaxis="y2")])
+        elseif comp == "apoly"
+            append!(traces, [PlotlyJS.scatter(x=λ_model, y=ustrip.(comps[comp]), mode="lines",
+                line=Dict(:color => "brown", :width => 0.5), name="Additive Polynomial", yaxis="y1")])
         elseif occursin("SSP", comp)
-            append!(traces, [PlotlyJS.scatter(x=λ_model, y=ustrip.(comps[comp]) .* ext_stars, mode="lines", 
+            append!(traces, [PlotlyJS.scatter(x=λ_model, y=ustrip.(comps[comp]) .* ext_stars .* mpoly, mode="lines", 
                 line=Dict(:color => "#FF00FF", :width => 0.5), name="SSPs", yaxis="y1")])
         elseif occursin("na_feii", comp)
             append!(traces, [PlotlyJS.scatter(x=λ_model, y=ustrip.(comps[comp]) .* ext_gas, mode="lines", 
@@ -121,13 +128,13 @@ function plot_spaxel_fit_plotly(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_
             append!(traces, [PlotlyJS.scatter(x=λ_model, y=ustrip.(comps[comp]) .* ext_gas, mode="lines", 
                 line=Dict(:color => "yellow", :width => 1), name="Broad Fe II", yaxis="y1")])
         elseif occursin("power_law", comp)
-            append!(traces, [PlotlyJS.scatter(x=λ_model, y=ustrip.(comps[comp]) .* ext_gas, mode="lines", 
+            append!(traces, [PlotlyJS.scatter(x=λ_model, y=ustrip.(comps[comp]) .* ext_gas .* mpoly, mode="lines", 
                 line=Dict(:color => "orange", :width => 0.5), name="Power laws", yaxis="y1")])
         elseif occursin("dust_cont", comp)
-            append!(traces, [PlotlyJS.scatter(x=λ_model, y=ustrip.(comps[comp]) .* ext_gas, mode="lines", 
+            append!(traces, [PlotlyJS.scatter(x=λ_model, y=ustrip.(comps[comp]) .* ext_gas .* mpoly, mode="lines", 
                 line=Dict(:color => "orange", :width => 0.5), name="Dust continuum", yaxis="y1")])
         elseif occursin("hot_dust", comp)
-            append!(traces, [PlotlyJS.scatter(x=λ_model, y=ustrip.(comps[comp]) .* abs_full, mode="lines", 
+            append!(traces, [PlotlyJS.scatter(x=λ_model, y=ustrip.(comps[comp]) .* abs_full .* mpoly, mode="lines", 
                 line=Dict(:color => "yellow", :width => 0.5), name="Hot Dust", yaxis="y1")])
         elseif occursin("line", comp)
             append!(traces, [PlotlyJS.scatter(x=λ_model, y=ustrip.(comps[comp]) .* ext_gas,
@@ -451,12 +458,13 @@ function plot_spaxel_fit_pyplot(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_
     ext_gas = comps["total_extinction_gas"]
     ext_stars = comps["total_extinction_stars"]
     split_ext = haskey(comps, "absorption_oli")
+    mpoly = comps["mpoly"]
 
     # full continuum (no PAHs)
     ax1.plot(ustrip.(λ_model), comps["continuum"] ./ norm .* factor_model, "k-", lw=2, alpha=0.5, label="Continuum")
     # individual continuum components
     if fopt.fit_stellar_continuum
-        ax1.plot(ustrip.(λ_model), comps["SSPs"] .* ext_stars ./ norm .* factor_model, "-", color="fuchsia", alpha=0.75, label="SSPs")
+        ax1.plot(ustrip.(λ_model), comps["SSPs"] .* ext_stars .* mpoly ./ norm .* factor_model, "-", color="fuchsia", alpha=0.75, label="SSPs")
     end
     if fopt.fit_opt_na_feii
         ax1.plot(ustrip.(λ_model), comps["na_feii"] .* ext_gas ./ norm .* factor_model, "-", color="goldenrod", alpha=0.8, label="Narrow Fe II")
@@ -465,17 +473,20 @@ function plot_spaxel_fit_pyplot(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_
         ax1.plot(ustrip.(λ_model), comps["br_feii"] .* ext_gas ./ norm .* factor_model, "--", color="goldenrod", alpha=0.8, label="Broad Fe II")
     end
     for i in 1:cube_fitter.n_power_law
-        ax1.plot(ustrip.(λ_model), comps["power_law_$i"] .* ext_gas ./ norm .* factor_model, "k-", alpha=0.5, label="Power Law")
+        ax1.plot(ustrip.(λ_model), comps["power_law_$i"] .* ext_gas .* mpoly ./ norm .* factor_model, "k-", alpha=0.5, label="Power Law")
     end
     for i in 1:cube_fitter.n_dust_cont
-        ax1.plot(ustrip.(λ_model), comps["dust_cont_$i"] .* ext_gas ./ norm .* factor_model, "k-", alpha=0.5, label="Dust continuum")
+        ax1.plot(ustrip.(λ_model), comps["dust_cont_$i"] .* ext_gas .* mpoly ./ norm .* factor_model, "k-", alpha=0.5, label="Dust continuum")
+    end
+    if cube_fitter.apoly_degree ≥ 0
+        ax1.plot(ustrip.(λ_model), comps["apoly"] ./ norm .* factor_model, "k:", alpha=0.5, label="Additive polynomial")
     end
     if fopt.fit_sil_emission
-        ax1.plot(ustrip.(λ_model), comps["hot_dust"] .* abs_full ./ norm .* factor_model, "-", color="#8ac800", alpha=0.8, label="Hot Dust")
+        ax1.plot(ustrip.(λ_model), comps["hot_dust"] .* abs_full .* mpoly ./ norm .* factor_model, "-", color="#8ac800", alpha=0.8, label="Hot Dust")
     end
     # templates
     for k ∈ 1:cube_fitter.n_templates
-        ax1.plot(ustrip.(λ_model), comps["templates_$k"] ./ norm .* factor_model, "-", color="#50630d", label="Template $k")
+        ax1.plot(ustrip.(λ_model), comps["templates_$k"] .* mpoly ./ norm .* factor_model, "-", color="#50630d", label="Template $k")
     end
     # full PAH profile
     sdust = zeros(length(λ_model))

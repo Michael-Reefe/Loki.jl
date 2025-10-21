@@ -15,6 +15,28 @@ val = 100.0
 plim = [0.0, 1000.0]
 locked = false
 
+########## Polynomial Options ################
+
+# Note: Polynomials are NOT included by default.
+# To enable them, one must set "apoly_degree" or
+# "mpoly_degree" to an integer >= 0.
+
+# Additive polynomial coefficients.
+# Note: this applies to ALL coefficients for as many
+# degrees as you have configured to include.
+[polynomials.acoeff]
+val = 0.0
+plim = [0.0, 100.0]
+locked = false
+
+# Multiplicative polynomial coefficients.
+# Note: this applies to ALL coefficients for as many
+# degrees as you have configured to include.
+[polynomials.mcoeff]
+val = 0.0
+plim = [-1.0, 1.0]
+locked = false
+
 ################# Fe II Kinematics ###################
 
 [na_feii_kinematics.vel]

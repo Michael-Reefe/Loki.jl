@@ -79,6 +79,39 @@ silicate_absorption = "d+"
 # or "ccm" for the Cardelli, Clayton, & Mathis (1989) Milky Way curve.
 extinction_curve = "calz"
 
+# Polynomials degrees: 
+# "apoly_degree" sets the degree for additive polynomials.
+# "mpoly_degree" sets the degree for multiplicative polynomials.
+# If either degrees are less than 0, the polynomials components are disabled (this is the default).
+# For multiplicative polynomials specifically, the 0th degree is disabled, since it is degenerate with
+# the normalization of the other fitting components.  Therefore, to actually include a multiplicative 
+# polynomial, the degree must be at least 1. The same restriction does NOT apply to additive polynomials.
+#
+# BE CAREFUL when enabling polynomial components.  Most of the model component options in Loki are at
+# least somewhat physically motivated.  Polynomials are not, and are treated conceptually as
+# "calibration corrections" to your continuum model.  For example, additive polynomials can be a good
+# way to subtract out a foreground/background signal, whereas multiplicative polynomials can be a good
+# way to model a non-uniform flux calibration as a function of wavelength from your instrument. 
+# They can be very powerful fitting tools, but as they say, "with great power comes great responsibility."
+# (Check the optical.toml file for options on setting the bounds of the polynomial coefficients)
+#
+# Multiplicative polynomials act on everything EXCEPT:
+#  - Emission lines (including the Fe II templates)
+#  - PAHs (unless you are using PAH templates, in which case the polynomials are applied
+#          during the template fitting, but not during the Drude profile fitting)
+#  - Additive polynomials
+# Additive polynomials are also not affected by dust extinction.
+#
+apoly_degree = -1
+mpoly_degree = -1
+
+# These options set the type of polynomial to use for additive or multiplicative polynomials.
+# The options are:
+#   - "Legendre"
+#   - "Chebyshev"
+apoly_type = "Legendre"
+mpoly_type = "Legendre"
+
 # The following 3 options are only used if extinction_screen = "decompose"
 # Magnesium content for olivine 
 olivine_y = 0.5

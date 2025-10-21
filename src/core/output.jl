@@ -227,6 +227,12 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
                 cube_model.abs_ice[:, index] .= comps["absorption_ice"]
                 cube_model.abs_ch[:, index] .= comps["absorption_ch"]
             end
+            if cube_fitter.apoly_degree ≥ 0
+                cube_model.apoly[:, index] .= comps["apoly"] .* restframe_factor
+            end
+            if cube_fitter.mpoly_degree ≥ 1
+                cube_model.mpoly[:, index] .= comps["mpoly"]
+            end
             if fopt.fit_stellar_continuum
                 cube_model.stellar[:, index] .= comps["SSPs"] .* restframe_factor
             end
@@ -331,6 +337,12 @@ function assign_qso3d_outputs(param_maps::ParamMaps, cube_model::CubeModel, cube
     if fopt.fit_ch_abs
         cube_model_3d.abs_ice .= cube_model.abs_ice[:,1,1]
         cube_model_3d.abs_ch .= cube_model.abs_ch[:,1,1]
+    end
+    if cube_fitter.apoly_degree ≥ 0
+        cube_model_3d.apoly .= extendp(cube_model.apoly[:,1,1], _shape) .* psf_norm_p
+    end
+    if cube_fitter.mpoly_degree ≥ 1
+        cube_model_3d.mpoly .= cube_model.mpoly[:,1,1]
     end
     cube_model_3d.stellar .= extendp(cube_model.stellar[:,1,1], _shape) .* psf_norm_p
     if fopt.fit_opt_na_feii
@@ -1123,6 +1135,12 @@ function write_fits_full_model(cube_fitter::CubeFitter, cube_data::NamedTuple, c
         if fopt.fit_ch_abs
             write(f, Float32.(permutedims(cube_model.abs_ice, (2,3,1))); name="EXTINCTION.ABS_ICE")    # Ice Absorption model
             write(f, Float32.(permutedims(cube_model.abs_ch, (2,3,1))); name="EXTINCTION.ABS_CH")      # CH Absorption model
+        end
+        if cube_fitter.apoly_degree ≥ 0
+            write(f, Float32.(permutedims(ustrip.(cube_model.apoly), (2,3,1))); name="POLYNOMIALS.ADDITIVE")    # Additive polynomial
+        end
+        if cube_fitter.mpoly_degree ≥ 1
+            write(f, Float32.(permutedims(cube_model.mpoly, (2,3,1))); name="POLYNOMIALS.MULTIPLICATIVE")  # Multiplicative polynomial
         end
         if fopt.fit_stellar_continuum
             write(f, Float32.(permutedims(ustrip.(cube_model.stellar), (2,3,1)));      # Stellar population models

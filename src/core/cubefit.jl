@@ -192,6 +192,11 @@ these options. For more detailed explanations on these options, please refer to 
 - `n_acomps`: The summed total number of line profiles fit to all lines in the spectrum, including additional components.
 - `n_comps`: The maximum number of additional profiles that may be fit to any given line.
 
+- `apoly_degree`: The degree of additive polynomials.
+- `mpoly_degree`: The degree of multiplicative polynomials.
+- `apoly_type`: The type of additive polynomials.
+- `mpoly_type`: The type of multiplicative polynomials.
+
 - `n_params_cont`: The total number of free fitting parameters for the continuum fit (not including emission lines)
 - `n_params_dust`: The total number of free fitting parameters for the PAH fit (not including the continuum)
 - `n_params_lines`: The total number of free fitting parameters for the emission line fit (not including the continuum)
@@ -253,6 +258,11 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
     n_templates::S
     n_lines::S
     n_acomps::S
+
+    apoly_degree::S
+    mpoly_degree::S
+    apoly_type::Symbol
+    mpoly_type::Symbol
 
     # Total number of parameters for the continuum, dust features, lines, and extra
     n_params_cont::S
@@ -470,6 +480,10 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
             n_templates,
             n_lines,
             n_acomps,
+            out[:apoly_degree],
+            out[:mpoly_degree],
+            out[:apoly_type],
+            out[:mpoly_type],
             n_params_cont,
             n_params_dust,
             n_params_lines,
@@ -527,6 +541,8 @@ function cubefitter_add_default_options!(cube::DataCube, out::Dict)
 
     out[:line_test_lines] = Vector{Symbol}[Symbol[Symbol(ln) for ln in group] for group in out[:line_test_lines]]
     out[:plot_spaxels] = Symbol(out[:plot_spaxels])
+    out[:apoly_type] = Symbol(out[:apoly_type])
+    out[:mpoly_type] = Symbol(out[:mpoly_type])
 
     λunit = unit(cube.λ[1])
     if !haskey(out, :plot_range)
