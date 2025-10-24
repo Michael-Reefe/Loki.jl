@@ -93,6 +93,8 @@ extinction_curve = "calz"
 # way to subtract out a foreground/background signal, whereas multiplicative polynomials can be a good
 # way to model a non-uniform flux calibration as a function of wavelength from your instrument. 
 # They can be very powerful fitting tools, but as they say, "with great power comes great responsibility."
+# Just as one example, I would not recommend that you marginalize over any kind of extinction/reddening
+# at the same time as multiplicative polynomials, because they will inevitably be degenerate.
 # (Check the optical.toml file for options on setting the bounds of the polynomial coefficients)
 #
 # Multiplicative polynomials act on everything EXCEPT:
@@ -107,10 +109,10 @@ mpoly_degree = -1
 
 # These options set the type of polynomial to use for additive or multiplicative polynomials.
 # The options are:
-#   - "Legendre"
 #   - "Chebyshev"
-apoly_type = "Legendre"
-mpoly_type = "Legendre"
+#   - "Legendre"
+apoly_type = "Chebyshev"
+mpoly_type = "Chebyshev"
 
 # The following 3 options are only used if extinction_screen = "decompose"
 # Magnesium content for olivine 

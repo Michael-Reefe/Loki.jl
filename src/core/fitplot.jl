@@ -269,6 +269,14 @@ function plot_spaxel_fit_pyplot(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_
     ext_label = "Extinction"
     I_label = prefix -> L"$%$sub I_{%$sub}$ (%$prefix%$(latex(Iunit)))"
 
+    # Convert the user mask into a bitvector
+    user_mask_bits = falses(length(λ_data))
+    user_mask = cube_fitter.spectral_region.mask
+    for region in user_mask
+        user_mask_bits .|= region[1] .< λ_data .< region[2]
+    end
+    total_mask = mask_bad .| user_mask_bits
+
     # If max is above 10^4, normalize so the y axis labels aren't super wide
     power = floor(Int, log10(nanmaximum(ustrip.(I .* factor_data))))
     if (power ≥ 3) || (power ≤ -3)
@@ -285,11 +293,11 @@ function plot_spaxel_fit_pyplot(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_
 
     if !logy || !isnothing(range)
         max_inten = isnothing(range) ? 
-                    1.3nanmaximum((I ./ norm .* factor_data)[.~mask_lines .& .~mask_bad]) : 
+                    1.3nanmaximum((I ./ norm .* factor_data)[.~mask_lines .& .~total_mask]) : 
                     1.1nanmaximum((I ./ norm .* factor_data)[range[1] .< λ_data .< range[2]])
     else
         max_inten = isnothing(range) ? 
-                    1.1nanmaximum(I[.~mask_bad] ./ norm .* factor_data[.~mask_bad]) : 
+                    1.1nanmaximum(I[.~total_mask] ./ norm .* factor_data[.~total_mask]) : 
                     1.1nanmaximum((I ./ norm .* factor_data)[range[1] .< λ_data .< range[2]])
     end
 
@@ -346,6 +354,9 @@ function plot_spaxel_fit_pyplot(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_
         ax1.plot(ustrip.(λ_data), spline ./ norm .* factor_data, color="#2ca02c", linestyle="--", label="Cubic Spline")
     end
 
+    # full continuum model (no PAHs)
+    ax1.plot(ustrip.(λ_model), comps["continuum"] ./ norm .* factor_model, "k-", lw=2, alpha=0.5, label="Continuum")
+
     ax1.plot(ustrip.(λ_model), I_model ./ norm .* factor_model, "-", color="#ff5d00", label="Model")
     if !isnothing(I_boot_min) && !isnothing(I_boot_max)
         ax1.fill_between(ustrip.(λ_model), I_boot_min ./ norm .* factor_model, I_boot_max ./ norm .* factor_model, color="#ff5d00", 
@@ -367,12 +378,6 @@ function plot_spaxel_fit_pyplot(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_
     # ax4 = ax1.twiny()
 
     # Shade in masked regions
-    user_mask_bits = falses(length(λ_data))
-    user_mask = cube_fitter.spectral_region.mask
-    for region in user_mask
-        user_mask_bits .|= region[1] .< λ_data .< region[2]
-    end
-    total_mask = mask_bad .| user_mask_bits
     l_edges = findall(diff(total_mask) .== 1) .+ 1
     r_edges = findall(diff(total_mask) .== -1)
     # Edge cases
@@ -460,8 +465,6 @@ function plot_spaxel_fit_pyplot(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_
     split_ext = haskey(comps, "absorption_oli")
     mpoly = comps["mpoly"]
 
-    # full continuum (no PAHs)
-    ax1.plot(ustrip.(λ_model), comps["continuum"] ./ norm .* factor_model, "k-", lw=2, alpha=0.5, label="Continuum")
     # individual continuum components
     if fopt.fit_stellar_continuum
         ax1.plot(ustrip.(λ_model), comps["SSPs"] .* ext_stars .* mpoly ./ norm .* factor_model, "-", color="fuchsia", alpha=0.75, label="SSPs")

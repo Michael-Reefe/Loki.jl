@@ -603,6 +603,8 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
             logg_in = cat(logg_in, read(stellar_templates[i]["AXES"], "LOGG"), dims=1)
             logt_in = cat(logt_in, read(stellar_templates[i]["AXES"], "LOGT"), dims=1)
         end
+        # deal with NaNs 
+        ssp_templates_in[.~isfinite.(ssp_templates_in)] .= 0. .* input_units
         # remove all templates that dont fall within the LOGG/LOGT range
         gt_mask = (stars_options.logg.min .≤ logg_in .≤ stars_options.logg.max) .&
                   (stars_options.teff.min .≤ (10 .^ logt_in) .≤ stars_options.teff.max)

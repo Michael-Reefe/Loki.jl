@@ -929,7 +929,7 @@ function extinction_cardelli(λ::QWave, E_BV::Real; Rv::Real=3.10)
 
     # Correction invalid for any x > 11
     if x > 11.0
-        @warn "Input wavelength vector has values outside the allowable range of 1/λ < 11. Returning ones."
+        @warn "Input wavelength vector has values outside the allowable range of 1/λ > 11. Returning ones."
         return one(typeof(ustrip(λ)))
     end
     a = zero(typeof(ustrip(λ)))

@@ -145,6 +145,8 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         else 
             error("Unrecognized polynomial type: $(cube_fitter.apoly_type)")
         end
+        # Don't allow the polynomial to be negative
+        comps["apoly"] .= clamp.(comps["apoly"], 0., Inf)
         # Additive polynomials are not affected by any dust extinction or 
         # multiplicative polynomials, since they're meant to model background/
         # foreground emission or other systematics.
@@ -369,9 +371,9 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         coeffs = params[pᵢ:pᵢ+cube_fitter.apoly_degree]
         x = range(-1., 1., length=length(λ))
         if cube_fitter.apoly_type == :Legendre
-            contin .+= Legendre(coeffs).(x)
+            contin .+= clamp.(Legendre(coeffs).(x), 0., Inf)
         elseif cube_fitter.apoly_type == :Chebyshev
-            contin .+= Chebyshev(coeffs).(x)
+            contin .+= clamp.(Chebyshev(coeffs).(x), 0., Inf)
         else 
             error("Unrecognized polynomial type: $(cube_fitter.apoly_type)")
         end

@@ -40,6 +40,7 @@ As a brief overview, all components that may be included in a model based on the
 - A stellar continuum composed of a linear combination of simple stellar population (SSP) templates from FSPS
 - An arbitrary number of power laws (to model, for example, an AGN continuum).
 - Optional Narrow- and broad-line Fe II emission using the templates of [Véron-Cetty et al. (2004)](https://ui.adsabs.harvard.edu/abs/2004A%26A...417..515V/abstract) derived from the spectrum of I Zw 1.
+- Additive and/or multiplicative polynomials (Legendre or Chebyshev) of arbitrary degree.
 - A dust continuum modeled by a few modified blackbody functions (3-4) with emissivities $\propto 1/\lambda^2$ at variable temperatures in the range $T \in$ 35-400 K
 - Emission from Polycyclic Aromatic Hydrocarbon (PAH) molecules reperesented by Drude (or Pearson type-IV) profiles with constrained central wavelengths and widths
 - An intrinsic dust attenuation model using the extinction curve of either [Cardelli, Clayton, & Mathis (1989)](https://ui.adsabs.harvard.edu/abs/1989ApJ...345..245C/abstract) or [Calzetti et al. (2000)](https://ui.adsabs.harvard.edu/abs/2000ApJ...533..682C/abstract) (optionally with a UV bump parametrized by [Kriek & Conroy (2013)](https://ui.adsabs.harvard.edu/abs/2013ApJ...775L..16K/abstract)).
@@ -272,6 +273,15 @@ Also note, when your spectrum includes optical or UV data, then you may only use
 
 This option determines what dust extinction profile to use. The possible values are "ccm" for the [Cardelli, Clayton, & Mathis (1989)](https://ui.adsabs.harvard.edu/abs/1989ApJ...345..245C/abstract) template, or "calz" for the [Calzetti et al. (2000)](https://ui.adsabs.harvard.edu/abs/2000ApJ...533..682C/abstract) template. This is not used when you only have infrared data.
 
+`apoly_degree = -1`
+`mpoly_degree = -1`
+
+These two options determine the maximum degree for additive ("apoly") and multiplicative ("mpoly") polynomial components, respectively.  If they are set to any number < 0, the component is disabled (both are disabled by default).  For additive polynomials, the minimum degree that can be included in a fit is 0.  For multiplicative polynomials, the minimum degree that will be included in a fit is 1, since the 0th degree is degenerate with the normalizations of all other fitting components.  Therefore, to actually include a multiplicative polynomial, "mpoly_degree" must be at least 1.  BE CAREFUL WHEN ENABLING POLYNOMIAL COMPONENTS!  Most of the model component options in Loki are at least somewhat physically motivated.  Polynomials are not, and are treated conceptually as "calibration corrections" to your continuum model.  For example, additive polynomials can be a good way to subtract out a foreground/background signal, whereas multiplicative polynomials can be a good way to model a non-uniform flux calibration as a function of wavelength from your instrument. They can be very powerful fitting tools, but as they say, "with great power comes great responsibility."  Just as one example of how things can go wrong, I would not recommend that you marginalize over any kind of extinction/reddening at the same time as multiplicative polynomials, because they will inevitably be degenerate with the lower-order polynomial components. 
+
+`apoly_type = "Chebyshev"`
+`mpoly_type = "Chebyshev"`
+
+These two options determine the set of orthogonal polynomials to use as the basis for the additive ("apoly") and multiplicative ("mpoly") polynomial components, respectively.  One can choose between either Chebyshev or Legendre polynomials, with Chebyshev being the default.
 
 `olivine_y = 0.5`
 
