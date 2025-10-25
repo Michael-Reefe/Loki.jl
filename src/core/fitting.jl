@@ -1253,8 +1253,13 @@ function spaxel_loop_pmap!(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxe
     # => create a closure where the only actual function argument is the spaxel index; 
     #    I think this, in combination with the default Caching Pool, means the large cube_fitter 
     #    and cube_data structures dont have to all be passed to the individual workers
-    progress_pmap(spaxels, progress=prog, retry_delays=ones(1)) do index
+    pmap_result = progress_pmap(spaxels, progress=prog, retry_delays=ones(1)) do index
         p_out, p_err, np_ssp = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin) 
+        return index, p_out, p_err, np_ssp
+    end
+
+    # Loop over the results and insert them into the output arrays at the correct indices
+    for (index, p_out, p_err, np_ssp) in pmap_result
         if !isnothing(p_out)
             if vorbin
                 out_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(index)[1])
@@ -1269,7 +1274,6 @@ function spaxel_loop_pmap!(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxe
                 out_np_ssp[index] = np_ssp
             end
         end
-        nothing
     end
 
     # We no longer need the extra worker processes after this point
@@ -1283,27 +1287,7 @@ function spaxel_loop_distributed!(cube_fitter::CubeFitter, cube_data::NamedTuple
     spaxels::Vector, vorbin::Bool, out_params::AbstractArray{<:Real,3}, 
     out_errs::AbstractArray{<:Real,4}, out_np_ssp::AbstractArray{Int,2})
 
-    @showprogress @distributed for index ∈ spaxels
-        p_out, p_err, np_ssp = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
-        if !isnothing(p_out)
-            if vorbin
-                out_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(index)[1])
-                for out_index in out_indices
-                    out_params[out_index, :] .= ustrip.(p_out)
-                    out_errs[out_index, :, :] .= ustrip.(p_err)
-                    out_np_ssp[out_index] = np_ssp
-                end
-            else
-                out_params[index, :] .= ustrip.(p_out)
-                out_errs[index, :, :] .= ustrip.(p_err)
-                out_np_ssp[index] = np_ssp
-            end
-        end
-    end
-
-    # We no longer need the extra worker processes after this point
-    rmprocs(workers())
-
+    error("Sorry, the \"distributed\" parallelization option is not currently implemented!")
 end
 
 
@@ -1415,10 +1399,6 @@ function fit_cube!(cube_fitter::CubeFitter)
     # Use multiprocessing (not threading) to iterate over multiple spaxels at once using multiple CPUs
     if oopt.parallel && nworkers() > 1
         @info "===> Beginning individual spaxel fitting... <==="
-        # Parallel loops require these to be SharedArrays so that each process accesses the same array
-        out_params = SharedArray(out_params)
-        out_errs = SharedArray(out_errs)
-        out_np_ssp = SharedArray(out_np_ssp)
         if oopt.parallel_strategy == "pmap"
             spaxel_loop_pmap!(cube_fitter, cube_data, spaxels, vorbin, out_params, out_errs, out_np_ssp)
         elseif oopt.parallel_strategy == "distributed"
