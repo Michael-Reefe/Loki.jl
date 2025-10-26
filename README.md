@@ -1041,8 +1041,10 @@ The [profiles] dictionary gives the master reference for which profiles to use f
 
 ```toml
 [acomps]
-NeVI_7652m = ["Voigt"]   # <- be careful!
-low = ["Voigt"]         # <- more likely what you want
+# only affects Ne VI 7.652um (will not work if this line is part of a group!)
+NeVI_7652m = ["Voigt"]   
+# affects all lines in the "hi" kinematic group
+hi = ["Voigt"] 
 ```
 
 The [acomps] dictionary acts similarly to the [profiles] dictionary, but for the additional line components specified by `n_acomps.` In other words, this is the location where you actually specify which lines, if any, should have additional profiles, and what types of profiles they should be. In the example above, the [Ne VI] λ7.652 line is given one additional Voigt profile. This means that, in total, this line will be fit with two Voigt profiles (assuming any testing for additional components is successful for a given fit, or one is not doing component testing). You will notice that the entries here are lists of strings, meaning one can add an arbitrary number of additional profiles to each line. However, there is an upper limit on the number of additional profiles given by `n_acomps.`
@@ -1363,6 +1365,8 @@ Please see `examples` folder for a bunch of example notebooks for using MIRI/MRS
 - If you're interested in fitting NIRSpec data, fitting one spaxel at a time, see [example_NIRSpec_cube.ipynb](./examples/example_NIRSpec_cube.ipynb). (Note: the procedure for PSF decomposition is the same for MIRI and NIRSpec, so you can see the corresponding MIRI example notebook for information on how to do this)
 - If you're interested in using voronoi binning to bin spaxels into roughly equal S/N spectra, see [example_MIRI_vorbin.ipynb](./examples/example_MIRI_vorbin.ipynb)
 - If you're interested in combining data from multiple observations of the same object to create a mosaick, see [example_MIRI_mosaicking.ipynb](./examples/example_MIRI_mosaicking.ipynb)
+- If you're interested in getting the most accurate possible stellar velocities, see [example_NIRSpec_stellar_velocity.ipynb](./examples/example_NIRSpec_stellar_velocity.ipynb)
+- If you're interested in including polynomial components in your fit, see [example_polynomials.ipynb](./examples/example_polynomials.ipynb)
 - Finally, if you're interested in fitting non-JWST data, see [example_other_formats.ipynb](./examples/example_other_formats.ipynb)
 - Note that all of the notebooks will also show you how to load in data products straight from the STSci pipeline and prepare it to be fit, which include things like shifting it to the rest frame, applying a de-reddening correction, logarithmically binning the wavelengths, masking out bad pixels, etc., which can all be done with Loki. Most examples will also show you how to combine data from multiple channels, and the one on mosaicking in particular will show you how to combine data from multiple observations.
 
