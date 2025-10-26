@@ -28,6 +28,12 @@
     - [Units](#xi-units)
 * [Examples](#v-examples)
 
+---
+### UPDATE 10/26/25:
+
+Fixed an issue where running Loki with parallelization enabled over multiple different computers (i.e. across nodes in a HPCC) would cause a segmentation fault.  This was due to the usage of SharedArrays, which are apparently only valid when all parallel processes are run by the same host computer.  I fixed the issue by removing the dependency on SharedArrays all together and simply using the functionality of the "pmap" function to collect the results, and then sort them afterwards.
+
+TL;DR You should now be able to run Loki across multiple nodes in an HPCC to your heart's content!
 
 ---
 ## I. Introduction
