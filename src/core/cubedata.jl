@@ -1105,7 +1105,7 @@ Modifies the cube object in-place with the `voronoi_bins` attribute, which is a 
 labels to each voronoi bin.
 """
 function voronoi_rebin!(cube::DataCube, target_SN::Real, window::Union{Tuple{QWave,QWave},Nothing}=nothing,
-    bin_strategy::BinningStrategy=WeightedVoronoi(); noise_sigma_clip::Real=5.)
+    bin_strategy::BinningStrategy=WeightedVoronoi(); noise_sigma_clip::Real=10.)
 
     @info "Performing Voronoi rebinning with target S/N=$target_SN"
 
@@ -1132,8 +1132,10 @@ function voronoi_rebin!(cube::DataCube, target_SN::Real, window::Union{Tuple{QWa
     signal = clamp.(signal, 0*unit(signal[1]), Inf*unit(signal[1]))
     noise = clamp.(noise, 0*unit(noise[1]), Inf*unit(noise[1]))
     # do some sigma clipping on the noise to make sure the overall S/N calculation is not dominated by 
-    # a few pixels with super high noise levels
-    noise_thresh = (nanmedian(ustrip.(noise)) + nanstd(ustrip.(noise))*noise_sigma_clip) * unit(noise[1])
+    # a few pixels with super high noise levels. Default clip threshold is 10 sigma, where sigma is 
+    # calculated as 1.4826 * MAD (median absolute deviation), which is more robust against outliers than
+    # the standard deviation.
+    noise_thresh = (nanmedian(ustrip.(noise)) + 1.4826*nanmad(ustrip.(noise))*noise_sigma_clip) * unit(noise[1])
     noise_mask = noise .< noise_thresh
     x = x[noise_mask]
     y = y[noise_mask]
