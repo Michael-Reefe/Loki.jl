@@ -1249,6 +1249,8 @@ function spaxel_loop_pmap!(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxe
     vorbin::Bool, out_params::AbstractArray{<:Real,3}, out_errs::AbstractArray{<:Real,4}, 
     out_np_ssp::AbstractArray{Int,2})
 
+    @info "Number of spaxels to fit: $(length(spaxels))"
+
     prog = Progress(length(spaxels))
     # => create a closure where the only actual function argument is the spaxel index; 
     #    I think this, in combination with the default Caching Pool, means the large cube_fitter 
@@ -1294,6 +1296,8 @@ end
 # Helper function that loops over spaxels, fitting them in sequence (not parallel)
 function spaxel_loop_serial!(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxels::Vector,
     vorbin::Bool, out_params::AbstractArray{<:Real,3}, out_errs::AbstractArray{<:Real,4}, out_np_ssp::AbstractArray{Int,2})
+
+    @info "Number of spaxels to fit: $(length(spaxels))"
 
     prog = Progress(length(spaxels))
     for index ∈ spaxels
