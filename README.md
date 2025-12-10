@@ -962,7 +962,7 @@ kinematic_group_low = [
 tie_voff_low = true
 tie_fwhm_low = true
 ```
-The user may define arbitrary "kinematic groups" named with the prefix "kinematic_group_" followed by a unique identifying label. Inside the group should be a list of strings that can be matched to the names of emission lines. Any line that contains any of these strings within its name will be included in the group. By default, the velocity offset and FWHM of all lines in the group are tied together, but one can use the `tie_voff_[name]` and `tie_fwhm_[name]` options to enable or disable the velocity offset or FWHM individually from being tied. 
+The user may define arbitrary "kinematic groups" named with the prefix "kinematic_group_" followed by a unique identifying label. Inside the group should be a list of strings that can be matched to the names of emission lines. These can be any regular expressions that occur uniquely within the set of lines that you want (the regular expressions don't have to MATCH the line names, they just have to occur WITHIN them). Any line that contains any of these regular expressions within its name will be included in the group. By default, the velocity offset and FWHM of all lines in the group are tied together, but one can use the `tie_voff_[name]` and `tie_fwhm_[name]` options to enable or disable the velocity offset or FWHM individually from being tied. 
 
 ```toml
 kinematic_group_Balmer = [

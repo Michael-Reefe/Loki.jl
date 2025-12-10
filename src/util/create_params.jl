@@ -565,7 +565,7 @@ function check_tied_kinematics!(lines::Dict, prefix::String, line::String, kinem
             you can just include an item "FeII_" and it will automatically catch all the FeII lines. Note the underscore
             is important, otherwise "FeII" would also match "FeIII" lines.
             =#
-            if occursin(groupmember, line)
+            if occursin(Regex(groupmember), line)
 
                 # Check if amp should  be tied
                 params = []
@@ -641,7 +641,7 @@ function check_acomp_tied_kinematics!(lines::Dict, prefix::String, line::String,
     for j ∈ 1:(length(fit_profiles)-1)
         for group ∈ kinematic_groups
             for groupmember ∈ lines["kinematic_group_" * group]
-                if occursin(groupmember, line)
+                if occursin(Regex(groupmember), line)
 
                     params = []
                     # Check if amp should be tied
@@ -905,7 +905,7 @@ function construct_line_parameters(out::Dict, λunit::Unitful.Units, Iunit::Unit
         group_name = nothing
         for group ∈ kinematic_groups
             for groupmember ∈ lines["kinematic_group_" * group]
-                if occursin(groupmember, line) 
+                if occursin(Regex(groupmember), line) 
                     group_name = group
                 end
             end
