@@ -1,7 +1,7 @@
 name = "Loki"
 uuid = "6dc8f741-0729-4eeb-ae09-58704f061668"
 authors = ["Michael-Reefe <michael.reefe8@gmail.com>"]
-version = "3.3.3"
+version = "3.3.4"
 
 [deps]
 AbstractFFTs = "621f4979-c628-5d54-868e-fcf4e3e8185c"

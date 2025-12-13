@@ -294,7 +294,12 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
     #= Constructor function --> the default inputs are all taken from the configuration files, but may be overwritten
     by the kwargs object using the same syntax as any keyword argument. The rest of the fields are generated in the function 
     from these inputs =#
-    function CubeFitter(cube::DataCube, z::Real, name::String; kwargs...) 
+    function CubeFitter(cube::DataCube, z::Real, name::String; 
+        options_file::String=joinpath(@__DIR__, "..", "options", "options.toml"),
+        lines_file::String=joinpath(@__DIR__, "..", "options", "lines.toml"),
+        optical_file::String=joinpath(@__DIR__, "..", "options", "optical.toml"),
+        infrared_file::String=joinpath(@__DIR__, "..", "options", "infrared.toml"),
+        kwargs...) 
 
         # Do a few checks on the input data cube
         @assert cube.vacuum_wave "Please make sure the data is in vacuum wavelengths before constructing a CubeFitter! (use function: correct!)"
@@ -310,12 +315,15 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
         name = replace(name, #= no spaces! =# " " => "_")
 
         # Prepare options from the configuration file
-        options = parse_options()
+        # joinpath(@__DIR__, "..", "options", "options.toml")
+        options = parse_options(options_file)
+
         # Overwrite with any options provided in the keyword arguments
         out = copy(options)
         for key in keys(kwargs)
             out[key] = kwargs[key]
         end
+
         # Set up and reformat some default options
         cubefitter_add_default_options!(cube, out)
         # Set up the extinction map and PAH template boolean map 
@@ -346,9 +354,9 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
 
         # Create the model parameters, stellar and iron templates, and count various parameters
         model_parameters, ssps, feii, n_ssps, n_power_law, n_dust_cont, n_dust_feat, n_abs_feat, n_templates, vres =
-            cubefitter_prepare_continuum(λ, z, out, λunit, Iunit, spectral_region, name, cube, custom_stellar_template_wave,
-            custom_stellar_template_R, custom_stellar_templates)
-        lines, n_lines, n_acomps, n_fit_comps = cubefitter_prepare_lines(out, λunit, Iunit, cube, spectral_region)
+            cubefitter_prepare_continuum(optical_file, infrared_file, lines_file, λ, z, out, λunit, Iunit, spectral_region, 
+            name, cube, custom_stellar_template_wave, custom_stellar_template_R, custom_stellar_templates)
+        lines, n_lines, n_acomps, n_fit_comps = cubefitter_prepare_lines(lines_file, out, λunit, Iunit, cube, spectral_region)
 
         # Count total parameters
         n_params_cont = count_cont_parameters(model_parameters; split=false)

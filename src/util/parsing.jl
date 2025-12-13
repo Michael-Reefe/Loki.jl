@@ -161,15 +161,15 @@ end
 Read in the options.toml configuration file, checking that it is formatted correctly,
 and convert it into a julia dictionary.  This deals with general/top-level code configurations.
 """
-function parse_options()
+function parse_options(options_filepath::String)
 
     @debug """\n
-    Parsing options file
+    Parsing options file from: $(options_filepath)
     #######################################################
     """
 
     # Read in the options file
-    options = TOML.parsefile(joinpath(@__DIR__, "..", "options", "options.toml"))
+    options = TOML.parsefile(options_filepath)
     validate_options_file(options)
 
     # Convert keys to symbols
@@ -209,9 +209,13 @@ function parse_options()
 end
 
 
-function parse_lines(region::SpectralRegion, λunit::Unitful.Units)
+function parse_lines(lines_filepath::String, region::SpectralRegion, λunit::Unitful.Units)
 
-    lines = TOML.parsefile(joinpath(@__DIR__, "..", "options", "lines.toml"))
+    @debug """\n
+    Parsing lines file from: $(lines_filepath)
+    #######################################################
+    """
+    lines = TOML.parsefile(lines_filepath)
     validate_lines_file(lines)
 
     cent_vals = Vector{typeof(1.0λunit)}()    # provide all the line wavelengths in consistent units

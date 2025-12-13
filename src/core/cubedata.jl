@@ -1041,13 +1041,14 @@ The statistical errors are defined as the standard deviation of the residuals be
 fit to the flux, within a small window (60 pixels). Emission lines are masked out during this process.
 """
 function calculate_statistical_errors!(cube::DataCube, 
+    lines_file::String=joinpath(@__DIR__, "..", "options", "lines.toml"),
     overrides::Union{Vector{Tuple{T,T}},Nothing}=nothing; 
     mask_width::typeof(1.0u"km/s")=1000.0u"km/s", median::Bool=false) where {T<:QLength}
 
     λ = cube.λ
 
     if isnothing(overrides)
-        _, cent_vals = parse_lines(cube.spectral_region, unit(λ[1]))
+        _, cent_vals = parse_lines(lines_file, cube.spectral_region, unit(λ[1]))
         overrides = Vector{Tuple{eltype(cent_vals),eltype(cent_vals)}}()
         for λi in cent_vals
             push!(overrides, λi .* (1-mask_width/C_KMS, 1+mask_width/C_KMS))

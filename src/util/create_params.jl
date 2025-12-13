@@ -463,8 +463,8 @@ end
 Reads in the optical and infrared options files and creates parameter vectors for the 
 continuum and dust features.
 """
-function construct_continuum_parameters(out::Dict, λunit::Unitful.Units, Iunit::Unitful.Units, region::SpectralRegion,
-    redshift::Real)
+function construct_continuum_parameters(optical_file::String, infrared_file::String, out::Dict, 
+    λunit::Unitful.Units, Iunit::Unitful.Units, region::SpectralRegion, redshift::Real)
 
     params = FitParameter[]
     pnames = String[]
@@ -472,19 +472,19 @@ function construct_continuum_parameters(out::Dict, λunit::Unitful.Units, Iunit:
     ptrans = Vector{Transformation}[]
 
     @debug """\n
-    Parsing optical file
+    Parsing optical file from: $(optical_file)
     #######################################################
     """
     # Read in the optical file
-    optical = TOML.parsefile(joinpath(@__DIR__, "..", "options", "optical.toml"))
+    optical = TOML.parsefile(optical_file)
     validate_optical_file(optical)
 
     @debug """\n
-    Parsing infrared file
+    Parsing infrared file from: $(infrared_file)
     #######################################################
     """
     # Read in the infrared file
-    infrared = TOML.parsefile(joinpath(@__DIR__, "..", "options", "infrared.toml"))
+    infrared = TOML.parsefile(infrared_file)
     validate_ir_file(infrared)
 
     # Add parameters iteratively
@@ -862,21 +862,17 @@ end
 
 
 """
-    construct_line_parameters(out, λunit, Iunit, region)
+    construct_line_parameters(lines_file, out, λunit, Iunit, region)
 
 Read in the lines.toml configuration file, checking that it is formatted correctly,
 and convert it into a julia dictionary with Parameter objects for line fitting parameters.
 This deals purely with emission line options.
 """
-function construct_line_parameters(out::Dict, λunit::Unitful.Units, Iunit::Unitful.Units, region::SpectralRegion)
-
-    @debug """\n
-    Parsing lines file
-    #######################################################
-    """
+function construct_line_parameters(lines_file::String, out::Dict, λunit::Unitful.Units, Iunit::Unitful.Units, 
+    region::SpectralRegion)
 
     # Read in the lines file
-    lines, cent_vals = parse_lines(region, λunit)
+    lines, cent_vals = parse_lines(lines_file, region, λunit)
 
     # Create the kinematic groups
     #   ---> kinematic groups apply to all additional components of lines as well as the main component
@@ -1032,14 +1028,15 @@ end
 
 
 """
-    construct_model_parameters(out, λunit, Iunit, region)
+    construct_model_parameters(optical_file, infrared_file, lines_file, out, λunit, Iunit, region)
 
 The main function for constructing a ModelParameters object, which describes all the parameters of the model,
 including those that are being fit and those that are not being fit.
 """
-function construct_model_parameters(out::Dict, λunit::Unitful.Units, Iunit::Unitful.Units, region::SpectralRegion,
-    redshift::Real)
-    continuum, abs_features, dust_features, statistics = construct_continuum_parameters(out, λunit, Iunit, region, redshift)
-    lines = construct_line_parameters(out, λunit, Iunit, region)
+function construct_model_parameters(optical_file::String, infrared_file::String, lines_file::String, out::Dict, 
+    λunit::Unitful.Units, Iunit::Unitful.Units, region::SpectralRegion, redshift::Real)
+    continuum, abs_features, dust_features, statistics = construct_continuum_parameters(optical_file, infrared_file, out, 
+        λunit, Iunit, region, redshift)
+    lines = construct_line_parameters(lines_file, out, λunit, Iunit, region)
     ModelParameters(continuum, abs_features, dust_features, lines, statistics)
 end

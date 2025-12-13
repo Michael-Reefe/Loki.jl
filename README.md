@@ -29,6 +29,21 @@
 * [Examples](#v-examples)
 
 ---
+### UPDATE 12/13/25:
+
+I've now implemented a way to manually pass in a custom filepath for your options files ("options.toml", "lines.toml", "optical.toml", and "infrared.toml").  This way you no longer need to mess with or overwrite the default ones that come with the Loki installation in the src/options directory.  You can simply copy them into your working directory (or make new ones from scratch) and pass in the file paths to these files when making your CubeFitter, i.e.:
+```julia
+cube_fitter = CubeFitter(
+    # ... other arguments ...    
+    options_file="/path/to/options.toml",
+    lines_file="/path/to/lines.toml",
+    optical_file="/path/to/optical.toml",
+    infrared_file="/path/to/infrared.toml", 
+    # ... more arguments ...
+)
+```
+(also see [examples](#v-examples)). Note that this means the `calculate_statistical_errors!` function now *also* has an optional argument for the lines file, since it relies on it to mask out emission lines when calculating statistical errors.
+
 ### UPDATE 10/26/25:
 
 Fixed an issue where running Loki with parallelization enabled over multiple different computers (i.e. across nodes in a HPCC) would cause a segmentation fault.  This was due to the usage of SharedArrays, which are apparently only valid when all parallel processes are run by the same host computer.  I fixed the issue by removing the dependency on SharedArrays all together and simply using the functionality of the "pmap" function to collect the results, and then sort them afterwards.
@@ -461,6 +476,22 @@ The cosmology options determine the cosmology that the code assumes. Currently t
 ---
 
 Additional configuration options that do not have default entries in the `options.toml` file, but may be specified by either manually adding them to the file or including them as keyword arguments in the construction of a `CubeFitter` object, are listed below:
+
+`options_file`
+
+This specifies a (string) file path to a custom options.toml file, which will replace the default options file included under src/options.
+
+`lines_file`
+
+This specifies a (string) file path to a custom lines.toml file, which will replace the default lines file included under src/options.
+
+`optical_file`
+
+This specifies a (string) file path to a custom optical.toml file, which will replace the default optical file included under src/options.
+
+`infrared_file`
+
+This specifies a (string) file path to a custom infrared.toml file, which will replace the default infrared file included under src/options.
 
 `plot_range`
 
@@ -1454,13 +1485,25 @@ rotate_to_sky_axes!(obs.channels[0])
 ```julia
 interpolate_nans!(obs.channels[0])
 ```
-7. The errors in the cube can be replaced with the "statistical errors", which are calculated as the standard deviation of the residuals between the flux and a cubic spline fit to the flux (with emission lines masked out) within a small window (60 pixels) around each pixel.  This is performed with the "calculate_statistical_errors!" function.  I included this functionality because the errors provided by the STSci pipeline initially seemed to be very underestimated, so I have provided this as a way to calculate more reasonable errors based on the scatter in the data.  However, this step is totally optional, and if you trust the errors in your cube, you can skip it!
+7. The errors in the cube can be replaced with the "statistical errors", which are calculated as the standard deviation of the residuals between the flux and a cubic spline fit to the flux (with emission lines masked out) within a small window (60 pixels) around each pixel.  This is performed with the "calculate_statistical_errors!" function.  I included this functionality because the errors provided by the STSci pipeline initially seemed to be very underestimated, so I have provided this as a way to calculate more reasonable errors based on the scatter in the data.  However, this step is totally optional, and if you trust the errors in your cube, you can skip it!  It has an optional argument to provide a file path to a lines.toml file, but if not provided it will use the default file under src/options/lines.toml.  This is important because it uses the line positions in the file to mask out emission lines when calculating statistical errors in a sliding window across the spectrum.
 ```julia
-calculate_statistical_errors!(obs.channels[0])
+calculate_statistical_errors!(obs.channels[0], "/path/to/lines.toml")
 ```
-8. Create the CubeFitter object, which contains all of the fitting data and options for fitting a cube. Here you can overwrite any options from the `options.toml` file, which will otherwise be the defaults when creating any CubeFitter object.  For more info on these options, see the [Usage](#iii-usage) section.
+8. Create the CubeFitter object, which contains all of the fitting data and options for fitting a cube. Here you can overwrite any options from the `options.toml` file, which will otherwise be the defaults when creating any CubeFitter object.  You can also input custom filepaths pointing to your own modified versions of all of Loki's options files (using the keyword arguments "options_file", "lines_file", "optical_file", and "infrared_file", respectively).  For more info on these options, see the [Usage](#iii-usage) section.
 ```julia
-cube_fitter = CubeFitter(obs.channels[0], obs.z, name; parallel=true, plot_spaxels=:pyplot, plot_maps=true, save_fits=true)
+cube_fitter = CubeFitter(
+    obs.channels[0], 
+    obs.z, 
+    name; 
+    options_file="/path/to/options.toml",
+    lines_file="/path/to/lines.toml",
+    optical_file="/path/to/optical.toml",
+    infrared_file="/path/to/infrared.toml", 
+    parallel=true, 
+    plot_spaxels=:pyplot, 
+    plot_maps=true, 
+    save_fits=true
+)
 ```
 9. If fitting each spaxel individually, simply call the "fit_cube!" function on the CubeFitter object
 ```julia

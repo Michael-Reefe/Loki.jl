@@ -1,13 +1,14 @@
 
 # Helper function for preparing continuum and dust feature parameters for 
 # a CubeFitter object
-function cubefitter_prepare_continuum(λ::Vector{<:QWave}, z::Real, out::Dict, λunit::Unitful.Units, 
+function cubefitter_prepare_continuum(optical_file::String, infrared_file::String, lines_file::String,
+    λ::Vector{<:QWave}, z::Real, out::Dict, λunit::Unitful.Units, 
     Iunit::Unitful.Units, region::SpectralRegion, name::String, cube::DataCube, 
     custom_stellar_template_wave::Union{Nothing,Vector{<:Real}}, custom_stellar_template_R::Union{Nothing,Vector{<:Real}},
     custom_stellar_templates::Union{Nothing,Array{<:Real,2}})
 
     # Construct the ModelParameters object
-    model_parameters = construct_model_parameters(out, λunit, Iunit, region, z)
+    model_parameters = construct_model_parameters(optical_file, infrared_file, lines_file, out, λunit, Iunit, region, z)
     vres = NaN*u"km/s"   # (vres doesnt make sense if the wavelength vector isnt logarithmic)
 
     # Count a few different parameters 
@@ -71,11 +72,11 @@ end
 
 
 # Helper function for preparing emission line parameters for a CubeFitter object
-function cubefitter_prepare_lines(out::Dict, λunit::Unitful.Units, Iunit::Unitful.Units,
+function cubefitter_prepare_lines(lines_file::String, out::Dict, λunit::Unitful.Units, Iunit::Unitful.Units,
     cube::DataCube, region::SpectralRegion)
 
     # Construct the FitFeatures object for the lines
-    lines = construct_line_parameters(out, λunit, Iunit, region)
+    lines = construct_line_parameters(lines_file, out, λunit, Iunit, region)
 
     # Count the parameters
     n_lines = length(lines.names)
