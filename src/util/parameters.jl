@@ -624,9 +624,9 @@ end
 # the range parameter mainly determines what to do about extinction curves
 # since calzetti and CCM are not defined past ~2-3 um
 function get_λrange(λlim::Tuple{QLength,QLength})
-    if λlim[1] < 2.2u"μm" && λlim[2] > 2.2u"μm"
+    if λlim[1] < 3.3u"μm" && λlim[2] > 2.2u"μm"
         UVOptIR
-    elseif λlim[1] > 2.2u"μm"
+    elseif λlim[1] > 3.3u"μm"
         Infrared
     else
         UVOptical

@@ -563,6 +563,11 @@ function plot_spaxel_fit(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_model::
     I_boot_max::Union{Vector{<:QSIntensity},Nothing}=nothing, range::Union{Tuple,Nothing}=nothing, 
     spline::Union{Vector{<:QSIntensity},Nothing}=nothing, logy::Bool=false) 
 
+    if !isnothing(range) && ((range[1] > maximum(cube_fitter.cube.λ)) | (range[2] < minimum(cube_fitter.cube.λ)))
+        @warn "Cannot plot with a range of $(range) because it is outside the wavelength limits of the spectrum!"
+        return 
+    end
+
     # Plotly ---> useful interactive plots for visually inspecting data, but not publication-quality
     if (backend == :plotly || backend == :both) && isnothing(range)
         plot_spaxel_fit_plotly(cube_fitter, spaxel, spaxel_model, I_model, comps, label, χ2red; spline=spline)
