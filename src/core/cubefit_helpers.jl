@@ -193,7 +193,9 @@ function get_continuum_parameter_limits(cube_fitter::CubeFitter, I::Vector{<:Rea
     if fopt.lock_hot_dust
         pwhere = "continuum.dust.1." .* ["amp", "temp"]
         inds = fast_indexin(pwhere, pnames)
-        plock[inds] .= true
+        if !isnothing(inds[1])
+            plock[inds] .= true
+        end
     end
     # Lock N_pyr and N_for if the option is given
     if fopt.silicate_absorption == "decompose" && fopt.decompose_lock_column_densities && !init
@@ -312,7 +314,7 @@ function get_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, �
     # Dust continuum amplitudes
     for k ∈ 1:cube_fitter.n_dust_cont
         inds = fast_indexin("continuum.dust.$(k)." .* ["amp", "temp"], pnames)
-        if fopt.lock_hot_dust && isone(k)
+        if fopt.lock_hot_dust && isone(k) && !isnothing(inds[1])
             p₀[inds[1]] = 0.
             continue
         end
@@ -497,7 +499,7 @@ function get_continuum_initial_values_from_previous(cube_fitter::CubeFitter, spa
     for di ∈ 1:cube_fitter.n_dust_cont
         ind = fast_indexin("continuum.dust.$(di).amp", pnames)
         p₀[ind] *= scale_gas 
-        if fopt.lock_hot_dust && isone(di)
+        if fopt.lock_hot_dust && isone(di) && !isnothing(ind)
             p₀[ind] = 0.
         end
     end
