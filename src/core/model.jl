@@ -200,6 +200,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         end
         # These templates also need the solid angle divided out
         conv_na_feii[:, 1] ./= s.area_sr
+        conv_na_feii[.~isfinite.(conv_na_feii[:, 1]), 1] .= 0.0   # (area_sr may be 0 at some points)
         norms["continuum.feii.na.amp"] = maximum(conv_na_feii[:, 1])
         comps["na_feii"] = params[pᵢ] .* conv_na_feii[:, 1] ./ norms["continuum.feii.na.amp"]
         contin .+= comps["na_feii"] .* comps["total_extinction_gas"]
@@ -215,6 +216,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
                 npad_in=cube_fitter.feii.npad)
         end
         conv_br_feii[:, 1] ./= s.area_sr
+        conv_br_feii[.~isfinite.(conv_br_feii[:, 1]), 1] .= 0.0   # (area_sr may be 0 at some points)
         norms["continuum.feii.br.amp"] = maximum(conv_br_feii[:, 1])
         comps["br_feii"] = params[pᵢ] .* conv_br_feii[:, 1] ./ norms["continuum.feii.br.amp"]
         contin .+= comps["br_feii"] .* comps["total_extinction_gas"]
@@ -429,6 +431,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         end
         # These templates also need the solid angle divided out
         conv_na_feii[:, 1] ./= s.area_sr
+        conv_na_feii[.~isfinite.(conv_na_feii[:, 1]), 1] .= 0.0   # (area_sr may be 0 at some points)
         contin .+= params[pᵢ] .* conv_na_feii[:, 1]./maximum(conv_na_feii[:, 1]) .* ext_gas
         pᵢ += 3
     end
@@ -442,6 +445,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
                 npad_in=cube_fitter.feii.npad)
         end
         conv_br_feii[:, 1] ./= s.area_sr
+        conv_br_feii[.~isfinite.(conv_br_feii[:, 1]), 1] .= 0.0   # (area_sr may be 0 at some points)
         contin .+= params[pᵢ] .* conv_br_feii[:, 1]./maximum(conv_br_feii[:, 1]) .* ext_gas
         pᵢ += 3
     end
