@@ -202,14 +202,20 @@ function get_total_integrated_intensities(cube_fitter::CubeFitter; shape::Union{
 
     @info "Integrating spectrum across the whole cube..."
     Iunit = unit(cube_fitter.cube.I[1])
-    I = sumdim(ustrip.(cube_fitter.cube.I), (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2)) .* Iunit
-    σ = sqrt.(sumdim(ustrip.(cube_fitter.cube.σ).^2, (1,2))) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2)) .* Iunit
+    Imasked = copy(cube_fitter.cube.I)
+    Imasked[cube_fitter.cube.mask] .*= NaN
+    σmasked = copy(cube_fitter.cube.σ)
+    σmasked[cube_fitter.cube.mask] .*= NaN
+
+    I = sumdim(ustrip.(Imasked), (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2)) .* Iunit
+    σ = sqrt.(sumdim(ustrip.(σmasked).^2, (1,2))) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2)) .* Iunit
     area_sr = cube_fitter.cube.Ω .* sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
     # sometimes the mask can cause area_sr to be 0 at some points, which is bad
     area_sr[area_sr .== 0.0u"sr"] .= median(area_sr[area_sr .> 0.0u"sr"])
+
     templates = zeros(eltype(I), size(I)..., cube_fitter.n_templates)
     for s in 1:cube_fitter.n_templates
-        templates[:,s] .= sumdim(ustrip.(cube_fitter.templates), (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2)) .* Iunit
+        templates[:,s] .= sumdim(ustrip.(cube_fitter.templates[:,:,:,s]), (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2)) .* Iunit
     end
 
     # Mask out the chip gaps in NIRSPEC observations 
@@ -348,13 +354,27 @@ function create_cube_data(cube_fitter::CubeFitter, shape::Tuple)
         area_vorbin = zeros(eltype(cube_data.area_sr), n_bins, shape[3])
         template_vorbin = zeros(eltype(cube_data.templates), n_bins, shape[3], cube_fitter.n_templates)
         for n in 1:n_bins
-            w = cube_fitter.cube.voronoi_bins .== n
-            I_vorbin[n, :] .= sumdim(ustrip.(cube_data.I[w, :]), 1) ./ sum(w) .* unit(cube_data.I[1])
-            σ_vorbin[n, :] .= sqrt.(sumdim(ustrip.(cube_data.σ[w, :]).^2, 1)) ./ sum(w) .* unit(cube_data.σ[1])
-            area_vorbin[n, :] .= sum(w) .* cube_fitter.cube.Ω
-            for s in 1:cube_fitter.n_templates
-                template_vorbin[n, :, s] .= sumdim(ustrip.(cube_fitter.templates[w, :, s]), 1) ./ sum(w) .* unit(cube_fitter.templates[n, 1, s])
+            w = findall(cube_fitter.cube.voronoi_bins .== n)
+            # sum up the spaxels in the voronoi bin, ignoring where they are masked out
+            npix_vorbin = zeros(Int, shape[3])
+            for wi in w
+                mask_vorbin = cube_fitter.cube.mask[wi, :]
+                npix_vorbin .+= .~mask_vorbin
+                I_vorbin[n, .~mask_vorbin] .+= ustrip.(cube_data.I[wi, .~mask_vorbin]) .* unit(cube_data.I[1])
+                σ_vorbin[n, .~mask_vorbin] .+= ustrip.(cube_data.σ[wi, .~mask_vorbin].^2) .* unit(cube_data.σ[1])
+                for s in 1:cube_fitter.n_templates
+                    template_vorbin[n, :, s] .+= ustrip.(cube_fitter.templates[wi, :, s]) .* unit(cube_fitter.templates[n, 1, s])
+                end
             end
+            I_vorbin[n, :] ./= npix_vorbin
+            I_vorbin[n, .~isfinite.(I_vorbin[n, :])] .= 0*unit(cube_data.I[1])
+            σ_vorbin[n, :] .= sqrt.(ustrip.(σ_vorbin[n, :])) ./ npix_vorbin .* unit(cube_data.σ[1])
+            σ_vorbin[n, .~isfinite.(σ_vorbin[n, :])] .= 0*unit(cube_data.σ[1])
+            for s in 1:cube_fitter.n_templates
+                template_vorbin[n, :, s] ./= length(w)
+                template_vorbin[n, .~isfinite.(template_vorbin), s] .= 0*unit(cube_fitter.templates[n, 1, s])
+            end
+            area_vorbin[n, :] .= npix_vorbin .* cube_fitter.cube.Ω
         end
         cube_data = (λ=cube_fitter.cube.λ, I=I_vorbin, σ=σ_vorbin, area_sr=area_vorbin, templates=template_vorbin)
     end

@@ -5,6 +5,7 @@
 ---
 ## Table of Contents
 
+* [Changelog](#changelog)
 * [Introduction](#i-introduction)
 * [Installation](#ii-installation)
     - [Julia Requirements](#julia-requirements)
@@ -29,7 +30,13 @@
 * [Examples](#v-examples)
 
 ---
-### UPDATE 12/13/25:
+## Changelog
+
+### 12/22/25
+
+Bugfix: Bad pixel masks are now properly accounted for when calculating voronoi-binned spectra.
+
+### 12/13/25
 
 I've now implemented a way to manually pass in a custom filepath for your options files ("options.toml", "lines.toml", "optical.toml", and "infrared.toml").  This way you no longer need to mess with or overwrite the default ones that come with the Loki installation in the src/options directory.  You can simply copy them into your working directory (or make new ones from scratch) and pass in the file paths to these files when making your CubeFitter, i.e.:
 ```julia
@@ -44,7 +51,7 @@ cube_fitter = CubeFitter(
 ```
 (also see [examples](#v-examples)). Note that this means the `calculate_statistical_errors!` function now *also* has an optional argument for the lines file, since it relies on it to mask out emission lines when calculating statistical errors.
 
-### UPDATE 10/26/25:
+### 10/26/25
 
 Fixed an issue where running Loki with parallelization enabled over multiple different computers (i.e. across nodes in a HPCC) would cause a segmentation fault.  This was due to the usage of SharedArrays, which are apparently only valid when all parallel processes are run by the same host computer.  I fixed the issue by removing the dependency on SharedArrays all together and simply using the functionality of the "pmap" function to collect the results, and then sort them afterwards.
 

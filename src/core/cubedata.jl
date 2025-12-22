@@ -2522,13 +2522,16 @@ Perform a number of transformations on data from different channels/subchannels 
 - `extract_from_ap`: The size of the aperture to extract from at each spaxel, in units of the PSF FWHM. If 0, just takes the single spaxel.
     This may be necessary for MIRI data to reduce resampling noise.
 - `match_psf`: If true, convolves the data with a gaussian kernel such that the spatial PSF sizes match
+- `enforce_all_cubes_out`: If true, will enforce the same field of view over all combined cubes. That is, the output cube will
+    cover only regions where all input cubes have data.  Otherwise, all input data will be retained regardless of whether it
+    has corresponding data in other channels.
 - `user_mask`: An optional set of tuples with wavelength pairs - wavelengths between each pair will be masked out
     during fitting of the output cube
 """
 function combine_channels!(obs::Observation, channels=nothing, concat_type=:full; out_id=0,
     instrument_channel_edges::Union{Vector{<:QWave},Nothing}=nothing,
     order::Union{Integer,String}=1, adjust_wcs_headerinfo::Bool=false, min_λ::QWave=0.0*u"μm", max_λ=27.0*u"μm", 
-    output_wcs_frame::Integer=1, extract_from_ap::Real=0., match_psf::Bool=false, 
+    output_wcs_frame::Integer=1, extract_from_ap::Real=0., match_psf::Bool=false, enforce_all_cubes_out::Bool=true,
     user_mask::Union{Vector{Tuple{W,W}},Nothing}=nothing, gap_mask::Union{Vector{Tuple{W,W}},Nothing}=nothing) where {W<:QWave}
 
     format = Symbol(obs.instrument)
@@ -2567,7 +2570,7 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
     wcs_optimal_3d = obs.channels[channels[output_wcs_frame]].wcs
     if length(channels) > 1
         cubes = [obs.channels[channel] for channel in channels]
-        reproject_cubes!(cubes; order=order, output_wcs_frame=output_wcs_frame, enforce_all_cubes_out=true)
+        reproject_cubes!(cubes; order=order, output_wcs_frame=output_wcs_frame, enforce_all_cubes_out=enforce_all_cubes_out)
     end
 
     # 2. Optionally extract from an aperture
