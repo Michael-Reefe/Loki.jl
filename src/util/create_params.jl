@@ -738,6 +738,25 @@ function default_line_parameters(out::Dict, lines::Dict, λunit::Unitful.Units, 
         if isnothing(all_profiles[component])
             continue
         end
+        # Some sanity checking
+        if length(lines["acomp_amp"]) < (component-1)
+            error("The \"acomp_amp\" key in your line configuration file is not long enough! It must have at least $(component-1) entries.")
+        end
+        if length(lines["acomp_voff"]) < (component-1)
+            error("The \"acomp_voff\" key in your line configuration file is not long enough! It must have at least $(component-1) entries.")
+        end
+        if length(lines["acomp_fwhm"]) < (component-1)
+            error("The \"acomp_fwhm\" key in your line configuration file is not long enough! It must have at least $(component-1) entries.")
+        end
+        if length(lines["acomp_h3"]) < (component-1)
+            error("The \"acomp_h3\" key in your line configuration file is not long enough! It must have at least $(component-1) entries.")
+        end
+        if length(lines["acomp_h4"]) < (component-1)
+            error("The \"acomp_h4\" key in your line configuration file is not long enough! It must have at least $(component-1) entries.")
+        end
+        if length(lines["acomp_eta"]) < (component-1)
+            error("The \"acomp_eta\" key in your line configuration file is not long enough! It must have at least $(component-1) entries.")
+        end
 
         msg = "Component $component:"
         amp = component > 1 ? parameter_from_dict(lines["acomp_amp"][component-1]) : FitParameter(NaN, false, (0., Inf))
