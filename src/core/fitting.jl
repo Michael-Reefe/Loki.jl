@@ -1707,7 +1707,7 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, hdu_param::FITS, hd
     psf_norm = copy(cube_fitter.cube.psf_model)                              # PSF model (integrates to 1)
     psf_norm[.~isfinite.(psf_norm)] .= 0.
     for (i, ch_mask) ∈ enumerate(cube_fitter.cube.spectral_region.channel_masks)
-        fit_norm = 10 .^ read(hdu_param["TEMPLATES.NUCLEAR.AMP_$i"])         # Fit amplitudes
+        fit_norm = 10 .^ read(hdu_param["TEMPLATES.$(template_name).AMP_$i"])         # Fit amplitudes
         fit_norm[.~isfinite.(fit_norm)] .= 1.
         for k ∈ findall(ch_mask)
             s = nansum(psf_norm[:, :, k] .* fit_norm) 
