@@ -593,7 +593,7 @@ function check_tied_kinematics!(lines::Dict, prefix::String, line::String, kinem
                     @debug "Tying $param for $line to the group: $group"
                     # Use the group label
                     groupname = join([group, "1", param], "_") |> Symbol
-                    if !isnothing(amp_ratio) 
+                    if !isnothing(amp_ratio) && (param == "amp")
                         tie!(fit_profiles[1].fit_parameters[ind], groupname, amp_ratio)
                     else
                         tie!(fit_profiles[1].fit_parameters[ind], groupname)
@@ -669,7 +669,7 @@ function check_acomp_tied_kinematics!(lines::Dict, prefix::String, line::String,
                         @debug "Tying $param for $line acomp $j to the group: $group"
                         # Use the group label
                         groupname = join([group, "$(j+1)", param], "_") |> Symbol
-                        if !isnothing(amp_ratio)
+                        if !isnothing(amp_ratio) && (param == "amp")
                             tie!(fit_profiles[j+1].fit_parameters[ind], groupname, amp_ratio) 
                         else
                             tie!(fit_profiles[j+1].fit_parameters[ind], groupname)
