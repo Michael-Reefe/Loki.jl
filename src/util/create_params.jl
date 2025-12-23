@@ -570,7 +570,7 @@ function check_tied_kinematics!(lines::Dict, prefix::String, line::String, kinem
                 # Check if amp should  be tied
                 params = []
                 amp_ratio = nothing
-                if haskey(lines, "tie_amp_" * group) && !isnothing(lines["tie_amp_" * group])
+                if haskey(lines, "tie_amp_" * group) && !isnothing(lines["tie_amp_" * group]) && haskey(lines["tie_amp_" * group], line)
                     amp_ratio = lines["tie_amp_" * group][line]
                     push!(params, "amp")
                 end
@@ -646,7 +646,7 @@ function check_acomp_tied_kinematics!(lines::Dict, prefix::String, line::String,
                     params = []
                     # Check if amp should be tied
                     amp_ratio = nothing
-                    if haskey(lines, "tie_acomp_$(j)_amp_" * group) && !isnothing(lines["tie_acomp_$(j)_amp_" * group])
+                    if haskey(lines, "tie_acomp_$(j)_amp_" * group) && !isnothing(lines["tie_acomp_$(j)_amp_" * group]) && haskey(lines["tie_acomp_$(j)_amp_" * group], line)
                         amp_ratio = lines["tie_acomp_$(j)_amp_" * group][line]
                         push!(params, "amp")
                     end
