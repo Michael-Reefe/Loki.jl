@@ -432,7 +432,7 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
     if isfile(joinpath("output_$name", "stellar_templates.loki"))
         @info "Loading pre-generated stellar templates from binary file"
         out = deserialize(joinpath("output_$name", "stellar_templates.loki"))
-        return out.λ, out.age, out.logz, out.templates
+        return out.λ, out.age, out.logz, out.templates, out.rfft, out.npad
     end
 
     @debug "Loading in full resolution stellar templates"
@@ -727,8 +727,26 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
     # so?   : because of this, we will have to multiply the solid angle factor back in at the end of the fitting process
     #         to get the result back in units of Msun.
 
+    # Now pre-calculate the fourier transform of the templates
+
+    # Pad with 0s up to a factor of small primes to increase efficiency 
+    ssp_temp_flat = reshape(ssp_templates_final, size(ssp_templates_final,1), :)
+    s = size(ssp_temp_flat)
+    npad = nextprod([2,3,5], s[1])
+    if npad > s[1]
+        temps = zeros(eltype(ustrip.(ssp_temp_flat)), npad, s[2])
+        for j in axes(ssp_temp_flat, 2)
+            temps[1:s[1], j] .= ustrip.(ssp_temp_flat)[:, j]
+        end
+    else
+        temps = ustrip.(ssp_temp_flat)
+    end
+    # Calculate the Fourier transform of the templates
+    ssp_temp_rfft = rfft(temps, 1)
+
     # save for later
-    serialize(joinpath("output_$name", "stellar_templates.loki"), (λ=ssp_lnλ, age=ages_out, logz=logzs_out, templates=ssp_templates_final))
+    serialize(joinpath("output_$name", "stellar_templates.loki"), (λ=ssp_lnλ, age=ages_out, logz=logzs_out, 
+        templates=ssp_templates_final, rfft=ssp_temp_rfft, npad=npad))
 
     n_temp = prod(size(ssp_templates_final)[2:3])
     if n_temp > 1000
@@ -736,7 +754,7 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
               "that it might take a while to fit.  You might want to try reducing your parameter space in Teff, logg, metallicity, or alpha."
     end
 
-    ssp_lnλ, ages_out, logzs_out, ssp_templates_final
+    ssp_lnλ, ages_out, logzs_out, ssp_templates_final, ssp_temp_rfft, npad
 end
 
 

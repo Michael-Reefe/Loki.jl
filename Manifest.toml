@@ -2,7 +2,7 @@
 
 julia_version = "1.10.9"
 manifest_format = "2.0"
-project_hash = "d65714c6e14cbd98b1815c65f26080f089563ace"
+project_hash = "a8e5f54cf001bc442a525ee371d27f284381260a"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -978,6 +978,12 @@ git-tree-sha1 = "5b246fca5420ae176d65ed43a2d0ee5897775216"
 uuid = "b8f27783-ece8-5eb3-8dc8-9495eed66fee"
 version = "1.31.2"
 
+[[deps.MathProgBase]]
+deps = ["LinearAlgebra", "SparseArrays"]
+git-tree-sha1 = "9abbe463a1e9fc507f12a69e7f29346c2cdc472c"
+uuid = "fdba3010-5040-5b88-9595-932c9decdf73"
+version = "0.7.8"
+
 [[deps.MbedTLS]]
 deps = ["Dates", "MbedTLS_jll", "MozillaCACerts_jll", "NetworkOptions", "Random", "Sockets"]
 git-tree-sha1 = "c067a280ddc25f196b5e7df3877c6b226d390aaf"
@@ -1056,6 +1062,14 @@ git-tree-sha1 = "019f12e9a1a7880459d0173c182e6a99365d7ac1"
 uuid = "2774e3e8-f4cf-5e23-947b-6d7e65073b56"
 version = "4.5.1"
 
+[[deps.NNLS]]
+deps = ["Libdl", "LinearAlgebra", "MathProgBase", "Random", "Statistics"]
+git-tree-sha1 = "ff53ceac8b1064c609d05e78fcf670addeb8ee4e"
+repo-rev = "master"
+repo-url = "https://github.com/rdeits/NNLS.jl"
+uuid = "273520d0-e037-5df9-b548-206e1682bb53"
+version = "0.0.2"
+
 [[deps.NaNMath]]
 deps = ["OpenLibm_jll"]
 git-tree-sha1 = "0877504529a3e5c3343c6f8b4c0381e57e4387e4"
@@ -1077,12 +1091,6 @@ version = "0.4.20"
 [[deps.NetworkOptions]]
 uuid = "ca575930-c2e3-43a9-ace4-1e988b2c1908"
 version = "1.2.0"
-
-[[deps.NonNegLeastSquares]]
-deps = ["LinearAlgebra", "SparseArrays"]
-git-tree-sha1 = "cdc11138e74a0dd0b82e7d64eb1350fdf049d3b1"
-uuid = "b7351bd1-99d9-5c5d-8786-f205a815c4d7"
-version = "0.4.1"
 
 [[deps.NumericalIntegration]]
 deps = ["Interpolations", "LinearAlgebra", "Logging"]

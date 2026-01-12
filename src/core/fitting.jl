@@ -783,7 +783,7 @@ function all_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter; init::Bool=false, us
         n_free_cont, n_tied_cont = split_parameters(pars_0_cont, dstep_0_cont, plims_cont, lock_cont, tied_indices_cont)
 
     pars_0_lines, plims_lines, lock_lines, names_lines, dstep_0_lines, tied_pairs_lines, tied_indices_lines, tie_vec_lines = 
-        get_line_initial_values_limits_locked(cube_fitter, s.λ[spaxel_mask], s.I[spaxel_mask]; init=init||use_ap)
+        get_line_initial_values_limits_locked(cube_fitter, s.λ, s.I; init=init||use_ap)
     pars_0_lines, plims_lines, punits_lines = strip_units(pars_0_lines, plims_lines)
     dstep_0_lines = ustrip.(dstep_0_lines)
     if bootstrap_iter
@@ -818,7 +818,6 @@ function all_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter; init::Bool=false, us
         ptot_lines = rebuild_full_parameters(pfree_lines_tied, pfix_lines_tied, lock_lines_tied, tied_pairs_lines, tied_indices_lines, n_tied_lines)
     
         # First, get the extinction profile
-        fopt = fit_options(cube_fitter)
         ext_gas, _, _ = extinction_profiles(s.λ, ptot_cont, 1, fopt.fit_uv_bump, fopt.extinction_curve)
         # Generate the lines 
         Ilines = model_line_residuals(s, ptot_lines, punits_lines, model(cube_fitter).lines, cube_fitter.lsf, ext_gas, trues(length(s.λ)))

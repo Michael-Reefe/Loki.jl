@@ -27,6 +27,21 @@ const b_Wein = 2897.771955*u"μm*K"
 # A few other random constants
 const o_peak = 10.0178u"μm"
 
+# Global variable to hold a workspace for solving NNLS problems 
+# (this is used in stellar_populations_nnls)
+global nnls_workspace = NNLSWorkspace(0, 0)
+
+# Global variable to hold an allocated array for the convolve_losvd function
+global rfft_cache = nothing
+# Global variable to hold a plan for computing irffts quickly on input arrays of a given size
+global irfft_plan = nothing
+
+# More global caching variables for the stellar_populations_nnls function
+global A_cache = nothing 
+global b_cache = nothing 
+global A1_cache = nothing 
+global b1_cache = nothing
+
 
 # Load the appropriate templates that we need into the cache
 function _load_dust_templates(silicate_absorption::String, fit_ch_abs::Bool, use_pah_templates::Bool, 
@@ -581,7 +596,7 @@ the specific implementation is different. See:
 - Sexton et al. (2021): https://ui.adsabs.harvard.edu/abs/2021MNRAS.500.2871S/abstract 
 """
 function convolve_losvd(_templates::AbstractArray{T}, vsyst::S, v::S, σ::S, vres::S, 
-    npix::U; temp_fft::Bool=false, npad_in::U=0) where {T<:Number,S<:Number,U<:Integer}
+    npix::U; temp_fft::Bool=false, npad_in::U=0, use_cache::Bool=false) where {T<:Number,S<:Number,U<:Integer}
 
     if temp_fft
         @assert npad_in > 0 "npad_in must be specified for inputs that are already FFT'ed!"
@@ -606,9 +621,6 @@ function convolve_losvd(_templates::AbstractArray{T}, vsyst::S, v::S, σ::S, vre
             temps = templates
         end
         # Calculate the Fourier transform of the templates
-        # Note: in general we cannot calculate this a priori because the templates may be different for each iteration of the fit
-        #       if the user is marginalizing over the stellar ages or metallicities. The `temp_fft` option is mainly for usage with
-        #       the Fe II templates, which do not have any such parameters that can be marginalized over.
         temp_rfft = rfft(temps, 1)
     else
         npad = npad_in
@@ -621,11 +633,23 @@ function convolve_losvd(_templates::AbstractArray{T}, vsyst::S, v::S, σ::S, vre
     V = (vsyst + v)/vres
     Σ = σ/vres
     ω = range(0, π, n_ft)
+    losvd_rfft = conj.(exp.(1im .* ω .* V .- Σ.^2 .* ω.^2 ./ 2))
 
     # Calculate the analytic Fourier transform of the LOSVD: See Cappellari (2017) eq. (38)
     # and then get the inverse Fourier transform of the resultant distribution to get the convolution
     # see, i.e. https://en.wikipedia.org/wiki/Convolution_theorem
-    template_convolved = irfft(temp_rfft .* conj.(exp.(1im .* ω .* V .- Σ.^2 .* ω.^2 ./ 2)), npad, 1)
+    if !use_cache
+        template_convolved = irfft(temp_rfft .* losvd_rfft, npad, 1)
+    else
+        global rfft_cache, irfft_plan
+        if isnothing(rfft_cache) || (size(rfft_cache) != size(temp_rfft))
+            rfft_cache = temp_rfft .* losvd_rfft
+            irfft_plan = plan_irfft(rfft_cache, npad, 1; flags=FFTW.ESTIMATE, timelimit=Inf)
+        else
+            rfft_cache .= temp_rfft .* losvd_rfft
+        end
+        template_convolved = irfft_plan * rfft_cache
+    end
 
     # Take only enough pixels to match the length of the input spectrum
     @view template_convolved[1:npix, :]
@@ -660,6 +684,11 @@ end
 function stellar_populations_nnls(s::Spaxel, contin::Vector{<:Real}, ext_stars::Vector{<:Real}, 
     stel_vel::QVelocity, stel_sig::QVelocity, cube_fitter::CubeFitter; do_gaps::Bool=true, mask_lines::Bool=true)
 
+    # Using an NNLS workspace will save us from re-allocating memory for the NNLS fit 
+    # for every iteration of the outer non-linear least-squares fitting
+    global nnls_workspace
+    global A_cache, b_cache, A1_cache, b1_cache
+
     # prepare buffer arrays for NNLS
     nλ = length(s.λ)
     if cube_fitter.fitting.ssp_regularize > 0.
@@ -667,46 +696,78 @@ function stellar_populations_nnls(s::Spaxel, contin::Vector{<:Real}, ext_stars::
     else
         reg_dims = (0, 0)
     end
-    A = zeros(nλ+prod(reg_dims), cube_fitter.n_ssps)
-    b = zeros(nλ+prod(reg_dims))
+
+    # Use the cache to store A and b
+    A_size = (nλ+prod(reg_dims), cube_fitter.n_ssps)
+    b_size = (nλ+prod(reg_dims),)
+    if isnothing(A_cache) || (size(A_cache) != A_size)
+        A_cache = zeros(A_size)
+    else
+        A_cache .= 0.
+    end
+    if isnothing(b_cache) || (size(b_cache) != b_size)
+        b_cache = zeros(b_size)
+    else
+        b_cache .= 0.
+    end
 
     # subtract everything else from the data to create a residual stellar spectrum 
-    b[1:nλ] .= s.I .- contin
+    @views b_cache[1:nλ] .= s.I .- contin
 
     # calculate the convolved stellar templates
     gap_masks = do_gaps ? get_gap_masks(s.λ, cube_fitter.spectral_region.gaps) : [trues(length(s.λ))]
     for (gi, gap_mask) in enumerate(gap_masks)
         # split if the spectrum has a few separated regions
-        A[(1:nλ)[gap_mask], :] .= convolve_losvd(ustrip.(cube_fitter.ssps.templates), 
-            cube_fitter.ssps.vsysts[gi], stel_vel, stel_sig, s.vres, sum(gap_mask))
+        A_cache[(1:nλ)[gap_mask], :] .= convolve_losvd(cube_fitter.ssps.temp_rfft, 
+            cube_fitter.ssps.vsysts[gi], stel_vel, stel_sig, s.vres, sum(gap_mask); 
+            temp_fft=true, npad_in=cube_fitter.ssps.npad, use_cache=true)
     end
 
     # divide out the solid angle and apply the extinction
-    A[1:nλ, :] .*= ext_stars ./ s.area_sr
+    @views A_cache[1:nλ, :] .*= ext_stars ./ s.area_sr
     # normalize the stellar templates
-    stellar_N = haskey(s.aux, "stellar_norm") ? ustrip(s.aux["stellar_norm"]) : nanmedian(A[1:nλ, :])
+    stellar_N = haskey(s.aux, "stellar_norm") ? ustrip(s.aux["stellar_norm"]) : @views nanmaximum(A_cache[1:nλ, :])
     # stellar_N = ustrip(nanmedian(cube_fitter.ssps.templates) * nanmedian(ext_stars ./ s.area_sr))
-    A[1:nλ, :] ./= stellar_N
+    @views A_cache[1:nλ, :] ./= stellar_N
     stellar_norm = stellar_N*unit(cube_fitter.ssps.templates[1])/u"sr"  # should be specific intensity per unit mass
     # weight by the errors
-    A[1:nλ, :] ./= s.σ
-    b[1:nλ] ./= s.σ
+    @views A_cache[1:nλ, :] ./= s.σ
+    @views b_cache[1:nλ] ./= s.σ
     # add the regularization constraints
     # (we dont need to modify b here as it is already initialized with 0s)
     if cube_fitter.fitting.ssp_regularize > 0.
-        add_reg_constraints!(A, nλ, cube_fitter)
+        add_reg_constraints!(A_cache, nλ, cube_fitter)
     end
     # perform a non-negative least-squares fit
     if !haskey(s.aux, "stellar_weights") || isnothing(s.aux["stellar_weights"])
-        spaxel_mask_extended = falses(length(b))
+        spaxel_mask_extended = falses(length(b_cache))
         spaxel_mask_extended[1:nλ] .= get_vector_mask(s; lines=mask_lines, user_mask=cube_fitter.cube.spectral_region.mask)
-        weights = nonneg_lsq(A[.~spaxel_mask_extended, :], b[.~spaxel_mask_extended], alg=:fnnls)  # mask out the emission lines!
+
+        # Use the cache to store A1 and b1 
+        A1_size = (sum(.~spaxel_mask_extended), cube_fitter.n_ssps)
+        b1_size = (sum(.~spaxel_mask_extended),)
+        if isnothing(A1_cache) || (size(A1_cache) != A1_size)
+            A1_cache  = A_cache[.~spaxel_mask_extended, :]
+        else
+            A1_cache .= A_cache[.~spaxel_mask_extended, :]
+        end
+        if isnothing(b1_cache) || (size(b1_cache) != b1_size)
+            b1_cache  = b_cache[.~spaxel_mask_extended]
+        else
+            b1_cache .= b_cache[.~spaxel_mask_extended]
+        end
+
+        load!(nnls_workspace, A1_cache, b1_cache)
+        solve!(nnls_workspace)
+        weights = nnls_workspace.x
+        # weights = nonneg_lsq(A[.~spaxel_mask_extended, :], b[.~spaxel_mask_extended], alg=:fnnls)  # mask out the emission lines!
     else
-        weights = reshape(s.aux["stellar_weights"], cube_fitter.n_ssps, 1)
+        weights = s.aux["stellar_weights"]
     end
+    weights = reshape(weights, cube_fitter.n_ssps, 1)
 
     # get the final stellar continuum with a matrix multiplication
-    ssp_contin = ((A[1:nλ, :].*s.σ) * weights)[:,1]
+    @views ssp_contin = ((A_cache[1:nλ, :].*s.σ) * weights)[:,1]
 
     return ssp_contin, stellar_norm, weights
 end

@@ -20,9 +20,9 @@ function cubefitter_prepare_continuum(optical_file::String, infrared_file::Strin
     n_ssps = 0
     if out[:fit_stellar_continuum]
         # Create the simple stellar population templates with FSPS
-        ssp_λ, ages, metals, ssp_templates = generate_stellar_populations(λ, Iunit, cube.lsf, z, out[:stellar_template_type], 
-            out[:cosmology], out[:ssps], out[:stars], name, out[:user_mask], custom_stellar_template_wave, custom_stellar_template_R, 
-            custom_stellar_templates)
+        ssp_λ, ages, metals, ssp_templates, ssp_temp_rfft, npad_ssp = generate_stellar_populations(λ, Iunit, cube.lsf, z, 
+            out[:stellar_template_type], out[:cosmology], out[:ssps], out[:stars], name, out[:user_mask], 
+            custom_stellar_template_wave, custom_stellar_template_R, custom_stellar_templates)
         # flatten template array
         ssp_temp_flat = reshape(ssp_templates, size(ssp_templates,1), :)
         # 2nd axis ordering: (age1_z1, age2_z1, age3_z1, ..., age1_z2, age2_z2, age3_z2, ...)
@@ -34,7 +34,7 @@ function cubefitter_prepare_continuum(optical_file::String, infrared_file::Strin
             push!(vsyst_ssp, log(ssp_λ[1]/λ[λ .> gap[2]][1]) * C_KMS)
         end
         # Build a StellarPopulations object
-        ssps = StellarPopulations(ssp_λ, ages, collect(metals), ssp_temp_flat, vsyst_ssp)
+        ssps = StellarPopulations(ssp_λ, npad_ssp, ages, collect(metals), ssp_temp_flat, ssp_temp_rfft, vsyst_ssp)
     end
 
     # Fe II templates

@@ -771,18 +771,21 @@ end
 
 
 """
-    log_rebin!(cube, z[, factor])
+    log_rebin!(cube, z[, logscale, factor])
 
 Rebin a DataCube onto a logarithmically spaced wavelength vector, conserving flux.
 Optionally input a rebinning factor > 1 to resample onto a coarser wavelength grid.
 """
-function log_rebin!(cube::DataCube, z::Real, factor::Integer=1)
+function log_rebin!(cube::DataCube, z::Real; 
+    logscale::Real=median(log.(cube.λ[2:end]./cube.λ[1:end-1])),
+    factor::Integer=1)
+
+    @assert factor > 0 "factor must be > 0"
 
     if !cube.log_binned
         # rebin onto a logarithmically spaced wavelength grid
         # get masks for each gap region and the logarithmic spacing
         gap_masks = get_gap_masks(cube.λ, cube.spectral_region.gaps)
-        logscale = max(log(cube.λ[2]/cube.λ[1]), log(cube.λ[end]/cube.λ[end-1]))
         # prepare buffers
         λ_out = Vector{eltype(cube.λ)}()
         I_out = Array{eltype(cube.I), 3}(undef, size(cube.I)[1:2]..., 0)

@@ -1,7 +1,7 @@
 name = "Loki"
 uuid = "6dc8f741-0729-4eeb-ae09-58704f061668"
 authors = ["Michael-Reefe <michael.reefe8@gmail.com>"]
-version = "3.3.6"
+version = "3.3.7"
 
 [deps]
 AbstractFFTs = "621f4979-c628-5d54-868e-fcf4e3e8185c"
@@ -35,8 +35,8 @@ Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 LoggingExtras = "e6f89c97-d47a-5376-807f-9c37f3926c36"
 LoopVectorization = "bdcacae8-1622-11e9-2a5c-532679323890"
 NLsolve = "2774e3e8-f4cf-5e23-947b-6d7e65073b56"
+NNLS = "273520d0-e037-5df9-b548-206e1682bb53"
 NaNStatistics = "b946abbf-3ea7-4610-9019-9858bfdeaf2d"
-NonNegLeastSquares = "b7351bd1-99d9-5c5d-8786-f205a815c4d7"
 NumericalIntegration = "e7bfaba1-d571-5449-8927-abc22e82249b"
 Optim = "429524aa-4258-5aef-a3af-852621145aeb"
 Photometry = "af68cb61-81ac-52ed-8703-edc140936be4"

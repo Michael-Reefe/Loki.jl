@@ -861,7 +861,7 @@ function override_line_parameters!(lines::Dict, line::String, prefix::String, fi
                     end
                     if haskey(lines["parameters"][line][param_key][i], "locked")
                         @debug "Overriding $param_key acomp $i locked value for $line"
-                        if lines["parameters"][line][param_key]["locked"]
+                        if lines["parameters"][line][param_key][i]["locked"]
                             lock!(fit_profiles[i+1].fit_parameters[prefix * "$(i+1)." * param_key])
                         else
                             unlock!(fit_profiles[i+1].fit_parameters[prefix * "$(i+1)." * param_key])

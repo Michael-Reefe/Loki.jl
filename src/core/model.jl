@@ -526,7 +526,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
     end
 
     if return_extinction
-        contin, ext_gas
+        return contin, ext_gas
     end
 
     contin

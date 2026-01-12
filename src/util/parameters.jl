@@ -220,11 +220,13 @@ end
 
 # A little container for stellar populations 
 mutable struct StellarPopulations{Qw<:QWave,Qa<:typeof(1.0u"Gyr"),
-    Qv<:typeof(1.0u"km/s"),S<:Real,T<:Quantity}
+    Qv<:typeof(1.0u"km/s"),S<:Real,T<:Quantity,C<:Complex}
     λ::Vector{Qw}
+    npad::Int
     ages::Vector{Qa}
     logzs::Vector{S}
     templates::Matrix{T}
+    temp_rfft::Matrix{C}
     vsysts::Vector{Qv}
 end
 

@@ -323,7 +323,7 @@ max = +5.0
 #   Husser  : +1.0
 #   TLUSTY  :  0.0
 [stars.logz]
-min = -2.0
+min = -0.5
 max = +0.5
 
 # (alpha enhancement)

@@ -23,7 +23,7 @@ using ImageFiltering
 using ImageTransformations
 
 # Optimization packages
-using Optim, CMPFit, NonNegLeastSquares
+using Optim, CMPFit, NNLS
 
 # Astronomy packages
 using AstroLib
