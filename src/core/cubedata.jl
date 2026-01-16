@@ -777,7 +777,7 @@ Rebin a DataCube onto a logarithmically spaced wavelength vector, conserving flu
 Optionally input a rebinning factor > 1 to resample onto a coarser wavelength grid.
 """
 function log_rebin!(cube::DataCube, z::Real; 
-    logscale::Real=median(log.(cube.λ[2:end]./cube.λ[1:end-1])),
+    logscale::Real=maximum(log.(cube.λ[2:end]./cube.λ[1:end-1])),
     factor::Integer=1)
 
     @assert factor > 0 "factor must be > 0"

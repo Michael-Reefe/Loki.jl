@@ -1060,8 +1060,8 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
 
             # Loop through parameters and write them to the fits file along with the header and units
             for (i, parameter) ∈ enumerate(param_maps.parameters.names)
-                # Skip chi2 and dof for the error cubes
-                if ((split(parameter, ".")[1] == "statistics") && (index != 1)) || split(parameter, ".")[end] == "SNR"
+                # Skip chi2, dof, and SNRs for the error cubes
+                if (((split(parameter, ".")[1] == "statistics") || (split(parameter, ".")[end] == "SNR")) && (index != 1))
                     continue
                 end
                 good = isfinite.(param_data[:, :, i])
