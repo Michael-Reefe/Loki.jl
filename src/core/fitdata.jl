@@ -366,15 +366,16 @@ function create_cube_data(cube_fitter::CubeFitter, shape::Tuple)
                     template_vorbin[n, :, s] .+= ustrip.(cube_fitter.templates[wi, :, s]) .* unit(cube_fitter.templates[n, 1, s])
                 end
             end
+            npix_vorbin[iszero.(npix_vorbin)] .= 1
+            area_vorbin[n, :] .= npix_vorbin .* cube_fitter.cube.Ω
             I_vorbin[n, :] ./= npix_vorbin
             I_vorbin[n, .~isfinite.(I_vorbin[n, :])] .= 0*unit(cube_data.I[1])
             σ_vorbin[n, :] .= sqrt.(ustrip.(σ_vorbin[n, :])) ./ npix_vorbin .* unit(cube_data.σ[1])
-            σ_vorbin[n, .~isfinite.(σ_vorbin[n, :])] .= 0*unit(cube_data.σ[1])
+            σ_vorbin[n, .~isfinite.(σ_vorbin[n, :])] .= nanmedian(ustrip.(σ_vorbin[n, isfinite.(σ_vorbin[n, :])]))*unit(cube_data.σ[1])
             for s in 1:cube_fitter.n_templates
                 template_vorbin[n, :, s] ./= length(w)
                 template_vorbin[n, .~isfinite.(template_vorbin), s] .= 0*unit(cube_fitter.templates[n, 1, s])
             end
-            area_vorbin[n, :] .= npix_vorbin .* cube_fitter.cube.Ω
         end
         cube_data = (λ=cube_fitter.cube.λ, I=I_vorbin, σ=σ_vorbin, area_sr=area_vorbin, templates=template_vorbin)
     end
