@@ -1255,7 +1255,12 @@ function spaxel_loop_pmap!(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxe
     #    I think this, in combination with the default Caching Pool, means the large cube_fitter 
     #    and cube_data structures dont have to all be passed to the individual workers
     pmap_result = progress_pmap(spaxels, progress=prog, retry_delays=ones(1)) do index
-        p_out, p_err, np_ssp = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin) 
+        p_out, p_err, np_ssp = try
+            fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
+        catch e 
+            @warn "Error fitting spaxel $index: $e"
+            nothing, nothing, nothing
+        end
         return index, p_out, p_err, np_ssp
     end
 
@@ -1300,7 +1305,12 @@ function spaxel_loop_serial!(cube_fitter::CubeFitter, cube_data::NamedTuple, spa
 
     prog = Progress(length(spaxels))
     for index ∈ spaxels
-        p_out, p_err, np_ssp = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
+        p_out, p_err, np_ssp = try
+            fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
+        catch e 
+            @warn "Error fitting spaxel $index: $e"
+            nothing, nothing, nothing
+        end
         if !isnothing(p_out)
             if vorbin
                 out_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(index)[1])

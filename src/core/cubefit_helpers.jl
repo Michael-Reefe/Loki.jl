@@ -642,6 +642,8 @@ function get_continuum_parinfo(n_free::S, lb::Vector{T}, ub::Vector{T}, dp::Vect
     # Create a `config` structure
     config = CMPFit.Config()
     config.maxiter = 500
+    # check for infs/nans
+    config.nofinitecheck = 1
 
     parinfo, config
 end
@@ -671,6 +673,8 @@ function get_continuum_parinfo(n_free_1::S, n_free_2::S, lb_1::Vector{T}, ub_1::
     # Create a `config` structure
     config = CMPFit.Config()
     config.maxiter = 500
+    # check for infs/nans
+    config.nofinitecheck = 1
 
     parinfo_1, parinfo_2, config
 end
@@ -860,6 +864,8 @@ function get_line_parinfo(n_free, lb, ub, dp)
     config.ftol = 1e-16
     config.xtol = 1e-16
     config.maxiter = 500
+    # check for infs/nans
+    config.nofinitecheck = 1
 
     parinfo, config
 end

@@ -11,8 +11,11 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
     spaxels = CartesianIndices(size(out_params)[1:2])
 
     firsti = findfirst(index->any(isfinite.(out_params[index, :])), spaxels)
-    if !isnothing(cube_fitter.cube.voronoi_bins)
+    if !isnothing(cube_fitter.cube.voronoi_bins) && !isnothing(firsti)
         firsti = CartesianIndex(cube_fitter.cube.voronoi_bins[firsti])
+    end
+    if isnothing(firsti)
+        error("No spaxels were successfully fit; cannot generate output cubes/maps.")
     end
     spax = make_normalized_spaxel(cube_data, firsti, cube_fitter; use_ap=aperture, 
         use_vorbins=!isnothing(cube_fitter.cube.voronoi_bins))
