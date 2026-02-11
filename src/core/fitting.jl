@@ -1512,7 +1512,7 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
     if aperture isa String
         @assert lowercase(aperture) == "all" "The only accepted string input for 'aperture' is 'all' to signify the entire cube."
         I, σ, templates, area_sr = get_total_integrated_intensities(cube_fitter; shape=shape)
-        mask_bad = get_init_badpix_mask(I, σ, cube_fitter)
+        mask_bad = get_init_badpix_mask(I[1,1,:], σ[1,1,:], cube_fitter)
     else
         I, σ, templates, area_sr = get_aperture_integrated_intensities(cube_fitter, shape, aperture)
         mask_bad = nothing
