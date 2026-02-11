@@ -197,6 +197,21 @@ function get_continuum_for_line_fit(spaxel::Spaxel, cube_fitter::CubeFitter, I_c
 end
 
 
+function get_init_badpix_mask(I::Vector{<:Number}, σ::Vector{<:Number}, cube_fitter::CubeFitter; use_ap::Bool=false, use_vorbins::Bool=false)
+    if use_ap || use_vorbins
+        return iszero.(I) .| iszero.(σ)
+    end
+    # sum up the unmasked spaxels over each wavelength slice
+    pixmask_sum = sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
+    area_sr = cube_fitter.cube.Ω .* pixmask_sum
+    # mask out any wavelength slices that differ from the median by more than ~5%
+    masked_pix_fraction = (0.05*median(pixmask_sum) > 5) ? 0.05 : 5.0/median(pixmask_sum)
+    mask_bad_init = abs.(uconvert.(NoUnits, area_sr./median(area_sr[area_sr .> 0.0u"sr"])) .- 1) .>= masked_pix_fraction
+    mask_bad_init .|= iszero.(I) .| iszero.(σ)
+    return mask_bad_init
+end
+
+
 # Helper function for getting the total integrated intensity/error/solid angle over the whole FOV
 function get_total_integrated_intensities(cube_fitter::CubeFitter; shape::Union{Tuple,Nothing}=nothing)
 
@@ -207,11 +222,19 @@ function get_total_integrated_intensities(cube_fitter::CubeFitter; shape::Union{
     σmasked = copy(cube_fitter.cube.σ)
     σmasked[cube_fitter.cube.mask] .*= NaN
 
-    I = sumdim(ustrip.(Imasked), (1,2)) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2)) .* Iunit
-    σ = sqrt.(sumdim(ustrip.(σmasked).^2, (1,2))) ./ sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2)) .* Iunit
-    area_sr = cube_fitter.cube.Ω .* sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2))
-    # sometimes the mask can cause area_sr to be 0 at some points, which is bad
-    area_sr[area_sr .== 0.0u"sr"] .= median(area_sr[area_sr .> 0.0u"sr"])
+    pixmask_sum = sumdim(Array{Int}(.~cube_fitter.cube.mask), (1,2)) 
+    I = sumdim(ustrip.(Imasked), (1,2)) ./ pixmask_sum .* Iunit
+    σ = sqrt.(sumdim(ustrip.(σmasked).^2, (1,2))) ./ pixmask_sum .* Iunit
+    area_sr = cube_fitter.cube.Ω .* pixmask_sum
+
+    # Note: we are fitting a full cube here, not an aperture-integrated spectrum which may have physically different solid angles as a function of wavelength.
+    # So the only differences in area_sr as a function of wavelength will be from masked out spaxels.
+    # What this means is that the observed intensity I = F/area_sr should not experience any jumps at the masked wavelengths, assuming the masked spaxels are 
+    # randomly sampled in such a way that they don't preferentially have higher or lower flux than the unmasked spaxels. In general, it will be hard 
+    # to tell whether this is the case or not, so the simplest thing to do here is just assume that it's true and fill in area_sr with the median value at all
+    # wavelengths.  In the worst case scenario, this could cause some unmodeled artifical jumps in the spectrum during the initial_sum_fit, so we mask out
+    # any wavelength slices that have a large fraction (>~5%) of masked spaxels.
+    area_sr .= median(area_sr[area_sr .> 0.0u"sr"])
 
     templates = zeros(eltype(I), size(I)..., cube_fitter.n_templates)
     for s in 1:cube_fitter.n_templates
@@ -434,6 +457,8 @@ function create_cube_data_postnuctemp(cube_fitter::CubeFitter, agn_templates::Ar
     σ_agn = nanmedian(ustrip.(I_agn)) .* ones(Float64, size(I_agn)) .* unit(agn_templates[1])  
     templates = Array{eltype(I_agn),4}(undef, size(I_agn)..., 0)
     area_sr = cube_fitter.cube.Ω .* nansum(.~cube.mask, dims=(1,2))
+    # for the same reason as in get_total_integrated_intensities, we fill in area_sr with the median value at all wavelengths 
+    area_sr .= median(area_sr[area_sr .> 0.0u"sr"])
 
     I, σ, t_out = fill_bad_pixels(I_agn[1,1,:], σ_agn[1,1,:], templates[1,1,:,:])
 

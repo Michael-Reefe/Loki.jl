@@ -1033,7 +1033,8 @@ of a crash.
     use_ap or use_vorbins is true.
 """
 function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, coords::CartesianIndex; use_ap::Bool=false,
-    use_vorbins::Bool=false, σ_min::Vector=zeros(eltype(cube_data.σ), size(cube_data.σ)[end]))
+    use_vorbins::Bool=false, σ_min::Vector=zeros(eltype(cube_data.σ), size(cube_data.σ)[end]), 
+    mask_bad::Union{BitVector,Nothing}=nothing)
 
     # Check if the fit has already been performed
     fopt = fit_options(cube_fitter)
@@ -1066,7 +1067,8 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, coords::Cart
     end
 
     # Make a spaxel object
-    spax = make_normalized_spaxel(cube_data, coords, cube_fitter; use_ap=use_ap, use_vorbins=use_vorbins, σ_min=σ_min)
+    spax = make_normalized_spaxel(cube_data, coords, cube_fitter; use_ap=use_ap, use_vorbins=use_vorbins, σ_min=σ_min,
+        mask_bad=mask_bad)
     # Overwrite the raw errors with the updated errors
     # cube_data.σ[coords, :] .= spax.σ .* spax.N
 
@@ -1149,7 +1151,7 @@ function fit_stack!(cube_fitter::CubeFitter)
 
     # Perform a cubic spline fit, also obtaining the line mask
     mask_lines_init, I_spline_init, _ = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init, cube_fitter.linemask_overrides)
-    mask_bad_init = iszero.(I_sum_init) .| iszero.(σ_sum_init)
+    mask_bad_init = get_init_badpix_mask(I_sum_init, σ_sum_init, cube_fitter)
     mask_init = mask_lines_init .| mask_bad_init
     mask_chi2_init = mask_bad_init
     σ_sum_init .= calculate_statistical_errors(I_sum_init, I_spline_init, mask_init)
@@ -1510,8 +1512,10 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
     if aperture isa String
         @assert lowercase(aperture) == "all" "The only accepted string input for 'aperture' is 'all' to signify the entire cube."
         I, σ, templates, area_sr = get_total_integrated_intensities(cube_fitter; shape=shape)
+        mask_bad = get_init_badpix_mask(I, σ, cube_fitter)
     else
         I, σ, templates, area_sr = get_aperture_integrated_intensities(cube_fitter, shape, aperture)
+        mask_bad = nothing
     end
     cube_data = (λ=cube_fitter.cube.λ, I=I, σ=σ, templates=templates, area_sr=area_sr)
 
@@ -1540,7 +1544,7 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
     spaxels = CartesianIndices((1,1))
 
     @info "===> Beginning integrated spectrum fitting... <==="
-    p_out, p_err, np_ssp = fit_spaxel(cube_fitter, cube_data, spaxels[1]; use_ap=true)
+    p_out, p_err, np_ssp = fit_spaxel(cube_fitter, cube_data, spaxels[1]; use_ap=true, mask_bad=mask_bad)
     if !isnothing(p_out)
         out_params[spaxels[1], :] .= ustrip.(p_out)
         out_errs[spaxels[1], :, :] .= ustrip.(p_err)
@@ -1636,7 +1640,7 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, agn_templates::Arra
 
     # Perform a cubic spline fit, also obtaining the line mask
     mask_lines_init, I_spline_init, _ = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init, cube_fitter.linemask_overrides)
-    mask_bad_init = iszero.(I_sum_init) .| iszero.(σ_sum_init)
+    mask_bad_init = get_init_badpix_mask(I_sum_init, σ_sum_init, cube_fitter)
     mask_init = mask_lines_init .| mask_bad_init
     mask_chi2_init = mask_bad_init
     σ_sum_init  .= calculate_statistical_errors(I_sum_init, I_spline_init, mask_init)
@@ -1645,7 +1649,7 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, agn_templates::Arra
     @info "===> Beginning nuclear spectrum fitting... <==="
     # Add a minimum uncertainty to prevent the statistical uncertainties on the model from being close to 0 due to it being
     # a smooth model rather than actual data
-    p_out, p_err, np_ssp = fit_spaxel(cube_fitter, cube_data, CartesianIndex(1,1); use_ap=true, σ_min=σ_sum_init)
+    p_out, p_err, np_ssp = fit_spaxel(cube_fitter, cube_data, CartesianIndex(1,1); use_ap=true, σ_min=σ_sum_init, mask_bad=mask_bad_init)
     if !isnothing(p_out)
         out_params[1, 1, :] .= ustrip.(p_out)
         out_errs[1, 1, :, :] .= ustrip.(p_err)

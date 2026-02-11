@@ -176,7 +176,8 @@ end
 
 
 function make_normalized_spaxel(cube_data::NamedTuple, coords::CartesianIndex, cube_fitter::CubeFitter;
-    use_ap::Bool=false, use_vorbins::Bool=false, σ_min::Vector=zeros(eltype(cube_data.σ), size(cube_data.σ)[end]))
+    use_ap::Bool=false, use_vorbins::Bool=false, σ_min::Vector=zeros(eltype(cube_data.σ), size(cube_data.σ)[end]),
+    mask_bad::Union{Nothing,BitVector}=nothing)
 
     fopt = fit_options(cube_fitter)
 
@@ -190,7 +191,9 @@ function make_normalized_spaxel(cube_data::NamedTuple, coords::CartesianIndex, c
     # Perform a cubic spline fit, also obtaining the line mask
     mask_lines, I_spline = continuum_cubic_spline(λ, I, σ, cube_fitter.linemask_overrides; do_err=false)
     # Bad pixel mask
-    mask_bad = (use_ap || use_vorbins) ? iszero.(I) .| iszero.(σ) : cube_fitter.cube.mask[coords, :]
+    if isnothing(mask_bad)
+        mask_bad = (use_ap || use_vorbins) ? iszero.(I) .| iszero.(σ) : cube_fitter.cube.mask[coords, :]
+    end
     mask = mask_lines .| mask_bad
     # Calculate statistical errors if necessary
     if use_ap || use_vorbins
