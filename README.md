@@ -6,6 +6,7 @@
 ## Table of Contents
 
 * [Changelog](#changelog)
+* [Citation](#citation)
 * [Introduction](#i-introduction)
 * [Installation](#ii-installation)
     - [Julia Requirements](#julia-requirements)
@@ -32,6 +33,10 @@
 ---
 ## Changelog
 
+### 03/04/26
+
+Added the new "map_marker" parameter to allow the user to manually adjust the position of the red "X" in the 2D parameter maps.
+
 ### 12/22/25
 
 Bugfix: Bad pixel masks are now properly accounted for when calculating voronoi-binned spectra.
@@ -56,6 +61,32 @@ cube_fitter = CubeFitter(
 Fixed an issue where running Loki with parallelization enabled over multiple different computers (i.e. across nodes in a HPCC) would cause a segmentation fault.  This was due to the usage of SharedArrays, which are apparently only valid when all parallel processes are run by the same host computer.  I fixed the issue by removing the dependency on SharedArrays all together and simply using the functionality of the "pmap" function to collect the results, and then sort them afterwards.
 
 TL;DR You should now be able to run Loki across multiple nodes in an HPCC to your heart's content!
+
+---
+## Citation
+
+If you use Loki.jl in your research, please cite [Reefe et al. (2025)](https://ui.adsabs.harvard.edu/abs/2025Natur.638..360R/abstract).  For your convenience, a BibTeX citation is provided below:
+
+```bibtex
+@ARTICLE{2025Natur.638..360R,
+       author = {{Reefe}, Michael and {McDonald}, Michael and {Chatzikos}, Marios and {Seebeck}, Jerome and {Mushotzky}, Richard and {Veilleux}, Sylvain and {Allen}, Steven W. and {Bayliss}, Matthew and {Calzadilla}, Michael and {Canning}, Rebecca and {Floyd}, Benjamin and {Gaspari}, Massimo and {Hlavacek-Larrondo}, Julie and {McNamara}, Brian and {Russell}, Helen and {Sharon}, Keren and {Somboonpanyakul}, Taweewat},
+        title = "{Directly imaging the cooling flow in the Phoenix cluster}",
+      journal = {\nat},
+     keywords = {Physical Sciences, Astronomical and Space Sciences, Astrophysics - Astrophysics of Galaxies},
+         year = 2025,
+        month = feb,
+       volume = {638},
+       number = {8050},
+        pages = {360-364},
+          doi = {10.1038/s41586-024-08369-x},
+archivePrefix = {arXiv},
+       eprint = {2502.08619},
+ primaryClass = {astro-ph.GA},
+       adsurl = {https://ui.adsabs.harvard.edu/abs/2025Natur.638..360R},
+      adsnote = {Provided by the SAO/NASA Astrophysics Data System}
+}
+```
+
 
 ---
 ## I. Introduction
@@ -523,6 +554,10 @@ By default, if `linemask_overrides` is not provided, lines will be masked out by
 `map_snr_thresh`
 
 Gives the threshold that the signal to noise ratio must reach in order for a given quantity (i.e. emission line flux) to be shown in a given spaxel in the final 2D parameter maps output at the end of the fitting process. Defaults to 3.
+
+`map_marker`
+
+You may optionally specify a position to mark on the output 2D parameter maps with a red "X".  This must be a length-2 Vector of real values (i.e. [32.4, 41.9]).  If nothing is given for this parameter, the default marked position will be the centroid of data, calculated as the weighted average of pixel positions, with the integrated flux used as weights for each pixel.  This can be thought of as a "center of mass" centroid, or perhaps a "center of light."
 
 `guess_tau`
 

@@ -25,6 +25,7 @@ specific emission lines of interest).
 - `track_convergence`: Whether or not to save diagnostic files showing convergence of line fitting for each spaxel
 - `make_movies`: Whether or not to save mp4 files of the final model
 - `map_snr_thresh`: The SNR threshold below which to mask out spaxels from parameter maps for emission lines.
+- `map_marker`: Coordinates (x,y) to mark with a red 'X' in the output parameter maps.
 - `sort_line_components`: Defines how sorting should be done (either by flux or by fwhm) for individual line components
 
 """
@@ -42,6 +43,7 @@ struct OutputOptions <: Options
     track_convergence::Bool
     make_movies::Bool
     map_snr_thresh::Real
+    map_marker::Union{Vector{<:Real},Nothing}
     sort_line_components::Union{Symbol,Nothing}
     plot_line_annotation_positions::Vector{<:Real}
 end
@@ -434,6 +436,7 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
             out[:track_convergence],
             out[:make_movies],
             out[:map_snr_thresh],
+            out[:map_marker],
             out[:sort_line_components],
             line_annotation_positions
         )
@@ -619,6 +622,13 @@ function cubefitter_add_default_options!(cube::DataCube, out::Dict)
 
     if !haskey(out, :nirspec_mask_chip_gaps)
         out[:nirspec_mask_chip_gaps] = false
+    end
+
+    if !haskey(out, :map_marker)
+        out[:map_marker] = nothing
+    else
+        @assert (typeof(out[:map_marker]) <: Vector{<:Real}) "map_maker must be a Vector{<:Real}"
+        @assert (length(out[:map_marker]) == 2) "map_maker must have a length of 2"
     end
 
 end
