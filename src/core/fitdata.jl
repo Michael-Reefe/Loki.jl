@@ -24,7 +24,7 @@ function fill_bad_pixels(I::Vector{<:Number}, σ::Vector{<:Number}, templates::U
     end
     if !isfinite(I[end])
         i = findfirst(isfinite, I[end:-1:1])
-        I[end] = I[i]
+        I[end] = I[end:-1:1][i]
     end
     if !isfinite(σ[1])
         i = findfirst(isfinite, σ)
@@ -32,7 +32,7 @@ function fill_bad_pixels(I::Vector{<:Number}, σ::Vector{<:Number}, templates::U
     end
     if !isfinite(σ[end])
         i = findfirst(isfinite, σ[end:-1:1])
-        σ[end] = σ[i]
+        σ[end] = σ[end:-1:1][i]
     end
     if !isnothing(templates)
         for s in axes(templates, 2)
@@ -42,7 +42,7 @@ function fill_bad_pixels(I::Vector{<:Number}, σ::Vector{<:Number}, templates::U
             end
             if !isfinite(templates[end,s])
                 i = findfirst(isfinite, templates[end:-1:1,s])
-                templates[end,s] = templates[i,s]
+                templates[end,s] = templates[end:-1:1,s][i]
             end
         end
     end

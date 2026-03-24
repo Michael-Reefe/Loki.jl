@@ -1194,7 +1194,7 @@ function extinction_factor(ext::Real, τ_97::Real; screen::Bool=false)
     if screen
         exp(-τ_97*ext)
     else
-        iszero(τ_97) ? 1. : (1 - exp(-τ_97*ext)) / (τ_97*ext)
+        iszero(τ_97) | iszero(ext) ? 1. : (1 - exp(-τ_97*ext)) / (τ_97*ext)
     end
 end
 

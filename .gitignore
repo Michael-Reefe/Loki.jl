@@ -1,4 +1,4 @@
-test/**
+test_old/**
 test_optical/**
 src/idl_data*
 *.swp
