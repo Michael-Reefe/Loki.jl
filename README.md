@@ -33,6 +33,12 @@
 ---
 ## Changelog
 
+### 04/01/26
+
+Added the "spaxel_timelimit" option to set an upper limit on how long each spaxel fit can take, as a last resort to prevent hanging or unrecoverable fits.  The default is a very lenient 3600 seconds (1 hour), which should never be reached under normal circumstances.
+
+The option can be changed either in the options.toml file, or passing it directly into a CubeFitter.
+
 ### 03/04/26
 
 Added the new "map_marker" parameter to allow the user to manually adjust the position of the red "X" in the 2D parameter maps.
@@ -260,10 +266,6 @@ These options are found in `src/options/options.toml` and affect the defaults fo
 
 This boolean option enables or disables multiprocessing (not to be confused with multithreading). If this option is true, when fitting individual spaxels, multiple spaxel fits may be performed in parallel across different CPUs.
 
-`parallel_strategy = "pmap"`
-
-Changes how multiprocessing code is done. May be either "pmap" to use the `pmap` function or "distributed" to use a distributed for loop.  In general, sticking with "pmap" is recommended since this dynamically allocates jobs to different cores as they become available, so if one core's jobs happen to run faster than other, there is no wasted computation time. Distributed for loops preallocate jobs to each core, so if one finishes significantly faster than the others, that core becomes unused while the others finish.
-
 `plot_spaxels = "pyplot"`
 
 This option determines the plotting backend that is used for plotting the 1D spectral models of individual spaxels or integrated apertures. It may be "pyplot", "plotly", or "both".
@@ -297,6 +299,10 @@ not affect the uncertainties, which are always calculated as the (84.1st - 50th,
 `random_seed = 123456789`
 
 This option sets the random seed that is used when resampling the data for bootstrapping iterations. By using the same seed, you are guaranteed to get the same results after repeated runs (assuming all other inputs are the same).
+
+`spaxel_timelimit = 3600.0`
+
+This option sets the maximum seconds before forcibly terminating an in-progress spaxel fit.  It is meant as a last resort in case something is seriously wrong or unrecoverable, so the default is a very lenient 1 hour, which should never be reached under normal circumstances.
 
 `overwrite = false`
 

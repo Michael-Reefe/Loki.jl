@@ -3,11 +3,6 @@
 # parallel: Whether or not to utilize multiple CPUs to fit spaxels in parallel
 parallel = true
 
-# parallel_strategy: "pmap" or "distributed". Generally pmap is superior as it balances the work load
-# between processes, whereas distributed simply allocates an equal amount of jobs to each CPU.
-# (NOTE: "distributed" is now deprecated and is no longer implemented, do not use it!)
-parallel_strategy = "pmap"
-
 # plot_spaxels: The plotting backend for 1D spaxel fits. Can be "pyplot", "plotly", or "both".
 plot_spaxels = "pyplot"
 
@@ -30,6 +25,10 @@ n_bootstrap = 0
 
 # random_seed: Set the random seed for bootstrapping
 random_seed = 123456789
+
+# spaxel_timelimit: maximum seconds before forcibly terminating an incomplete spaxel fit.
+# The default is 1 hour.
+spaxel_timelimit = 3600.0
 
 # overwrite: This controls what to do in case the fit for a certain spaxel
 # has already been performed / saved.  If true, the fit will be performed again

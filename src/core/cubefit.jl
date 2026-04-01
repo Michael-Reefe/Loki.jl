@@ -34,7 +34,6 @@ struct OutputOptions <: Options
     plot_maps::Bool
     plot_range::Union{Vector{<:Tuple},Nothing}
     parallel::Bool
-    parallel_strategy::String
     save_fits::Bool
     save_tables::Bool
     save_full_model::Bool
@@ -52,7 +51,6 @@ end
 ## Fitting Options ##
 
 - `parallel`: Whether or not to allow multiprocessing
-- `parallel_strategy`: Either `pmap` or `distributed`
 - `sys_err`: Optional systematic uncertainty quantified as a ratio (0-1) of the flux. I.e. to add a 10% systematic 
     uncertainty use fσ_sys = 0.1
 - `extinction_curve`: The type of extinction curve being used, i.e. `"kvt"` or `"d+"`
@@ -139,6 +137,7 @@ mutable struct FittingOptions{T<:Real,S<:Integer} <: Options
     plot_line_test::Bool
     lines_allow_negative::Bool
     subtract_cubic_spline::Bool
+    spaxel_timelimit::T
 end
 
 
@@ -427,7 +426,6 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
             out[:plot_maps],
             out[:plot_range],
             out[:parallel],
-            out[:parallel_strategy],
             out[:save_fits],
             out[:save_tables],
             out[:save_full_model],
@@ -477,7 +475,8 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
             out[:line_test_threshold],
             out[:plot_line_test],
             out[:lines_allow_negative],
-            out[:subtract_cubic_spline]
+            out[:subtract_cubic_spline],
+            out[:spaxel_timelimit]
         )
 
         new{typeof(z), typeof(n_params_cont), eltype(out[:templates]), typeof(vres), eltype(cube.λ)}(

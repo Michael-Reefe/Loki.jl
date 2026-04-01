@@ -1245,89 +1245,162 @@ function spaxel_loop_previous(cube_fitter::CubeFitter, cube_data::NamedTuple, sp
 end
 
 
-# Helper function that loops over spaxels using pmap to fit them in parallel
-function spaxel_loop_pmap!(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxels::Vector,
-    vorbin::Bool, out_params::AbstractArray{<:Real,3}, out_errs::AbstractArray{<:Real,4}, 
-    out_np_ssp::AbstractArray{Int,2})
-
-    @info "Number of spaxels to fit: $(length(spaxels))"
-
-    prog = Progress(length(spaxels))
-    # => create a closure where the only actual function argument is the spaxel index; 
-    #    I think this, in combination with the default Caching Pool, means the large cube_fitter 
-    #    and cube_data structures dont have to all be passed to the individual workers
-    pmap_result = progress_pmap(spaxels, progress=prog, retry_delays=ones(1)) do index
-        p_out, p_err, np_ssp = try
-            fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
-        catch e 
-            @warn "Error fitting spaxel $index: $e"
-            nothing, nothing, nothing
-        end
-        return index, p_out, p_err, np_ssp
-    end
-
-    # Loop over the results and insert them into the output arrays at the correct indices
-    for (index, p_out, p_err, np_ssp) in pmap_result
-        if !isnothing(p_out)
-            if vorbin
-                out_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(index)[1])
-                for out_index in out_indices
-                    out_params[out_index, :] .= ustrip.(p_out)
-                    out_errs[out_index, :, :] .= ustrip.(p_err)
-                    out_np_ssp[out_index] = np_ssp
-                end
-            else
-                out_params[index, :] .= ustrip.(p_out)
-                out_errs[index, :, :] .= ustrip.(p_err)
-                out_np_ssp[index] = np_ssp
-            end
-        end
-    end
-
-    # We no longer need the extra worker processes after this point
-    rmprocs(workers())
-
-end
-
-
-# Helper function that loops over spaxels using distributed to fit them in parallel
-function spaxel_loop_distributed!(cube_fitter::CubeFitter, cube_data::NamedTuple,
-    spaxels::Vector, vorbin::Bool, out_params::AbstractArray{<:Real,3}, 
-    out_errs::AbstractArray{<:Real,4}, out_np_ssp::AbstractArray{Int,2})
-
-    error("Sorry, the \"distributed\" parallelization option is not currently implemented!")
-end
-
-
-# Helper function that loops over spaxels, fitting them in sequence (not parallel)
-function spaxel_loop_serial!(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxels::Vector,
+function spaxel_loop_timeout!(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxels::Vector,
     vorbin::Bool, out_params::AbstractArray{<:Real,3}, out_errs::AbstractArray{<:Real,4}, out_np_ssp::AbstractArray{Int,2})
 
-    @info "Number of spaxels to fit: $(length(spaxels))"
 
-    prog = Progress(length(spaxels))
-    for index ∈ spaxels
-        p_out, p_err, np_ssp = try
-            fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
-        catch e 
-            @warn "Error fitting spaxel $index: $e"
-            nothing, nothing, nothing
-        end
-        if !isnothing(p_out)
-            if vorbin
-                out_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(index)[1])
-                for out_index in out_indices
-                    out_params[out_index, :] .= ustrip.(p_out)
-                    out_errs[out_index, :, :] .= ustrip.(p_err)
-                    out_np_ssp[out_index] = np_ssp
-                end
-            else
-                out_params[index, :] .= ustrip.(p_out)
-                out_errs[index, :, :] .= ustrip.(p_err)
-                out_np_ssp[index] = np_ssp
+    fopt = fit_options(cube_fitter)
+    oopt = out_options(cube_fitter)
+    n_spax = length(spaxels)
+    n_done = 0
+    @info "Number of spaxels to fit: $(n_spax) (time limit: $(fopt.spaxel_timelimit) s)"
+
+    # a lock object for writing to the output arrays to prevent race conditions
+    results_lock = ReentrantLock()
+    workers_lock = ReentrantLock()
+
+    @info """\n
+    ------------------------
+    Worker processes:     $(nworkers())
+    Threads per process:  $(Threads.nthreads())
+    ------------------------
+    """
+
+    if isone(nprocs())
+        @warn "No parallel processes have been started, so time limits cannot be monitored for spaxel fits. Spaxel fits may exceed the spaxel_timelimit parameter."
+    end
+
+    # Set up the worker pool with our workers (may be 1 if not using parallel processing)
+    pool = Channel{Int}(nworkers())
+    foreach(w -> put!(pool, w), workers())
+
+    # Keep track of which workers are active. We consider a worker to become "inactive" if it is hanging indefinitely on a spaxel
+    # (in practice, if it exceeds the spaxel_timelimit).
+    active_workers = workers()
+
+    # this is a clusterf*ck of nested tasks...but I'll try to explain it 
+
+    # our list of tasks
+    tasks = Task[]
+
+    # outer try/finally block is just to make sure that if we crash for whatever reason, we clean up all 
+    # of the worker processes 
+    try
+
+        # outer loop: iterate over each spaxel. 
+        # note that this is NOT a sync loop, which would block progress until all nested tasks finish. This is
+        # because we may need to stop waiting for tasks if abort is ever flagged.
+        for index ∈ spaxels 
+
+            # Grab a worker from the pool that will be used for this spaxel.
+            # If there are currently no free workers, take! will wait until there is one, so 
+            # this essentially means that this loop will schedule nworkers() tasks at a time.
+            # If the pool is closed, take! throws, in which case we can break out of the loop.
+            w = try 
+                take!(pool)
+            catch
+                break
             end
+
+            # inner block: we will now start an asynchronous task for this spaxel. What this means is 
+            # that this inner loop's control flow is NOT blocked by the work that it requests from fit_spaxel.
+            # It will keep looping and scheduling tasks until the pool is out of workers to use, at which 
+            # point the take! function above will stop the control flow until a new worker is freed up.
+            t = @async begin
+
+                # Now we set up a channel that will hold the final result of the work (the fit_spaxel function)
+                ch = Channel{Any}(1)
+                # remotecall requests fit_spaxel to be run on worker w with the given arguments.  It immediately returns 
+                # a "future" object which is like a promise that this work will be done sometime in the future.
+                future = remotecall(fit_spaxel, w, cube_fitter, cube_data, index; use_vorbins=vorbin)
+
+                # this async block starts another task which will put the future result into the channel once it's ready.
+                # So this task will be blocked until the results of fit_spaxel are ready.
+                @async begin 
+                    try
+                        put!(ch, fetch(future))
+                    catch e 
+                        put!(ch, e)
+                    end
+                end
+
+                # Now the timedwait function will wait here until the channel has the result, or until a timeout occurs,
+                # whichever comes first.  The control flow for the outer async block will be stopped here until this
+                # function returns (but, remember, it won't stop other iterations of the outer sync loop to be started).
+                t_start = time_ns()
+                status = timedwait(() -> isready(ch), fopt.spaxel_timelimit; pollint=1.)
+                t_stop = time_ns()
+
+                # Once we reach here, the work is done, and all that's left to do is collect it, depending of course on 
+                # whether it timed out, errored, or returned normally.  First we handle the timeout case.
+                result = if status === :timed_out
+                    # if we exceed the time limit, give up on the spaxel, kill the worker, and spawn a new one
+                    @warn "Spaxel $index timed out on worker $w"
+                    # remove this worker from the active workers and consider it dead/hanging 
+                    lock(workers_lock) do
+                        idx = findfirst(==(w), active_workers)
+                        deleteat!(active_workers, idx)
+                        if isempty(active_workers) 
+                            @error "All workers have become inactive, abandoning remaining spaxel fits."
+                            # closing the pool will unblock any take! calls in the outer for loop
+                            close(pool)
+                        end
+                    end
+                    nothing, nothing, nothing
+                else
+                    # no timeout - put the original worker back in the pool
+                    put!(pool, w)
+                    try
+                        take!(ch)
+                    catch e
+                        # we may still run into errors (particularly if there are NaNs), which are caught here
+                        @warn "Error fitting spaxel $index: $e"
+                        status = :error
+                        nothing, nothing, nothing
+                    end
+                end
+
+                # unpack the result
+                p_out, p_err, np_ssp = result
+
+                # lock writing to the output arrays to avoid race conditions
+                lock(results_lock) do 
+                    if !isnothing(p_out)
+                        if vorbin
+                            out_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(index)[1])
+                            for out_index in out_indices
+                                out_params[out_index, :] .= ustrip.(p_out)
+                                out_errs[out_index, :, :] .= ustrip.(p_err)
+                                out_np_ssp[out_index] = np_ssp
+                            end
+                        else
+                            out_params[index, :] .= ustrip.(p_out)
+                            out_errs[index, :, :] .= ustrip.(p_err)
+                            out_np_ssp[index] = np_ssp
+                        end
+                    end  
+                    n_done += 1
+                end
+
+                @info "(Progress: $(n_done)/$(n_spax)) Spaxel $index status: $status after $(@sprintf "%.0f" ((t_stop-t_start)/1e9)) s | Limit: $(fopt.spaxel_timelimit) s"
+            end
+
+            # add the task to the list of tasks to wait for after the loop
+            push!(tasks, t)
         end
-        next!(prog)
+
+        # now, after the loop spawns and schedules the tasks, here is where we wait for them to complete.
+        # calling wait here is safe because any tasks which are already spawned will definitely complete, either 
+        # normally or via timing out.
+        foreach(wait, tasks)
+    
+    finally
+
+        # remove all worker processes - we are done with them
+        if nprocs() > 1
+            rmprocs(workers())
+        end
+
     end
 end
 
@@ -1356,10 +1429,6 @@ function fit_cube!(cube_fitter::CubeFitter)
     ######## BEGINNING FULL CUBE FITTING ROUTINE FOR $(cube_fitter.name) ########
     #############################################################################
 
-    ------------------------
-    Worker Processes:     $(nworkers())
-    Threads per process:  $(Threads.nthreads())
-    ------------------------
     """
     # copy the main log file
     cp(joinpath(@__DIR__, "..", "loki.main.log"), joinpath("output_$(cube_fitter.name)", "loki.main.log"), force=true)
@@ -1412,19 +1481,8 @@ function fit_cube!(cube_fitter::CubeFitter)
     oopt = out_options(cube_fitter)
 
     # Use multiprocessing (not threading) to iterate over multiple spaxels at once using multiple CPUs
-    if oopt.parallel && nworkers() > 1
-        @info "===> Beginning individual spaxel fitting... <==="
-        if oopt.parallel_strategy == "pmap"
-            spaxel_loop_pmap!(cube_fitter, cube_data, spaxels, vorbin, out_params, out_errs, out_np_ssp)
-        elseif oopt.parallel_strategy == "distributed"
-            spaxel_loop_distributed!(cube_fitter, cube_data, spaxels, vorbin, out_params, out_errs, out_np_ssp)
-        else
-            error("Unrecognized parallel strategy: $(oopt.parallel_strategy). May be \"pmap\" or \"distributed\".")
-        end
-    else
-        @info "===> Beginning individual spaxel fitting... <==="
-        spaxel_loop_serial!(cube_fitter, cube_data, spaxels, vorbin, out_params, out_errs, out_np_ssp)
-    end
+    @info "===> Beginning individual spaxel fitting... <==="
+    spaxel_loop_timeout!(cube_fitter, cube_data, spaxels, vorbin, out_params, out_errs, out_np_ssp)
 
     @info "===> Generating parameter maps and model cubes... <==="
     # apply the units
@@ -1489,11 +1547,6 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
     #############################################################################
     ######## BEGINNING FULL CUBE FITTING ROUTINE FOR $(cube_fitter.name) ########
     #############################################################################
-
-    ------------------------
-    Worker Processes:     $(nworkers())
-    Threads per process:  $(Threads.nthreads())
-    ------------------------
     """
     # copy the main log file
     cp(joinpath(@__DIR__, "..", "loki.main.log"), joinpath("output_$(cube_fitter.name)", "loki.main.log"), force=true)

@@ -772,7 +772,11 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, bunit::Abstra
         if !isdir(dirname(save_path))
             mkpath(dirname(save_path))
         end
-        plt.savefig(save_path, dpi=300, bbox_inches=:tight)
+        try
+            plt.savefig(save_path, dpi=300, bbox_inches=:tight)
+        catch e
+            @warn "Could not save plot for $(name_i): $e"
+        end
     end
     if !isnothing(modify_ax)
         return fig, ax, cdata

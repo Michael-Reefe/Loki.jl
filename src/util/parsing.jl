@@ -23,7 +23,7 @@ function validate_options_file(options)
     keylist1 = ["n_bootstrap", "silicate_absorption", "extinction_curve", "extinction_screen", "fit_sil_emission", "fit_opt_na_feii", 
                 "fit_opt_br_feii", "fit_all_global", "use_pah_templates", "fit_joint", "fit_uv_bump", "fit_covering_frac", "parallel", 
                 "plot_spaxels", "plot_maps", "save_fits", "overwrite", "track_memory", "track_convergence", "save_full_model", 
-                "line_test_lines", "line_test_threshold", "plot_line_test", "make_movies", "cosmology", "parallel_strategy", 
+                "line_test_lines", "line_test_threshold", "plot_line_test", "make_movies", "cosmology", "spaxel_timelimit",
                 "random_seed", "sys_err", "olivine_y", "pyroxene_x", "grain_size", "fit_stellar_continuum", 
                 "fit_temp_multexp", "decompose_lock_column_densities", "linemask_width", "map_snr_thresh"]
     keylist2 = ["h", "omega_m", "omega_K", "omega_r"]
