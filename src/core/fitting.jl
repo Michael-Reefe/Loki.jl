@@ -1351,9 +1351,8 @@ function spaxel_loop_timeout!(cube_fitter::CubeFitter, cube_data::NamedTuple, sp
                     # no timeout - put the original worker back in the pool
                     put!(pool, w)
                     val = take!(ch)
-                    if val isa Exception
+                    if typeof(val) <: Exception
                         # we may still run into errors (particularly if there are NaNs), which are caught here
-                        @warn "Error fitting spaxel $index: $val"
                         status = :error
                         nothing, nothing, nothing
                     else
@@ -1383,7 +1382,7 @@ function spaxel_loop_timeout!(cube_fitter::CubeFitter, cube_data::NamedTuple, sp
                     n_done += 1
                 end
 
-                @info "(Progress: $(n_done)/$(n_spax)) Spaxel $index status: $status after $(@sprintf "%.0f" ((t_stop-t_start)/1e9)) s | Limit: $(fopt.spaxel_timelimit) s"
+                @info "(Progress: $(n_done)/$(n_spax)) Spaxel $index status: $status after $(round((t_stop-t_start)/1e9)) s | Limit: $(fopt.spaxel_timelimit) s"
             end
 
             # add the task to the list of tasks to wait for after the loop
