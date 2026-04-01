@@ -1350,11 +1350,10 @@ function spaxel_loop_timeout!(cube_fitter::CubeFitter, cube_data::NamedTuple, sp
                 else
                     # no timeout - put the original worker back in the pool
                     put!(pool, w)
-                    try
-                        take!(ch)
-                    catch e
+                    val = take!(ch)
+                    if val isa Exception
                         # we may still run into errors (particularly if there are NaNs), which are caught here
-                        @warn "Error fitting spaxel $index: $e"
+                        @warn "Error fitting spaxel $index: $val"
                         status = :error
                         nothing, nothing, nothing
                     end

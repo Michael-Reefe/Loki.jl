@@ -35,9 +35,9 @@
 
 ### 04/01/26
 
-Added the "spaxel_timelimit" option to set an upper limit on how long each spaxel fit can take, as a last resort to prevent hanging or unrecoverable fits.  The default is a very lenient 3600 seconds (1 hour), which should never be reached under normal circumstances.
+Added the "spaxel_timelimit" option to set an upper limit on how long each spaxel fit can take, as a last resort to prevent hanging or unrecoverable fits.  The default is a very lenient 3600 seconds (1 hour), which should never be reached under normal circumstances.  The option can be changed either in the options.toml file, or passing it directly into a CubeFitter.
 
-The option can be changed either in the options.toml file, or passing it directly into a CubeFitter.
+IMPORTANT NOTE: The time limit will NOT be enforced unless you run Loki with at least 1 worker process.  Otherwise, with only the main process, it is not possible to set a timer in parallel with the spaxel fits.
 
 ### 03/04/26
 
@@ -302,7 +302,7 @@ This option sets the random seed that is used when resampling the data for boots
 
 `spaxel_timelimit = 3600.0`
 
-This option sets the maximum seconds before forcibly terminating an in-progress spaxel fit.  It is meant as a last resort in case something is seriously wrong or unrecoverable, so the default is a very lenient 1 hour, which should never be reached under normal circumstances.
+This option sets the maximum seconds before forcibly terminating an in-progress spaxel fit.  It is meant as a last resort in case something is seriously wrong or unrecoverable, so the default is a very lenient 1 hour, which should never be reached under normal circumstances.  NOTE: This limit is NOT enforced unless Loki is run with at least 1 parallel process (otherwise, with only the main process, the spaxel fit function blocks the control flow and prevents a timer from properly working).
 
 `overwrite = false`
 
