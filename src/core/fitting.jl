@@ -1252,7 +1252,7 @@ function spaxel_loop_timeout!(cube_fitter::CubeFitter, cube_data::NamedTuple, sp
     fopt = fit_options(cube_fitter)
     oopt = out_options(cube_fitter)
     n_spax = length(spaxels)
-    n_done = 0
+    n_done = Ref(0)
     @info "Number of spaxels to fit: $(n_spax) (time limit: $(fopt.spaxel_timelimit) s)"
 
     # a lock object for writing to the output arrays to prevent race conditions
@@ -1274,6 +1274,10 @@ function spaxel_loop_timeout!(cube_fitter::CubeFitter, cube_data::NamedTuple, sp
     pool = Channel{Int}(nworkers())
     foreach(w -> put!(pool, w), workers())
 
+    # Set up a queue of spaxels that need to be fit 
+    spaxel_queue = Channel{eltype(spaxels)}(length(spaxels))
+    foreach(s -> put!(spaxel_queue, s), spaxels)
+
     # Keep track of which workers are active. We consider a worker to become "inactive" if it is hanging indefinitely on a spaxel
     # (in practice, if it exceeds the spaxel_timelimit).
     active_workers = workers()
@@ -1287,25 +1291,36 @@ function spaxel_loop_timeout!(cube_fitter::CubeFitter, cube_data::NamedTuple, sp
     # of the worker processes 
     try
 
-        # outer loop: iterate over each spaxel. 
-        # note that this is NOT a sync loop, which would block progress until all nested tasks finish. This is
-        # because we may need to stop waiting for tasks if abort is ever flagged.
-        for index ∈ spaxels 
+        # outer loop: keep iterating until we explicitly reach a break statement.
+        # Note that this is NOT a sync loop, which would block progress until all nested tasks finish. This is
+        # because we may need to stop waiting for tasks if there are no more active workers.
+        while true
 
-            # Grab a worker from the pool that will be used for this spaxel.
+            # First, grab a spaxel from the spaxel queue.  This should never block progress 
+            # because the spaxel queue won't be empty until there are no spaxels left to fit.
+            index = try 
+                take!(spaxel_queue)
+            catch
+                break
+            end
+
+            # Next, grab a worker from the pool that will be used for this spaxel.
             # If there are currently no free workers, take! will wait until there is one, so 
             # this essentially means that this loop will schedule nworkers() tasks at a time.
-            # If the pool is closed, take! throws, in which case we can break out of the loop.
+            # If the pool is closed (meaning all workers are dead), take! throws, in which case 
+            # we break out of the loop because we essentially have to give up.
             w = try 
                 take!(pool)
             catch
                 break
             end
 
-            # inner block: we will now start an asynchronous task for this spaxel. What this means is 
-            # that this inner loop's control flow is NOT blocked by the work that it requests from fit_spaxel.
-            # It will keep looping and scheduling tasks until the pool is out of workers to use, at which 
-            # point the take! function above will stop the control flow until a new worker is freed up.
+            # inner block: we will now start an asynchronous task "t" for this spaxel. 
+            # What this means is that this inner code block will NOT block the progress of the loop by waiting 
+            # for the work that it requests from fit_spaxel.  It will schedule the work to be done on one of the 
+            # worker processes, and then the loop will immediately move on to the next iteration (repeating 
+            # until there are no workers available in the pool, at which point it will wait at the take! 
+            # function above until either a new worker is freed up or all workers become inactive)
             t = @async begin
 
                 # Now we set up a channel that will hold the final result of the work (the fit_spaxel function)
@@ -1315,49 +1330,60 @@ function spaxel_loop_timeout!(cube_fitter::CubeFitter, cube_data::NamedTuple, sp
                 future = remotecall(fit_spaxel, w, cube_fitter, cube_data, index; use_vorbins=vorbin)
 
                 # this async block starts another task which will put the future result into the channel once it's ready.
-                # So this task will be blocked until the results of fit_spaxel are ready.
-                @async begin 
-                    try
-                        put!(ch, fetch(future))
-                    catch e 
-                        put!(ch, e)
-                    end
+                # So this task will be blocked until the results of fit_spaxel are ready.  This is somewhat redundant,
+                # but it is necessary because for some reason calling "isready" directly on the future object will block 
+                # the control flow until the future object is ready, rather than returning immediately (which is what
+                # we want it to do for the timedwait function below to work correctly).
+                @async try
+                    put!(ch, fetch(future))
+                catch e 
+                    put!(ch, e)
                 end
 
                 # Now the timedwait function will wait here until the channel has the result, or until a timeout occurs,
-                # whichever comes first.  The control flow for the outer async block will be stopped here until this
-                # function returns (but, remember, it won't stop other iterations of the outer sync loop to be started).
+                # whichever comes first.  The control flow for this task (within the async block) will be stopped here until this
+                # function returns (but, remember, it won't stop other iterations of the outer loop from being started).
                 t_start = time_ns()
                 status = timedwait(() -> isready(ch), fopt.spaxel_timelimit; pollint=1.)
                 t_stop = time_ns()
 
+                # check if the process has been killed by the OS 
+                os_killed = w ∉ workers()
+
                 # Once we reach here, the work is done, and all that's left to do is collect it, depending of course on 
                 # whether it timed out, errored, or returned normally.  First we handle the timeout case.
                 result = if status === :timed_out
-                    # if we exceed the time limit, give up on the spaxel, kill the worker, and spawn a new one
-                    @warn "Spaxel $index timed out on worker $w"
-                    # remove this worker from the active workers and consider it dead/hanging 
-                    lock(workers_lock) do
-                        idx = findfirst(==(w), active_workers)
-                        deleteat!(active_workers, idx)
-                        if isempty(active_workers) 
-                            @error "All workers have become inactive, abandoning remaining spaxel fits."
-                            # closing the pool will unblock any take! calls in the outer for loop
-                            close(pool)
-                        end
-                    end
+                    @warn "Spaxel $index timed out on worker $w. Marking process as hanging."
                     nothing, nothing, nothing
                 else
-                    # no timeout - put the original worker back in the pool
-                    put!(pool, w)
                     val = take!(ch)
                     if typeof(val) <: Exception
                         # we may still run into errors (particularly if there are NaNs), which are caught here
                         status = :error
+                        ex = val isa RemoteException ? val.captured.ex : val
+                        @error "Spaxel $index has reported an error on worker $w: $ex"
                         nothing, nothing, nothing
                     else
                         val
                     end
+                end
+
+                # if the spaxel timed out or the OS killed the worker, we need to remove this 
+                # worker from the active workers
+                if status === :timed_out || os_killed
+                    lock(workers_lock) do
+                        idx = findfirst(==(w), active_workers)
+                        !isnothing(idx) && deleteat!(active_workers, idx)
+                        if isempty(active_workers) 
+                            @error "All workers have become inactive, abandoning remaining spaxel fits."
+                            # closing the pool will unblock any take! calls in the outer for loop
+                            close(pool)
+                            close(spaxel_queue)
+                        end
+                    end
+                else 
+                    # no timeout and hasn't been killed by the OS
+                    put!(pool, w)
                 end
 
                 # unpack the result
@@ -1379,10 +1405,24 @@ function spaxel_loop_timeout!(cube_fitter::CubeFitter, cube_data::NamedTuple, sp
                             out_np_ssp[index] = np_ssp
                         end
                     end  
-                    n_done += 1
+
+                    if os_killed && isopen(spaxel_queue)
+                        # check if the OS killed the worker, in which case we want to retry the spaxel
+                        @warn "Worker $w was killed by the OS on spaxel $index. Retrying."
+                        # re-queue the spaxel
+                        put!(spaxel_queue, index)
+                    else
+                        # otherwise, increment the number of done spaxels.
+                        n_done[] += 1
+                    end
+
+                    # check if there are any remaining spaxels to fit 
+                    if n_done[] == length(spaxels)
+                        close(spaxel_queue)
+                    end
                 end
 
-                @info "(Progress: $(n_done)/$(n_spax)) Spaxel $index status: $status after $(round((t_stop-t_start)/1e9)) s | Limit: $(fopt.spaxel_timelimit) s"
+                @info "(Progress: $(n_done[])/$(n_spax)) Spaxel $index status: $status after $(round((t_stop-t_start)/1e9)) s | Limit: $(fopt.spaxel_timelimit) s"
             end
 
             # add the task to the list of tasks to wait for after the loop
