@@ -1356,6 +1356,8 @@ function spaxel_loop_timeout!(cube_fitter::CubeFitter, cube_data::NamedTuple, sp
                         @warn "Error fitting spaxel $index: $val"
                         status = :error
                         nothing, nothing, nothing
+                    else
+                        val
                     end
                 end
 
