@@ -10,6 +10,7 @@ integrates to 1.  The DataCube object is modified in-place with the PSF model, a
 """
 function generate_psf_model!(cube::DataCube, instrument::String, psf_model_dir::String=""; interpolate_leak_artifact::Bool=true, z::Real=0.)
 
+    @debug "generate_psf_model!(DataCube): instrument=$instrument, channel=$(cube.channel), band=$(cube.band), interpolate_leak=$interpolate_leak_artifact, z=$z"
     # Load in data from observations of bright stars (HD 163466, HD 37962, 16 Cyg B)
     hdus = []
     if (instrument == "MIRI") && (psf_model_dir == "")
@@ -183,6 +184,7 @@ function generate_psf_model!(cube::DataCube, instrument::String, psf_model_dir::
 
     # Save the PSF model to the DataCube object
     cube.psf_model = psf
+    @debug "generate_psf_model!(DataCube): done — psf_shape=$(size(psf)), n_nan=$(count(isnan, psf))"
 
     psf
 end
@@ -192,6 +194,7 @@ end
 function generate_psf_model!(obs::Observation, psf_model_dir::String=""; interpolate_leak_artifact::Bool=true,
     centroid_4c_4b::Bool=false)
 
+    @debug "generate_psf_model!(Observation): n_channels=$(length(obs.channels)), instrument=$(obs.instrument), centroid_4c_4b=$centroid_4c_4b"
     for ch in keys(obs.channels)
         generate_psf_model!(obs.channels[ch], obs.instrument, psf_model_dir; interpolate_leak_artifact=interpolate_leak_artifact, z=obs.z)
     end
@@ -223,7 +226,7 @@ Fit a PSF model with a cubic spline with knots spaced by `spline_width` pixels.
 """
 function splinefit_psf_model!(cube::DataCube, spline_width::Integer)
     @assert !isnothing(cube.psf_model) "Please input a DataCube that already has a PSF model!"
-
+    @debug "splinefit_psf_model!(DataCube): channel=$(cube.channel), band=$(cube.band), psf_shape=$(size(cube.psf_model)), spline_width=$spline_width"
     @info "Fitting PSF with a cubic spline with knots spaced by $spline_width pixels"
     for c ∈ CartesianIndices(size(cube.psf_model)[1:2])
         filt = isfinite.(cube.psf_model[c, :])
@@ -245,6 +248,7 @@ end
 
 # Method that applies `splinefit_psf_model!` to each channel in an Observation object
 function splinefit_psf_model!(obs::Observation, spline_width::Integer)
+    @debug "splinefit_psf_model!(Observation): n_channels=$(length(obs.channels)), spline_width=$spline_width"
     for ch in keys(obs.channels)
         splinefit_psf_model!(obs.channels[ch], spline_width)
     end
@@ -299,8 +303,9 @@ that the PSF FWHM does). If `ap_r` is 0, then the template is just extracted fro
 `spline_width` is > 0, a cubic spline interpolation is performed with knots spaced by `spline_width` pixels.
 The 1D template is then combined with a 3D PSF model to create a full 3D nuclear template.
 """
-function generate_nuclear_template(cube::DataCube, ap_r::Real=0.; spline_width::Integer=7) 
+function generate_nuclear_template(cube::DataCube, ap_r::Real=0.; spline_width::Integer=7)
 
+    @debug "generate_nuclear_template: channel=$(cube.channel), band=$(cube.band), ap_r=$ap_r, spline_width=$spline_width, cube_shape=$(size(cube.I))"
     Iunit = unit(cube.I[1])
     data2d = dropdims(nansum(ustrip(cube.I), dims=3), dims=3)
     data2d[.~isfinite.(data2d)] .= 0.

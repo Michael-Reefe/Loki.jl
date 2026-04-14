@@ -30,6 +30,7 @@ end
 
 # combine multiple SpaxelFitResult objects together
 function combine!(s1::SpaxelFitResult, s2::SpaxelFitResult)
+    @debug "combine!(SpaxelFitResult): n_params_1=$(length(s1.pnames)), n_params_2=$(length(s2.pnames))"
     s1.pnames = cat(s1.pnames, s2.pnames, dims=1)
     s1.popt = cat(s1.popt, s2.popt, dims=1)
     s1.perr = cat(s1.perr, s2.perr, dims=1)
@@ -41,13 +42,14 @@ end
 
 # Make a copy of a SpaxelFitResult object
 function Base.copy(s::SpaxelFitResult)
+    @debug "copy(SpaxelFitResult): n_params=$(length(s.pnames))"
     SpaxelFitResult(copy(s.pnames), copy(s.popt), copy(s.perr), copy(s.bounds), copy(s.plock), copy(s.ptie))
 end
 
 
 # Function for nicely printing out results
 function pretty_print_results(result::SpaxelFitResult; round::Bool=false)
-
+    @debug "pretty_print_results: n_params=$(length(result.pnames)), round=$round, n_locked=$(sum(result.plock))"
     # prettify locked and tied vectors
     locked = ifelse.(result.plock, "yes", "")
     tie_groups = Vector{String}([!isnothing(tie) ? string(tie.group) : "" for tie in result.ptie])

@@ -2,10 +2,12 @@
 # Helper function for preparing continuum and dust feature parameters for 
 # a CubeFitter object
 function cubefitter_prepare_continuum(optical_file::String, infrared_file::String, lines_file::String,
-    λ::Vector{<:QWave}, z::Real, out::Dict, λunit::Unitful.Units, 
-    Iunit::Unitful.Units, region::SpectralRegion, name::String, cube::DataCube, 
+    λ::Vector{<:QWave}, z::Real, out::Dict, λunit::Unitful.Units,
+    Iunit::Unitful.Units, region::SpectralRegion, name::String, cube::DataCube,
     custom_stellar_template_wave::Union{Nothing,Vector{<:Real}}, custom_stellar_template_R::Union{Nothing,Vector{<:Real}},
     custom_stellar_templates::Union{Nothing,Array{<:Real,2}})
+
+    @debug "cubefitter_prepare_continuum: λ range=$(extrema(λ)), nλ=$(length(λ)), z=$z"
 
     # Construct the ModelParameters object
     model_parameters = construct_model_parameters(optical_file, infrared_file, lines_file, out, λunit, Iunit, region, z)
@@ -19,41 +21,53 @@ function cubefitter_prepare_continuum(optical_file::String, infrared_file::Strin
     ssps = nothing
     n_ssps = 0
     if out[:fit_stellar_continuum]
+        @debug "cubefitter_prepare_continuum: fit_stellar_continuum=true, generating SSP templates"
         # Create the simple stellar population templates with FSPS
-        ssp_λ, ages, metals, ssp_templates, ssp_temp_rfft, npad_ssp = generate_stellar_populations(λ, Iunit, cube.lsf, z, 
-            out[:stellar_template_type], out[:cosmology], out[:ssps], out[:stars], name, out[:user_mask], 
+        ssp_λ, ages, metals, ssp_templates, ssp_temp_rfft, npad_ssp = generate_stellar_populations(λ, Iunit, cube.lsf, z,
+            out[:stellar_template_type], out[:cosmology], out[:ssps], out[:stars], name, out[:user_mask],
             custom_stellar_template_wave, custom_stellar_template_R, custom_stellar_templates)
         # flatten template array
         ssp_temp_flat = reshape(ssp_templates, size(ssp_templates,1), :)
         # 2nd axis ordering: (age1_z1, age2_z1, age3_z1, ..., age1_z2, age2_z2, age3_z2, ...)
         n_ssps = size(ssp_temp_flat, 2)
+        @debug "cubefitter_prepare_continuum: SSP templates shape=$(size(ssp_temp_flat)), n_ages=$(length(ages)), n_metals=$(length(metals)), npad_ssp=$npad_ssp"
         # Systemic velocity offset
         vsyst_ssp = [log(ssp_λ[1]/λ[1]) * C_KMS]
         # add velocity offsets for each separate region
         for gap in region.gaps
             push!(vsyst_ssp, log(ssp_λ[1]/λ[λ .> gap[2]][1]) * C_KMS)
         end
+        @debug "cubefitter_prepare_continuum: SSP systemic velocities=$vsyst_ssp"
         # Build a StellarPopulations object
         ssps = StellarPopulations(ssp_λ, npad_ssp, ages, collect(metals), ssp_temp_flat, ssp_temp_rfft, vsyst_ssp)
+    else
+        @debug "cubefitter_prepare_continuum: fit_stellar_continuum=false, skipping SSP templates"
     end
 
     # Fe II templates
     feii = nothing
     if out[:fit_opt_na_feii] || out[:fit_opt_br_feii]
+        @debug "cubefitter_prepare_continuum: generating Fe II templates (na=$(out[:fit_opt_na_feii]), br=$(out[:fit_opt_br_feii]))"
         # Load in the Fe II templates from Veron-Cetty et al. (2004)
         npad_feii, feii_λ, na_feii_fft, br_feii_fft = generate_feii_templates(λ, Iunit, cube.lsf)
+        @debug "cubefitter_prepare_continuum: Fe II templates loaded, npad_feii=$npad_feii, feii_λ range=$(extrema(feii_λ))"
         # Make the object
         vsyst_feii = [log(feii_λ[1]/λ[1]) * C_KMS]
         for gap in region.gaps
             push!(vsyst_feii, log(feii_λ[1]/λ[λ .> gap[2]][1]) * C_KMS)
         end
         feii = FeIITemplates(feii_λ, npad_feii, na_feii_fft, br_feii_fft, vsyst_feii)
+    else
+        @debug "cubefitter_prepare_continuum: fit_opt_na_feii=false and fit_opt_br_feii=false, skipping Fe II templates"
     end
 
     # Velocity resolution
     if n_ssps > 0 || out[:fit_opt_na_feii] || out[:fit_opt_br_feii]
         vres = log(λ[2]/λ[1]) * C_KMS
         @assert isapprox(vres, (log(λ[end]/λ[end-1]) * C_KMS), rtol=1e-3)
+        @debug "cubefitter_prepare_continuum: velocity resolution vres=$vres"
+    else
+        @debug "cubefitter_prepare_continuum: no SSPs or Fe II — vres not set (NaN)"
     end
 
     # Power laws
@@ -67,6 +81,7 @@ function cubefitter_prepare_continuum(optical_file::String, infrared_file::Strin
     # Templates
     n_templates = size(out[:templates], 4)
 
+    @debug "cubefitter_prepare_continuum: complete — n_power_law=$n_power_law, n_dust_cont=$n_dust_cont, n_dust_feat=$n_dust_feat, n_abs_feat=$n_abs_feat, n_templates=$n_templates, n_ssps=$n_ssps"
     model_parameters, ssps, feii, n_ssps, n_power_law, n_dust_cont, n_dust_feat, n_abs_feat, n_templates, vres
 end
 
@@ -88,6 +103,8 @@ function cubefitter_prepare_lines(lines_file::String, out::Dict, λunit::Unitful
         n_fit_comps[name] = ones(Int, size(cube.I)[1:2])
     end
 
+    @debug "cubefitter_prepare_lines: n_lines=$n_lines, n_acomps=$n_acomps"
+
     # Adjust the sort_line_components option based on the relative flags in the lines object
     if !haskey(out, :sort_line_components)
         relative_flags = BitVector([lines.config.rel_amp, lines.config.rel_voff, lines.config.rel_fwhm])
@@ -95,8 +112,10 @@ function cubefitter_prepare_lines(lines_file::String, out::Dict, λunit::Unitful
         if all(.~relative_flags)
             out[:sort_line_components] = :flux
         end
+        @debug "cubefitter_prepare_lines: sort_line_components auto-set to $(out[:sort_line_components]) (rel_flags=$(relative_flags))"
     elseif !isnothing(out[:sort_line_components])
         out[:sort_line_components] = Symbol(out[:sort_line_components])
+        @debug "cubefitter_prepare_lines: sort_line_components set to $(out[:sort_line_components])"
     end
 
     lines, n_lines, n_acomps, n_fit_comps
@@ -110,13 +129,18 @@ function count_cont_parameters(model::ModelParameters; split::Bool=false)
     # If the "split" option is true, keep the continuum and PAHs separate, otherwise they are combined
     if !split
         n_params_cont += count_dust_parameters(model)
+        @debug "count_cont_parameters: split=false — $n_params_cont total (continuum + dust)"
+    else
+        @debug "count_cont_parameters: split=true — $n_params_cont continuum-only params (dust kept separate)"
     end
     n_params_cont
 end
 
 
 function count_dust_parameters(model::ModelParameters)
-    length(get_flattened_fit_parameters(model.dust_features))
+    n = length(get_flattened_fit_parameters(model.dust_features))
+    @debug "count_dust_parameters: $n dust feature parameters"
+    n
 end
 
 
@@ -126,13 +150,15 @@ function guess_optical_depth(cube_fitter::CubeFitter, λ::Vector{<:QWave}, I::Ve
     continuum = model(cube_fitter).continuum
     fopt = fit_options(cube_fitter)
 
+    @debug "guess_optical_depth: using windows $(fopt.guess_tau[1]) and $(fopt.guess_tau[2])"
     i1 = nanmedian(I[fopt.guess_tau[1][1] .< λ .< fopt.guess_tau[1][2]])
-    i2 = nanmedian(I[fopt.guess_tau[2][1] .< λ .< fopt.guess_tau[2][2]]) 
+    i2 = nanmedian(I[fopt.guess_tau[2][1] .< λ .< fopt.guess_tau[2][2]])
     m = (i2 - i1) / (mean(fopt.guess_tau[2]) - mean(fopt.guess_tau[1]))
     contin_unextinct = i1 + m * uconvert(unit(λ[1]), 9.7u"μm" - mean(fopt.guess_tau[1]))  # linear extrapolation over the silicate feature
     contin_extinct = clamp(nanmedian(I[9.6u"μm" .< λ .< 9.8u"μm"]), 0., Inf)
     # Optical depth at 10 microns
     r = contin_extinct / contin_unextinct
+    @debug "guess_optical_depth: contin_unextinct=$contin_unextinct, contin_extinct=$contin_extinct, ratio r=$r"
     tau_10 = r > 0 ? clamp(-log(r), continuum["extinction.tau_97"].limits...) : 0.
     if !fopt.extinction_screen && r > 0
         # solve nonlinear equation
@@ -144,6 +170,7 @@ function guess_optical_depth(cube_fitter::CubeFitter, λ::Vector{<:QWave}, I::Ve
             tau_10 = 0.
         end
     end
+    @debug "guess_optical_depth: estimated τ_9.7=$tau_10"
 
     tau_10
 end
@@ -154,9 +181,10 @@ end
 
 Get the continuum limits and locked vectors for a given CubeFitter object.
 """
-function get_continuum_parameter_limits(cube_fitter::CubeFitter, I::Vector{<:Real}, σ::Vector{<:Real}; 
+function get_continuum_parameter_limits(cube_fitter::CubeFitter, I::Vector{<:Real}, σ::Vector{<:Real};
     init::Bool=false, force_noext::Bool=false, split::Bool=false)
 
+    @debug "get_continuum_parameter_limits: init=$init, force_noext=$force_noext, split=$split"
     continuum = model(cube_fitter).continuum
     dust_features = model(cube_fitter).dust_features
     fopt = fit_options(cube_fitter)
@@ -179,6 +207,9 @@ function get_continuum_parameter_limits(cube_fitter::CubeFitter, I::Vector{<:Rea
         pwhere = prefix .* ["E_BV", "E_BV_factor"]
         inds = fast_indexin(pwhere, pnames)
         plock[inds] .= true
+        @debug "get_continuum_parameter_limits: locking E(B-V) (ebv_map=$(isnothing(fopt.ebv_map) ? "not provided" : "provided"), ext_criterion=$ext_criterion)"
+    else
+        @debug "get_continuum_parameter_limits: E(B-V) free (no ebv_map, ext_criterion=$ext_criterion)"
     end
     if (!isnothing(fopt.sil_abs_map) && !init) || ext_criterion
         if fopt.silicate_absorption == "decompose"
@@ -188,6 +219,9 @@ function get_continuum_parameter_limits(cube_fitter::CubeFitter, I::Vector{<:Rea
         end
         inds = fast_indexin(pwhere, pnames)
         plock[inds] .= true
+        @debug "get_continuum_parameter_limits: locking silicate absorption param $(pwhere) (sil_abs_map=$(isnothing(fopt.sil_abs_map) ? "not provided" : "provided"), ext_criterion=$ext_criterion)"
+    else
+        @debug "get_continuum_parameter_limits: silicate absorption free (sil_abs_map=$(isnothing(fopt.sil_abs_map) ? "not provided" : "provided"), init=$init, ext_criterion=$ext_criterion)"
     end
     # Lock the hottest dust component if some flags have been set
     if fopt.lock_hot_dust
@@ -195,13 +229,19 @@ function get_continuum_parameter_limits(cube_fitter::CubeFitter, I::Vector{<:Rea
         inds = fast_indexin(pwhere, pnames)
         if !isnothing(inds[1])
             plock[inds] .= true
+            @debug "get_continuum_parameter_limits: locking hottest dust component (lock_hot_dust=true)"
         end
+    else
+        @debug "get_continuum_parameter_limits: hot dust not locked (lock_hot_dust=false)"
     end
     # Lock N_pyr and N_for if the option is given
     if fopt.silicate_absorption == "decompose" && fopt.decompose_lock_column_densities && !init
         pwhere = "extinction." .* ["N_pyr", "N_for"]
         inds = fast_indexin(pwhere, pnames)
         plock[inds] .= true
+        @debug "get_continuum_parameter_limits: locking decompose column densities N_pyr and N_for"
+    else
+        @debug "get_continuum_parameter_limits: decompose column densities not locked (silicate_absorption=$(fopt.silicate_absorption), decompose_lock_column_densities=$(fopt.decompose_lock_column_densities), init=$init)"
     end
     # Lock template amplitudes during the initial fit
     # if !fopt.fit_temp_multexp && init
@@ -218,7 +258,12 @@ function get_continuum_parameter_limits(cube_fitter::CubeFitter, I::Vector{<:Rea
     tie_vec = continuum.ties
     df_tie_vec = df_params.ties
 
+    n_locked = sum(plock) + sum(df_plock)
+    n_total = length(plock) + length(df_plock)
+    @debug "get_continuum_parameter_limits: $(n_locked)/$(n_total) parameters locked"
+
     if split
+        @debug "get_continuum_parameter_limits: split=true, returning PAH template amplitudes separately from Drude parameters"
         # add the 2 amplitudes for the PAH templates to the continuum, and return the PAH parameters separately
         pnames = [pnames; "dust_features.templates.1.amp"; "dust_features.templates.2.amp"]
         plims = [plims; (0., Inf); (0., Inf)]
@@ -226,6 +271,7 @@ function get_continuum_parameter_limits(cube_fitter::CubeFitter, I::Vector{<:Rea
         tie_vec = [tie_vec; nothing; nothing]
         pnames, df_names, plims, df_plims, plock, df_plock, tied_pairs, tied_indices, tie_vec, df_tie_vec
     else
+        @debug "get_continuum_parameter_limits: split=false, combining all PAH Drude parameters into single vector"
         # add all of the PAH parameters
         pnames = [pnames; df_names]
         plims = [plims; df_plims]
@@ -238,9 +284,17 @@ end
 
 # Helper function for getting initial MIR parameters based on estimates from the data
 # --- remember I is already normalized at this point!
-function get_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, λ::Vector{<:QWave}, 
+function get_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, λ::Vector{<:QWave},
     I::Vector{<:Real}, N::QSIntensity; force_noext::Bool=false)
 
+    @debug "get_continuum_initial_values_from_estimation: λ range=$(extrema(λ)), nλ=$(length(λ)), force_noext=$force_noext, N=$N"
+    n_nan_I = count(isnan, I)
+    n_inf_I = count(isinf, I)
+    if n_nan_I > 0 || n_inf_I > 0
+        @debug "get_continuum_initial_values_from_estimation: WARNING — I has $n_nan_I NaN and $n_inf_I Inf values"
+    else
+        @debug "get_continuum_initial_values_from_estimation: I range=$(extrema(filter(isfinite, I))), median=$(nanmedian(I))"
+    end
     # Get the initial parameter vector read from the config files
     fopt = fit_options(cube_fitter)
     continuum = model(cube_fitter).continuum
@@ -268,11 +322,15 @@ function get_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, �
     inv_atten_gas_med = 1 / att_gas_med[1]
     I_med = clamp(nanmedian(I), 0., Inf)
     λlim = extrema(λ)
+    @debug "get_continuum_initial_values_from_estimation: I_med=$I_med, inv_atten_gas_med=$inv_atten_gas_med, inv_atten_star_med=$inv_atten_star_med"
 
     # Extinction
     if !isnothing(fopt.guess_tau) && fopt.silicate_absorption != "decompose"
         ind = fast_indexin("extinction.tau_97", pnames)
         p₀[ind] = guess_optical_depth(cube_fitter, λ, I)
+        @debug "get_continuum_initial_values_from_estimation: initial τ_9.7 estimate=$(p₀[ind])"
+    else
+        @debug "get_continuum_initial_values_from_estimation: no τ_9.7 guess (guess_tau=$(isnothing(fopt.guess_tau) ? "nothing" : "set"), silicate_absorption=$(fopt.silicate_absorption))"
     end
     # Force no extinction
     if force_noext
@@ -283,27 +341,34 @@ function get_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, �
             push!(inds, fast_indexin("extinction.N_oli", pnames))
         end
         p₀[inds] .= 0.
+        @debug "get_continuum_initial_values_from_estimation: force_noext=true, setting extinction params to 0"
+    else
+        @debug "get_continuum_initial_values_from_estimation: force_noext=false, keeping extinction params as estimated"
     end
 
     # Fe II amplitudes
     if fopt.fit_opt_na_feii
         ind = fast_indexin("continuum.feii.na.amp", pnames)
         p₀[ind] = clamp(0.1 * I_med * inv_atten_gas_med, 0., Inf)
+        @debug "get_continuum_initial_values_from_estimation: initial na_feii.amp=$(p₀[ind])"
     end
     if fopt.fit_opt_br_feii
         ind = fast_indexin("continuum.feii.br.amp", pnames)
         p₀[ind] = clamp(0.1 * I_med * inv_atten_gas_med, 0., Inf)
+        @debug "get_continuum_initial_values_from_estimation: initial br_feii.amp=$(p₀[ind])"
     end
-    
+
     # Power laws
     for j ∈ 1:cube_fitter.n_power_law
         inds = fast_indexin("continuum.power_law.$(j)." .* ["amp", "index"], pnames)
         if p₀[inds[2]] > 0   # index > 0 means it gets brighter at longer wavelengths
             atten_j, _, _ = extinction_profiles([λlim[2]], ustrip.(p₀), 1, fopt.fit_uv_bump, fopt.extinction_curve)
             A_i = 0.5 * nanmedian(I[end-10:end]) / atten_j[1] / cube_fitter.n_power_law
+            @debug "get_continuum_initial_values_from_estimation: power_law $j — positive index, estimating from red end, A_i=$A_i"
         else                 # index < 0 means it gets brighter at shorter wavelengths
             atten_j, _, _ = extinction_profiles([λlim[1]], ustrip.(p₀), 1, fopt.fit_uv_bump, fopt.extinction_curve)
             A_i = 0.5 * nanmedian(I[1:10]) / atten_j[1] / cube_fitter.n_power_law
+            @debug "get_continuum_initial_values_from_estimation: power_law $j — negative index, estimating from blue end, A_i=$A_i"
         end
         if cube_fitter.n_templates > 0
             A_i *= 0.5
@@ -316,6 +381,7 @@ function get_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, �
         inds = fast_indexin("continuum.dust.$(k)." .* ["amp", "temp"], pnames)
         if fopt.lock_hot_dust && isone(k) && !isnothing(inds[1])
             p₀[inds[1]] = 0.
+            @debug "get_continuum_initial_values_from_estimation: dust_cont $k — locked as hot dust, setting amp=0"
             continue
         end
         T_dc = p₀[inds[2]]
@@ -329,6 +395,7 @@ function get_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, �
             A_i *= 0.8
         end
         p₀[inds[1]] = clamp(A_i, 0., Inf)
+        @debug "get_continuum_initial_values_from_estimation: dust_cont $k — T=$(T_dc), λ_peak=$(λ_dc), A_i=$(p₀[inds[1]])"
     end
 
     # Hot dust amplitude
@@ -339,6 +406,9 @@ function get_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, �
         mhd = argmax(hd)
         A_hd = 0.2 * nanmedian(I[max(mhd-5,1):min(mhd+5,length(I))])
         p₀[inds[1]] = clamp(A_hd, 0., Inf)
+        @debug "get_continuum_initial_values_from_estimation: hot_dust — T=$(T_hd), Cf=$Cf, A_hd=$(p₀[inds[1]])"
+    else
+        @debug "get_continuum_initial_values_from_estimation: fit_sil_emission=false, skipping hot dust amplitude"
     end
 
     # Templates
@@ -362,6 +432,7 @@ function get_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, �
         end
     end
     df_amp = length(diffs) > 0 ? nanmedian(diffs) : I_med/4
+    @debug "get_continuum_initial_values_from_estimation: PAH amplitude estimate df_amp=$df_amp (from $(length(diffs)) wavelength checks)"
 
     for df ∈ df_feature_names
         ind = fast_indexin("dust_features.$(df).amp", df_names)
@@ -372,14 +443,23 @@ function get_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, �
     pah_frac = repeat([clamp(df_amp, 0., Inf)], 2)
     append!(p₀, df_p₀)
 
+    @debug "get_continuum_initial_values_from_estimation: returning $(length(p₀)) initial parameter values"
     p₀, pah_frac
 end
 
 
 # Helper function for getting initial MIR parameters based on the initial fit
-function get_continuum_initial_values_from_previous(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:QWave}, 
+function get_continuum_initial_values_from_previous(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:QWave},
     I::Vector{<:Real}, σ::Vector{<:Real}; force_noext::Bool=false)
 
+    @debug "get_continuum_initial_values_from_previous: spaxel=$spaxel, force_noext=$force_noext, nλ=$(length(λ))"
+    n_nan_I = count(isnan, I)
+    n_nan_σ = count(isnan, σ)
+    if n_nan_I > 0 || n_nan_σ > 0
+        @debug "get_continuum_initial_values_from_previous: WARNING — I has $n_nan_I NaN, σ has $n_nan_σ NaN values"
+    else
+        @debug "get_continuum_initial_values_from_previous: I range=$(extrema(filter(isfinite, I))), median=$(nanmedian(I)), median_σ=$(nanmedian(σ))"
+    end
     fopt = fit_options(cube_fitter)
     continuum = model(cube_fitter).continuum
     pnames = continuum.names
@@ -395,7 +475,8 @@ function get_continuum_initial_values_from_previous(cube_fitter::CubeFitter, spa
     N0 = Float64(abs(maximum(I_init[isfinite.(I_init)])))
     N0 = N0 ≠ 0.0Iunit ? N0 : 1.0Iunit
     scale = max(nanmedian(I), 1e-10) * N0 / nanmedian(I_init)   # (should be close to 1)
-    @assert unit(scale) == NoUnits 
+    @assert unit(scale) == NoUnits
+    @debug "get_continuum_initial_values_from_previous: amplitude scale factor=$scale"
 
     atten_gas_0, atten_star_0, _  = extinction_profiles([median(λ)], ustrip.(p₀), 1, fopt.fit_uv_bump, fopt.extinction_curve)
     atten_star_0, atten_gas_0 = atten_star_0[1], atten_gas_0[1]
@@ -409,21 +490,26 @@ function get_continuum_initial_values_from_previous(cube_fitter::CubeFitter, spa
             push!(inds, fast_indexin("extinction.N_oli", pnames))
         end
         p₀[inds] .= 0.
+        @debug "get_continuum_initial_values_from_previous: force_noext=true, zeroing extinction params"
+    else
+        @debug "get_continuum_initial_values_from_previous: force_noext=false, keeping extinction from previous fit"
     end
     # Extinction maps
     if !isnothing(fopt.ebv_map)
-        @debug "Using the provided E(B-V) values from the extinction_map"
         if !isnothing(cube_fitter.cube.voronoi_bins)
             data_indices = findall(vbin -> vbin == Tuple(spaxel)[1], cube_fitter.cube.voronoi_bins)
             ebv_new = mean(fopt.ebv_map[data_indices, 1])
+            @debug "get_continuum_initial_values_from_previous: E(B-V) from map (Voronoi average over $(length(data_indices)) pixels) = $ebv_new"
         else
             ebv_new = fopt.ebv_map[spaxel, 1]
+            @debug "get_continuum_initial_values_from_previous: E(B-V) from map at spaxel $spaxel = $ebv_new"
         end
         ind = fast_indexin("extinction.E_BV", pnames)
         p₀[ind] = ebv_new
+    else
+        @debug "get_continuum_initial_values_from_previous: no ebv_map, keeping E(B-V) from previous fit"
     end
     if !isnothing(fopt.sil_abs_map)
-        @debug "Using the provided τ_9.7 values from the extinction_map"
         if fopt.silicate_absorption == "decompose"
             inds = fast_indexin("extinction." .* ["N_oli", "N_pyr", "N_for"], pnames)
         else
@@ -434,12 +520,16 @@ function get_continuum_initial_values_from_previous(cube_fitter::CubeFitter, spa
             for i in eachindex(inds)
                 p₀[inds[i]] = mean(fopt.sil_abs_map[data_indices, i])
             end
+            @debug "get_continuum_initial_values_from_previous: silicate abs from map (Voronoi average) = $(p₀[inds])"
         else
             data_index = spaxel
             for i in eachindex(inds)
                 p₀[inds[i]] = fopt.sil_abs_map[data_index, i]
             end
+            @debug "get_continuum_initial_values_from_previous: silicate abs from map at spaxel $spaxel = $(p₀[inds])"
         end
+    else
+        @debug "get_continuum_initial_values_from_previous: no sil_abs_map, keeping silicate absorption from previous fit"
     end
 
     if fopt.silicate_absorption != "decompose"
@@ -458,11 +548,17 @@ function get_continuum_initial_values_from_previous(cube_fitter::CubeFitter, spa
         end
         inds = fast_indexin(pwhere, pnames)
         p₀[inds] .= 0.
+        @debug "get_continuum_initial_values_from_previous: low SNR spaxel (median_I ≤ median_σ), zeroing absorption params and setting lock_abs=true"
+    else
+        @debug "get_continuum_initial_values_from_previous: SNR sufficient, keeping absorption params from previous fit"
     end
     # Set τ_9.7 to the guess if the guess_tau flag is set
     if !isnothing(fopt.guess_tau) && (fopt.silicate_absorption != "decompose")
         ind = fast_indexin("extinction.tau_97", pnames)
         p₀[ind] = guess_optical_depth(cube_fitter, λ, I)
+        @debug "get_continuum_initial_values_from_previous: using guess_tau, τ_9.7=$(p₀[ind])"
+    else
+        @debug "get_continuum_initial_values_from_previous: not using guess_tau (guess_tau=$(isnothing(fopt.guess_tau) ? "nothing" : "set"), silicate_absorption=$(fopt.silicate_absorption))"
     end
     # Do not adjust absorption feature amplitudes since they are multiplicative
     for ab ∈ ab_feature_names
@@ -478,6 +574,7 @@ function get_continuum_initial_values_from_previous(cube_fitter::CubeFitter, spa
 
     scale_star = scale * atten_star_0 / atten_star_new    # may no longer be close to 1
     scale_gas = scale * atten_gas_0 / atten_gas_new
+    @debug "get_continuum_initial_values_from_previous: scale_gas=$scale_gas, scale_star=$scale_star"
 
     # Fe II amplitudes
     if fopt.fit_opt_na_feii
@@ -498,7 +595,7 @@ function get_continuum_initial_values_from_previous(cube_fitter::CubeFitter, spa
     # Dust continuum amplitudes (rescaled)
     for di ∈ 1:cube_fitter.n_dust_cont
         ind = fast_indexin("continuum.dust.$(di).amp", pnames)
-        p₀[ind] *= scale_gas 
+        p₀[ind] *= scale_gas
         if fopt.lock_hot_dust && isone(di) && !isnothing(ind)
             p₀[ind] = 0.
         end
@@ -513,6 +610,7 @@ function get_continuum_initial_values_from_previous(cube_fitter::CubeFitter, spa
     # PAH template amplitudes
     pah_frac *= scale_gas
 
+    @debug "get_continuum_initial_values_from_previous: returning $(length(p₀)) rescaled parameter values"
     p₀, pah_frac
 end
 
@@ -526,7 +624,13 @@ Again, the vector may be split up by the 2 continuum fitting steps in the MIR ca
 function get_continuum_initial_values(cube_fitter::CubeFitter, spaxel::CartesianIndex, λ::Vector{<:QWave}, I::Vector{<:Real},
     σ::Vector{<:Real}, N::QSIntensity; init::Bool=false, split::Bool=true, force_noext::Bool=false)
 
-    # Check if the cube fitter has initial fit parameters 
+    @debug "get_continuum_initial_values: spaxel=$spaxel, init=$init, split=$split, force_noext=$force_noext, N=$N"
+    n_nan_I = count(isnan, I)
+    n_nan_σ = count(isnan, σ)
+    if n_nan_I > 0 || n_nan_σ > 0
+        @debug "get_continuum_initial_values: WARNING — I has $n_nan_I NaN, σ has $n_nan_σ NaN values"
+    end
+    # Check if the cube fitter has initial fit parameters
     if !init
         @debug "Using initial best fit continuum parameters..."
         p₀, pah_frac = get_continuum_initial_values_from_previous(cube_fitter, spaxel, λ, I, σ; force_noext=force_noext)
@@ -563,6 +667,7 @@ end
 # Helper function for getting MIR parameter step sizes 
 function get_continuum_step_sizes(cube_fitter::CubeFitter, λ::Vector{<:QWave})
 
+    @debug "get_continuum_step_sizes: n_params_cont=$(cube_fitter.n_params_cont), nλ=$(length(λ))"
     # Calculate relative step sizes for finite difference derivatives
     dλ = (λ[end] - λ[1]) / (length(λ)-1)
     deps = sqrt(eps())
@@ -617,6 +722,7 @@ function get_continuum_step_sizes(cube_fitter::CubeFitter, λ::Vector{<:QWave})
 
     dstep_pahtemp = [deps, deps]
 
+    @debug "get_continuum_step_sizes: done — dstep range=$(extrema(dstep)), $(count(d -> d == deps, dstep)) params at default deps step"
     dstep, dstep_pahtemp
 end
 
@@ -629,6 +735,7 @@ limits, and relative step sizes.
 """
 function get_continuum_parinfo(n_free::S, lb::Vector{T}, ub::Vector{T}, dp::Vector{<:Real}) where {S<:Integer,T<:Number}
 
+    @debug "get_continuum_parinfo: n_free=$n_free, lb range=$(extrema(lb)), ub range=$(extrema(ub))"
     parinfo = CMPFit.Parinfo(n_free)
 
     for pᵢ ∈ 1:n_free
@@ -650,9 +757,10 @@ end
 
 
 # Version for the split fitting if use_pah_templates is enabled
-function get_continuum_parinfo(n_free_1::S, n_free_2::S, lb_1::Vector{T}, ub_1::Vector{T}, 
+function get_continuum_parinfo(n_free_1::S, n_free_2::S, lb_1::Vector{T}, ub_1::Vector{T},
     lb_2::Vector{T}, ub_2::Vector{T}, dp_1::Vector{<:Real}, dp_2::Vector{<:Real}) where {S<:Integer,T<:Number}
 
+    @debug "get_continuum_parinfo (split): n_free_1=$n_free_1, n_free_2=$n_free_2"
     parinfo_1 = CMPFit.Parinfo(n_free_1)
     parinfo_2 = CMPFit.Parinfo(n_free_2)
 
@@ -680,9 +788,10 @@ function get_continuum_parinfo(n_free_1::S, n_free_2::S, lb_1::Vector{T}, ub_1::
 end
 
 
-function get_line_initial_values_limits_locks_from_estimation(cube_fitter::CubeFitter, λ::Vector{<:QWave}, 
+function get_line_initial_values_limits_locks_from_estimation(cube_fitter::CubeFitter, λ::Vector{<:QWave},
     I::Vector{<:Real}, ext_curve::Union{Nothing,Vector{<:Real}}=nothing; init::Bool=false)
 
+    @debug "get_line_initial_values_limits_locks_from_estimation: init=$init, ext_curve=$(isnothing(ext_curve) ? "none" : "provided")"
     fopt = fit_options(cube_fitter)
 
     continuum = model(cube_fitter).continuum
@@ -696,9 +805,11 @@ function get_line_initial_values_limits_locks_from_estimation(cube_fitter::CubeF
     plims = params.limits
     plock = params.locked
     p₀ = init ? params.values : copy(cube_fitter.p_init_line)
+    @debug "get_line_initial_values_limits_locks_from_estimation: $(length(lines.names)) lines, $(length(pnames)) parameters"
 
     if !isnothing(ext_curve)
         max_amp = clamp(1 / minimum(ext_curve), 1., 1e100)
+        @debug "get_line_initial_values_limits_locks_from_estimation: max_amp=$max_amp (from provided ext_curve, min=$(minimum(ext_curve)))"
     else
         # find the maximum extinction factor between the extinction curve and the silicate absorption
         atten, _, _ = extinction_profiles(λ, ustrip.(p0_contin), 1, fopt.fit_uv_bump, fopt.extinction_curve)
@@ -707,12 +818,14 @@ function get_line_initial_values_limits_locks_from_estimation(cube_fitter::CubeF
         silab, = silicate_absorption(λ, ustrip.(p0_contin), pstart, cube_fitter)
         inv_abs = 1 / minimum(silab)
         max_amp = max(inv_atten, inv_abs)
+        @debug "get_line_initial_values_limits_locks_from_estimation: max_amp=$max_amp (inv_atten=$inv_atten, inv_abs=$inv_abs)"
     end
     if fopt.lines_allow_negative
         amp_plim = (-max_amp, max_amp)
     else
         amp_plim = (0., max_amp)
     end
+    @debug "get_line_initial_values_limits_locks_from_estimation: amp_plim=$amp_plim"
 
     # A_ln = 0.33 * max_amp
     for (k, line) in enumerate(lines.profiles)   # <- iterates over emission lines
@@ -794,6 +907,8 @@ function get_line_initial_values_limits_locks_from_estimation(cube_fitter::CubeF
         plock[tp[2]] = plock[tp[1]]
     end
 
+    n_locked = sum(plock)
+    @debug "get_line_initial_values_limits_locks_from_estimation: $(length(tied_pairs)) tied pairs, $n_locked/$(length(plock)) locked"
     p₀, plims, plock, pnames, tied_pairs, tied_indices, tie_vec
 end
 
@@ -801,6 +916,7 @@ end
 # Helper function for getting line parameter step sizes
 function get_line_step_sizes(cube_fitter::CubeFitter, ln_pars::Vector{<:Number}, init::Bool)
 
+    @debug "get_line_step_sizes: $(length(ln_pars)) parameters, init=$init"
     lines = model(cube_fitter).lines
     pnames = get_flattened_fit_parameters(lines).names
 
@@ -827,16 +943,22 @@ end
 
 Get the vector of starting values and relative step sizes for the line fit for a given CubeFitter object.
 """
-function get_line_initial_values_limits_locked(cube_fitter::CubeFitter, λ::Vector{<:QWave}, 
+function get_line_initial_values_limits_locked(cube_fitter::CubeFitter, λ::Vector{<:QWave},
     I::Vector{<:Real}, ext_curve::Union{Nothing,Vector{<:Real}}=nothing; init::Bool=false)
 
+    @debug "get_line_initial_values_limits_locked: nλ=$(length(λ)), init=$init, ext_curve=$(isnothing(ext_curve) ? "none" : "provided (length=$(length(ext_curve)))")"
+    n_nan_I = count(isnan, I)
+    if n_nan_I > 0
+        @debug "get_line_initial_values_limits_locked: WARNING — I has $n_nan_I NaN values"
+    end
     # Get initial values, locks, etc.
-    ln_pars, plims, plock, pnames, tied_pairs, tied_indices, tie_vec = 
+    ln_pars, plims, plock, pnames, tied_pairs, tied_indices, tie_vec =
         get_line_initial_values_limits_locks_from_estimation(cube_fitter, λ, I, ext_curve; init=init)
 
     # Get step sizes for each parameter
     ln_astep = get_line_step_sizes(cube_fitter, ln_pars, init)
 
+    @debug "get_line_initial_values_limits_locked: done — $(length(ln_pars)) params, $(sum(plock)) locked, $(length(tied_pairs)) tied pairs"
     ln_pars, plims, plock, pnames, ln_astep, tied_pairs, tied_indices, tie_vec
 end
 
@@ -849,6 +971,7 @@ limits, and absolute step sizes.
 """
 function get_line_parinfo(n_free, lb, ub, dp)
 
+    @debug "get_line_parinfo: n_free=$n_free, lb range=$(extrema(lb)), ub range=$(extrema(ub))"
     # Convert parameter limits into CMPFit object
     parinfo = CMPFit.Parinfo(n_free)
     for pᵢ ∈ 1:n_free
@@ -880,6 +1003,7 @@ various other small adjustments.
 """
 function clean_line_parameters(cube_fitter::CubeFitter, popt::Vector{<:Number}, lower_bounds::Vector{<:Real}, upper_bounds::Vector{<:Real})
 
+    @debug "clean_line_parameters: cleaning $(length(model(cube_fitter).lines.names)) lines"
     lines = model(cube_fitter).lines
     params = get_flattened_fit_parameters(lines)
 
@@ -899,6 +1023,8 @@ function clean_line_parameters(cube_fitter::CubeFitter, popt::Vector{<:Number}, 
             # If additional components arent detected, set them to a small nonzero value
             replace_line = iszero(popt[pᵢ])
             if replace_line
+                ln_name = lines.names[k]
+                @debug "clean_line_parameters: line $(ln_name) component $j has zero amplitude — replacing with default"
                 if j > 1
                     popt[pᵢ] = lines.config.rel_amp ? 0.1 * 1/(n_prof-1) : 0.1 * 1/(n_prof-1) * amp_main
                     popt[pᵢ+1] = lines.config.rel_voff ? 0.0u"km/s" : voff_main
@@ -945,5 +1071,6 @@ function clean_line_parameters(cube_fitter::CubeFitter, popt::Vector{<:Number}, 
             popt = pnew
         end
     end
+    @debug "clean_line_parameters: done"
     return popt
 end

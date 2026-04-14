@@ -841,9 +841,10 @@ Calculate the integrated flux of a spectral feature, i.e. a PAH or emission line
 of the feature profile, using an analytic form if available, otherwise integrating numerically with QuadGK.
 """
 function calculate_flux(profile::Symbol, λ::AbstractVector{<:QWave}, amp::T, amp_err::T, peak::S, peak_err::S, fwhm::S, fwhm_err::S;
-    asym=nothing, asym_err=nothing, m=nothing, m_err=nothing, ν=nothing, ν_err=nothing, h3=nothing, 
+    asym=nothing, asym_err=nothing, m=nothing, m_err=nothing, ν=nothing, ν_err=nothing, h3=nothing,
     h3_err=nothing, h4=nothing, h4_err=nothing, η=nothing, η_err=nothing, propagate_err::Bool=true) where {T<:Number,S<:Number}
 
+    @debug "calculate_flux: profile=$profile, amp=$(ustrip(amp)), peak=$(ustrip(peak)), fwhm=$(ustrip(fwhm)), propagate_err=$propagate_err"
     # Evaluate the line profiles according to whether there is a simple analytic form
     # otherwise, integrate numerically with quadgk
     if profile == :Drude
@@ -909,12 +910,15 @@ end
 Calculate the w80 (width containing 80% of the flux) and Δv (asymmetry parameter), both in km/s,
 for a line profile.
 """
-function calculate_composite_params(λ::AbstractVector{T}, flux::AbstractVector{<:QSIntensity}, λ0::T, 
+function calculate_composite_params(λ::AbstractVector{T}, flux::AbstractVector{<:QSIntensity}, λ0::T,
     fwhm_inst::QVelocity) where {T<:QWave}
 
+    n_pos = count(f -> f > 0.0*unit(f), flux)
+    @debug "calculate_composite_params: λ0=$(ustrip(λ0)) $(unit(λ0)), nλ=$(length(λ)), n_positive_flux=$n_pos, fwhm_inst=$(ustrip(fwhm_inst)) $(unit(fwhm_inst))"
     # Get the cumulative distribution function
     m = flux .> 0.0*unit(flux[1])
     if sum(m) < 2
+        @debug "calculate_composite_params: fewer than 2 positive flux points — returning zeros"
         return (0., 0., 0., 0.) .* u"km/s"
     end
 
@@ -976,7 +980,7 @@ Currently this includes the integrated intensity, equivalent width, and signal t
 function calculate_extra_parameters(s::Spaxel, s_model::Spaxel, cube_fitter::CubeFitter, comps::Dict, result_c::SpaxelFitResult, 
     result_l::SpaxelFitResult, continuum::Vector{<:Real}, propagate_err::Bool=true)
 
-    @debug "Calculating extra parameters"
+    @debug "calculate_extra_parameters: coords=$(s.coords), n_dust_feat=$(cube_fitter.n_dust_feat), n_lines=$(cube_fitter.n_lines), propagate_err=$propagate_err"
 
     popt_c = result_c.popt
     perr_c = result_c.perr
@@ -985,7 +989,7 @@ function calculate_extra_parameters(s::Spaxel, s_model::Spaxel, cube_fitter::Cub
 
     # Normalization
     N = s.N
-    @debug "Normalization: $(N)"
+    @debug "calculate_extra_parameters: normalization N=$N"
 
     n_extra_df = length(get_flattened_nonfit_parameters(model(cube_fitter).dust_features))
     p_dust = Vector{Quantity{eltype(s.I)}}(undef, n_extra_df)
@@ -1370,10 +1374,11 @@ function calculate_extra_parameters(s::Spaxel, s_model::Spaxel, cube_fitter::Cub
     popt_extra = [p_dust; p_lines]
     perr_extra = [p_dust_err; p_lines_err]
     punit_extra = unit.(popt_extra)
-    result = SpaxelFitResult(params_extra.names[1:end-2], popt_extra, [perr_extra perr_extra], 
-        [repeat([-Inf], length(popt_extra)).*punit_extra repeat([Inf], length(popt_extra)).*punit_extra], 
+    result = SpaxelFitResult(params_extra.names[1:end-2], popt_extra, [perr_extra perr_extra],
+        [repeat([-Inf], length(popt_extra)).*punit_extra repeat([Inf], length(popt_extra)).*punit_extra],
         falses(length(popt_extra)), Vector{Union{Tie,Nothing}}([nothing for _ in 1:length(popt_extra)]))
 
+    @debug "calculate_extra_parameters: done — $(length(popt_extra)) extra parameters computed ($(length(p_dust)) dust + $(length(p_lines)) line)"
     result
 end
 
@@ -1385,9 +1390,10 @@ end
 Calculate the equivalent width (in microns) of a spectral feature, i.e. a PAH or emission line. Calculates the
 integral of the ratio of the feature profile to the underlying continuum.
 """
-function calculate_eqw(λ::Vector{<:QWave}, feature::Vector{T}, comps::Dict, line::Bool; 
+function calculate_eqw(λ::Vector{<:QWave}, feature::Vector{T}, comps::Dict, line::Bool;
     feature_err::Union{Matrix{T},Nothing}=nothing, propagate_err::Bool=true) where {T<:QSIntensity}
 
+    @debug "calculate_eqw: line=$line, nλ=$(length(λ)), propagate_err=$propagate_err"
     contin = line ? comps["continuum_and_pahs"] : comps["continuum"]
 
     # May blow up for spaxels where the continuum is close to 0

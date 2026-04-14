@@ -72,6 +72,7 @@ Get the center of mass coordinates of a given n-dimensional array `data`.
 centroid_com(data) = centroid_com(data, falses(size(data)))
 
 function centroid_com(data::AbstractArray, mask::BitArray)
+    @debug "centroid_com: data_shape=$(size(data)), n_masked=$(sum(mask)), n_nonfinite=$(count(!isfinite, data))"
     # Mask out any non-finite values
     _data = copy(data)
     _data[.~isfinite.(data) .| mask] .= 0.
@@ -103,9 +104,10 @@ Create an aperture using the Photometry Library.
 - `scale_psf`: if true, creates a vector of apertures that scale up in radius at the same rate that the PSF scales up
 - `box_size`: if `auto_centroid` is true, this gives the box size to search for a local peak in brightness, in pixels
 """
-function make_aperture(cube::DataCube, ap_type::Symbol, ra::Union{String,Real}, dec::Union{String,Real}, 
+function make_aperture(cube::DataCube, ap_type::Symbol, ra::Union{String,Real}, dec::Union{String,Real},
     params...; auto_centroid=false, scale_psf::Bool=false, box_size::Integer=11)
 
+    @debug "make_aperture: ap_type=$ap_type, ra=$ra, dec=$dec, params=$params, auto_centroid=$auto_centroid, scale_psf=$scale_psf"
     if ap_type == :Circular
         @assert length(params) == 1 "CircularAperture takes 1 parameter (radius in pix)"
     elseif ap_type == :Rectangular
@@ -172,6 +174,7 @@ function make_aperture(cube::DataCube, ap_type::Symbol, ra::Union{String,Real}, 
 
     if scale_psf
         # Scale the aperture size based on the change in the PSF size
+        @debug "make_aperture: scale_psf=true — creating $(length(cube.λ)) wavelength-dependent apertures"
         pix_aps = Vector{typeof(pix_ap)}(undef, length(cube.λ))
         for i ∈ eachindex(pix_aps)
             if ap_type == :Circular
@@ -185,5 +188,6 @@ function make_aperture(cube::DataCube, ap_type::Symbol, ra::Union{String,Real}, 
         return pix_aps
     end
 
+    @debug "make_aperture: done — center=($(round(x_cent, digits=2)), $(round(y_cent, digits=2))), pix_params=$pix_params"
     pix_ap
 end

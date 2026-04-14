@@ -1,8 +1,11 @@
 
 
-function create_dust_features(dust::Dict, λunit::Unitful.Units, Iunit::Unitful.Units, region::SpectralRegion; 
+function create_dust_features(dust::Dict, λunit::Unitful.Units, Iunit::Unitful.Units, region::SpectralRegion;
     do_absorption::Bool=false)
 
+    key = do_absorption ? "absorption_features" : "dust_features"
+    n_features = haskey(dust, key) ? length(dust[key]) : 0
+    @debug "create_dust_features: do_absorption=$do_absorption, n_$(key)=$n_features, λlim=$(region.λlim)"
     # Dust feature central wavelengths and FWHMs
     cent_vals = Qum[]
     complexes = String[]
@@ -159,6 +162,7 @@ function construct_extinction_params!(params::Vector{FitParameter}, pnames::Vect
     ptrans::Vector{Vector{Transformation}}, out::Dict, optical::Dict, infrared::Dict, λunit::Unitful.Units, Iunit::Unitful.Units,
     region::SpectralRegion)
 
+    @debug "construct_extinction_params!: extinction_curve=$(out[:extinction_curve]), fit_uv_bump=$(out[:fit_uv_bump]), fit_covering_frac=$(out[:fit_covering_frac])"
     # Extinction parameters, optical depth and mixing ratio
     msg = "Extinction:"
     prefix = "extinction."
@@ -237,6 +241,8 @@ function construct_extinction_params!(params::Vector{FitParameter}, pnames::Vect
         push!(plabels, L"$C_f$")
         push!(ptrans, Transformation[])
         @debug msg
+    else
+        @debug "construct_extinction_params!: fit_covering_frac=false — skipping covering fraction parameter"
     end
 
     abs_features
@@ -247,6 +253,7 @@ function construct_polynomial_params!(params::Vector{FitParameter}, pnames::Vect
     ptrans::Vector{Vector{Transformation}}, out::Dict, optical::Dict, infrared::Dict, λunit::Unitful.Units, Iunit::Unitful.Units,
     region::SpectralRegion)
 
+    @debug "construct_polynomial_params!: apoly_degree=$(out[:apoly_degree]), mpoly_degree=$(out[:mpoly_degree]), apoly_type=$(out[:apoly_type]), mpoly_type=$(out[:mpoly_type])"
     # Polynomial parameters, which is pretty much just the coefficients (for both additive and multiplicative polynomials)
     msg = "Polynomials:"
     prefix = "polynomials."
@@ -280,6 +287,7 @@ function construct_continuum_params!(params::Vector{FitParameter}, pnames::Vecto
     ptrans::Vector{Vector{Transformation}}, out::Dict, optical::Dict, infrared::Dict, λunit::Unitful.Units, Iunit::Unitful.Units,
     redshift::Real, region::SpectralRegion)
 
+    @debug "construct_continuum_params!: fit_stellar_continuum=$(out[:fit_stellar_continuum]), fit_opt_na_feii=$(out[:fit_opt_na_feii]), fit_opt_br_feii=$(out[:fit_opt_br_feii]), fit_sil_emission=$(out[:fit_sil_emission]), λlim=$(region.λlim)"
     # Check wavelength ranges to make sure fitting stellar pops is not unreasonable
     if region.λlim[1] > 20.0u"μm" && out[:fit_stellar_continuum]
         @warn "The minimum wavelength in the input spectrum is > 20 μm! Stellar populations will be disabled."
@@ -298,6 +306,8 @@ function construct_continuum_params!(params::Vector{FitParameter}, pnames::Vecto
         append!(plabels, [L"$v_*$ (km s$^{-1}$)", L"$\sigma_*$ (km s$^{-1}$)"])
         append!(ptrans, [Transformation[], Transformation[]])
         @debug msg
+    else
+        @debug "construct_continuum_params!: fit_stellar_continuum=false — skipping stellar kinematics"
     end
 
     if (region.λlim[1] > 7200.0u"angstrom") || (region.λlim[2] < 3400.0u"angstrom")
@@ -323,6 +333,8 @@ function construct_continuum_params!(params::Vector{FitParameter}, pnames::Vecto
         append!(plabels, [L"$\log_{10}(I / $ %$(latex(Iunit))$)$", L"$v$ (km s$^{-1}$)", L"$\sigma$ (km s$^{-1}$)"])
         append!(ptrans, [t_na_A, Transformation[], Transformation[]])
         @debug msg
+    else
+        @debug "construct_continuum_params!: fit_opt_na_feii=false — skipping narrow Fe II"
     end
     if out[:fit_opt_br_feii]
         msg = "Broad Fe II templates:"
@@ -338,6 +350,8 @@ function construct_continuum_params!(params::Vector{FitParameter}, pnames::Vecto
         append!(plabels, [L"$\log_{10}(I / $ %$(latex(Iunit))$)$", L"$v$ (km s$^{-1}$)", L"$\sigma$ (km s$^{-1}$)"])
         append!(ptrans, [t_br_A, Transformation[], Transformation[]])
         @debug msg
+    else
+        @debug "construct_continuum_params!: fit_opt_br_feii=false — skipping broad Fe II"
     end
 
     if haskey(optical, "power_law_indices")
@@ -355,6 +369,8 @@ function construct_continuum_params!(params::Vector{FitParameter}, pnames::Vecto
             append!(ptrans, [t_A, Transformation[]])
         end
         @debug msg
+    else
+        @debug "construct_continuum_params!: no power_law_indices in optical file — skipping power laws"
     end
 
     # Dust continua
@@ -388,8 +404,8 @@ function construct_continuum_params!(params::Vector{FitParameter}, pnames::Vecto
 
     # Hot dust parameters, temperature, covering fraction, warm tau, and cold tau
     # No real restrictions on the wavelength range here!  Leave it up to the user if they want to fit it.
-    msg = "Hot Dust:"
     if out[:fit_sil_emission]
+        msg = "Hot Dust:"
         prefix = "continuum.hot_dust."
         A_hot = FitParameter(NaN, false, (0., Inf))
         t_A = [RestframeTransform, LogTransform]
@@ -412,6 +428,8 @@ function construct_continuum_params!(params::Vector{FitParameter}, pnames::Vecto
             L"$\tau_{\rm cold}$", L"$\mu$ (%$(latex(λunit)))"])
         append!(ptrans, [t_A, Transformation[], Transformation[], Transformation[], Transformation[],
             Transformation[]])
+    else
+        @debug "construct_continuum_params!: fit_sil_emission=false — skipping hot dust parameters"
     end
 
 end
@@ -421,6 +439,7 @@ end
 function construct_template_params!(params::Vector{FitParameter}, pnames::Vector{String}, plabels::Vector{String},
     ptrans::Vector{Vector{Transformation}}, out::Dict, contin_options::Dict, region::SpectralRegion)
 
+    @debug "construct_template_params!: n_template_names=$(length(out[:template_names])), fit_temp_multexp=$(out[:fit_temp_multexp])"
     if haskey(contin_options, "template_amps") && !out[:fit_temp_multexp] && (length(out[:template_names]) > 0)
         msg = "Template amplitudes:"
         for i ∈ eachindex(contin_options["template_amps"])
@@ -439,7 +458,7 @@ function construct_template_params!(params::Vector{FitParameter}, pnames::Vector
             end
         end
         @debug msg
-    elseif haskey(contin_options, "template_inds") && out[:fit_temp_multexp] 
+    elseif haskey(contin_options, "template_inds") && out[:fit_temp_multexp]
         msg = "Template amplitudes:"
         for i ∈ 1:4
             temp_A = FitParameter(NaN, false, (0., Inf))
@@ -452,6 +471,8 @@ function construct_template_params!(params::Vector{FitParameter}, pnames::Vector
             append!(ptrans, [[LogTransform], Transformation[]])
         end
         @debug msg
+    else
+        @debug "construct_template_params!: no template amplitudes to add (no template_amps/template_inds keys or no template_names)"
     end
 
 end
@@ -463,9 +484,10 @@ end
 Reads in the optical and infrared options files and creates parameter vectors for the 
 continuum and dust features.
 """
-function construct_continuum_parameters(optical_file::String, infrared_file::String, out::Dict, 
+function construct_continuum_parameters(optical_file::String, infrared_file::String, out::Dict,
     λunit::Unitful.Units, Iunit::Unitful.Units, region::SpectralRegion, redshift::Real)
 
+    @debug "construct_continuum_parameters: λrange=$(wavelength_range(region)), region.λlim=$(region.λlim)"
     params = FitParameter[]
     pnames = String[]
     plabels = String[]
@@ -501,15 +523,15 @@ function construct_continuum_parameters(optical_file::String, infrared_file::Str
     # Get the spectral coverage of the region
     λrange = wavelength_range(region)
 
-    # For Optical+IR fitting, let the infrared extinction parameters handle JUST the silicate absorption 
+    # For Optical+IR fitting, let the infrared extinction parameters handle JUST the silicate absorption
     # (i.e. set beta = 0)
     if λrange == UVOptIR
+        @debug "construct_continuum_parameters: UVOptIR range — locking extinction.beta=0 (silicate handled by IR)"
         @assert out[:silicate_absorption] ∈ ("kvt", "d+") "Only the kvt and d+ silicate absorption profiles are supported for joint IR+optical observations!"
         set_val!(continuum["extinction.beta"], 0.0)
         lock!(continuum["extinction.beta"])
-    end
-    # For optical only fitting, we cant constrain the silicate absorption, so also lock these parameters
-    if λrange == UVOptical
+    elseif λrange == UVOptical
+        @debug "construct_continuum_parameters: UVOptical range — locking silicate/IR absorption params to 0"
         pwhere = "extinction." .* (out[:silicate_absorption] == "decompose" ? ["N_oli", "N_pyr", "N_for"] : ["tau_97"])
         append!(pwhere, "extinction." .* ["beta"])
         if out[:fit_ch_abs]
@@ -519,9 +541,8 @@ function construct_continuum_parameters(optical_file::String, infrared_file::Str
             set_val!(continuum[pw], 0.0)
             lock!(continuum[pw])
         end
-    end
-    # For IR-only fitting, we cant constrain the reddening 
-    if λrange == Infrared
+    elseif λrange == Infrared
+        @debug "construct_continuum_parameters: Infrared range — locking optical reddening params to 0"
         pwhere = "extinction." .* ["E_BV", "E_BV_factor"]
         if out[:fit_uv_bump]
             push!(pwhere, "extinction.delta_UV")
@@ -533,13 +554,17 @@ function construct_continuum_parameters(optical_file::String, infrared_file::Str
             set_val!(continuum[pw], 0.0)
             lock!(continuum[pw])
         end
+    else
+        @debug "construct_continuum_parameters: λrange=$λrange — no wavelength-range-based parameter locking needed"
     end
 
     # If there are no dust features, disable the use_pah_templates option
     if (length(dust_features.names) == 0) && out[:use_pah_templates]
-        @warn "There are no PAH features within the input wavelength range of the spectrum. " * 
+        @warn "There are no PAH features within the input wavelength range of the spectrum. " *
               "The use_pah_templates option will be disabled."
         out[:use_pah_templates] = false
+    else
+        @debug "construct_continuum_parameters: dust_features.names=$(length(dust_features.names)) features found"
     end
 
     # Final few non-fit parameters
@@ -549,6 +574,7 @@ function construct_continuum_parameters(optical_file::String, infrared_file::Str
     strans = [Transformation[], Transformation[]]
     statistics = NonFitParameters(sname, slabel, strans, sparam)
 
+    @debug "construct_continuum_parameters: done — $(length(params)) continuum parameters constructed"
     continuum, abs_features, dust_features, statistics
 end
 
@@ -556,6 +582,7 @@ end
 # Check if the kinematics should be tied to other lines based on the kinematic groups
 function check_tied_kinematics!(lines::Dict, prefix::String, line::String, kinematic_groups::Vector, fit_profiles::FitProfiles)
 
+    @debug "check_tied_kinematics!: line=$line, n_kinematic_groups=$(length(kinematic_groups))"
     for group ∈ kinematic_groups
         for groupmember ∈ lines["kinematic_group_" * group]
 
@@ -635,9 +662,10 @@ end
 
 
 # Same as above but for the additional components
-function check_acomp_tied_kinematics!(lines::Dict, prefix::String, line::String, kinematic_groups::Vector, 
+function check_acomp_tied_kinematics!(lines::Dict, prefix::String, line::String, kinematic_groups::Vector,
     fit_profiles::FitProfiles)
 
+    @debug "check_acomp_tied_kinematics!: line=$line, n_acomps=$(length(fit_profiles)-1), n_kinematic_groups=$(length(kinematic_groups))"
     for j ∈ 1:(length(fit_profiles)-1)
         for group ∈ kinematic_groups
             for groupmember ∈ lines["kinematic_group_" * group]
@@ -711,6 +739,7 @@ end
 
 
 function check_tied_voigt_mixing!(lines::Dict, prefix::String, line::String, fit_profiles::FitProfiles)
+    @debug "check_tied_voigt_mixing!: line=$line, tie_voigt_mixing=$(lines["tie_voigt_mixing"]), n_profiles=$(length(fit_profiles))"
     # Go through each profile, check if it's a Voigt, and if so, tie it
     if lines["tie_voigt_mixing"] 
         group = :voigt_mixing
@@ -723,10 +752,11 @@ function check_tied_voigt_mixing!(lines::Dict, prefix::String, line::String, fit
     end
 end
 
-function default_line_parameters(out::Dict, lines::Dict, λunit::Unitful.Units, Iunit::Unitful.Units, prefix::String, profile::Symbol, 
+function default_line_parameters(out::Dict, lines::Dict, λunit::Unitful.Units, Iunit::Unitful.Units, prefix::String, profile::Symbol,
     acomp_profiles::Vector{Union{Symbol,Nothing}})
 
     n_acomps = lines["n_acomps"]
+    @debug "default_line_parameters: prefix=$prefix, profile=$profile, n_acomps=$n_acomps, acomp_profiles=$acomp_profiles"
     profs = FitProfiles([])
 
     all_profiles = [profile; acomp_profiles]
@@ -825,6 +855,8 @@ end
 
 function override_line_parameters!(lines::Dict, line::String, prefix::String, fit_profiles::FitProfiles)
 
+    has_overrides = haskey(lines, "parameters") && haskey(lines["parameters"], line)
+    @debug "override_line_parameters!: line=$line, has_overrides=$has_overrides"
     # Check if there are any specific override values present in the options file,
     # and if so, use them
     if haskey(lines, "parameters") && haskey(lines["parameters"], line)
@@ -887,9 +919,10 @@ Read in the lines.toml configuration file, checking that it is formatted correct
 and convert it into a julia dictionary with Parameter objects for line fitting parameters.
 This deals purely with emission line options.
 """
-function construct_line_parameters(lines_file::String, out::Dict, λunit::Unitful.Units, Iunit::Unitful.Units, 
+function construct_line_parameters(lines_file::String, out::Dict, λunit::Unitful.Units, Iunit::Unitful.Units,
     region::SpectralRegion)
 
+    @debug "construct_line_parameters: lines_file=$lines_file, λlim=$(region.λlim)"
     # Read in the lines file
     lines, cent_vals = parse_lines(lines_file, region, λunit)
 
@@ -1042,6 +1075,8 @@ function construct_line_parameters(lines_file::String, out::Dict, λunit::Unitfu
     end
 
     @debug "#######################################################"
+    n_line_params = length(get_flattened_fit_parameters(lines_out)._parameters)
+    @debug "construct_line_parameters: done — $(length(lines_out.names)) lines, $n_line_params total line parameters, $(length(tied_pairs)) tied pairs"
     lines_out
 end
 
@@ -1052,10 +1087,16 @@ end
 The main function for constructing a ModelParameters object, which describes all the parameters of the model,
 including those that are being fit and those that are not being fit.
 """
-function construct_model_parameters(optical_file::String, infrared_file::String, lines_file::String, out::Dict, 
+function construct_model_parameters(optical_file::String, infrared_file::String, lines_file::String, out::Dict,
     λunit::Unitful.Units, Iunit::Unitful.Units, region::SpectralRegion, redshift::Real)
-    continuum, abs_features, dust_features, statistics = construct_continuum_parameters(optical_file, infrared_file, out, 
+    @debug "construct_model_parameters: optical=$optical_file, infrared=$infrared_file, lines=$lines_file, region=$(region.λlim), redshift=$redshift"
+    continuum, abs_features, dust_features, statistics = construct_continuum_parameters(optical_file, infrared_file, out,
         λunit, Iunit, region, redshift)
     lines = construct_line_parameters(lines_file, out, λunit, Iunit, region)
-    ModelParameters(continuum, abs_features, dust_features, lines, statistics)
+    mp = ModelParameters(continuum, abs_features, dust_features, lines, statistics)
+    n_cont = length(continuum._parameters)
+    n_dust = sum(length(get_flattened_fit_parameters(pf)._parameters) for pf in dust_features.profiles; init=0)
+    n_lines = length(get_flattened_fit_parameters(lines)._parameters)
+    @debug "construct_model_parameters: done — n_cont=$n_cont, n_dust=$n_dust, n_lines=$n_lines continuum+dust+line parameters"
+    mp
 end

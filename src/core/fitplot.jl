@@ -1,6 +1,7 @@
 
 # insert NaNs in the gaps so matplotlib doesnt draw lines between them
 function _insert_gap_nans!(λ::Vector{<:QWave}, I::Vector, mask_lines::BitVector, mask_bad::BitVector, cube_fitter::CubeFitter)
+    @debug "_insert_gap_nans!: nλ=$(length(λ)), n_gaps=$(length(cube_fitter.spectral_region.gaps))"
     for gap in cube_fitter.spectral_region.gaps
         _, w1 = findmin(x -> abs(x - gap[1]), λ)
         _, w2 = findmin(x -> abs(x - gap[2]), λ)
@@ -14,9 +15,10 @@ end
 
 
 # Helper function to fit a plotly HTML plot of a spaxel fit
-function plot_spaxel_fit_plotly(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_model::Spaxel, I_model_u::Vector{<:QSIntensity}, 
+function plot_spaxel_fit_plotly(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_model::Spaxel, I_model_u::Vector{<:QSIntensity},
     comps::Dict, label::String, χ2red::Real; spline::Union{Vector{<:QSIntensity},Nothing}=nothing)
 
+    @debug "plot_spaxel_fit_plotly: label=$label, χ2red=$χ2red, nλ=$(length(spaxel.λ)), has_spline=$(spline !== nothing)"
     # Get units
     fopt = fit_options(cube_fitter)
     λunit = replace(latex(unit(spaxel.λ[1])), '$' => "")  # plotly cannot parse more than one latex math expression per axis label
@@ -169,6 +171,7 @@ function pyplot_annotate_emission_lines!(λ_model::Vector{<:QWave}, comps::Dict,
     extinction::Vector{<:Real}, normalization::Vector{<:Quantity}, cube_fitter::CubeFitter,
     ax1, ax2, range::Union{Nothing,Tuple})
 
+    @debug "pyplot_annotate_emission_lines!: n_lines=$(length(lines.names)), range=$range"
     # full line profile
     if isnothing(range)
         s = zeros(length(λ_model))
@@ -235,11 +238,12 @@ function pyplot_annotate_emission_lines!(λ_model::Vector{<:QWave}, comps::Dict,
 end
 
 
-function plot_spaxel_fit_pyplot(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_model::Spaxel, I_model::Vector{<:QSIntensity}, 
-    comps::Dict, range::Union{Tuple,Nothing}, χ2red::Real, label::String; spline::Union{Vector{<:QSIntensity},Nothing}=nothing, 
-    I_boot_min::Union{Vector{<:QSIntensity},Nothing}=nothing, I_boot_max::Union{Vector{<:QSIntensity},Nothing}=nothing, 
+function plot_spaxel_fit_pyplot(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_model::Spaxel, I_model::Vector{<:QSIntensity},
+    comps::Dict, range::Union{Tuple,Nothing}, χ2red::Real, label::String; spline::Union{Vector{<:QSIntensity},Nothing}=nothing,
+    I_boot_min::Union{Vector{<:QSIntensity},Nothing}=nothing, I_boot_max::Union{Vector{<:QSIntensity},Nothing}=nothing,
     logy::Bool=false)
 
+    @debug "plot_spaxel_fit_pyplot: label=$label, χ2red=$χ2red, nλ=$(length(spaxel.λ)), logy=$logy, range=$range, has_bootstrap=$(I_boot_min !== nothing)"
     fopt = fit_options(cube_fitter)
     λunit = unit(spaxel.λ[1])
     Nunit = unit(spaxel.N)
@@ -559,10 +563,11 @@ Plot the best fit for an individual spaxel using the given backend (`:pyplot` or
 - `logy`: If true, make the y-axis logarithmic (only for pyplot backend)
 """
 function plot_spaxel_fit(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_model::Spaxel, I_model::Vector{<:QSIntensity},
-    comps::Dict, χ2red::Real, label::String; backend::Symbol=:pyplot, I_boot_min::Union{Vector{<:QSIntensity},Nothing}=nothing, 
-    I_boot_max::Union{Vector{<:QSIntensity},Nothing}=nothing, range::Union{Tuple,Nothing}=nothing, 
-    spline::Union{Vector{<:QSIntensity},Nothing}=nothing, logy::Bool=false) 
+    comps::Dict, χ2red::Real, label::String; backend::Symbol=:pyplot, I_boot_min::Union{Vector{<:QSIntensity},Nothing}=nothing,
+    I_boot_max::Union{Vector{<:QSIntensity},Nothing}=nothing, range::Union{Tuple,Nothing}=nothing,
+    spline::Union{Vector{<:QSIntensity},Nothing}=nothing, logy::Bool=false)
 
+    @debug "plot_spaxel_fit: label=$label, backend=$backend, χ2red=$χ2red, range=$range, logy=$logy"
     if !isnothing(range) && ((range[1] > maximum(cube_fitter.cube.λ)) | (range[2] < minimum(cube_fitter.cube.λ)))
         @warn "Cannot plot with a range of $(range) because it is outside the wavelength limits of the spectrum!"
         return 
@@ -570,12 +575,16 @@ function plot_spaxel_fit(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_model::
 
     # Plotly ---> useful interactive plots for visually inspecting data, but not publication-quality
     if (backend == :plotly || backend == :both) && isnothing(range)
+        @debug "plot_spaxel_fit: dispatching to plotly backend"
         plot_spaxel_fit_plotly(cube_fitter, spaxel, spaxel_model, I_model, comps, label, χ2red; spline=spline)
+    elseif (backend == :plotly || backend == :both) && !isnothing(range)
+        @debug "plot_spaxel_fit: skipping plotly backend (range specified)"
     end
 
     # Pyplot --> actually publication-quality plots finely tuned to be the most useful and visually appealing that I could make them
     if backend == :pyplot || backend == :both
-        plot_spaxel_fit_pyplot(cube_fitter, spaxel, spaxel_model, I_model, comps, range, χ2red, label; spline=spline, 
+        @debug "plot_spaxel_fit: dispatching to pyplot backend"
+        plot_spaxel_fit_pyplot(cube_fitter, spaxel, spaxel_model, I_model, comps, range, χ2red, label; spline=spline,
             I_boot_min=I_boot_min, I_boot_max=I_boot_max, logy=logy)
     end
 
@@ -779,8 +788,10 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, bunit::Abstra
         end
     end
     if !isnothing(modify_ax)
+        @debug "plot_parameter_map: returning modified ax for $name_i"
         return fig, ax, cdata
     end
+    @debug "plot_parameter_map: saved $save_path"
     plt.close()
 
 end
@@ -789,9 +800,10 @@ end
 function plot_stellar_grids(result::StellarResult, cube_fitter::CubeFitter, label::String)
 
     st_type = fit_options(cube_fitter).stellar_template_type
+    @debug "plot_stellar_grids: label=$label, st_type=$st_type, n_ages=$(length(cube_fitter.ssps.ages)), n_logzs=$(length(cube_fitter.ssps.logzs))"
     if st_type ≠ "ssp"
-        @debug "NOTE: Skipping stellar grid plots because stellar_template_type is $(st_type)"
-        return 
+        @debug "plot_stellar_grids: skipping — stellar_template_type is $(st_type)"
+        return
     end
 
     all_ages = log10.(ustrip.(uconvert.(u"yr", cube_fitter.ssps.ages)))

@@ -7,6 +7,7 @@ them into code objects.
 
 
 function pah_name_to_float(name::AbstractString)
+    @debug "pah_name_to_float: name=$name"
     # assumed to be formatted such that the wavelength is given to two decimal places,
     # i.e. "PAH_620" is interpreted at 6.20
     wl = split(name, "_")[end]
@@ -20,6 +21,7 @@ end
 Checks that the parsed options file has all of the keys that it should have.
 """
 function validate_options_file(options)
+    @debug "validate_options_file: validating $(length(keys(options))) top-level keys"
     keylist1 = ["n_bootstrap", "silicate_absorption", "extinction_curve", "extinction_screen", "fit_sil_emission", "fit_opt_na_feii", 
                 "fit_opt_br_feii", "fit_all_global", "use_pah_templates", "fit_joint", "fit_uv_bump", "fit_covering_frac", "parallel", 
                 "plot_spaxels", "plot_maps", "save_fits", "overwrite", "track_memory", "track_convergence", "save_full_model", 
@@ -45,6 +47,7 @@ Checks that the parsed dust file has all of the keys that it should have.
 """
 function validate_ir_file(dust::Dict)
 
+    @debug "validate_ir_file: validating dust file with $(length(keys(dust))) top-level keys, $(length(get(dust, "dust_features", Dict()))) dust features"
     keylist1 = ["dust_features", "extinction", "hot_dust"]
     keylist2 = ["wave", "fwhm"]
     keylist3 = ["tau_9_7", "tau_ice", "tau_ch", "beta"]
@@ -87,6 +90,7 @@ Checks that the parsed optical file has all of the keys that it should have.
 """
 function validate_optical_file(optical::Dict)
 
+    @debug "validate_optical_file: validating optical file with $(length(keys(optical))) top-level keys"
     keylist1 = ["extinction", "stellar_kinematics", "na_feii_kinematics", "br_feii_kinematics"]
     keylist2 = ["E_BV", "E_BV_factor", "uv_slope", "frac"]
     keylist3 = ["vel", "vdisp"]
@@ -127,6 +131,7 @@ sorts the profiles and acomp_profiles keys into dictionaries.
 """
 function validate_lines_file(lines)
 
+    @debug "validate_lines_file: validating lines file with $(length(get(lines, "lines", Dict()))) lines"
     keylist1 = ["default_sort_order", "tie_voigt_mixing", "lines", "profiles", "acomps", "n_acomps", 
         "rel_amp", "rel_fwhm", "rel_voff"]
     keylist2 = ["wave", "latex", "annotate", "unit"]
@@ -342,35 +347,48 @@ end
 
 
 function silicate_kvt()
-    data = readdlm(joinpath(@__DIR__, "..", "templates", "kvt.txt"), ' ', Float64, '\n')
-    data[:,1] .* u"μm", data[:,2]
+    path = joinpath(@__DIR__, "..", "templates", "kvt.txt")
+    @debug "silicate_kvt: loading Kemper, Vriend & Tielens (2004) profile from $path"
+    data = readdlm(path, ' ', Float64, '\n')
+    λ, τ = data[:,1] .* u"μm", data[:,2]
+    @debug "silicate_kvt: done — λ range=$(extrema(ustrip.(λ))) μm, $(length(λ)) points"
+    λ, τ
 end
 
 
 # Setup function for creating the extinction profile from Chiar+Tielens 2006
 function silicate_ct()
-    data = CSV.read(joinpath(@__DIR__, "..", "templates", "chiar+tielens_2005.dat"), DataFrame, skipto=15, delim=' ', 
+    path = joinpath(@__DIR__, "..", "templates", "chiar+tielens_2005.dat")
+    @debug "silicate_ct: loading Chiar & Tielens (2006) profile from $path"
+    data = CSV.read(path, DataFrame, skipto=15, delim=' ',
         ignorerepeated=true, header=["wave", "a_galcen", "a_local"], select=[1, 2])
     # normalize to the value at 9.7 um
     _, mn = findmin(x -> abs(x - 9.7), data[!, "wave"])
     data[!, "a_galcen"] ./= data[mn, "a_galcen"]
-    data[!, "wave"] .* u"μm", data[!, "a_galcen"]
+    λ, τ = data[!, "wave"] .* u"μm", data[!, "a_galcen"]
+    @debug "silicate_ct: done — λ range=$(extrema(ustrip.(λ))) μm, $(length(λ)) points"
+    λ, τ
 end
 
 
 # Setup function for creating the extinction profile from OHM+92
 function silicate_ohm()
-    data = CSV.read(joinpath(@__DIR__, "..", "templates", "ohmc.txt"), DataFrame, delim=' ', ignorerepeated=true,
+    path = joinpath(@__DIR__, "..", "templates", "ohmc.txt")
+    @debug "silicate_ohm: loading Ossenkopf, Henning & Mathis (1992) profile from $path"
+    data = CSV.read(path, DataFrame, delim=' ', ignorerepeated=true,
         header=["wave", "ext"])
     # normalize to the value at 9.7 um
     _, mn = findmin(x -> abs(x - 9.7), data[!, "wave"])
     data[!, "ext"] ./= data[mn, "ext"]
-    data[!, "wave"] .* u"μm", data[!, "ext"]
+    λ, τ = data[!, "wave"] .* u"μm", data[!, "ext"]
+    @debug "silicate_ohm: done — λ range=$(extrema(ustrip.(λ))) μm, $(length(λ)) points"
+    λ, τ
 end
 
 
 function read_dust_κ(x::Real, y::Real, a::QLength, λunit::Unitful.Units)
 
+    @debug "read_dust_κ: x=$x, y=$y, a=$a, λunit=$λunit"
     # Get wavelength, x, y, and a arrays
     λ = readdlm(joinpath(@__DIR__, "..", "templates", "dorschner_wave.txt"), ' ', Float64, '\n')[:,1] .* u"μm"
     λ = uconvert.(λunit, λ)
@@ -393,13 +411,14 @@ function read_dust_κ(x::Real, y::Real, a::QLength, λunit::Unitful.Units)
     # Read in the mass absorption coefficiencts for crystalline forsterite
     for_data = readdlm(joinpath(@__DIR__, "..", "templates", "tamani_crystalline_forsterite_k.txt"), ' ', Float64, '\n', comments=true)
 
-    # Create interpolating function 
+    # Create interpolating function
     # extend edges to 0
     λ_for = [for_data[1,1]-0.2; for_data[1,1]-0.1; for_data[:, 1]; for_data[end, 1]+0.1; for_data[end, 1]+0.2] .* u"μm"
     λ_for = uconvert.(λunit, λ_for)
     κ_abs_for = [0.; 0.; for_data[:, 2]; 0.; 0.] .* u"cm^2/g"
     κ_abs_for = Spline1D(ustrip.(λ_for), ustrip.(κ_abs_for), k=3)
 
+    @debug "read_dust_κ: done — olivine, pyroxene, and forsterite κ_abs splines created"
     κ_abs_oli, κ_abs_pyr, κ_abs_for
 end
 
@@ -864,6 +883,7 @@ end
 Updates the convergence log file with results from a global simulated annealing fit with Optim.
 """
 function update_global_convergence_log(cube_fitter::CubeFitter, spaxel::CartesianIndex, res)
+    @debug "update_global_convergence_log: spaxel=$spaxel"
     global file_lock
     # use the ReentrantLock to prevent multiple processes from trying to write to the same file at once
     lock(file_lock) do 
@@ -894,7 +914,9 @@ make_spaxel_logger(name::String, fname::String) = TeeLogger(ConsoleLogger(stdout
 Writes the log file that contains information on memory usage for a particular spaxel fit.
 """
 function write_memory_log(cube_fitter::CubeFitter, fname::String)
-    open(joinpath("output_$(cube_fitter.name)", "logs", "mem.$fname.log"), "w") do f
+    logpath = joinpath("output_$(cube_fitter.name)", "logs", "mem.$fname.log")
+    @debug "write_memory_log: fname=$fname, path=$logpath"
+    open(logpath, "w") do f
 
         print(f, """
         ### PROCESS ID: $(getpid()) ###
@@ -917,10 +939,13 @@ Writes the CSV file that contains the fit results for a particular spaxel
 (best fit values and errors).
 """
 function write_fit_results_csv(cube_fitter::CubeFitter, fname::String, result::SpaxelFitResult)
+    fpath = joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.csv")
+    @debug "write_fit_results_csv: writing results to $fpath"
     pretty = pretty_print_results(result)
-    open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.csv"), "w") do f
+    open(fpath, "w") do f
         write(f, pretty)
     end
+    @debug "write_fit_results_csv: done"
 end
 
 
@@ -934,8 +959,10 @@ and returns the best fit values and errors as separate vectors (errors is a
 function read_fit_results_csv(name::String, fname::String; output_path::Union{String,Nothing}=nothing)
 
     folder = isnothing(output_path) ? "output_$(name)" : output_path
+    fpath = joinpath(folder, "spaxel_binaries", "$fname.csv")
+    @debug "read_fit_results_csv: reading results from $fpath"
     # Read in the CSV as a DataFrame
-    df = CSV.read(joinpath(folder, "spaxel_binaries", "$fname.csv"), DataFrame, delim='\t', stripwhitespace=true)
+    df = CSV.read(fpath, DataFrame, delim='\t', stripwhitespace=true)
     rename!(df, strip.(names(df)))
 
     # read back in the raw values
@@ -952,6 +979,7 @@ function read_fit_results_csv(name::String, fname::String; output_path::Union{St
     p_err_upp = p_err_upp .* p_unit
     p_err = [p_err_low p_err_upp]
 
+    @debug "read_fit_results_csv: done — $(length(p_out)) parameters read"
     p_out, p_err
 end
 
@@ -959,24 +987,31 @@ end
 # Helper function for saving the outputs of the initial integrated fit to both the CubeFitter object
 # and to csv files
 function save_init_fit_outputs!(cube_fitter::CubeFitter, popt::Vector{<:Real}, pah_amp::Vector{<:Real})
+    cont_path = joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_cont.csv")
+    pahtemp_path = joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_pahtemp.csv")
+    @debug "save_init_fit_outputs!: saving continuum+PAH init results — $(length(popt)) cont params, $(length(pah_amp)) pah_amp params"
     # Save the results to a file and to the CubeFitter object
     # save running best fit parameters in case the fitting is interrupted
     cube_fitter.p_init_cont[:] .= popt
-    open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_cont.csv"), "w") do f
+    open(cont_path, "w") do f
         writedlm(f, cube_fitter.p_init_cont, ',')
     end
     cube_fitter.p_init_pahtemp[:] .= pah_amp
-    open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_pahtemp.csv"), "w") do f
+    open(pahtemp_path, "w") do f
         writedlm(f, cube_fitter.p_init_pahtemp, ',')
     end
+    @debug "save_init_fit_outputs!: saved to $cont_path and $pahtemp_path"
 end
 
 
 # Alternative dispatch for the line fit (doesnt include the pah_amp argument)
 function save_init_fit_outputs!(cube_fitter::CubeFitter, popt::Vector{<:Real})
+    line_path = joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_line.csv")
+    @debug "save_init_fit_outputs!: saving line init results — $(length(popt)) line params"
     # Save results to file
     cube_fitter.p_init_line[:] .= copy(popt)
-    open(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "init_fit_line.csv"), "w") do f
+    open(line_path, "w") do f
         writedlm(f, cube_fitter.p_init_line, ',')
     end
+    @debug "save_init_fit_outputs!: saved to $line_path"
 end

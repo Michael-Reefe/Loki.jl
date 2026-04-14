@@ -42,7 +42,7 @@ end
 # fit of a DataCube.
 function generate_cubemodel(cube_fitter::CubeFitter, _shape::Tuple, floattype::DataType=Float32; do_1d::Bool=false)
 
-    @debug "Generating full 3D cube models"
+    @debug "generate_cubemodel: _shape=$_shape, floattype=$floattype, do_1d=$do_1d"
     shape = do_1d ? (1,1,_shape[3]) : _shape
 
     @debug """\n
@@ -81,8 +81,9 @@ function generate_cubemodel(cube_fitter::CubeFitter, _shape::Tuple, floattype::D
     dust_features = zeros(qtype, shape2..., cube_fitter.n_dust_feat)
     lines = zeros(qtype, shape2..., cube_fitter.n_lines)
 
-    CubeModel(model, extinction_stars, extinction_gas, absorption_silicates, abs_ice, abs_ch, apoly, mpoly, 
-        stellar, na_feii, br_feii, power_law, dust_continuum, hot_dust, templates, abs_features, dust_features, 
+    @debug "generate_cubemodel: n_power_law=$(cube_fitter.n_power_law), n_dust_cont=$(cube_fitter.n_dust_cont), n_templates=$(cube_fitter.n_templates), n_lines=$(cube_fitter.n_lines), has_apoly=$(apoly !== nothing), has_mpoly=$(mpoly !== nothing)"
+    CubeModel(model, extinction_stars, extinction_gas, absorption_silicates, abs_ice, abs_ch, apoly, mpoly,
+        stellar, na_feii, br_feii, power_law, dust_continuum, hot_dust, templates, abs_features, dust_features,
         lines)
 end
 

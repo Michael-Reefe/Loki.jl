@@ -170,6 +170,7 @@ end
 
 
 function make_single_line_object(f::FitFeatures, i::Integer, n_prof::Integer)
+    @debug "make_single_line_object: name=$(f.names[i]), i=$i, n_prof=$n_prof"
     cfg = LineConfig(
         BitVector([f.config.annotate[i]]), [f.config.sort_order[i]], f.config.combined, f.config.rel_amp,
         f.config.rel_voff, f.config.rel_fwhm
@@ -321,7 +322,7 @@ end
 A constructor function for Parameter structs given a Dictionary
 """
 function parameter_from_dict(dict::Dict; units::Unitful.Units=unit(1.0))
-
+    @debug "parameter_from_dict: val=$(dict["val"]), locked=$(dict["locked"]), plim=$(dict["plim"]), units=$units"
     # Unpack the dictionary into fields of the Parameter
     value = dict["val"] * units
     locked = dict["locked"]
@@ -340,7 +341,7 @@ using deltas on upper/lower limits, i.e. if val = 5 and plim = [-0.1, 0.1],
 then the true limits will be 5 .+ [-0.1, 0.1] = [4.9, 5.1]
 """
 function parameter_from_dict_wave(dict::Dict; units::Unitful.Units=unit(1.0))
-
+    @debug "parameter_from_dict_wave: val=$(dict["val"]), locked=$(dict["locked"]), plim=$(dict["plim"]), units=$units"
     # Unpack the dictionary into fields of the Parameter
     value = dict["val"]
     locked = dict["locked"]
@@ -364,7 +365,7 @@ using fractional values on upper/lower limits, i.e. if val = 5 and
 plim = [0.5, 2], then the true limits will be 5 .* [0.5, 2] = [2.5, 10]
 """
 function parameter_from_dict_fwhm(dict::Dict; units::Unitful.Units=unit(1.0))
-
+    @debug "parameter_from_dict_fwhm: val=$(dict["val"]), locked=$(dict["locked"]), plim=$(dict["plim"]), units=$units"
     # Unpack the dictionary into fields of the Parameter
     value = dict["val"]
     locked = dict["locked"]
@@ -484,6 +485,7 @@ Base.getproperty(p::FitParameters, s::Symbol) = _getproperty(p, Val{s}())
 
 # methods for obtaining the tied pair vector (vector of tuples)
 function get_tied_pairs(p::FitParameters)
+    @debug "get_tied_pairs: n_params=$(length(p))"
     ties = p.ties
     tie_groups = Vector{Union{Symbol,Nothing}}([!isnothing(tie) ? tie.group : nothing for tie in ties])
     tie_pairs = Vector{Tuple{Int,Int,Float64}}()
@@ -541,6 +543,7 @@ function set_val!(p::Parameters, names::AbstractVector{String}, vs::AbstractVect
 end
 
 function check_valid(p::Parameters)
+    @debug "check_valid: n_params=$(length(p))"
     for param in p[:]
         check_valid(param)
     end
@@ -557,6 +560,7 @@ function total_num_profiles(p::FitFeatures)
     for profiles_i in p.profiles
         n_prof += length(profiles_i)
     end
+    @debug "total_num_profiles: n_features=$(length(p.profiles)), n_total_profiles=$n_prof"
     n_prof
 end
 
@@ -582,61 +586,75 @@ end
 
 
 # get all the fit parameters in a FitFeatures object
-# (dont do this until the last step; the object returned 
+# (dont do this until the last step; the object returned
 #  will be a COPY of the fit parameters, so modifying it
 #  wont affect the original)
 function get_flattened_fit_parameters(p::FitFeatures)
+    @debug "get_flattened_fit_parameters(FitFeatures): n_features=$(length(p.profiles))"
     flat = FitParameters(String[], String[], Vector{Transformation}[], FitParameter[])
     for profiles_i in p.profiles
         append!(flat, get_flattened_fit_parameters(profiles_i))
     end
+    @debug "get_flattened_fit_parameters(FitFeatures): n_flat=$(length(flat))"
     flat
 end
 function get_flattened_nonfit_parameters(p::FitFeatures)
+    @debug "get_flattened_nonfit_parameters(FitFeatures): n_features=$(length(p.profiles))"
     flat = NonFitParameters(String[], String[], Vector{Transformation}[], NonFitParameter[])
     for (composite_i, profiles_i) in zip(p.composite, p.profiles)
         append!(flat, get_flattened_nonfit_parameters(profiles_i))
         append!(flat, composite_i)
     end
+    @debug "get_flattened_nonfit_parameters(FitFeatures): n_flat=$(length(flat))"
     flat
 end
 
 # get all the fit parameters in a ModelParameters object
 function get_flattened_fit_parameters(p::ModelParameters)
+    @debug "get_flattened_fit_parameters(ModelParameters): n_continuum=$(length(p.continuum))"
     flat = FitParameters(String[], String[], Vector{Transformation}[], FitParameter[])
     append!(flat, p.continuum)
     append!(flat, get_flattened_fit_parameters(p.dust_features))
     append!(flat, get_flattened_fit_parameters(p.lines))
+    @debug "get_flattened_fit_parameters(ModelParameters): n_total=$(length(flat))"
     flat
 end
 function get_flattened_nonfit_parameters(p::ModelParameters)
+    @debug "get_flattened_nonfit_parameters(ModelParameters): n_statistics=$(length(p.statistics))"
     flat = NonFitParameters(String[], String[], Vector{Transformation}[], NonFitParameter[])
     append!(flat, get_flattened_nonfit_parameters(p.dust_features))
     append!(flat, get_flattened_nonfit_parameters(p.lines))
     append!(flat, p.statistics)
+    @debug "get_flattened_nonfit_parameters(ModelParameters): n_total=$(length(flat))"
     flat
 end
 function get_flattened_parameters(p::ModelParameters)
+    @debug "get_flattened_parameters(ModelParameters)"
     flat = AllParameters(String[], String[], Vector{Transformation}[], Vector{Union{FitParameter,NonFitParameter}}())
     append!(flat, get_flattened_fit_parameters(p))
     append!(flat, get_flattened_nonfit_parameters(p))
+    @debug "get_flattened_parameters(ModelParameters): n_total=$(length(flat))"
     flat
 end
 
 # the range parameter mainly determines what to do about extinction curves
 # since calzetti and CCM are not defined past ~2-3 um
 function get_λrange(λlim::Tuple{QLength,QLength})
-    if λlim[1] < 3.3u"μm" && λlim[2] > 2.2u"μm"
+    @debug "get_λrange: λlim=$(ustrip.(λlim)) $(unit(λlim[1]))"
+    result = if λlim[1] < 3.3u"μm" && λlim[2] > 2.2u"μm"
         UVOptIR
     elseif λlim[1] > 3.3u"μm"
         Infrared
     else
         UVOptical
     end
+    @debug "get_λrange: result=$result"
+    result
 end
 
 # get masks for each part of the spectrum separated by the gaps
 function get_gap_masks(λ::Vector{T}, gaps::Vector{Tuple{T,T}}) where {T<:Number}
+    # @debug "get_gap_masks: nλ=$(length(λ)), n_gaps=$(length(gaps))"
     region_masks = BitVector[]
     if length(gaps) == 0
         push!(region_masks, trues(length(λ)))

@@ -1,11 +1,12 @@
 
 function create_wcs_from_header(hdr::FITSHeader)
-
+    @debug "create_wcs_from_header: n_header_keys=$(length(hdr))"
     if haskey(hdr, "NAXIS")
         naxis = hdr["NAXIS"]
     else
         error("Header is missing NAXIS keyword")
     end
+    @debug "create_wcs_from_header: naxis=$naxis"
     wcs_out = WCSTransform(naxis)
 
     # Go through header keywords, checking if they are present, and inserting them into the WCS
@@ -58,6 +59,7 @@ function create_wcs_from_header(hdr::FITSHeader)
 
     # PS and PV keywords are ignored because WCS.jl cannot handle them
 
+    @debug "create_wcs_from_header: done — radesys=$(wcs_out.radesys), naxis=$(wcs_out.naxis)"
     wcs_out
 end
 
@@ -66,7 +68,7 @@ end
 # For example, taking a 3D WCS with a wavelength axis to a 2D WCS
 # with only sky coordinate axes
 function shrink_wcs_dimensions(wcs::WCSTransform; keep_axes=1:2)
-
+    @debug "shrink_wcs_dimensions: naxis=$(wcs.naxis) → $(length(keep_axes)), keep_axes=$keep_axes"
     # Go pretty exhaustively through all WCS properties
     WCSTransform(length(keep_axes);
         crval=wcs.crval[keep_axes],
@@ -108,7 +110,7 @@ end
 # For example, taking a 2D WCS with only sky coordinate axes and
 # adding a third wavelength axis
 function extend_wcs_dimensions(wcs::WCSTransform, λ::Vector{<:QWave})
-
+    @debug "extend_wcs_dimensions: naxis=$(wcs.naxis) → $(wcs.naxis+1), nλ=$(length(λ)), λ_unit=$(unit(λ[1]))"
     pc = zeros(3, 3)
     cd = zeros(3, 3)
     if any(wcs.pc .> 0)
@@ -128,9 +130,11 @@ function extend_wcs_dimensions(wcs::WCSTransform, λ::Vector{<:QWave})
     dλ = diff(λ)
     wave_linear = all(dλ[1] .≈ dλ)
     if !wave_linear
+        @debug "extend_wcs_dimensions: non-linear wavelength spacing — using WAVE-TAB"
         ctype3 = "WAVE-TAB"
         crval3 = crpix3 = cdelt3 = 1.
     else
+        @debug "extend_wcs_dimensions: linear wavelength spacing — using WAVE, crval3=$(ustrip(λ[1])), cdelt3=$(ustrip(dλ[1]))"
         ctype3 = "WAVE"
         crval3 = ustrip(λ[1])
         crpix3 = 1.
@@ -193,12 +197,16 @@ end
 # A little helper function that takes the FITS header keyword RADESYS and 
 # converts it into a type of coordinate object that SkyCoords.jl can understand
 function string_to_coordframe(sframe::String)
+    @debug "string_to_coordframe: sframe=$sframe"
     if sframe == "ICRS"
+        @debug "string_to_coordframe: using ICRSCoords"
         ICRSCoords
     elseif sframe == "FK5"
+        @debug "string_to_coordframe: using FK5Coords{2000}"
         # FK5 uses an equinox of 2000
         FK5Coords{2000}
     elseif sframe == "FK4"
+        @debug "string_to_coordframe: using FK5Coords{1950}"
         # use FK5 with an equinox of 1950
         FK5Coords{1950}
     else
@@ -211,7 +219,7 @@ end
 
 # calculate the rotation angle of the data relative to the sky coordinates, given a WCS
 function get_sky_rotation_angle(wcs::WCSTransform)
-
+    @debug "get_sky_rotation_angle: has_pc=$(any(wcs.pc .> 0)), has_cd=$(any(wcs.cd .> 0))"
     if any(wcs.pc .> 0)
         # PC is a rotation matrix
         cosθ =  wcs.pc[1,1]    
@@ -233,13 +241,15 @@ function get_sky_rotation_angle(wcs::WCSTransform)
         cosθ *= -1
     end
 
-    atan(sinθ, cosθ) * u"rad"
+    result = atan(sinθ, cosθ) * u"rad"
+    @debug "get_sky_rotation_angle: θ=$(round(ustrip(result), digits=4)) rad"
+    result
 end
 
 
 # Utility function to calculate pixel resolutions in each axis from a WCS
 function get_pixel_resolutions(wcs::WCSTransform)
-
+    @debug "get_pixel_resolutions: has_pc=$(any(wcs.pc .> 0)), has_cd=$(any(wcs.cd .> 0)), has_cdelt=$(any(wcs.cdelt .> 0))"
     if any(wcs.pc .> 0) && any(wcs.cdelt .> 0)
         pccd = wcs.pc * diagm(wcs.cdelt)   # matrix multiplication!
     elseif any(wcs.cd .> 0)
@@ -256,6 +266,7 @@ end
 
 # Utility function to parse WCS "CUNIT" keywords into Unitful objects
 function parse_cunits(wcs::WCSTransform)
+    @debug "parse_cunits: cunit=$(wcs.cunit)"
     s_units = wcs.cunit
     units_i = Unitful.FreeUnits[]
     for i in 1:length(s_units)

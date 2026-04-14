@@ -36,23 +36,28 @@ mutable struct Spaxel{Q1<:QWave}
             normalized = false
         end
 
+        @debug "Spaxel: coords=$coords, nλ=$(length(λ)), λ range=$(extrema(ustrip.(λ))) $(unit(λ[1])), normalized=$normalized"
         new{Q1}(coords, λ, I, σ, area_sr, mask_lines, mask_bad, vres, I_spline, N, aux, normalized)
     end
 end
 
 
 function Base.copy(s::Spaxel)
+    @debug "copy(Spaxel): coords=$(s.coords), nλ=$(length(s.λ)), normalized=$(s.normalized), aux keys=$(keys(s.aux))"
     aux = Dict()
     for key in keys(s.aux)
         aux[key] = copy(s.aux[key])
     end
-    Spaxel(s.coords, copy(s.λ), copy(s.I), copy(s.σ), copy(s.area_sr), copy(s.mask_lines), copy(s.mask_bad), 
+    Spaxel(s.coords, copy(s.λ), copy(s.I), copy(s.σ), copy(s.area_sr), copy(s.mask_lines), copy(s.mask_bad),
         s.vres, copy(s.I_spline); N=s.N, aux=aux)
 end
 
 
 # create a new normalized spaxel
 function normalize!(s::Spaxel, N::T) where {T}
+    n_nan_I = count(isnan, ustrip.(s.I))
+    n_inf_I = count(isinf, ustrip.(s.I))
+    @debug "normalize!: coords=$(s.coords), N=$N, pre-norm I range=$(extrema(filter(isfinite, ustrip.(s.I)))), n_nan=$n_nan_I, n_inf=$n_inf_I"
     s.I = s.I ./ N
     s.σ = s.σ ./ N
     if !isnothing(s.I_spline)
@@ -71,17 +76,27 @@ function normalize!(s::Spaxel, N::T) where {T}
     end
     s.normalized = true
     s.N = N
+    @debug "normalize!: done — post-norm I range=$(extrema(filter(isfinite, s.I))), σ range=$(extrema(filter(isfinite, s.σ)))"
 end
 
 
 function subtract_continuum!(s::Spaxel, s_model::Spaxel, continuum::AbstractVector{<:Real})
+    n_nan_cont = count(isnan, continuum)
+    n_inf_cont = count(isinf, continuum)
+    if n_nan_cont > 0 || n_inf_cont > 0
+        @debug "subtract_continuum!: WARNING — continuum has $n_nan_cont NaN and $n_inf_cont Inf values before subtraction"
+    end
     unit_check(unit(s.I[1]), unit(continuum[1]))
     cont = continuum
+    interpolated = false
     if s != s_model
-        # interpolate 
+        # interpolate
         cont = Spline1D(ustrip.(s_model.λ), continuum, k=1)(ustrip.(s.λ))
+        interpolated = true
     end
+    @debug "subtract_continuum!: coords=$(s.coords), interpolated=$interpolated, cont range=$(extrema(filter(isfinite, cont))), pre-sub I range=$(extrema(filter(isfinite, s.I)))"
     s.I .-= cont
+    @debug "subtract_continuum!: done — post-sub I range=$(extrema(filter(isfinite, s.I)))"
 end
 
 
@@ -94,10 +109,12 @@ function interpolate_over_lines!(s::Spaxel, scale::Integer)
 
     # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
     λknots = s.λ[.~s.mask_lines][(1+scale):scale:(length(s.λ[.~s.mask_lines])-scale)]
+    n_line_masked = sum(s.mask_lines)
+    @debug "interpolate_over_lines!: coords=$(s.coords), n_line_masked=$n_line_masked, n_knots=$(length(λknots))"
 
     #### => IMPORTANT <= ####
-    # Lines shouldnt be interpolated over in optical wavelength ranges where you might expect 
-    # stellar absorption to be present on top of nebular emission.  Instead these regions should 
+    # Lines shouldnt be interpolated over in optical wavelength ranges where you might expect
+    # stellar absorption to be present on top of nebular emission.  Instead these regions should
     # just be masked out.
 
     # However, in the infrared, there is no stellar absorption.  But there are PAH emission features,
@@ -107,27 +124,37 @@ function interpolate_over_lines!(s::Spaxel, scale::Integer)
 
     # Replace the masked lines with a linear interpolation
     if (sum(mask_ir) > 0) & (length(λknots) > 0)
-        s.I[mask_ir] .= Spline1D(ustrip.(s.λ[.~mask_ir]), s.I[.~mask_ir], ustrip.(λknots), 
+        @debug "interpolate_over_lines!: interpolating over $(sum(mask_ir)) IR-masked line pixels ($(length(λknots)) knots)"
+        s.I[mask_ir] .= Spline1D(ustrip.(s.λ[.~mask_ir]), s.I[.~mask_ir], ustrip.(λknots),
             k=1, bc="extrapolate").(ustrip.(s.λ[mask_ir])) .* unit(s.I[1])
-        s.σ[mask_ir] .= Spline1D(ustrip.(s.λ[.~mask_ir]), s.σ[.~mask_ir], ustrip.(λknots), 
+        s.σ[mask_ir] .= Spline1D(ustrip.(s.λ[.~mask_ir]), s.σ[.~mask_ir], ustrip.(λknots),
             k=1, bc="extrapolate").(ustrip.(s.λ[mask_ir])) .* unit(s.σ[1])
 
-        # Do it for the templates => THIS IS IMPORTANT 
+        # Do it for the templates => THIS IS IMPORTANT
         # because the templates have the lines built-in, and if interpolate over the lines in the data then we
         # need to also do it in the templates
         if haskey(s.aux, "templates") && size(s.aux["templates"], 2) > 0
+            n_templates = size(s.aux["templates"], 2)
+            @debug "interpolate_over_lines!: also interpolating over lines in $n_templates template(s)"
             for si in axes(s.aux["templates"], 2)
                 m = .~isfinite.(s.aux["templates"][:, si])
-                s.aux["templates"][mask_ir.|m, si] .= Spline1D(ustrip.(s.λ[.~mask_ir .& .~m]), 
-                    ustrip.(s.aux["templates"][.~mask_ir .& .~m, si]), ustrip.(λknots), k=1, 
+                s.aux["templates"][mask_ir.|m, si] .= Spline1D(ustrip.(s.λ[.~mask_ir .& .~m]),
+                    ustrip.(s.aux["templates"][.~mask_ir .& .~m, si]), ustrip.(λknots), k=1,
                     bc="extrapolate")(ustrip.(s.λ[mask_ir .| m]))
             end
+        else
+            @debug "interpolate_over_lines!: no templates to interpolate"
         end
+    else
+        @debug "interpolate_over_lines!: no IR-region line pixels to interpolate (sum(mask_ir)=$(sum(mask_ir)), n_knots=$(length(λknots)))"
     end
 end
 
 
 function fill_bad_pixels!(s::Spaxel)
+    n_nan = count(isnan, ustrip.(s.I))
+    n_inf = count(isinf, ustrip.(s.I))
+    @debug "fill_bad_pixels!: coords=$(s.coords), n_nan_I=$n_nan, n_inf_I=$n_inf, has_templates=$(haskey(s.aux, "templates"))"
     temp = haskey(s.aux, "templates") ? s.aux["templates"] : nothing
     I, σ, templates = fill_bad_pixels(s.I, s.σ, temp)
     s.I = I
@@ -135,6 +162,7 @@ function fill_bad_pixels!(s::Spaxel)
     if haskey(s.aux, "templates")
         s.aux["templates"] = templates
     end
+    @debug "fill_bad_pixels!: done — remaining NaN in I: $(count(isnan, ustrip.(s.I)))"
 end
 
 
@@ -145,7 +173,7 @@ Apply two masks (mask_bad and user_mask) to a set of vectors (λ, I, σ, templat
 them for fitting. The mask_bad is a pixel-by-pixel mask flagging bad data, while the user_mask is a set of pairs
 of wavelengths specifying entire regions to mask out.  The vectors are modified in-place.
 """
-function get_vector_mask(s::Spaxel; lines::Bool=true, user_mask::Union{Nothing,Vector{<:Tuple}}=nothing) 
+function get_vector_mask(s::Spaxel; lines::Bool=true, user_mask::Union{Nothing,Vector{<:Tuple}}=nothing)
     # bad pixels
     mask_all = copy(s.mask_bad)
     # OPTICAL-NIR emission lines ONLY
@@ -158,20 +186,26 @@ function get_vector_mask(s::Spaxel; lines::Bool=true, user_mask::Union{Nothing,V
             mask_all .|= pair[1] .< s.λ .< pair[2]
         end
     end
+    @debug "get_vector_mask: coords=$(s.coords), lines=$lines, n_user_regions=$(isnothing(user_mask) ? 0 : length(user_mask)), total masked=$(sum(mask_all))/$(length(mask_all))"
     mask_all
 end
 
 
 function continuum_cubic_spline!(s::Spaxel, overrides)
+    @debug "continuum_cubic_spline!: coords=$(s.coords), nλ=$(length(s.λ)), $(length(overrides)) override(s)"
     mask_lines, I_spline = continuum_cubic_spline(s.λ, s.I, s.σ, overrides; do_err=false)
     s.I_spline = I_spline
     s.mask_lines = mask_lines
+    @debug "continuum_cubic_spline!: done — $(sum(mask_lines)) line pixels masked, I_spline range=$(extrema(filter(isfinite, ustrip.(I_spline))))"
 end
 
 
 function calculate_statistical_errors!(s::Spaxel)
     @assert haskey(s.aux, "mask_lines") "Need to have a line mask first! Run continuum_cubic_spline! to generate it."
-    calculate_statistical_errors(s.I, s.I_spline, s.aux["mask_lines"])
+    @debug "calculate_statistical_errors!: coords=$(s.coords), nλ=$(length(s.λ)), $(sum(s.aux["mask_lines"])) line-masked pixels"
+    σ_stat = calculate_statistical_errors(s.I, s.I_spline, s.aux["mask_lines"])
+    @debug "calculate_statistical_errors!: done — σ_stat range=$(extrema(filter(isfinite, ustrip.(σ_stat))))"
+    σ_stat
 end
 
 
@@ -179,12 +213,21 @@ function make_normalized_spaxel(cube_data::NamedTuple, coords::CartesianIndex, c
     use_ap::Bool=false, use_vorbins::Bool=false, σ_min::Vector=zeros(eltype(cube_data.σ), size(cube_data.σ)[end]),
     mask_bad::Union{Nothing,BitVector}=nothing)
 
+    @debug "make_normalized_spaxel: coords=$coords, use_ap=$use_ap, use_vorbins=$use_vorbins, nλ=$(length(cube_data.λ))"
     fopt = fit_options(cube_fitter)
 
     # Gather the data from the appropriate spaxel
     λ = cube_data.λ
     I = cube_data.I[coords, :]
     σ = cube_data.σ[coords, :]
+    n_nan_I = count(isnan, ustrip.(I))
+    n_inf_I = count(isinf, ustrip.(I))
+    n_nan_σ = count(isnan, ustrip.(σ))
+    if n_nan_I > 0 || n_inf_I > 0 || n_nan_σ > 0
+        @debug "make_normalized_spaxel: WARNING — raw I has $n_nan_I NaN/$n_inf_I Inf, σ has $n_nan_σ NaN at coords=$coords"
+    else
+        @debug "make_normalized_spaxel: I range=$(extrema(filter(isfinite, ustrip.(I)))), σ range=$(extrema(filter(isfinite, ustrip.(σ))))"
+    end
     area_sr = cube_data.area_sr[coords, :]
     templates = cube_data.templates[coords, :, :]
 
@@ -193,8 +236,13 @@ function make_normalized_spaxel(cube_data::NamedTuple, coords::CartesianIndex, c
     # Bad pixel mask
     if isnothing(mask_bad)
         mask_bad = (use_ap || use_vorbins) ? iszero.(I) .| iszero.(σ) : cube_fitter.cube.mask[coords, :]
+        @debug "make_normalized_spaxel: mask source — $(use_ap || use_vorbins ? "zero-value pixels (aperture/vorbin)" : "cube mask")"
+    else
+        @debug "make_normalized_spaxel: using externally provided mask_bad"
     end
     mask = mask_lines .| mask_bad
+    n_masked = sum(mask)
+    @debug "make_normalized_spaxel: n_line_masked=$(sum(mask_lines)), n_bad_masked=$(sum(mask_bad)), total masked=$n_masked / $(length(mask))"
     # Calculate statistical errors if necessary
     if use_ap || use_vorbins
         σ .= calculate_statistical_errors(I, I_spline, mask)
@@ -204,32 +252,43 @@ function make_normalized_spaxel(cube_data::NamedTuple, coords::CartesianIndex, c
     # Add systematic error in quadrature
     σ .= sqrt.(σ.^2 .+ (fopt.sys_err .* I).^2)
 
-    # Mask out the chip gaps in NIRSPEC observations 
-    # (they will be captured by default in individual spaxels with the 3D cube mask, but special care needs to be taken 
-    # when integrating over an aperture or a voronoi bin, since there may be slices where some spaxels are in the gap and 
+    # Mask out the chip gaps in NIRSPEC observations
+    # (they will be captured by default in individual spaxels with the 3D cube mask, but special care needs to be taken
+    # when integrating over an aperture or a voronoi bin, since there may be slices where some spaxels are in the gap and
     # others aren't; to be safe, we just mask out the full possible range of chip gap positions)
     if (use_ap || use_vorbins) && fit_options(cube_fitter).nirspec_mask_chip_gaps
         λobs = λ .* (1 .+ cube_fitter.z)
+        n_gap_before = sum(mask_bad)
         for chip_gap in chip_gaps_nir
             mask_bad .|= (chip_gap[1] .< λobs .< chip_gap[2])
         end
+        @debug "make_normalized_spaxel: NIRSPEC chip gap masking added $(sum(mask_bad) - n_gap_before) pixels"
     end
 
     # Use a fixed normalization for the line fits so that the bootstrapped amplitudes are consistent with each other
     norm = Float64(abs(nanmaximum(ustrip.(I)))) * unit(I[1])
     norm = norm ≠ 0. ? norm : 1.
+    if norm == 1.
+        @warn "make_normalized_spaxel: normalization is 0 for spaxel $coords, defaulting to N=1"
+    end
+    @debug "make_normalized_spaxel: normalization N=$norm"
 
     vres = isapprox((λ[2]/λ[1]), (λ[end]/λ[end-1]), rtol=1e-6) ? log(λ[2]/λ[1]) * C_KMS : nothing
 
-    # Interpolate over the bad pixels in the templates 
+    # Interpolate over the bad pixels in the templates
     scale = 7
+    n_templates_interp = 0
     for si in axes(templates, 2)
         m = .~isfinite.(templates[:, si])
         if sum(m) > 0
+            n_templates_interp += 1
             λknots = λ[.~m][(1+scale):scale:(length(λ[.~m])-scale)]
-            templates[m, si] .= Spline1D(ustrip.(λ[.~m]), ustrip.(templates[.~m, si]), ustrip.(λknots), k=1, 
+            templates[m, si] .= Spline1D(ustrip.(λ[.~m]), ustrip.(templates[.~m, si]), ustrip.(λknots), k=1,
                 bc="extrapolate")(ustrip.(λ[m]))
         end
+    end
+    if n_templates_interp > 0
+        @debug "make_normalized_spaxel: interpolated bad pixels in $n_templates_interp template(s)"
     end
 
     # Create the spaxel object and normalize it
@@ -238,6 +297,7 @@ function make_normalized_spaxel(cube_data::NamedTuple, coords::CartesianIndex, c
     normalize!(spax, norm)
     fill_bad_pixels!(spax)
 
+    @debug "make_normalized_spaxel: done — normalized spaxel at $coords with nλ=$(length(λ))"
     spax
 end
 
@@ -247,6 +307,7 @@ function get_model_spaxel(cube_fitter::CubeFitter, spaxel::Spaxel, stellar::Unio
         return spaxel
     end
 
+    @debug "get_model_spaxel: coords=$(spaxel.coords), building gap-filled model spaxel ($(length(cube_fitter.spectral_region.gaps)) gap(s))"
     # create a full filled logarithmically spaced wavelength vector
     logscale = spaxel.λ[2]/spaxel.λ[1]
     λstart = spaxel.λ[begin]
@@ -254,6 +315,7 @@ function get_model_spaxel(cube_fitter::CubeFitter, spaxel::Spaxel, stellar::Unio
     nλ = floor(Int, log(λend/λstart) / log(logscale))
     λ_model = λstart .* logscale.^collect(0:nλ)
     vres = log(logscale) * C_KMS
+    @debug "get_model_spaxel: model wavelength vector nλ=$nλ (vs input $(length(spaxel.λ))), vres=$vres"
 
     # extensions of other objects
     area_sr = Spline1D(ustrip.(spaxel.λ), ustrip.(spaxel.area_sr), k=1)(ustrip.(λ_model)) .* unit(spaxel.area_sr[1])
@@ -279,13 +341,17 @@ function get_model_spaxel(cube_fitter::CubeFitter, spaxel::Spaxel, stellar::Unio
     s = Spaxel(spaxel.coords, λ_model, ones(length(λ_model)), ones(length(λ_model)), area_sr, mask_lines,
         mask_bad, vres; N=spaxel.N, aux=aux)
     add_stellar_weights!(s, stellar)
+    @debug "get_model_spaxel: done — model spaxel nλ=$(length(λ_model)), has_templates=$(haskey(aux, "templates")), has_stellar=$(haskey(s.aux, "stellar_weights"))"
     return s
 end
 
 
 function add_stellar_weights!(s::Spaxel, stellar::Union{StellarResult,Nothing})
     if !isnothing(stellar)
+        @debug "add_stellar_weights!: adding stellar norm=$(stellar.norm) and $(length(stellar.weights)) weights to spaxel aux"
         s.aux["stellar_norm"] = stellar.norm
         s.aux["stellar_weights"] = stellar.weights
+    else
+        @debug "add_stellar_weights!: stellar=nothing — no stellar weights added"
     end
 end

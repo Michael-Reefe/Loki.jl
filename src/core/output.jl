@@ -3,12 +3,13 @@
 const ascii_lowercase = "abcdefghijklmnopqrstuvwxyz"
 
 
-function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractArray{<:Number}, 
+function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractArray{<:Number},
     out_np_ssp::AbstractArray{Int}, cube_fitter::CubeFitter, cube_data::NamedTuple, aperture::Bool=false)
 
     # Create the CubeModel and ParamMaps structs to be filled in
     np_ssp = maximum(out_np_ssp)
     spaxels = CartesianIndices(size(out_params)[1:2])
+    @debug "assign_outputs: $(length(spaxels)) spaxels, aperture=$aperture, voronoi=$(isnothing(cube_fitter.cube.voronoi_bins) ? "none" : "present"), np_ssp=$np_ssp"
 
     firsti = findfirst(index->any(isfinite.(out_params[index, :])), spaxels)
     if !isnothing(cube_fitter.cube.voronoi_bins) && !isnothing(firsti)
@@ -62,12 +63,15 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
         results_stellar = nothing
         if fopt.fit_stellar_continuum
             fname = !isnothing(cube_fitter.cube.voronoi_bins) ? "voronoi_bin_$(index[1])" : "spaxel_$(index[1])_$(index[2])"
+            @debug "assign_outputs: loading stellar binary $fname.ssp"
             results_stellar = deserialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.ssp"))
             stellar_vals = Array{Quantity{Float64}}(undef, 1+2np_ssp)
             stellar_vals[:] .= NaN
             stellar_vals[1] = results_stellar.mtot
             stellar_vals[2:1+length(results_stellar.ages)] .= results_stellar.ages
             stellar_vals[2+np_ssp:1+np_ssp+length(results_stellar.logzs)] .= results_stellar.logzs
+        else
+            @debug "assign_outputs: fit_stellar_continuum=false, skipping stellar binary load"
         end
 
         # Set the 2D parameter map outputs
@@ -81,8 +85,10 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
             use_vorbins=!isnothing(cube_fitter.cube.voronoi_bins))
         spax_model = copy(spax)
         if length(cube_fitter.spectral_region.gaps) > 0
+            @debug "assign_outputs: building gap-filled model spaxel for $index ($(length(cube_fitter.spectral_region.gaps)) gap(s))"
             spax_model = get_model_spaxel(cube_fitter, spax, results_stellar)
         else
+            @debug "assign_outputs: no spectral gaps — using spaxel directly for $index"
             add_stellar_weights!(spax_model, results_stellar)
         end
 
@@ -214,6 +220,7 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
         sort_line_components!(cube_fitter, param_maps, index, cube_data)
 
         if oopt.save_full_model
+            @debug "assign_outputs: saving full 3D model for spaxel $index"
             # Set 3D model cube outputs, shifted back to the observed frame
             # Remember the wavelength axis is the first axis here to increase efficiency
             cube_model.model[:, index] .= I_model .* restframe_factor
@@ -271,10 +278,13 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
                 end
             end
 
-        next!(prog)
+        else
+            @debug "assign_outputs: save_full_model=false, skipping 3D model cube fill for spaxel $index"
         end
+        next!(prog)
     end
 
+    @debug "assign_outputs: done — processed $(length(spaxels)) spaxels"
     param_maps, param_units, cube_model
 end
 
@@ -283,6 +293,7 @@ end
 function assign_qso3d_outputs(param_maps::ParamMaps, cube_model::CubeModel, cube_fitter::CubeFitter,
     psf_norm::Array{<:Real,3})
 
+    @debug "assign_qso3d_outputs: psf_norm shape=$(size(psf_norm)), n_params=$(size(param_maps.data, 3))"
     param_maps_3d = generate_parammaps(cube_fitter; do_1d=false)
     cube_model_3d = generate_cubemodel(cube_fitter, size(cube_fitter.cube.I); do_1d=false)
     fopt = fit_options(cube_fitter)
@@ -315,8 +326,10 @@ function assign_qso3d_outputs(param_maps::ParamMaps, cube_model::CubeModel, cube
         # (because the intensities recorded in param_maps are over the whole FOV
         #  whereas these intensities are over single spaxels: area_FOV / area_spaxel = number of spaxels)
         if dont_log
+            @debug "assign_qso3d_outputs: param $name — linear scaling (dont_log=true)"
             param_maps_3d.data[:,:,k] .= param_maps.data[1,1,k] .* psf_norm[:,:,w] .* amp_factor
         else
+            @debug "assign_qso3d_outputs: param $name — log10 scaling (dont_log=false)"
             new = 10 .^ param_maps.data[1,1,k] .* psf_norm[:,:,w] .* amp_factor
             new[new .< 0] .= 0.0
             param_maps_3d.data[:,:,k] .= log10.(new)
@@ -376,6 +389,7 @@ function assign_qso3d_outputs(param_maps::ParamMaps, cube_model::CubeModel, cube
         cube_model_3d.lines[:,:,:,k] .= extendp(cube_model.lines[:,1,1,k], _shape) .* psf_norm_p
     end 
 
+    @debug "assign_qso3d_outputs: done — param_maps_3d shape=$(size(param_maps_3d.data)), cube_model_3d shape=$(size(cube_model_3d.model))"
     param_maps_3d, cube_model_3d
 end
 
@@ -390,11 +404,12 @@ this will make a grid of 3 plots containing the total combined flux, and the flu
 all on the same color scale. Kinematic components such as the velocity don't have an equivalent "total" that is well
 defined, so they would just get 2 plots containing the kinematics of each component.
 """
-function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMaps, psf_interp::Spline1D, 
+function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMaps, psf_interp::Spline1D,
     snr_thresh::Real=3., marker::Union{Vector{<:Real},Nothing}=nothing)
 
     fopt = fit_options(cube_fitter)
     lines = model(cube_fitter).lines
+    @debug "plot_multiline_parameters: n_lines=$(length(lines.names)), snr_thresh=$snr_thresh, marker=$(isnothing(marker) ? "nothing" : "provided")"
 
     for (i, line) ∈ enumerate(lines.names)
 
@@ -405,8 +420,10 @@ function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMap
         component_keys = [string(line) * ".$(j)" for j in 1:n_line_comps]
         if n_line_comps < 2
             # Dont bother for lines with only 1 component
+            @debug "plot_multiline_parameters: line=$line has only $n_line_comps component — skipping"
             continue
         end
+        @debug "plot_multiline_parameters: processing line=$line, n_line_comps=$n_line_comps, wave=$(ustrip(wave_i)) $(unit(wave_i))"
         snr_filter = get_val(param_maps, "lines.$(string(line)).total_snr")
 
         # Get the total flux and eqw for lines with multiple components
@@ -508,11 +525,13 @@ function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMap
             # Add the colorbar to cax
             fig.colorbar(cdata, cax=cax, label=bunit_final)
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$line", "$(name_final).pdf")
+            @debug "plot_multiline_parameters: saving combined plot for line=$line, parameter=$parameter → $save_path"
             plt.savefig(save_path, dpi=300, bbox_inches="tight")
             plt.close()
         end
 
     end
+    @debug "plot_multiline_parameters: done"
 end
 
 
@@ -533,8 +552,9 @@ and creating 2D maps of them.
 function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr_thresh::Real=3.,
     qso3d::Bool=false)
 
+    @debug "plot_parameter_maps: cube=$(cube_fitter.name), n_parameters=$(length(param_maps.parameters.names)), snr_thresh=$snr_thresh, qso3d=$qso3d"
     # Iterate over model parameters and make 2D maps
-    @debug "Using solid angle $(cube_fitter.cube.Ω), redshift $(cube_fitter.z), cosmology $(cube_fitter.cosmology)"
+    @debug "plot_parameter_maps: Ω=$(cube_fitter.cube.Ω), z=$(cube_fitter.z), cosmology=$(cube_fitter.cosmology)"
 
     dust_features = model(cube_fitter).dust_features
     lines = model(cube_fitter).lines
@@ -753,14 +773,16 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
         
     end
 
-    # Reduced chi^2 
+    # Reduced chi^2
     data = get_val(param_maps, "statistics.chi2") ./ get_val(param_maps, "statistics.dof")
     name_i = "reduced_chi2"
     save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "$(name_i).pdf")
-    plot_parameter_map(data, name_i, L"$\tilde{\chi}^2$", save_path, cube_fitter.cube.Ω, cube_fitter.z, 
+    @debug "plot_parameter_maps: plotting reduced chi2 map → $save_path"
+    plot_parameter_map(data, name_i, L"$\tilde{\chi}^2$", save_path, cube_fitter.cube.Ω, cube_fitter.z,
         ustrip(median(cube_fitter.cube.psf)), cube_fitter.cosmology, cube_fitter.cube.wcs, marker=map_marker,
         wave_unit=unit(cube_fitter.cube.λ[1]))
 
+    @debug "plot_parameter_maps: done — all parameter maps written for $(cube_fitter.name)"
     return
 
 end
@@ -787,10 +809,14 @@ N.B. This function takes a while to run so be prepared to wait a good few minute
 """
 function make_movie(cube_fitter::CubeFitter, cube_model::CubeModel; cmap::Symbol=:cubehelix)
 
+    cube_shape = size(cube_fitter.cube.I)
+    @debug "make_movie: cube=$(cube_fitter.name), cube_shape=$cube_shape, cmap=$cmap"
     if eltype(cube_fitter.cube.I) <: QPerFreq
         restframe_factor = 1 + cube_fitter.z
+        @debug "make_movie: per-frequency units — restframe_factor=$(1 + cube_fitter.z)"
     else
         restframe_factor = 1 / (1 + cube_fitter.z)
+        @debug "make_movie: per-wavelength units — restframe_factor=$(1 / (1 + cube_fitter.z))"
     end
 
     for (full_data, title) ∈ zip([cube_fitter.cube.I .* restframe_factor, cube_model.model], ["DATA", "MODEL"])
@@ -834,9 +860,10 @@ function make_movie(cube_fitter::CubeFitter, cube_model::CubeModel; cmap::Symbol
 
         # Loop over the wavelength axis and set the image data to the new slice for each frame
         output_file = joinpath("output_$(cube_fitter.name)", "$title.mp4")
+        @debug "make_movie: writing $title movie — $(size(full_data, 3)) frames → $output_file"
         writer.setup(fig, output_file, dpi=300)
         for i ∈ axes(full_data, 3)
-            data_i = ustrip.(full_data)[:, :, i] 
+            data_i = ustrip.(full_data)[:, :, i]
             image.set_array(data_i')
             ln.set_data(wave_rest[i], 24)
             time_text.set_text(@sprintf "%.3f" wave_rest[i])
@@ -844,8 +871,10 @@ function make_movie(cube_fitter::CubeFitter, cube_model::CubeModel; cmap::Symbol
         end
         writer.finish()
         plt.close()
+        @debug "make_movie: $title movie complete — $output_file"
 
     end
+    @debug "make_movie: done — DATA and MODEL movies written for $(cube_fitter.name)"
 
 end
 
@@ -860,14 +889,16 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
     param_units::Vector{String}; aperture::Union{Vector{<:Aperture.AbstractAperture},String,Nothing}=nothing, 
     nuc_temp_fit::Bool=false, nuc_spax::Union{Nothing,CartesianIndex}=nothing, qso3d::Bool=false)
 
+    @debug "write_fits: cube=$(cube_fitter.name), aperture=$(aperture isa Nothing ? "none" : typeof(aperture)), nuc_temp_fit=$nuc_temp_fit, qso3d=$qso3d"
     aperture_keys = []
     aperture_vals = []
     aperture_comments = []
-    # If using an aperture, extract its properties 
+    # If using an aperture, extract its properties
     if eltype(aperture) <: Aperture.AbstractAperture
 
         # Get the name (giving the shape of the aperture: circular, elliptical, or rectangular)
         ap_shape = string(eltype(aperture))
+        @debug "write_fits: aperture type detected — $ap_shape"
   
         aperture_keys = String["AP_SHAPE", "AP_X", "AP_Y"]
         aperture_vals = Any[ap_shape, aperture[1].x, aperture[1].y]
@@ -914,6 +945,7 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
     
     elseif aperture isa String
 
+        @debug "write_fits: aperture=full_cube string — integrating over whole FOV"
         n_pix = [sum(.~cube_fitter.cube.mask[:, :, i]) for i in axes(cube_fitter.cube.mask, 3)]
         aperture_keys = ["AP_SHAPE", "AP_AREA"]
         aperture_vals = Any["full_cube", median(n_pix[isfinite.(n_pix)])]
@@ -921,10 +953,13 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
 
     elseif nuc_temp_fit
 
+        @debug "write_fits: nuc_temp_fit=true, nuclear spaxel at $(nuc_spax)"
         aperture_keys = ["SPAXEL_X", "SPAXEL_Y"]
-        aperture_vals = [nuc_spax.I[1], nuc_spax.I[2]] 
+        aperture_vals = [nuc_spax.I[1], nuc_spax.I[2]]
         aperture_comments = ["x coordinate of nuclear spaxel", "y coordinate of nuclear spaxel"]
 
+    else
+        @debug "write_fits: no aperture, no nuc_temp_fit — writing full cube outputs"
     end
 
     # Header information
@@ -1051,7 +1086,10 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
 
     oopt = out_options(cube_fitter)
     if oopt.save_full_model
+        @debug "write_fits: save_full_model=true — writing 3D model FITS"
         write_fits_full_model(cube_fitter, cube_data, cube_model, hdr0, hdr1_3d, nuc_temp_fit; qso3d=qso3d)
+    else
+        @debug "write_fits: save_full_model=false — skipping 3D model FITS"
     end
 
     # Create the 2D parameter map FITS file for the parameters and the errors
@@ -1079,10 +1117,14 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
               
             # Add another HDU for the voronoi bin map, if applicable
             if !isnothing(cube_fitter.cube.voronoi_bins)
+                @debug "write_fits: writing VORONOI_BINS HDU to parameter map FITS"
                 write(f, cube_fitter.cube.voronoi_bins; name="VORONOI_BINS", header=hdr1_2d)
+            else
+                @debug "write_fits: no Voronoi bins to write"
             end
         end
     end
+    @debug "write_fits: done — parameter map FITS files written for $(cube_fitter.name)"
 end
 
 
@@ -1090,6 +1132,7 @@ end
 function write_fits_full_model(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel,
     hdr0::FITSHeader, hdr1_3d::FITSHeader, nuc_temp_fit::Bool; qso3d::Bool=false)
 
+    @debug "write_fits_full_model: cube=$(cube_fitter.name), nuc_temp_fit=$nuc_temp_fit, qso3d=$qso3d, cube_data.I shape=$(size(cube_data.I))"
     fopt = fit_options(cube_fitter)
     if eltype(cube_data.I) <: QPerFreq
         restframe_factor = 1 + cube_fitter.z
@@ -1100,6 +1143,8 @@ function write_fits_full_model(cube_fitter::CubeFitter, cube_data::NamedTuple, c
     Iunit = replace(string(unit(cube_data.I[1])), 'μ' => 'u', "Å" => "angstrom")
 
     if !isnothing(cube_fitter.cube.voronoi_bins)
+        n_bins = maximum(cube_fitter.cube.voronoi_bins)
+        @debug "write_fits_full_model: expanding $n_bins Voronoi bins back to full cube shape $(size(cube_fitter.cube.I)[1:2])"
         out_data = ones(eltype(cube_data.I), size(cube_fitter.cube.I)).*NaN
         out_err  = ones(eltype(cube_data.σ), size(cube_fitter.cube.I)).*NaN
         for spaxel in CartesianIndices(size(out_data)[1:2])
@@ -1110,6 +1155,7 @@ function write_fits_full_model(cube_fitter::CubeFitter, cube_data::NamedTuple, c
             end
         end
     else
+        @debug "write_fits_full_model: no Voronoi bins — using cube_data directly"
         out_data = cube_data.I
         out_err  = cube_data.σ
     end
@@ -1196,13 +1242,17 @@ function write_fits_full_model(cube_fitter::CubeFitter, cube_data::NamedTuple, c
         end
 
         if !isnothing(cube_fitter.cube.voronoi_bins)
+            @debug "write_fits_full_model: writing VORONOI_BINS HDU"
             write(f, cube_fitter.cube.voronoi_bins; name="VORONOI_BINS")  # Voronoi bin indices
+        else
+            @debug "write_fits_full_model: no Voronoi bins HDU to write"
         end
-        
+
         write(f, ["wave"], [reshape(ustrip.(cube_data.λ) .* (1 .+ cube_fitter.z), (1, length(cube_data.λ), 1))],  # wavelength vector
             hdutype=TableHDU, name="WAVELENGTH", units=Dict(:wave => λunit))
         write_key(f["WAVELENGTH"], "TDIM2", "(1,$(length(cube_data.λ)))", "Wavetable dimension")
     end
+    @debug "write_fits_full_model: done — 3D model FITS written for $(cube_fitter.name)"
 end
 
 
@@ -1217,6 +1267,10 @@ to the observed frame.
 function write_table(cube_fitter::CubeFitter, param_maps::ParamMaps, param_units::Vector{String})
 
     param_names = param_maps.parameters.names
+    n_params = length(param_names)
+    map_shape = size(param_maps.data)[1:2]
+    n_spaxels = prod(map_shape)
+    @debug "write_table: cube=$(cube_fitter.name), map_shape=$map_shape, n_spaxels=$n_spaxels, n_params=$n_params"
 
     tblpath = joinpath("output_$(cube_fitter.name)", "output_tables")
     if !isdir(tblpath)
@@ -1224,7 +1278,8 @@ function write_table(cube_fitter::CubeFitter, param_maps::ParamMaps, param_units
     end
 
     # loop over spaxels
-    for spaxel in CartesianIndices(size(param_maps.data)[1:2])
+    n_written = 0
+    for spaxel in CartesianIndices(map_shape)
 
         # skip spaxels that aren't fit
         if all(.~isfinite.(param_maps.data[spaxel,:]))
@@ -1277,11 +1332,15 @@ function write_table(cube_fitter::CubeFitter, param_maps::ParamMaps, param_units
         @debug msg
 
         # write the output table
-        open(joinpath(tblpath, "$fname.final.csv"), "w") do f
+        out_path = joinpath(tblpath, "$fname.final.csv")
+        open(out_path, "w") do f
             write(f, msg)
         end
+        n_written += 1
+        @debug "write_table: wrote $out_path (spaxel=$spaxel, n_params=$n_params)"
 
     end
+    @debug "write_table: done — wrote $n_written spaxel table(s) to $tblpath"
 
 end
 

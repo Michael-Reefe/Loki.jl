@@ -16,13 +16,17 @@ Checks the status of a fit to see if it has gotten stuck at the initial position
 and if so it jitters the starting parameters and tries to fit again.  It will try up to 10 times before giving up.
 """
 function repeat_fit_jitter(λ_spax::Vector{<:QWave}, I_spax::Vector{<:Real}, σ_spax::Vector{<:Real}, fit_func::Function,
-    params::Vector{<:Real}, lb::Vector{<:Real}, ub::Vector{<:Real}, parinfo::Vector{CMPFit.Parinfo}, 
+    params::Vector{<:Real}, lb::Vector{<:Real}, ub::Vector{<:Real}, parinfo::Vector{CMPFit.Parinfo},
     config::CMPFit.Config, res0::CMPFit.Result, fit_type::String, spaxel::CartesianIndex; check_cont_snr::Bool=false)
 
+    @debug "repeat_fit_jitter: fit_type=$fit_type, spaxel=$spaxel, niter=$(res0.niter), status=$(res0.status), n_params=$(length(params)), check_cont_snr=$check_cont_snr"
     res = res0
     cont_snr = 10.
     if check_cont_snr
         cont_snr = nanmedian(I_spax ./ σ_spax)
+        @debug "repeat_fit_jitter: cont_snr=$cont_snr"
+    else
+        @debug "repeat_fit_jitter: check_cont_snr=false, using cont_snr=10 (always jitter if stuck)"
     end
     n = 1
     while (res.niter < 5) && (cont_snr > 3)
@@ -425,10 +429,12 @@ Calculates the significance of additional line components and determines whether
 Modifies the p₀ and param_lock vectors in-place to reflect these changes (by locking the amplitudes and other parameters
 for non-necessary line components to 0).
 """
-function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Spaxel, extinction_curve::Vector{<:Real}, 
-    p₀::Vector{<:Real}, punits::Vector{<:Unitful.Units}, param_lock::BitVector, lower_bounds::Vector{<:Real}, 
+function perform_line_component_test!(cube_fitter::CubeFitter, spaxel::Spaxel, extinction_curve::Vector{<:Real},
+    p₀::Vector{<:Real}, punits::Vector{<:Unitful.Units}, param_lock::BitVector, lower_bounds::Vector{<:Real},
     upper_bounds::Vector{<:Real}; all_fail::Bool=false, bootstrap_iter::Bool=false)
 
+    lines_to_test = vcat(fit_options(cube_fitter).line_test_lines...)
+    @debug "perform_line_component_test!: spaxel=$(spaxel.coords), n_lines_to_test=$(length(lines_to_test)), lines=$lines_to_test, all_fail=$all_fail, bootstrap_iter=$bootstrap_iter"
     @debug "Performing line component testing..."
 
     # Perform a test to see if each line with > 1 component really needs multiple components to be fit
@@ -564,10 +570,16 @@ end
 
 
 # Helper function that does a global fit to the emission lines with Simulated Annealing
-function perform_global_SAMIN_fit(spaxel::Spaxel, cube_fitter::CubeFitter, pfree_tied::Vector{<:Real}, 
+function perform_global_SAMIN_fit(spaxel::Spaxel, cube_fitter::CubeFitter, pfree_tied::Vector{<:Real},
     lbfree_tied::Vector{<:Real}, ubfree_tied::Vector{<:Real}, fit_func_inner::Function; update_log::Bool=true,
     spaxel_mask::BitVector=trues(length(spaxel.λ)))
 
+    n_nan_I = count(isnan, spaxel.I[spaxel_mask])
+    n_inf_I = count(isinf, spaxel.I[spaxel_mask])
+    @debug "perform_global_SAMIN_fit: spaxel=$(spaxel.coords), n_free=$(length(pfree_tied)), n_data=$(sum(spaxel_mask)), n_nan_I=$n_nan_I, n_inf_I=$n_inf_I, update_log=$update_log"
+    if n_nan_I > 0 || n_inf_I > 0
+        @debug "perform_global_SAMIN_fit: WARNING — input I has $n_nan_I NaN and $n_inf_I Inf in masked region"
+    end
     @debug "Beginning global fitting with Simulated Annealing:"
 
     fit_func = p -> -ln_likelihood(spaxel.I[spaxel_mask], fit_func_inner(nothing, p), spaxel.σ[spaxel_mask])
@@ -897,10 +909,11 @@ end
 
 
 # Helper function for fitting one iteration (i.e. for bootstrapping)
-function _fit_spaxel_iterfunc(spaxel::Spaxel, cube_fitter::CubeFitter; bootstrap_iter::Bool=false, 
-    p1_boots_c::Union{Vector{<:Real},Nothing}=nothing, p1_boots_l::Union{Vector{<:Real},Nothing}=nothing, 
+function _fit_spaxel_iterfunc(spaxel::Spaxel, cube_fitter::CubeFitter; bootstrap_iter::Bool=false,
+    p1_boots_c::Union{Vector{<:Real},Nothing}=nothing, p1_boots_l::Union{Vector{<:Real},Nothing}=nothing,
     p1_boots_pah::Union{Vector{<:Real},Nothing}=nothing, use_ap::Bool=false, init::Bool=false)
 
+    @debug "_fit_spaxel_iterfunc: coords=$(spaxel.coords), bootstrap_iter=$bootstrap_iter, use_ap=$use_ap, init=$init"
     fopt = fit_options(cube_fitter)
     # organize bootstrap fit components depending on if PAHs are being jointly fit
     p1_boots_cont = p1_boots_c
@@ -909,7 +922,8 @@ function _fit_spaxel_iterfunc(spaxel::Spaxel, cube_fitter::CubeFitter; bootstrap
     end
 
     if !fopt.fit_joint
-        # First, do the continuum fit 
+        @debug "_fit_spaxel_iterfunc: fit_joint=false — sequential continuum then line fit"
+        # First, do the continuum fit
         result_c, I_cont, comps_cont, norms, pahtemp, result_stellar, spaxel_model, _, n_free_c = continuum_fit_spaxel(
             spaxel, cube_fitter, fopt.use_pah_templates; init=init, use_ap=use_ap, bootstrap_iter=bootstrap_iter, 
             p1_boots=p1_boots_cont)
@@ -919,9 +933,10 @@ function _fit_spaxel_iterfunc(spaxel::Spaxel, cube_fitter::CubeFitter; bootstrap
         result_l, I_line, comps_line, n_free_l = line_fit_spaxel(spaxel, spaxel_model, cube_fitter, line_cont, 
             comps_cont["total_extinction_gas"]; init=init, use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots=p1_boots_l)
     else
+        @debug "_fit_spaxel_iterfunc: fit_joint=true — simultaneous continuum+line fit"
         # Fit the continuum and lines together
-        result_c, result_l, I_cont, I_line, comps_cont, norms, comps_line, n_free_c, n_free_l, pahtemp, result_stellar, spaxel_model = 
-            all_fit_spaxel(spaxel, cube_fitter; init=init, use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots_cont=p1_boots_cont, 
+        result_c, result_l, I_cont, I_line, comps_cont, norms, comps_line, n_free_c, n_free_l, pahtemp, result_stellar, spaxel_model =
+            all_fit_spaxel(spaxel, cube_fitter; init=init, use_ap=use_ap, bootstrap_iter=bootstrap_iter, p1_boots_cont=p1_boots_cont,
             p1_boots_line=p1_boots_l)
         line_cont = get_continuum_for_line_fit(spaxel, cube_fitter, I_cont, comps_cont)
     end
@@ -933,6 +948,7 @@ function _fit_spaxel_iterfunc(spaxel::Spaxel, cube_fitter::CubeFitter; bootstrap
     combine!(result, result_l)
 
     if !init
+        @debug "_fit_spaxel_iterfunc: init=false — computing extra parameters (flux, EW, SNR, etc.)"
         # The extra parameters (fluxes, equivalent widths, SNRs, etc.)
         result_e = calculate_extra_parameters(spaxel, spaxel_model, cube_fitter, comps, result_c, result_l, line_cont, !bootstrap_iter)
         # The chi2 and dof 
@@ -943,18 +959,21 @@ function _fit_spaxel_iterfunc(spaxel::Spaxel, cube_fitter::CubeFitter; bootstrap
         combine!(result, result_e)
         combine!(result, result_s)
 
+    else
+        @debug "_fit_spaxel_iterfunc: init=true — skipping extra parameter calculation"
     end
 
     return result, result_c, result_l, result_stellar, pahtemp, I_model, comps, spaxel_model, χ2, dof
 end
 
 
-function _fit_bootstraps(spax::Spaxel, spax_model::Spaxel, cube_fitter::CubeFitter, I_model::Vector{<:QSIntensity}, 
-    result::SpaxelFitResult, result_c::SpaxelFitResult, result_l::SpaxelFitResult, pahtemp::Vector{<:Real}, 
+function _fit_bootstraps(spax::Spaxel, spax_model::Spaxel, cube_fitter::CubeFitter, I_model::Vector{<:QSIntensity},
+    result::SpaxelFitResult, result_c::SpaxelFitResult, result_l::SpaxelFitResult, pahtemp::Vector{<:Real},
     fname::String; use_ap::Bool=false)
 
-    # Set the random seed
     fopt = fit_options(cube_fitter)
+    @debug "_fit_bootstraps: spaxel=$(spax.coords), n_bootstrap=$(fopt.n_bootstrap), n_params=$(length(result.popt)), fname=$fname, use_ap=$use_ap"
+    # Set the random seed
     @debug "Setting the random seed to: $(fopt.random_seed)"
     Random.seed!(fopt.random_seed)
     # Resample the data using normal distributions with the statistical uncertainties
@@ -1009,7 +1028,10 @@ function _fit_bootstraps(spax::Spaxel, spax_model::Spaxel, cube_fitter::CubeFitt
     result.perr .= p_err
     result_stellar = nothing
     if fopt.fit_stellar_continuum
+        @debug "_fit_bootstraps: computing stellar parameters from bootstrap median"
         result_stellar = calculate_stellar_parameters(cube_fitter, norms, spax.N)
+    else
+        @debug "_fit_bootstraps: fit_stellar_continuum=false, skipping stellar parameter calculation"
     end
 
     result, result_stellar, I_boot_min, I_boot_max, I_model, comps, χ2
@@ -1033,9 +1055,10 @@ of a crash.
     use_ap or use_vorbins is true.
 """
 function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, coords::CartesianIndex; use_ap::Bool=false,
-    use_vorbins::Bool=false, σ_min::Vector=zeros(eltype(cube_data.σ), size(cube_data.σ)[end]), 
+    use_vorbins::Bool=false, σ_min::Vector=zeros(eltype(cube_data.σ), size(cube_data.σ)[end]),
     mask_bad::Union{BitVector,Nothing}=nothing)
 
+    @debug "fit_spaxel: coords=$coords, use_ap=$use_ap, use_vorbins=$use_vorbins, nλ=$(size(cube_data.I)[end])"
     # Check if the fit has already been performed
     fopt = fit_options(cube_fitter)
     oopt = out_options(cube_fitter)
@@ -1156,16 +1179,19 @@ function fit_stack!(cube_fitter::CubeFitter)
     mask_chi2_init = mask_bad_init
     σ_sum_init .= calculate_statistical_errors(I_sum_init, I_spline_init, mask_init)
 
-    # Mask out the chip gaps in NIRSPEC observations 
-    # (they would technically work considering we are measuring surface brightness and not flux, but in practice it doesn't because 
-    # we are covering up regions that may drastically differ in brightness across different spatial regions in the cube, so it leads 
+    # Mask out the chip gaps in NIRSPEC observations
+    # (they would technically work considering we are measuring surface brightness and not flux, but in practice it doesn't because
+    # we are covering up regions that may drastically differ in brightness across different spatial regions in the cube, so it leads
     # to aritifical dips in the continuum)
     if fit_options(cube_fitter).nirspec_mask_chip_gaps
+        @debug "fit_stack!: masking NIRSPEC chip gaps in initial sum spectrum"
         λobs = λ_init .* (1 .+ cube_fitter.z)
         for chip_gap in chip_gaps_nir
             mask_bad_init .|= (chip_gap[1] .< λobs .< chip_gap[2])
             σ_sum_init[mask_bad_init] .= maximum(σ_sum_init) .* 100.   # Inflate errors over the chip gap
         end
+    else
+        @debug "fit_stack!: nirspec_mask_chip_gaps=false, no chip gap masking applied"
     end
 
     # Get the normalization
@@ -1190,19 +1216,24 @@ function fit_stack!(cube_fitter::CubeFitter)
     fopt = fit_options(cube_fitter)
     oopt = out_options(cube_fitter)
     if oopt.plot_spaxels != :none
-        @debug "Plotting spaxel sum initial fit"
+        @debug "fit_stack!: plotting initial sum fit (plot_spaxels=$(oopt.plot_spaxels))"
         plot_spaxel_fit(cube_fitter, s_init, s_init_model, I_model_init, comps_init, χ2red_init, "initial_sum_fit"; backend=:both, logy=false)
         if !isnothing(oopt.plot_range)
             for (i, plot_range) ∈ enumerate(oopt.plot_range)
-                plot_spaxel_fit(cube_fitter, s_init, s_init_model, I_model_init, comps_init, χ2red_init, "initial_sum_line_$i"; 
+                plot_spaxel_fit(cube_fitter, s_init, s_init_model, I_model_init, comps_init, χ2red_init, "initial_sum_line_$i";
                     backend=:both, range=plot_range)
             end
         end
+    else
+        @debug "fit_stack!: plot_spaxels=:none, skipping initial sum fit plot"
     end
 
     # Plot the stellar matrix
     if fopt.fit_stellar_continuum && (oopt.plot_spaxels != :none)
+        @debug "fit_stack!: plotting stellar population grids for initial sum fit"
         plot_stellar_grids(result_stellar, cube_fitter, "initial_sum_fit")
+    else
+        @debug "fit_stack!: skipping stellar grid plot (fit_stellar_continuum=$(fopt.fit_stellar_continuum), plot_spaxels=$(oopt.plot_spaxels))"
     end
 
 end
@@ -1210,9 +1241,10 @@ end
 
 # Helper function that loops over previously fit spaxels and adds their results into
 # the out_params and out_errs
-function spaxel_loop_previous(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxels::Vector, 
+function spaxel_loop_previous(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxels::Vector,
     vorbin::Bool, out_params::AbstractArray{<:Real,3}, out_errs::AbstractArray{<:Real,4}, out_np_ssp::AbstractArray{Int,2})
 
+    @debug "spaxel_loop_previous: n_spaxels=$(length(spaxels)), vorbin=$vorbin, overwrite=$(out_options(cube_fitter).overwrite)"
     _m2 = falses(length(spaxels))
     if !(out_options(cube_fitter).overwrite)
         @info "Loading in previous fit results (if any...)"
@@ -1461,8 +1493,10 @@ function fit_cube!(cube_fitter::CubeFitter)
     # if the "cube" is a size 1x1xN, call the aperture method with the "all" keyword
     shape = size(cube_fitter.cube.I)
     if shape[1:2] == (1,1)
+        @debug "fit_cube!: cube is 1×1 — redirecting to aperture fit_cube! with \"all\""
         return fit_cube!(cube_fitter, "all")
     end
+    @debug "fit_cube!: cube shape=$shape, n_params_total=$(cube_fitter.n_params_total)"
 
     @info """\n
     #############################################################################
@@ -1536,15 +1570,21 @@ function fit_cube!(cube_fitter::CubeFitter)
     if oopt.plot_maps
         @info "===> Plotting parameter maps... <==="
         plot_parameter_maps(cube_fitter, param_maps, snr_thresh=oopt.map_snr_thresh)
+    else
+        @debug "fit_cube!: plot_maps=false, skipping parameter map plots"
     end
 
     if oopt.save_fits
         @info "===> Writing FITS outputs... <==="
         write_fits(cube_fitter, cube_data, cube_model, param_maps, param_units)
+    else
+        @debug "fit_cube!: save_fits=false, skipping FITS output"
     end
     if oopt.save_tables
-        @info "===> Writing CSV tables... <=== "
+        @info "===> Writing CSV tables... <==="
         write_table(cube_fitter, param_maps, param_units)
+    else
+        @debug "fit_cube!: save_tables=false, skipping CSV table output"
     end
 
     # Save a copy of the options file used to run the code, so the settings can be referenced/reused
@@ -1791,6 +1831,7 @@ end
 
 # Different methods for reading from FITS file or cube_model directly:
 function post_fit_nuclear_template!(cube_fitter::CubeFitter, params::String, full_cube_model::String, template_name::String)
+    @debug "post_fit_nuclear_template!(String): params=$params, full_cube_model=$full_cube_model, template_name=$template_name"
     hdu_param = FITS(params)
     hdu_model = FITS(full_cube_model)
     post_fit_nuclear_template!(cube_fitter, hdu_param, hdu_model, template_name)
@@ -1798,6 +1839,7 @@ end
 
 function post_fit_nuclear_template!(cube_fitter::CubeFitter, hdu_param::FITS, hdu_model::FITS, template_name::String)
 
+    @debug "post_fit_nuclear_template!(FITS): template_name=$template_name, cube=$(cube_fitter.name)"
     # get the AGN templates
     ftype = typeof(1.0)
     agn_templates = ftype.(read(hdu_model["TEMPLATES.$(uppercase(template_name))"]))
@@ -1826,6 +1868,7 @@ end
 
 function post_fit_nuclear_template!(cube_fitter::CubeFitter, param_maps::ParamMaps, full_cube_model::CubeModel, template_index::Int=1)
 
+    @debug "post_fit_nuclear_template!(ParamMaps): cube=$(cube_fitter.name), template_index=$template_index"
     # get the AGN templates
     agn_templates = full_cube_model.templates[:,:,:,template_index]
     # shift back into the rest frame

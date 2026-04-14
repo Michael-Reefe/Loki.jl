@@ -22,7 +22,7 @@ struct ParamMaps
     function ParamMaps(model::ModelParameters, shape::Tuple{S,S}; stellar_params::Int=0)::ParamMaps where {S<:Integer}
 
         @debug """\n
-        Creating ParamMaps struct with shape $shape
+        Creating ParamMaps struct with shape $shape, stellar_params=$stellar_params
         ##############################################
         """
 
@@ -44,7 +44,7 @@ struct ParamMaps
             end
         end
         n_param = length(mp)
-            
+        @debug "ParamMaps: n_param=$n_param (fit+nonfit+stellar=$stellar_params stellar)"
         data = Array{Quantity{Float64}}(undef, shape..., n_param)
         data .= NaN
 
@@ -100,5 +100,6 @@ by the CubeFitter object.
 """
 function generate_parammaps(cube_fitter::CubeFitter; do_1d::Bool=false, stellar_params::Int=0)
     shape = do_1d ? (1,1) : size(cube_fitter.cube.I)[1:2]
+    @debug "generate_parammaps: shape=$shape, do_1d=$do_1d, stellar_params=$stellar_params"
     ParamMaps(cube_fitter.model, shape, stellar_params=stellar_params)
 end

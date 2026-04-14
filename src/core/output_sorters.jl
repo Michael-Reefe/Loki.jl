@@ -15,11 +15,14 @@ function sort_line_components!(cube_fitter::CubeFitter, result::SpaxelFitResult;
     oopt = out_options(cube_fitter)
     lines = model(cube_fitter).lines
     df = model(cube_fitter).dust_features
+    @debug "sort_line_components!(SpaxelFitResult): n_lines=$(length(lines.profiles)), sort_by=$(oopt.sort_line_components), mask_zeros=$mask_zeros"
     # Do not sort
     if isnothing(oopt.sort_line_components)
+        @debug "sort_line_components!(SpaxelFitResult): sort_line_components=nothing — skipping"
         return
     end
     if lines.config.rel_amp || lines.config.rel_voff || lines.config.rel_fwhm
+        @debug "sort_line_components!(SpaxelFitResult): relative line parameters set — skipping"
         return
     end
 
@@ -131,7 +134,9 @@ function sort_line_components!(cube_fitter::CubeFitter, param_maps::ParamMaps, i
 
     oopt = out_options(cube_fitter)
     lines = model(cube_fitter).lines
+    @debug "sort_line_components!(ParamMaps): index=$index, n_lines=$(cube_fitter.n_lines), sort_by=$(oopt.sort_line_components)"
     if isnothing(oopt.sort_line_components)
+        @debug "sort_line_components!(ParamMaps): sort_line_components=nothing — skipping"
         return
     end
     if lines.config.rel_amp || lines.config.rel_fwhm || lines.config.rel_voff
@@ -210,7 +215,7 @@ A helper function that sorts dust continua parameters based on the temperature p
 parameter maps look continuous.
 """
 function sort_temperatures!(cube_fitter::CubeFitter, param_maps::ParamMaps, index::CartesianIndex)
-
+    @debug "sort_temperatures!: index=$index, n_dust_cont=$(cube_fitter.n_dust_cont)"
     # Collect the relevant dust continuum parameters
     temp_inds = [findfirst(param_maps.parameters.names .== "continuum.dust.$(i).temp") for i in 1:cube_fitter.n_dust_cont]
     amp_inds = [findfirst(param_maps.parameters.names .== "continuum.dust.$(i).amp") for i in 1:cube_fitter.n_dust_cont]

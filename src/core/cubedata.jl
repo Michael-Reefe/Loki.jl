@@ -30,6 +30,7 @@ end
 
 # very simple parser; bound to not work in all cases but that's a lotta work
 function fits_unitstr_to_unitful(unit_string::String)
+    @debug "fits_unitstr_to_unitful: input=\"$unit_string\""
     unit_string = replace(unit_string, "um" => "μm", "." => "*")
     i = 1
     while i ≤ lastindex(unit_string)
@@ -192,6 +193,7 @@ mutable struct DataCube{T<:Vector{<:QWave}, S<:Array{<:QSIntensity, 3}}
         spectral_region = SpectralRegion(λlim, umask, n_channels, channel_masks, ch_bounds, gaps, λrange)
 
         # Return a new instance of the DataCube struct
+        @debug "DataCube: channel=$channel, band=$band, shape=($nx,$ny,$nz), λ_range=($(ustrip(λ[1])),$(ustrip(λ[end]))) $(unit(λ[1])), rest_frame=$rest_frame"
         Tnew = typeof(λ)
         Snew = typeof(I)
         new{Tnew, Snew}(λ, I, σ, mask, psf_model, Ω, α, δ, θ_sky, psf, lsf, wcs, channel, band, nx, ny, nz, spectral_region,
@@ -448,16 +450,17 @@ Utility function for creating DataCube structures directly from input data.
 - `instrument_channel_edges`: A series of wavelengths specifying the edges of individual wavelength channels 
     (this is only relevant if doing QSO PSF decomposition with multi-channel data)
 """
-function from_data(Ω::typeof(1.0u"sr"), z::Real, λ::AbstractVector{<:Quantity}, 
-    I::AbstractArray{<:Quantity}, σ::Union{AbstractArray{<:Quantity},Nothing}=nothing; mask::Union{BitArray,Nothing}=nothing, 
-    α=0.0*u"°", δ=0.0*u"°", θ_sky=0.0*u"rad", psf_fwhm::Union{Quantity,AbstractVector{<:Quantity},Nothing}=nothing, 
-    psf_model::Union{AbstractArray{<:Real},Nothing}=nothing, R::Union{Real,AbstractVector{<:Real},Nothing}=nothing, 
-    wcs::Union{WCSTransform,Nothing}=nothing, channel::String="Generic Channel", band::String="Generic Band", 
-    user_mask::Union{Vector{<:Tuple},Nothing}=nothing, gaps::Union{Vector{<:Tuple},Nothing}=nothing, 
-    rest_frame::Union{Bool,Nothing}=nothing, masked::Union{Bool,Nothing}=nothing, vacuum_wave::Union{Bool,Nothing}=nothing, 
-    log_binned::Union{Bool,Nothing}=nothing, dereddened::Union{Bool,Nothing}=nothing, sky_aligned::Union{Bool,Nothing}=nothing, 
-    instrument_channel_edges::Union{Vector{<:Quantity},Nothing}=nothing) 
+function from_data(Ω::typeof(1.0u"sr"), z::Real, λ::AbstractVector{<:Quantity},
+    I::AbstractArray{<:Quantity}, σ::Union{AbstractArray{<:Quantity},Nothing}=nothing; mask::Union{BitArray,Nothing}=nothing,
+    α=0.0*u"°", δ=0.0*u"°", θ_sky=0.0*u"rad", psf_fwhm::Union{Quantity,AbstractVector{<:Quantity},Nothing}=nothing,
+    psf_model::Union{AbstractArray{<:Real},Nothing}=nothing, R::Union{Real,AbstractVector{<:Real},Nothing}=nothing,
+    wcs::Union{WCSTransform,Nothing}=nothing, channel::String="Generic Channel", band::String="Generic Band",
+    user_mask::Union{Vector{<:Tuple},Nothing}=nothing, gaps::Union{Vector{<:Tuple},Nothing}=nothing,
+    rest_frame::Union{Bool,Nothing}=nothing, masked::Union{Bool,Nothing}=nothing, vacuum_wave::Union{Bool,Nothing}=nothing,
+    log_binned::Union{Bool,Nothing}=nothing, dereddened::Union{Bool,Nothing}=nothing, sky_aligned::Union{Bool,Nothing}=nothing,
+    instrument_channel_edges::Union{Vector{<:Quantity},Nothing}=nothing)
 
+    @debug "from_data: channel=$channel, band=$band, I_shape=$(size(I)), z=$z, n_λ=$(length(λ)), n_I_nan=$(count(isnan, ustrip.(I))), n_I_inf=$(count(isinf, ustrip.(I)))"
     # convert to a normal vector
     _λ = Float64.(collect(λ))
 
@@ -616,9 +619,10 @@ end
 
 
 # Helper function for calculating the number of subchannels covered by MIRI observations
-function get_n_channels(_λ::Vector{<:QWave}, rest_frame::Bool, z::Union{Real,Nothing}; format=:MIRI, 
+function get_n_channels(_λ::Vector{<:QWave}, rest_frame::Bool, z::Union{Real,Nothing}; format=:MIRI,
     instrument_channel_edges::Union{Vector{<:QWave},Nothing}=nothing)
 
+    @debug "get_n_channels: nλ=$(length(_λ)), rest_frame=$rest_frame, z=$z, format=$format"
     # NOTE: do not use n_channels to count the ACTUAL number of channels/bands in an observation,
     #  as n_channels counts the overlapping regions between channels as separate "channels" altogether
     #  to allow them to have different normalizations
@@ -674,6 +678,7 @@ function get_n_channels(_λ::Vector{<:QWave}, rest_frame::Bool, z::Union{Real,No
     end
     ch_bound_out = ch_bounds[minimum(λ) .< ch_bounds .< maximum(λ)]
 
+    @debug "get_n_channels: n_channels=$n_channels, n_ch_bounds=$(length(ch_bound_out))"
     n_channels, ch_bound_out, channel_masks
 end
 
@@ -706,10 +711,12 @@ end
 
 # Internal functions
 function _restframe!(cube::DataCube{<:Vector{<:QWave}, <:Array{<:QPerFreq,3}}, z1::Real)
+    @debug "_restframe!(QPerFreq): channel=$(cube.channel), band=$(cube.band), z1=$z1"
     cube.I = @. cube.I / z1
     cube.σ = @. cube.σ / z1
 end
 function _restframe!(cube::DataCube{<:Vector{<:QWave}, <:Array{<:QPerWave,3}}, z1::Real)
+    @debug "_restframe!(QPerWave): channel=$(cube.channel), band=$(cube.band), z1=$z1"
     cube.I = @. cube.I * z1
     cube.σ = @. cube.σ * z1
 end
@@ -776,12 +783,12 @@ end
 Rebin a DataCube onto a logarithmically spaced wavelength vector, conserving flux.
 Optionally input a rebinning factor > 1 to resample onto a coarser wavelength grid.
 """
-function log_rebin!(cube::DataCube, z::Real; 
+function log_rebin!(cube::DataCube, z::Real;
     logscale::Real=maximum(log.(cube.λ[2:end]./cube.λ[1:end-1])),
     factor::Integer=1)
 
     @assert factor > 0 "factor must be > 0"
-
+    @debug "log_rebin!(DataCube): channel=$(cube.channel), band=$(cube.band), nλ=$(length(cube.λ)), factor=$factor, already_binned=$(cube.log_binned)"
     if !cube.log_binned
         # rebin onto a logarithmically spaced wavelength grid
         # get masks for each gap region and the logarithmic spacing
@@ -853,6 +860,7 @@ end
 # Apply a Cardelli extinction correction
 function deredden!(cube::DataCube)
 
+    @debug "deredden!(DataCube): channel=$(cube.channel), band=$(cube.band), already_dereddened=$(cube.dereddened)"
     if !cube.dereddened
 
         # get galactic coordinates
@@ -894,6 +902,7 @@ See also [`DataCube`](@ref)
 """
 function interpolate_nans!(cube::DataCube)
 
+    @debug "interpolate_nans!: channel=$(cube.channel), band=$(cube.band), shape=$(size(cube.I)), n_nan_I=$(count(isnan, ustrip.(cube.I))), n_nan_σ=$(count(isnan, ustrip.(cube.σ)))"
     λ = ustrip.(cube.λ)
     @info "Interpolating NaNs in cube with channel $(cube.channel), band $(cube.band):"
 
@@ -1111,6 +1120,7 @@ labels to each voronoi bin.
 function voronoi_rebin!(cube::DataCube, target_SN::Real, window::Union{Tuple{QWave,QWave},Nothing}=nothing,
     bin_strategy::BinningStrategy=WeightedVoronoi(); noise_sigma_clip::Real=10.)
 
+    @debug "voronoi_rebin!: channel=$(cube.channel), band=$(cube.band), shape=$(size(cube.I)), target_SN=$target_SN, window=$window"
     @info "Performing Voronoi rebinning with target S/N=$target_SN"
 
     # Get the signal and noise 
@@ -1154,6 +1164,7 @@ function voronoi_rebin!(cube::DataCube, target_SN::Real, window::Union{Tuple{QWa
     end
     # Set the voronoi_bins value in the cube object
     cube.voronoi_bins = voronoi_bins
+    @debug "voronoi_rebin!: done — n_bins=$(length(unique(voronoi_bins[voronoi_bins .> 0])))"
 end
 
 
@@ -1530,6 +1541,7 @@ save_fits(path::String, obs::Observation) = save_fits(path, obs, collect(keys(ob
 save_fits(path::String, obs::Observation, channel) = save_fits(path, obs, [channel])
 
 function save_fits(path::String, obs::Observation, channels::Vector)
+    @debug "save_fits: path=$path, channels=$channels, obs=$(obs.name)"
     for channel in channels
 
         # Header information
@@ -1735,9 +1747,10 @@ function from_fits(filenames::Vector{String}, z::Real=0.; user_mask=nothing)
 end
 
 
-function from_cubes(name::String, redshift::Real, cubes::Vector{<:DataCube}, channel_names::Vector; 
+function from_cubes(name::String, redshift::Real, cubes::Vector{<:DataCube}, channel_names::Vector;
     inst::String="Generic Instrument")
 
+    @debug "from_cubes: name=$name, redshift=$redshift, n_cubes=$(length(cubes)), channel_names=$channel_names"
     channels = Dict{Any,DataCube}()
     for (chan, cube) in zip(channel_names, cubes)
         channels[chan] = cube
@@ -2010,8 +2023,9 @@ will cover the full range of all datacubes.
 function get_optimal_2dwcs(cubes::Vector{<:DataCube}; frame::Union{String,Nothing}=nothing, refpoint=nothing,
     resolution=nothing, projection::String="TAN")
 
+    @debug "get_optimal_2dwcs: n_cubes=$(length(cubes)), frame=$frame, projection=$projection"
     # First we need to create an optimal output WCS to reproject all of the inputs onto.
-    # This code is heavily inspired (copied) by the python reproject.mosaicking package's "find_optimal_celestial_wcs" function 
+    # This code is heavily inspired (copied) by the python reproject.mosaicking package's "find_optimal_celestial_wcs" function
     n_cubes = length(cubes)
     @assert n_cubes ≥ 2 "Please input at least two cubes to compute an optimal WCS for!"
 
@@ -2132,9 +2146,10 @@ Reproject all channels onto a common WCS grid. Modifies the Observation object i
     keep this disabled.
 """
 function reproject_cubes!(cubes::Vector{<:DataCube}; order::Integer=1, output_wcs_frame::Integer=0,
-    enforce_all_cubes_out::Bool=false, frame::Union{String,Nothing}=nothing, refpoint=nothing, resolution=nothing, 
+    enforce_all_cubes_out::Bool=false, frame::Union{String,Nothing}=nothing, refpoint=nothing, resolution=nothing,
     projection::String="TAN")
 
+    @debug "reproject_cubes!: n_cubes=$(length(cubes)), order=$order, output_wcs_frame=$output_wcs_frame, enforce_all=$enforce_all_cubes_out"
     # Pixel sizes in each channel (in arcseconds)
     do_psf_model = all([!isnothing(cube.psf_model) for cube ∈ cubes])
 
@@ -2250,6 +2265,7 @@ This is essentially convolving the data with a tophat kernel, and it may be nece
 function extract_from_aperture!(obs::Observation, channels::Vector, ap_r::Real; output_wcs_frame::Integer=1,
     conical::Bool=false)
 
+    @debug "extract_from_aperture!: obs=$(obs.name), channels=$channels, ap_r=$ap_r, conical=$conical"
     pixel_scale = uconvert(u"arcsecond", sqrt(obs.channels[channels[output_wcs_frame]].Ω))
 
     for ch_in ∈ channels
@@ -2291,6 +2307,7 @@ end
 # Calculate the PSF FWHM in pixel units
 function calc_psf_fwhm(cube::DataCube)
 
+    @debug "calc_psf_fwhm: channel=$(cube.channel), band=$(cube.band), nλ=$(size(cube.I,3))"
     fwhms = zeros(size(cube.I, 3))
     data2d = dropdims(nansum(cube.psf_model, dims=3), dims=3)
     data2d[.~isfinite.(data2d)] .= 0.
@@ -2324,6 +2341,7 @@ function calc_psf_fwhm(cube::DataCube)
         fwhms[wi] = res.param[3] * 2.355
     end
 
+    @debug "calc_psf_fwhm: fwhm_range=($(minimum(fwhms)),$(maximum(fwhms))) pixels"
     fwhms
 end
 
@@ -2333,9 +2351,10 @@ end
 
 Blur the data using a gaussian kernel such that the psf size matches the maximum psf size in the full data cube.
 """
-function apply_gaussian_smoothing!(obs::Observation, channels::Vector; output_wcs_frame::Integer=1, 
+function apply_gaussian_smoothing!(obs::Observation, channels::Vector; output_wcs_frame::Integer=1,
     max_λ::QLength=Inf*u"μm")
 
+    @debug "apply_gaussian_smoothing!: obs=$(obs.name), channels=$channels, max_λ=$(ustrip(max_λ)) $(unit(max_λ))"
     pixel_scale = uconvert(u"arcsecond", sqrt(obs.channels[channels[output_wcs_frame]].Ω))
     λ_out = vcat([obs.channels[ch_i].λ for ch_i ∈ channels]...)
     psf_out = []
@@ -2407,10 +2426,11 @@ the surrounding channels. The inputs are expected to already be concatenated fro
 - `concat_type`: Either :sub for subchannels or :full for full channels
 
 """
-function resample_channel_wavelengths!(λ_out::Vector{<:QWave}, jumps::Vector{<:Integer}, I_out::Array{<:QSIntensity,3}, 
-    σ_out::Array{<:QSIntensity,3}, mask_out::BitArray{3}, psf_out::Union{Array{<:Real,3},Nothing}=nothing, 
+function resample_channel_wavelengths!(λ_out::Vector{<:QWave}, jumps::Vector{<:Integer}, I_out::Array{<:QSIntensity,3},
+    σ_out::Array{<:QSIntensity,3}, mask_out::BitArray{3}, psf_out::Union{Array{<:Real,3},Nothing}=nothing,
     concat_type::Symbol=:sub)
 
+    @debug "resample_channel_wavelengths!: nλ=$(length(λ_out)), n_jumps=$(length(jumps)), concat_type=$concat_type, do_psf=$(psf_out !== nothing)"
     do_psf_model = !isnothing(psf_out)
 
     if concat_type == :full
@@ -2537,6 +2557,7 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
     output_wcs_frame::Integer=1, extract_from_ap::Real=0., match_psf::Bool=false, enforce_all_cubes_out::Bool=true,
     user_mask::Union{Vector{Tuple{W,W}},Nothing}=nothing, gap_mask::Union{Vector{Tuple{W,W}},Nothing}=nothing) where {W<:QWave}
 
+    @debug "combine_channels!: obs=$(obs.name), channels=$channels, concat_type=$concat_type, order=$order, extract_from_ap=$extract_from_ap, match_psf=$match_psf"
     format = Symbol(obs.instrument)
 
     # Default to all 4 channels
@@ -2733,6 +2754,7 @@ function combine_observations(observations::Vector{Observation}; frames=nothing,
     order::Integer=1, pad_mask::Bool=true, instrument_channel_edges::Union{Vector{<:QWave},Nothing}=nothing,
     name_out::Union{String,Nothing}=nothing)
 
+    @debug "combine_observations: n_obs=$(length(observations)), order=$order, pad_mask=$pad_mask"
     # Input checking
     n_obs = length(observations)
     @assert n_obs ≥ 2 "Please input at least two Observations to combine!"
@@ -3046,7 +3068,7 @@ Original docstring is copied below:
 ;----------------------------------------------------------------------------
 """
 function frebin(array::AbstractArray, nsout::S, nlout::S=1; total::Bool=false) where {S<:Integer}
-
+    @debug "frebin: input_shape=$(size(array)), nsout=$nsout, nlout=$nlout, total=$total"
     # Determine the size of the input array
     ns = size(array, 1)
     nl = length(array)/ns

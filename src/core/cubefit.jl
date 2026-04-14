@@ -375,11 +375,14 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
         @debug "### There are a total of $(n_params_extra) extra parameters ###"
 
         # Pre-calculate mass absorption coefficients for olivine, pyroxene, and forsterite
-        κ_abs = nothing 
+        κ_abs = nothing
         if out[:silicate_absorption] == "decompose"
+            @debug "CubeFitter: silicate_absorption=decompose — loading olivine/pyroxene/forsterite κ_abs"
             gunit = typeof(out[:grain_size]) <: QLength ? 1.0 : u"μm"
             κ_oli, κ_pyr, κ_for = read_dust_κ(out[:pyroxene_x], out[:olivine_y], out[:grain_size]*gunit, λunit)
             κ_abs = [κ_oli, κ_pyr, κ_for]
+        else
+            @debug "CubeFitter: silicate_absorption=$(out[:silicate_absorption]) — κ_abs not needed"
         end
 
         # Prepare initial best fit parameter options
@@ -391,9 +394,12 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
         # If a fit has been run previously, read in the file containing the best fit parameters
         # to pick up where the fitter left off seamlessly
         if isfile(joinpath("output_$name", "spaxel_binaries", "init_fit_cont.csv")) && isfile(joinpath("output_$name", "spaxel_binaries", "init_fit_line.csv"))
+            @debug "CubeFitter: found previous init fit results — loading p_init_cont, p_init_line, p_init_pahtemp"
             p_init_cont, = read_fit_results_csv(name, "init_fit_cont")
             p_init_line, = read_fit_results_csv(name, "init_fit_line")
             p_init_pahtemp, = read_fit_results_csv(name, "init_fit_pahtemp")
+        else
+            @debug "CubeFitter: no previous init fit results found — initializing p_init to zeros"
         end
 
         # Load templates into memory
@@ -479,10 +485,14 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
             out[:spaxel_timelimit]
         )
 
+        @debug "CubeFitter: key options — extinction_curve=$(out[:extinction_curve]), fit_stellar_continuum=$(out[:fit_stellar_continuum]), fit_opt_na_feii=$(out[:fit_opt_na_feii]), fit_opt_br_feii=$(out[:fit_opt_br_feii]), fit_joint=$(out[:fit_joint]), use_pah_templates=$(out[:use_pah_templates]), n_bootstrap=$(out[:n_bootstrap])"
+        @debug "CubeFitter: model counts — n_dust_cont=$n_dust_cont, n_power_law=$n_power_law, n_dust_feat=$n_dust_feat, n_abs_feat=$n_abs_feat, n_templates=$n_templates, n_lines=$n_lines, n_ssps=$n_ssps"
+        @debug "CubeFitter: cube shape=$(size(cube.I)), z=$z, vres=$vres"
+
         new{typeof(z), typeof(n_params_cont), eltype(out[:templates]), typeof(vres), eltype(cube.λ)}(
-            cube, 
-            z, 
-            name, 
+            cube,
+            z,
+            name,
             spectral_region, 
             output_options,
             fitting_options,
@@ -559,6 +569,7 @@ end
 # Helper function for setting up default options when creating a CubeFitter object
 function cubefitter_add_default_options!(cube::DataCube, out::Dict)
 
+    @debug "cubefitter_add_default_options!: cube shape=$(size(cube.I)), n_keys=$(length(keys(out)))"
     out[:line_test_lines] = Vector{Symbol}[Symbol[Symbol(ln) for ln in group] for group in out[:line_test_lines]]
     out[:plot_spaxels] = Symbol(out[:plot_spaxels])
     out[:apoly_type] = Symbol(out[:apoly_type])
@@ -635,6 +646,7 @@ end
 
 # Helper function to prepare extinction map and PAH template boolean map
 function cubefitter_prepare_extinction_maps(out::Dict, cube::DataCube)
+    @debug "cubefitter_prepare_extinction_maps: checking for ebv_map and sil_abs_map in options"
     # Get potential extinction map
     ebv_map = sil_abs_map = nothing
     if haskey(out, :ebv_map) && !isnothing(out[:ebv_map])
@@ -643,6 +655,9 @@ function cubefitter_prepare_extinction_maps(out::Dict, cube::DataCube)
         if ndims(ebv_map) == 2
             ebv_map = reshape(ebv_map, (size(ebv_map)..., 1))
         end
+        @debug "cubefitter_prepare_extinction_maps: ebv_map loaded, shape=$(size(ebv_map)), range=$(extrema(filter(isfinite, ebv_map)))"
+    else
+        @debug "cubefitter_prepare_extinction_maps: no ebv_map provided"
     end
     if haskey(out, :sil_abs_map) && !isnothing(out[:sil_abs_map])
         sil_abs_map = out[:sil_abs_map]
@@ -650,6 +665,9 @@ function cubefitter_prepare_extinction_maps(out::Dict, cube::DataCube)
         if ndims(sil_abs_map) == 2
             sil_abs_map = reshape(sil_abs_map, (size(sil_abs_map)..., 1))
         end
+        @debug "cubefitter_prepare_extinction_maps: sil_abs_map loaded, shape=$(size(sil_abs_map)), range=$(extrema(filter(isfinite, sil_abs_map)))"
+    else
+        @debug "cubefitter_prepare_extinction_maps: no sil_abs_map provided"
     end
     ebv_map, sil_abs_map
 end
@@ -657,6 +675,7 @@ end
 
 # Helper function to prepare custom stellar templates
 function cubefitter_prepare_custom_stellar_templates(out::Dict, cube::DataCube)
+    @debug "cubefitter_prepare_custom_stellar_templates: checking for custom stellar templates"
     temp_λ = nothing
     temp_R = nothing
     temps = nothing
@@ -691,6 +710,10 @@ function cubefitter_prepare_custom_stellar_templates(out::Dict, cube::DataCube)
             " (Note: the normalization does not matter, but per-unit-frequency or per-unit-wavelength does matter)")
         end
         temps = ustrip.(temps)
+        @debug "cubefitter_prepare_custom_stellar_templates: temps shape=$(size(temps)), λ range=$(extrema(temp_λ)) $λunit"
+    end
+    if isnothing(temps)
+        @debug "cubefitter_prepare_custom_stellar_templates: no custom stellar templates provided"
     end
     temp_λ, temp_R, temps
 end
@@ -698,17 +721,22 @@ end
 
 # Helper function for counting the total number of emission line parameters
 function count_line_parameters(lines::FitFeatures)
-    length(get_flattened_fit_parameters(lines))
+    n = length(get_flattened_fit_parameters(lines))
+    @debug "count_line_parameters: n_params=$n"
+    n
 end
 
 
 # Helper function for counting the total number of "extra" (non-fit) parameters
 function count_extra_parameters(model_parameters::ModelParameters)
-    length(get_flattened_nonfit_parameters(model_parameters))
+    n = length(get_flattened_nonfit_parameters(model_parameters))
+    @debug "count_extra_parameters: n_params=$n"
+    n
 end
 
 
 function make_linemask!(out::Dict, lines::FitFeatures, λunit::Unitful.Units)
+    @debug "make_linemask!: n_lines=$(length(lines.λ₀)), linemask_width=$(get(out, :linemask_width, "not set"))"
     # overrides for all lines in the line list with a width of +/-1000 km/s;
     # this can still be overridden with a manual line mask input
     if haskey(out, :linemask_width) && !(typeof(out[:linemask_width]) <: QVelocity)
@@ -720,9 +748,11 @@ function make_linemask!(out::Dict, lines::FitFeatures, λunit::Unitful.Units)
             push!(overrides, λi .* (1-out[:linemask_width]/C_KMS, 1+out[:linemask_width]/C_KMS))
         end
         out[:linemask_overrides] = overrides
+        @debug "make_linemask!: auto-generated $(length(overrides)) line mask regions from line list"
     else
         punit = typeof(out[:linemask_overrides][1][1]) <: Quantity{<:Real, u"𝐋"} ? 1.0 : λunit
         out[:linemask_overrides] = [tuple(out[:linemask_overrides][i].*punit...) for i in 1:length(out[:linemask_overrides])]
+        @debug "make_linemask!: using $(length(out[:linemask_overrides])) manually specified line mask regions"
     end
 end
 
@@ -735,12 +765,11 @@ Also sorts the step, limits, and lock vectors accordingly.
 """
 function split_parameters(pars::Vector{<:Real}, dstep::Vector{<:Real}, plims::Vector{<:Tuple}, plock::BitVector)
 
+    n_free = sum(.~plock)
+    @debug "split_parameters (no ties): n_total=$(length(pars)), n_free=$n_free, n_locked=$(sum(plock))"
     pfix = pars[plock]
     pfree = pars[.~plock]
     dfree = dstep[.~plock]
-
-    # Count free parameters
-    n_free = sum(.~plock)
 
     # Lower/upper limits
     lbfree = [pl[1] for pl in plims[.~plock]]
@@ -843,6 +872,7 @@ end
 
 
 function strip_units(params::Vector{<:Number}, plims::Vector{<:Tuple})
+    @debug "strip_units: n_params=$(length(params))"
     # Get the units of the parameters and strip them off of the actual parameter vector
     punits = unit.(params)
     pars_out = ustrip.(params)
@@ -851,8 +881,9 @@ function strip_units(params::Vector{<:Number}, plims::Vector{<:Tuple})
 end
 
 
-function strip_units(params_1::Vector{<:Number}, params_2::Vector{<:Number}, 
+function strip_units(params_1::Vector{<:Number}, params_2::Vector{<:Number},
     plims_1::Vector{<:Tuple}, plims_2::Vector{<:Tuple})
+    @debug "strip_units (split): n_params_1=$(length(params_1)), n_params_2=$(length(params_2))"
     pars_out_1, plims_out_1, punits_1 = strip_units(params_1, plims_1)
     pars_out_2, plims_out_2, punits_2 = strip_units(params_2, plims_2)
     pars_out_1, plims_out_1, punits_1, pars_out_2, plims_out_2, punits_2

@@ -47,55 +47,71 @@ global b1_cache = nothing
 function _load_dust_templates(silicate_absorption::String, fit_ch_abs::Bool, use_pah_templates::Bool, 
     λunit::Unitful.Units, Iunit::Unitful.Units)
 
+    @debug "_load_dust_templates: silicate_absorption=$silicate_absorption, fit_ch_abs=$fit_ch_abs, use_pah_templates=$use_pah_templates, λunit=$λunit"
     dust_profiles = Dict{String, Tuple{Vector{<:QWave},Vector{<:AbstractFloat}}}()
     dust_interpolators = Dict{String, Spline1D}()
 
     if silicate_absorption == "d+"
-        # Save the Donnan et al. 2022 profile as a constant
+        @debug "_load_dust_templates: loading Donnan+2022 (d+) silicate profile"
         dust_profiles["dp"] = silicate_dp()
-        dust_interpolators["dp"] = Spline1D(ustrip.(uconvert.(λunit, dust_profiles["dp"][1])), 
+        dust_interpolators["dp"] = Spline1D(ustrip.(uconvert.(λunit, dust_profiles["dp"][1])),
             dust_profiles["dp"][2]; k=3, bc="nearest")
+        @debug "_load_dust_templates: dp profile λ range=$(extrema(ustrip.(uconvert.(λunit, dust_profiles["dp"][1]))))"
     elseif silicate_absorption == "ct"
-        # Save the Chiar+Tielens 2005 profile as a constant
+        @debug "_load_dust_templates: loading Chiar+Tielens 2005 (ct) silicate profile"
         dust_profiles["ct"] = silicate_ct()
-        dust_interpolators["ct"] = Spline1D(ustrip.(uconvert.(λunit, dust_profiles["ct"][1])), 
+        dust_interpolators["ct"] = Spline1D(ustrip.(uconvert.(λunit, dust_profiles["ct"][1])),
             dust_profiles["ct"][2]; k=3, bc="nearest")
+        @debug "_load_dust_templates: ct profile λ range=$(extrema(ustrip.(uconvert.(λunit, dust_profiles["ct"][1]))))"
     elseif silicate_absorption == "kvt"
-        # Save the KVT profile as a constant
+        @debug "_load_dust_templates: loading KVT silicate profile"
         dust_profiles["kvt"] = silicate_kvt()
-        dust_interpolators["kvt"] = Spline1D(ustrip.(uconvert.(λunit, dust_profiles["kvt"][1])), 
+        dust_interpolators["kvt"] = Spline1D(ustrip.(uconvert.(λunit, dust_profiles["kvt"][1])),
             dust_profiles["kvt"][2], k=2, bc="nearest")
-        dust_interpolators["kvt_end"] = Spline1D(ustrip.(uconvert.(λunit, [dust_profiles["kvt"][1][end], 
+        dust_interpolators["kvt_end"] = Spline1D(ustrip.(uconvert.(λunit, [dust_profiles["kvt"][1][end],
             dust_profiles["kvt"][1][end]+2u"μm"])), [dust_profiles["kvt"][2][end], 0.], k=1, bc="nearest")
+        @debug "_load_dust_templates: kvt profile λ range=$(extrema(ustrip.(uconvert.(λunit, dust_profiles["kvt"][1]))))"
+    else
+        @debug "_load_dust_templates: silicate_absorption=$silicate_absorption — no named profile loaded (decompose or none)"
     end
     # Save the OHM 1992 profile as a constant
+    @debug "_load_dust_templates: loading OHM 1992 silicate profile"
     dust_profiles["ohm"] = silicate_ohm()
-    dust_interpolators["ohm"] = Spline1D(ustrip.(uconvert.(λunit, dust_profiles["ohm"][1])), 
+    dust_interpolators["ohm"] = Spline1D(ustrip.(uconvert.(λunit, dust_profiles["ohm"][1])),
         dust_profiles["ohm"][2]; k=3, bc="nearest")
+    @debug "_load_dust_templates: ohm profile λ range=$(extrema(ustrip.(uconvert.(λunit, dust_profiles["ohm"][1]))))"
 
     if fit_ch_abs
-        # Save the Ice+CH optical depth template as a constant
+        @debug "_load_dust_templates: fit_ch_abs=true — loading Ice+CH optical depth templates"
         ice_wave, ice_prof, ch_wave, ch_prof = read_ice_ch_temps()
         dust_profiles["ice"] = (ice_wave, ice_prof)
         dust_profiles["ch"] = (ch_wave, ch_prof)
-        dust_interpolators["ice"] = Spline1D(ustrip.(uconvert.(λunit, dust_profiles["ice"][1])), 
+        dust_interpolators["ice"] = Spline1D(ustrip.(uconvert.(λunit, dust_profiles["ice"][1])),
             dust_profiles["ice"][2]; k=3)
-        dust_interpolators["ch"] = Spline1D(ustrip.(uconvert.(λunit, dust_profiles["ch"][1])), 
+        dust_interpolators["ch"] = Spline1D(ustrip.(uconvert.(λunit, dust_profiles["ch"][1])),
             dust_profiles["ch"][2]; k=3)
+        @debug "_load_dust_templates: ice λ range=$(extrema(ustrip.(uconvert.(λunit, ice_wave)))), ch λ range=$(extrema(ustrip.(uconvert.(λunit, ch_wave))))"
+    else
+        @debug "_load_dust_templates: fit_ch_abs=false — skipping Ice+CH templates"
     end
 
     # Save the Smith+2006 PAH templates as constants
     if use_pah_templates
+        @debug "_load_dust_templates: use_pah_templates=true — loading Smith+2006 PAH templates"
         SmithTemps = read_smith_temps()
-        # may need to do a unit conversion 
+        # may need to do a unit conversion
         ST2 = match_fluxunits.(SmithTemps[2].*u"erg/s/cm^2/Hz/sr", 1.0*Iunit, SmithTemps[1])
         ST2 = ST2 ./ maximum(ST2)
         dust_interpolators["smith3"] = Spline1D(ustrip.(uconvert.(λunit, SmithTemps[1])), ST2; k=3, bc="nearest")
         ST4 = match_fluxunits.(SmithTemps[4].*u"erg/s/cm^2/Hz/sr", 1.0*Iunit, SmithTemps[3])
         ST4 = ST4 ./ maximum(ST4)
         dust_interpolators["smith4"] = Spline1D(ustrip.(uconvert.(λunit, SmithTemps[3])), ST4; k=3, bc="nearest")
+        @debug "_load_dust_templates: smith3 λ range=$(extrema(ustrip.(uconvert.(λunit, SmithTemps[1])))), smith4 λ range=$(extrema(ustrip.(uconvert.(λunit, SmithTemps[3]))))"
+    else
+        @debug "_load_dust_templates: use_pah_templates=false — skipping Smith+2006 PAH templates"
     end
 
+    @debug "_load_dust_templates: done — loaded $(length(dust_profiles)) dust profiles: $(keys(dust_profiles))"
     return dust_profiles, dust_interpolators
 end
 
@@ -294,6 +310,7 @@ given as a probability, for example a threshold of 0.003 corresponds
 to 1-0.003 -> 99.7% or a 3-sigma confidence level.
 """
 function F_test(n, p1, p2, χ1, χ2, threshold)
+    @debug "F_test: n=$n, p1=$p1, p2=$p2, χ1=$χ1, χ2=$χ2, threshold=$threshold"
     # Generate an F distribution with these parameters
     F = FDist(p2 - p1, n - p2)
     # Calculate the critical value at some confidence threshold set by the user
@@ -301,7 +318,9 @@ function F_test(n, p1, p2, χ1, χ2, threshold)
     # Calculate the F value from the data
     F_data = ((χ1 - χ2) / (p2 - p1)) / (χ2 / (n - p2))
     # Compare to the critical value
-    F_data > F_crit, F_data, F_crit
+    result = F_data > F_crit
+    @debug "F_test: F_data=$F_data, F_crit=$F_crit, passed=$result"
+    result, F_data, F_crit
 end
 
 
@@ -318,6 +337,7 @@ however the implementation is different.
 """
 function convolveGaussian1D(flux::Vector{T}, fwhm::Vector{<:Real}) where {T<:Number}
 
+    @debug "convolveGaussian1D: length(flux)=$(length(flux)), fwhm range=$(extrema(fwhm))"
     # clamp with a minimum of 0.01 so as to not cause problems with Gaussians with 0 std dev
     fwhm_clamped = clamp.(fwhm, 0.01, Inf)
 
@@ -1208,8 +1228,9 @@ are also permuted such that they have the same shape as the inputs. This is usef
 in this code have the wavelength axis as the third axis.
 """
 function resample_flux_permuted3D(new_wave::AbstractVector, old_wave::AbstractVector, flux::AbstractArray,
-    err::Union{AbstractArray,Nothing}=nothing, mask::Union{AbstractArray,Nothing}=nothing) 
+    err::Union{AbstractArray,Nothing}=nothing, mask::Union{AbstractArray,Nothing}=nothing)
 
+    @debug "resample_flux_permuted3D: flux shape=$(size(flux)), old_wave range=$(extrema(ustrip.(old_wave))), new_wave range=$(extrema(ustrip.(new_wave))), has_err=$(! isnothing(err)), has_mask=$(! isnothing(mask))"
     # remove units
     funit = unit(flux[begin])
     out_units = Any[funit]
@@ -1273,6 +1294,8 @@ processing is done to remove outliers (convolution) and any linear trends in the
 """
 function test_line_snr(λ0::T, half_window_size::T, λ::Vector{T}, I::Vector{<:Number}) where {T<:QWave}
 
+    n_finite_I = count(isfinite, ustrip.(I))
+    @debug "test_line_snr: λ0=$(ustrip(λ0)) $(unit(λ0)), window=±$(ustrip(half_window_size)) $(unit(half_window_size)), nλ=$(length(λ)), n_finite_I=$n_finite_I"
     # Line testing region
     region = (λ0 - half_window_size) .< λ .< (λ0 + half_window_size)
     @assert sum(region) > 40 "The spectrum does not cover the line in question sufficiently!"
