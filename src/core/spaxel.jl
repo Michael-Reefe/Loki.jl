@@ -186,7 +186,7 @@ function get_vector_mask(s::Spaxel; lines::Bool=true, user_mask::Union{Nothing,V
             mask_all .|= pair[1] .< s.λ .< pair[2]
         end
     end
-    @debug "get_vector_mask: coords=$(s.coords), lines=$lines, n_user_regions=$(isnothing(user_mask) ? 0 : length(user_mask)), total masked=$(sum(mask_all))/$(length(mask_all))"
+    @debug "get_vector_mask: coords=$(s.coords), lines=$lines, user_mask=$(user_mask), total masked=$(sum(mask_all))/$(length(mask_all))"
     mask_all
 end
 
