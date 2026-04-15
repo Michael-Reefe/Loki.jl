@@ -143,17 +143,23 @@ function __init__()
 
     ###### SETTING UP A GLOBAL LOGGER ######
 
-    # Append timestamps to all logging messages
-    timestamp_logger(logger) = TransformerLogger(logger) do log
-        merge(log, (; message = "$(Dates.format(now(), date_format)) $(log.message)"))
+    if myid() == 1
+        # Append timestamps to all logging messages
+        timestamp_logger(logger) = TransformerLogger(logger) do log
+            merge(log, (; message = "$(Dates.format(now(), date_format)) $(log.message)"))
+        end
+        # Create a tee logger that writes both to the stdout and to a log file
+        logger = TeeLogger(ConsoleLogger(stdout, Logging.Info), 
+                            timestamp_logger(MinLevelLogger(FileLogger(joinpath(@__DIR__, "loki.main.log"); 
+                                                                        always_flush=true), 
+                                                                        Logging.Debug)))
+        # Initialize our logger as the global logger
+        global_logger(logger)
+    else
+        # on worker processes, make sure logging messages dont overwrite the main log 
+        # (they will have individual logs that are set up later in the spaxel fit function)
+        global_logger(NullLogger())
     end
-    # Create a tee logger that writes both to the stdout and to a log file
-    logger = TeeLogger(ConsoleLogger(stdout, Logging.Info), 
-                        timestamp_logger(MinLevelLogger(FileLogger(joinpath(@__DIR__, "loki.main.log"); 
-                                                                    always_flush=true), 
-                                                                    Logging.Debug)))
-    # Initialize our logger as the global logger
-    global_logger(logger)
 
 end
 

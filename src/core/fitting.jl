@@ -1174,7 +1174,7 @@ function fit_stack!(cube_fitter::CubeFitter)
 
     # Perform a cubic spline fit, also obtaining the line mask
     mask_lines_init, I_spline_init, _ = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init, cube_fitter.linemask_overrides)
-    mask_bad_init = get_init_badpix_mask(I_sum_init, σ_sum_init, cube_fitter)
+    mask_bad_init = get_init_badpix_mask(I_sum_init, σ_sum_init, cube_fitter; use_vorbins=!isnothing(cube_fitter.cube.voronoi_bins))
     mask_init = mask_lines_init .| mask_bad_init
     mask_chi2_init = mask_bad_init
     σ_sum_init .= calculate_statistical_errors(I_sum_init, I_spline_init, mask_init)
@@ -1645,7 +1645,7 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
     if aperture isa String
         @assert lowercase(aperture) == "all" "The only accepted string input for 'aperture' is 'all' to signify the entire cube."
         I, σ, templates, area_sr = get_total_integrated_intensities(cube_fitter; shape=shape)
-        mask_bad = get_init_badpix_mask(I[1,1,:], σ[1,1,:], cube_fitter)
+        mask_bad = get_init_badpix_mask(I[1,1,:], σ[1,1,:], cube_fitter; use_ap=true)
     else
         I, σ, templates, area_sr = get_aperture_integrated_intensities(cube_fitter, shape, aperture)
         mask_bad = nothing
@@ -1773,7 +1773,7 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, agn_templates::Arra
 
     # Perform a cubic spline fit, also obtaining the line mask
     mask_lines_init, I_spline_init, _ = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init, cube_fitter.linemask_overrides)
-    mask_bad_init = get_init_badpix_mask(I_sum_init, σ_sum_init, cube_fitter)
+    mask_bad_init = get_init_badpix_mask(I_sum_init, σ_sum_init, cube_fitter; use_ap=true)
     mask_init = mask_lines_init .| mask_bad_init
     mask_chi2_init = mask_bad_init
     σ_sum_init  .= calculate_statistical_errors(I_sum_init, I_spline_init, mask_init)
