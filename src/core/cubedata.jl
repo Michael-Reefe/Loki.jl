@@ -1915,7 +1915,7 @@ A composition of the many functions for Observation objects that convert the dat
 
 See [`apply_mask!`](@ref) and [`to_rest_frame!`](@ref)
 """
-correct! = deredden! ∘ apply_mask! ∘ log_rebin! ∘ to_rest_frame! ∘ to_vacuum_wavelength!
+correct! = apply_mask! ∘ log_rebin! ∘ to_rest_frame! ∘ deredden! ∘ to_vacuum_wavelength!
 
 
 #################################### CHANNEL ALIGNMENT AND REPROJECTION ######################################
