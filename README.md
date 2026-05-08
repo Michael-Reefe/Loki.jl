@@ -33,6 +33,10 @@
 ---
 ## Changelog
 
+### 05/08/26
+
+Added a new utility function "make_subcube" for extracting sub-cubes from DataCubes.  
+
 ### 04/01/26
 
 Added the "spaxel_timelimit" option to set an upper limit on how long each spaxel fit can take, as a last resort to prevent hanging or unrecoverable fits.  The default is a very lenient 3600 seconds (1 hour), which should never be reached under normal circumstances.  The option can be changed either in the options.toml file, or passing it directly into a CubeFitter.
