@@ -35,7 +35,12 @@
 
 ### 05/08/26
 
-Added a new utility function "make_subcube" for extracting sub-cubes from DataCubes.  
+Added a new utility function "make_subcube" for extracting sub-cubes from DataCubes.  Use this to, for example, extract small regions of interest in your data cube and fit them with different models to your full cube.  The syntax is simple, just specify lower and upper limits in the x and y pixel dimensions:
+```julia
+obs_small = make_subcube(obs, xmin, xmax, ymin, ymax)
+```
+
+IMPORTANT NOTE: I have also fixed a bug related to the `correct!` procedure, specifically the `deredden!` step for correction Milky Way dust extinction.  Previously, if the user called `correct!`, it would call `deredden!` *after* calling `to_rest_frame!` to shift the cube's wavelengths to the rest frame.  This means it would incorrectly apply an extinction correction with a Cardelli law using the *rest-frame* wavelengths of the data cube, when it should use the *observed-frame* wavelengths to correct local Milky Way dust extinction.  Therefore, the order of `deredden!` and `to_rest_frame!` has been swapped, so the dereddening is always applied first.
 
 ### 04/01/26
 
