@@ -43,6 +43,7 @@ struct OutputOptions <: Options
     make_movies::Bool
     map_snr_thresh::Real
     map_marker::Union{Vector{<:Real},Nothing}
+    map_disable_psfcirc::Bool
     sort_line_components::Union{Symbol,Nothing}
     plot_line_annotation_positions::Vector{<:Real}
 end
@@ -441,6 +442,7 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
             out[:make_movies],
             out[:map_snr_thresh],
             out[:map_marker],
+            out[:map_disable_psfcirc],
             out[:sort_line_components],
             line_annotation_positions
         )
@@ -639,6 +641,12 @@ function cubefitter_add_default_options!(cube::DataCube, out::Dict)
     else
         @assert (typeof(out[:map_marker]) <: Vector{<:Real}) "map_maker must be a Vector{<:Real}"
         @assert (length(out[:map_marker]) == 2) "map_maker must have a length of 2"
+    end
+
+    if !haskey(out, :map_disable_psfcirc)
+        out[:map_disable_psfcirc] = false
+    else
+        @assert (typeof(out[:map_disable_psfcirc]) <: Bool) "map_disable_psfcirc must be a Bool"
     end
 
 end

@@ -180,6 +180,7 @@ export DataCube,   # DataCube struct
        calculate_statistical_errors!,
        rotate_to_sky_axes!,
        voronoi_rebin!,
+       make_subcube,
        plot_2d, 
        plot_1d,
 

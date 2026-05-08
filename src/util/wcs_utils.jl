@@ -194,6 +194,49 @@ function extend_wcs_dimensions(wcs::WCSTransform, λ::Vector{<:QWave})
 end
 
 
+# A utility function to make a new WCS where the pixel coordinate reference is shifted 
+# by deltaX and deltaY pixels.
+function make_offset_wcs_crpix(wcs::WCSTransform, Δc::Integer...)
+    @debug "offset_wcs_crpix: Δc = $(Δc)" 
+
+    # Go pretty exhaustively through all WCS properties
+    WCSTransform(wcs.naxis;
+        crval=wcs.crval,
+        crpix=wcs.crpix .+ collect(Δc),
+        cdelt=wcs.cdelt,
+        crder=wcs.crder,
+        csyer=wcs.csyer,
+        ctype=wcs.ctype,
+        crota=wcs.crota,
+        cunit=wcs.cunit,
+        cname=wcs.cname,
+        pc=wcs.pc,
+        cd=wcs.cd,
+        equinox=wcs.equinox,
+        latpole=wcs.latpole,
+        lonpole=wcs.lonpole,
+        mjdavg=wcs.mjdavg,
+        mjdobs=wcs.mjdobs,
+        restfrq=wcs.restfrq,
+        restwav=wcs.restwav,
+        velangl=wcs.velangl,
+        velosys=wcs.velosys,
+        zsource=wcs.zsource,
+        colnum=wcs.colnum,
+        dateavg=wcs.dateavg,
+        dateobs=wcs.dateobs,
+        radesys=wcs.radesys,
+        specsys=wcs.specsys,
+        ssysobs=wcs.ssysobs,
+        ssyssrc=wcs.ssyssrc,
+        wcsname=wcs.wcsname,
+        obsgeo=[wcs.obsgeo...],
+        alt=wcs.alt
+    )
+
+end
+
+
 # A little helper function that takes the FITS header keyword RADESYS and 
 # converts it into a type of coordinate object that SkyCoords.jl can understand
 function string_to_coordframe(sframe::String)

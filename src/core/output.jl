@@ -409,6 +409,7 @@ function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMap
 
     fopt = fit_options(cube_fitter)
     lines = model(cube_fitter).lines
+    disable_psfcirc = out_options(cube_fitter).map_disable_psfcirc
     @debug "plot_multiline_parameters: n_lines=$(length(lines.names)), snr_thresh=$snr_thresh, marker=$(isnothing(marker) ? "nothing" : "provided")"
 
     for (i, line) ∈ enumerate(lines.names)
@@ -490,7 +491,7 @@ function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMap
                 _, _, cdata = plot_parameter_map(total_flux, name_i, bunit, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(ustrip(wave_i)),
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=ustrip.(snr_filter), snr_thresh=snr_thresh,
                     line_latex=latex_i, modify_ax=(fig, ax[ci]), disable_colorbar=true, colorscale_limits=(vmin, vmax), marker=marker,
-                    wave_unit=unit(cube_fitter.cube.λ[1]))
+                    disable_psfcirc=disable_psfcirc, wave_unit=unit(cube_fitter.cube.λ[1]))
                 ci += 1
             end
             if parameter == "eqw" && plot_total
@@ -500,7 +501,7 @@ function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMap
                 _, _, cdata = plot_parameter_map(total_eqw, name_i, bunit, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(ustrip(wave_i)),
                     cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=ustrip.(snr_filter), snr_thresh=snr_thresh,
                     line_latex=latex_i, modify_ax=(fig, ax[ci]), disable_colorbar=true, colorscale_limits=(vmin, vmax), marker=marker,
-                    wave_unit=unit(cube_fitter.cube.λ[1]))
+                    disable_psfcirc=disable_psfcirc, wave_unit=unit(cube_fitter.cube.λ[1]))
                 ci += 1
             end
 
@@ -516,7 +517,7 @@ function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMap
                 _, _, cdata = plot_parameter_map(data, name_i, bunit, save_path, cube_fitter.cube.Ω, cube_fitter.z, 
                     psf_interp(ustrip(wave_i)), cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filt, 
                     snr_thresh=snr_thresh, line_latex=latex_i, modify_ax=(fig, ax[ci]), disable_colorbar=true, 
-                    colorscale_limits=(vmin, vmax), marker=marker, wave_unit=unit(cube_fitter.cube.λ[1]))
+                    disable_psfcirc=disable_psfcirc, colorscale_limits=(vmin, vmax), marker=marker, wave_unit=unit(cube_fitter.cube.λ[1]))
                 ci += 1
             end
             # Save the final figure
@@ -570,8 +571,14 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
         # Calculate the centroid
         data2d = sumdim(ustrip.(cube_fitter.cube.I), 3)
         _, mx = findmax(data2d)
-        map_marker = centroid_com(data2d[mx[1]-5:mx[1]+5, mx[2]-5:mx[2]+5]) .+ (mx.I .- 5) .- 1
+        map_marker = Real[mx[1], mx[2]]
+        if (size(data2d,1) > 11) && (size(data2d,2) > 11)
+            map_marker = centroid_com(data2d[mx[1]-5:mx[1]+5, mx[2]-5:mx[2]+5]) .+ (mx.I .- 5) .- 1
+        end
     end
+
+    # boolean option for disabling the PSF circle on the output maps
+    disable_psfcirc = out_options(cube_fitter).map_disable_psfcirc
 
     # Plot individual parameter maps
     for (i, parameter) ∈ enumerate(param_maps.parameters.names)
@@ -663,7 +670,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
 
         plot_parameter_map(data, name_i, bunit, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf,
             cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=split(parameter, ".")[end] != "SNR" ? snr_filt : nothing, 
-            snr_thresh=snr_thresh, line_latex=latex_i, marker=map_marker, wave_unit=unit(cube_fitter.cube.λ[1]))
+            disable_psfcirc=disable_psfcirc, snr_thresh=snr_thresh, line_latex=latex_i, marker=map_marker, wave_unit=unit(cube_fitter.cube.λ[1]))
     end
 
     # Calculate a tau_9.7 map if using the "decompose" method
@@ -678,7 +685,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
         name_i = "tau_9_7"
         save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "extinction", "$(name_i).pdf")
         plot_parameter_map(data, name_i, L"$\tau_{9.7}$", save_path, cube_fitter.cube.Ω, cube_fitter.z, median(cube_fitter.cube.psf),
-            cube_fitter.cosmology, cube_fitter.cube.wcs, marker=map_marker, wave_unit=unit(cube_fitter.cube.λ))
+            disable_psfcirc=disable_psfcirc, cube_fitter.cosmology, cube_fitter.cube.wcs, marker=map_marker, wave_unit=unit(cube_fitter.cube.λ))
     end
 
     # Make combined plots for lines with multiple components
@@ -748,7 +755,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(group_name)", "$(name_i).pdf")
             plot_parameter_map(total_i, name_i, bu_i, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(ustrip(wave_i)),
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
-                line_latex=group_name_ltx, marker=map_marker, wave_unit=unit(cube_fitter.cube.λ[1]))
+                disable_psfcirc=disable_psfcirc, line_latex=group_name_ltx, marker=map_marker, wave_unit=unit(cube_fitter.cube.λ[1]))
         end
 
         # Voff and FWHM
@@ -759,7 +766,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(group_name)", "$(name_i).pdf") 
             plot_parameter_map(ustrip.(vpeak), name_i, bunit, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(ustrip(wave_i)),
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
-                line_latex=group_name_ltx, marker=map_marker, wave_unit=unit(cube_fitter.cube.λ[1])) 
+                disable_psfcirc=disable_psfcirc, line_latex=group_name_ltx, marker=map_marker, wave_unit=unit(cube_fitter.cube.λ[1])) 
         end
         if tied_fwhm
             w80 = get_val(param_maps, "lines.$(component_keys[1]).w80")
@@ -768,7 +775,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
             save_path = joinpath("output_$(cube_fitter.name)", "param_maps", "lines", "$(group_name)", "$(name_i).pdf") 
             plot_parameter_map(ustrip.(w80), name_i, bunit, save_path, cube_fitter.cube.Ω, cube_fitter.z, psf_interp(ustrip(wave_i)),
                 cube_fitter.cosmology, cube_fitter.cube.wcs, snr_filter=snr_filter, snr_thresh=snr_thresh,
-                line_latex=group_name_ltx, marker=map_marker, wave_unit=unit(cube_fitter.cube.λ[1])) 
+                disable_psfcirc=disable_psfcirc, line_latex=group_name_ltx, marker=map_marker, wave_unit=unit(cube_fitter.cube.λ[1])) 
         end
         
     end
@@ -780,7 +787,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
     @debug "plot_parameter_maps: plotting reduced chi2 map → $save_path"
     plot_parameter_map(data, name_i, L"$\tilde{\chi}^2$", save_path, cube_fitter.cube.Ω, cube_fitter.z,
         ustrip(median(cube_fitter.cube.psf)), cube_fitter.cosmology, cube_fitter.cube.wcs, marker=map_marker,
-        wave_unit=unit(cube_fitter.cube.λ[1]))
+        disable_psfcirc=disable_psfcirc, wave_unit=unit(cube_fitter.cube.λ[1]))
 
     @debug "plot_parameter_maps: done — all parameter maps written for $(cube_fitter.name)"
     return

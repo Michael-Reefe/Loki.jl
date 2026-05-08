@@ -1217,6 +1217,120 @@ function get_physical_scales(shape::Tuple, Ω::typeof(1.0u"sr"), cosmo::Union{Co
 end
 
 
+"""
+    make_subcube(data, redshift[, xmin, xmax, ymin, ymax, zmin, zmax])
+
+Extract a subcube from a full cube, restricting to a minimum/maximum range in x, y, and z 
+(where z is the wavelength axis).
+"""
+function make_subcube(data::DataCube, redshift::Real,
+                      xmin::Integer=1, xmax::Integer=size(data.I, 1),
+                      ymin::Integer=1, ymax::Integer=size(data.I, 2),
+                      zmin::Integer=1, zmax::Integer=size(data.I, 3))
+    
+    @assert 1 ≤ xmin ≤ size(data.I, 1) "xmin must be in range (1,$(size(data.I,1)))"
+    @assert 1 ≤ xmax ≤ size(data.I, 1) "xmax must be in range (1,$(size(data.I,1)))"
+    @assert 1 ≤ ymin ≤ size(data.I, 2) "ymin must be in range (1,$(size(data.I,2)))"
+    @assert 1 ≤ ymax ≤ size(data.I, 2) "ymax must be in range (1,$(size(data.I,2)))"
+    @assert 1 ≤ zmin ≤ size(data.I, 3) "zmin must be in range (1,$(size(data.I,3)))"
+    @assert 1 ≤ zmax ≤ size(data.I, 3) "zmax must be in range (1,$(size(data.I,3)))"
+
+    @info "Making a sub-cube with slices ($xmin:$xmax,$ymin:$ymax,$zmin:$zmax)"
+
+    # make a deep copy of data so we dont modify any of the original DataCube
+    out_data = deepcopy(data)
+    
+    # modify each attribute in-place
+    out_data.nx   = xmax-xmin+1
+    out_data.ny   = ymax-ymin+1
+    out_data.nz   = zmax-zmin+1
+
+    out_data.λ    = out_data.λ[zmin:zmax]
+    out_data.I    = out_data.I[xmin:xmax, ymin:ymax, zmin:zmax]
+    out_data.σ    = out_data.σ[xmin:xmax, ymin:ymax, zmin:zmax]
+    out_data.mask = out_data.mask[xmin:xmax, ymin:ymax, zmin:zmax]
+    if !isnothing(out_data.psf_model)
+        out_data.psf_model = out_data.psf_model[xmin:xmax, ymin:ymax, zmin:zmax]
+    end
+    out_data.psf = out_data.psf[zmin:zmax]
+    out_data.lsf = out_data.lsf[zmin:zmax]
+
+    # we need to update the WCS to account for the new pixel coordinates
+    if !isnothing(out_data.wcs)
+        out_data.wcs = make_offset_wcs_crpix(out_data.wcs, -(xmin-1), -(ymin-1), -(zmin-1))
+    end
+
+    # if we slice along the wavelength axis, we need to recalculate the spectral region
+    if (zmin != 1) || (zmax != size(data.I, 3))
+
+        restframe_factor = out_data.rest_frame ? 1.0 : 1 / (1 + redshift)
+        λlim = extrema(out_data.λ .* restframe_factor)
+        λrange = get_λrange(λlim)
+
+        new_umask = umask(out_data.spectral_region)
+        umask_to_remove = Int[]
+        for i in eachindex(new_umask)
+            if new_umask[i][2] < minimum(out_data.λ)
+                push!(umask_to_remove, i)
+            end
+            if new_umask[i][1] > maximum(out_data.λ)
+                push!(umask_to_remove, i)
+            end
+        end
+        deleteat!(new_umask, umask_to_remove)
+
+        new_gaps = gaps(out_data.spectral_region)
+        gaps_to_remove = Int[]
+        for i in eachindex(new_gaps)
+            if new_gaps[i][2] < minimum(out_data.λ)
+                push!(gaps_to_remove, i)
+            end
+            if new_gaps[i][1] > maximum(out_data.λ)
+                push!(gaps_to_remove, i)
+            end
+        end
+        deleteat!(new_gaps, gaps_to_remove)
+
+        # calculate new n_channels, ch_bounds, channel_masks
+        new_n_channels = 0
+        new_channel_masks = BitVector[]
+        for i in 1:out_data.spectral_region.n_channels
+            new_mask = out_data.spectral_region.channel_masks[i][zmin:zmax]
+            if sum(new_mask) > 0
+                push!(new_channel_masks, new_mask)
+                new_n_channels += 1
+            end
+        end
+        new_ch_bounds = out_data.spectral_region.ch_bounds[
+            minimum(out_data.λ) .< out_data.spectral_region.ch_bounds .< maximum(out_data.λ)
+        ]
+
+        # new spectral region
+        out_data.spectral_region = SpectralRegion(
+            λlim, new_umask, new_n_channels, new_channel_masks, new_ch_bounds, new_gaps, λrange
+        )
+    end
+
+    out_vorbins = nothing
+    if !isnothing(out_data.voronoi_bins)
+        new_vorbins = out_data.voronoi_bins[xmin:xmax, ymin:ymax]
+        out_vorbins = zeros(size(new_vorbins))
+        # need to remap voronoi bin labels because some may have been completely lost
+        @warn "Voronoi bins were found in the full cube. Their labels will be remapped in the subcube."
+        bin_labels = unique(new_vorbins[new_vorbins .> 0])
+        sort!(bin_labels)
+        for (i, bin_label) in enumerate(bin_labels)
+            # dont modify new_vorbins in-place because the new labels "i" might overlap with some 
+            # old "bin_label" which could mess everything up
+            out_vorbins[new_vorbins .== bin_label] .= i
+        end
+        out_data.voronoi_bins = out_vorbins
+    end
+
+    return out_data
+end
+
+
 ############################## PLOTTING FUNCTIONS ####################################
 
 
@@ -1248,7 +1362,7 @@ See also [`DataCube`](@ref), [`plot_1d`](@ref)
 function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=true, logᵢ::Union{Integer,Nothing}=10,
     logₑ::Union{Integer,Nothing}=nothing, colormap=py_colormap.cubehelix, name::Union{String,Nothing}=nothing, 
     slice::Union{Integer,Nothing}=nothing, z::Union{Real,Nothing}=nothing, cosmo::Union{Cosmology.AbstractCosmology,Nothing}=nothing, 
-    aperture::Union{Aperture.AbstractAperture,Nothing}=nothing)
+    disable_psfcirc::Bool=false, aperture::Union{Aperture.AbstractAperture,Nothing}=nothing)
 
     @debug "Plotting 2D intensity/error map for cube with channel $(data.channel), band $(data.band)"
 
@@ -1319,10 +1433,12 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
             color="w", frameon=false, size_vertical=0.1, label_top=true, bbox_to_anchor=(0.17, 0.1), bbox_transform=ax1.transAxes)
         ax1.add_artist(scalebar_2)
 
-        r = (isnothing(slice) ? median(data.psf) : data.psf[slice]) / pix_as / 2
-        psf = plt.Circle(size(_I) .* (0.93, 0.05) .+ (-r, r), r, color="w")
-        ax1.add_patch(psf)
-        ax1.annotate("PSF", size(_I) .* (0.93, 0.05) .+ (-r, 2.5r + 1.75), ha=:center, va=:center, color="w")    
+        if !disable_psfcirc
+            r = (isnothing(slice) ? median(data.psf) : data.psf[slice]) / pix_as / 2
+            psf = plt.Circle(size(_I) .* (0.93, 0.05) .+ (-r, r), r, color="w")
+            ax1.add_patch(psf)
+            ax1.annotate("PSF", size(_I) .* (0.93, 0.05) .+ (-r, 2.5r + 1.75), ha=:center, va=:center, color="w")    
+        end
 
         if !isnothing(aperture)
             patches = get_patches(aperture)
@@ -1352,10 +1468,12 @@ function plot_2d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
             color="w", frameon=false, size_vertical=0.1, label_top=true, bbox_to_anchor=(0.17, 0.1), bbox_transform=ax2.transAxes)
         ax2.add_artist(scalebar_2)
 
-        r = (isnothing(slice) ? median(data.psf) : data.psf[slice]) / pix_as / 2
-        psf = plt.Circle(size(_σ) .* (0.93, 0.05) .+ (-r, r), r, color="w")
-        ax2.add_patch(psf)
-        ax2.annotate("PSF", size(_σ) .* (0.93, 0.05) .+ (-r, 2.5r + 1.75), ha=:center, va=:center, color="w")    
+        if !disable_psfcirc
+            r = (isnothing(slice) ? median(data.psf) : data.psf[slice]) / pix_as / 2
+            psf = plt.Circle(size(_σ) .* (0.93, 0.05) .+ (-r, r), r, color="w")
+            ax2.add_patch(psf)
+            ax2.annotate("PSF", size(_σ) .* (0.93, 0.05) .+ (-r, 2.5r + 1.75), ha=:center, va=:center, color="w")    
+        end
 
         if !isnothing(aperture)
             patches = get_patches(aperture)
@@ -1916,6 +2034,35 @@ A composition of the many functions for Observation objects that convert the dat
 See [`apply_mask!`](@ref) and [`to_rest_frame!`](@ref)
 """
 correct! = apply_mask! ∘ log_rebin! ∘ to_rest_frame! ∘ deredden! ∘ to_vacuum_wavelength!
+
+
+"""
+    make_subcube(obs[, xmin, xmax, ymin, ymax])
+
+Extract a sub-cube from each DataCube in an observation, restricted to coordinates 
+from (xmin:xmax, ymin:ymax). This requires all cubes in the observation to be projected 
+onto the same coordinate grid.
+"""
+function make_subcube(obs::Observation,
+                      xmin::Integer=1, xmax::Integer=size(first(values(obs.channels)).I, 1),
+                      ymin::Integer=1, ymax::Integer=size(first(values(obs.channels)).I, 2))
+    
+    # make subcubes for each datacube in the observation.
+    # note: this only works if all subcubes are the same size!
+    fsize = size(first(values(obs.channels)).I)
+    size_match = [size(cube.I) == fsize for cube in values(obs.channels)]
+    @assert all(size_match) "Cannot make a subcube of an observation with mismatching DataCube sizes! Project everything onto the same coordinate axis first."
+    
+    new_channels = Dict{Any,DataCube}()
+    for channel in keys(obs.channels)
+        new_channels[channel] = make_subcube(obs.channels[channel], obs.z, xmin, xmax, ymin, ymax)
+    end
+
+    # make a new observation (dont overwrite the old one)
+    return Observation(new_channels, obs.name, obs.z, obs.α, obs.δ, obs.instrument, 
+                       obs.rest_frame, obs.masked, obs.vacuum_wave, obs.log_binned, obs.dereddened,
+                       obs.sky_aligned)
+end
 
 
 #################################### CHANNEL ALIGNMENT AND REPROJECTION ######################################

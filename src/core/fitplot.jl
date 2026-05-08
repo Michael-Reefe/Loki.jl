@@ -624,8 +624,8 @@ automtically using the `name_i` parameter.
 function plot_parameter_map(data::Matrix{Float64}, name_i::String, bunit::AbstractString, save_path::String, Ω::typeof(1.0u"sr"), z::Float64, 
     psf_fwhm::Float64, cosmo::Cosmology.AbstractCosmology, wcs::Union{WCSTransform,Nothing}; snr_filter::Union{Nothing,Matrix{Float64}}=nothing, 
     snr_thresh::Float64=3., abs_thresh::Union{Float64,Nothing}=nothing, cmap=py_colormap.cubehelix, line_latex::Union{String,Nothing}=nothing, 
-    marker::Union{Vector{<:Real},Nothing}=nothing, disable_axes::Bool=true, disable_colorbar::Bool=false, modify_ax=nothing, colorscale_limits=nothing, 
-    custom_bunit::Union{AbstractString,Nothing}=nothing, wave_unit::Union{Unitful.Units,Nothing}=nothing)
+    marker::Union{Vector{<:Real},Nothing}=nothing, disable_axes::Bool=true, disable_psfcirc::Bool=false, disable_colorbar::Bool=false, modify_ax=nothing, 
+    colorscale_limits=nothing, custom_bunit::Union{AbstractString,Nothing}=nothing, wave_unit::Union{Unitful.Units,Nothing}=nothing)
 
     # Overwrite with input if provided
     if !isnothing(custom_bunit)
@@ -746,10 +746,12 @@ function plot_parameter_map(data::Matrix{Float64}, name_i::String, bunit::Abstra
     end
 
     # Add circle for the PSF FWHM
-    r = psf_fwhm / ustrip(pix_as) / 2
-    psf = plt.Circle(size(data) .* (0.93, 0.05) .+ (-r, r), r, color=text_color)
-    ax.add_patch(psf)
-    ax.annotate("PSF", size(data) .* (0.93, 0.05) .+ (-r, 2.5r + 1.75), ha=:center, va=:center, color=text_color)
+    if !disable_psfcirc
+        r = psf_fwhm / ustrip(pix_as) / 2
+        psf = plt.Circle(size(data) .* (0.93, 0.05) .+ (-r, r), r, color=text_color)
+        ax.add_patch(psf)
+        ax.annotate("PSF", size(data) .* (0.93, 0.05) .+ (-r, 2.5r + 1.75), ha=:center, va=:center, color=text_color)
+    end
 
     # Add line label, if applicable
     if !isnothing(line_latex)
