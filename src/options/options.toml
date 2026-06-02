@@ -231,6 +231,13 @@ stellar_template_type = "ssp"
 # Obviously, this only matters if the "stellar_template_type" is set to "ssp"
 [ssps]
 
+# IMF has a few options:
+#    - "salpeter" (default): Slope of -2.35 from 0.08-120 Msun
+#    - "bottom-heavy-1"    : Slope of -3.00 from 0.08-120 Msun
+#    - "bottom-heavy-2"    : Slope of -3.00 from 0.08-1 Msun, -2.35 from 1-120 Msun
+#    - "bottom-heavy-3"    : Slope of -2.97 from 0.08-0.5 Msun, -2.13 from 0.5-1 Msun, -2.35 from 1-120 Msun
+imf = "salpeter"
+
 # (Ages are in Gyr)
 [ssps.age]
 min = 0.001

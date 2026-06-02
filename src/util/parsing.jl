@@ -181,7 +181,8 @@ function parse_options(options_filepath::String)
     options = Dict(Symbol(k) => v for (k, v) ∈ options)
 
     # Convert SSP keys into a nested NamedTuple object
-    options[:ssps] = (age=(min=options[:ssps]["age"]["min"], 
+    options[:ssps] = (imf=options[:ssps]["imf"],
+                      age=(min=options[:ssps]["age"]["min"], 
                            max=options[:ssps]["age"]["max"],
                            num=options[:ssps]["age"]["num"]),
                      logz=(min=options[:ssps]["logz"]["min"],
@@ -457,7 +458,18 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
     @debug "Loading in full resolution stellar templates"
     if template_type == "ssp"
 
-        stellar_templates = FITS(joinpath(@__DIR__, "..", "templates", "ssps", "loki.ssps.fits.gz"))
+        # read the right stellar template file depending on IMF option
+        stellar_templates = if ssp_options.imf == "salpeter"
+            FITS(joinpath(@__DIR__, "..", "templates", "ssps", "loki.ssps.imf-2.35-2.35-2.35.fits.gz"))
+        elseif ssp_options.imf == "bottom-heavy-1"
+            FITS(joinpath(@__DIR__, "..", "templates", "ssps", "loki.ssps.imf-3.00-3.00-3.00.fits.gz"))
+        elseif ssp_options.imf == "bottom-heavy-2"
+            FITS(joinpath(@__DIR__, "..", "templates", "ssps", "loki.ssps.imf-3.00-3.00-2.35.fits.gz"))
+        elseif ssp_options.imf == "bottom-heavy-3"
+            FITS(joinpath(@__DIR__, "..", "templates", "ssps", "loki.ssps.imf-2.97-2.13-2.35.fits.gz"))
+        else
+            error("Unrecognized option for ssps.imf: $(ssp_options.imf)")
+        end
 
         # Read in wavelengths
         ssp_λ0 = read(stellar_templates["AXES"], "WAVE") .* u"angstrom"
