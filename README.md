@@ -33,6 +33,14 @@
 ---
 ## Changelog
 
+### 06/19/26
+
+Updates: New SSPs are now available at non-Salpeter IMFs.  The IMF can be changed with the "imf" option in options.toml.
+
+Bugfixes: Adjusted how polynomials are calculated.  Before, wavelengths were simply remapped to x values in the range -1 to 1, but the remapping did not preserve a linear relationship between lambda and x.  This is technically not problematic if the model is always evaluated on the same wavelength grid, but it can be otherwise.  Therefore, the mapping has been updated to preserve linearity between lambda and x.  Please note that this means any polynomial coefficients for models evaluated with older versions of Loki will no longer be accurate for the new version.
+
+Small tweaks: Adjusted how emission line masking works such that during continuum fitting they are only interpolated over if the user is not fitting a stellar continuum.  This is important for preserving stellar absorption.  This was done before as well, but it was done regardless of whether the user was fitting a stellar continuum or not, which could lead to fitting instabilities if fitting, for example, a pure polynomial continuum to data with a bunch of gaps in it.
+
 ### 05/08/26
 
 Added a new utility function "make_subcube" for extracting sub-cubes from DataCubes.  Use this to, for example, extract small regions of interest in your data cube and fit them with different models to your full cube.  The syntax is simple, just specify lower and upper limits in the x and y pixel dimensions:

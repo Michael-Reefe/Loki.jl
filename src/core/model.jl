@@ -137,7 +137,8 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
     # Additive polynomials 
     if cube_fitter.apoly_degree ≥ 0
         coeffs = params[pᵢ:pᵢ+cube_fitter.apoly_degree]
-        x = range(-1., 1., length=length(λ))
+        # rescale wavelengths to range from -1 to +1
+        x = ustrip.(-1.0 .+ 2.0 ./ (s.λ[end].-s.λ[1]) .* (s.λ.-s.λ[1]))
         if cube_fitter.apoly_type == :Legendre
             comps["apoly"] = Legendre(coeffs).(x)
         elseif cube_fitter.apoly_type == :Chebyshev
@@ -158,7 +159,8 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
     comps["mpoly"] = ones(out_type, length(λ))
     if cube_fitter.mpoly_degree ≥ 1
         coeffs = [1.0; params[pᵢ:pᵢ+cube_fitter.mpoly_degree-1]]
-        x = range(-1., 1., length=length(λ))
+        # rescale wavelengths to range from -1 to +1
+        x = ustrip.(-1.0 .+ 2.0 ./ (s.λ[end].-s.λ[1]) .* (s.λ.-s.λ[1]))
         if cube_fitter.mpoly_type == :Legendre 
             comps["mpoly"] .= Legendre(coeffs).(x)
         elseif cube_fitter.mpoly_type == :Chebyshev 
@@ -371,7 +373,8 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
     # Additive polynomials 
     if cube_fitter.apoly_degree ≥ 0
         coeffs = params[pᵢ:pᵢ+cube_fitter.apoly_degree]
-        x = range(-1., 1., length=length(λ))
+        # rescale wavelengths to range from -1 to +1
+        x = ustrip.(-1.0 .+ 2.0 ./ (s.λ[end].-s.λ[1]) .* (s.λ.-s.λ[1]))
         if cube_fitter.apoly_type == :Legendre
             contin .+= clamp.(Legendre(coeffs).(x), 0., Inf)
         elseif cube_fitter.apoly_type == :Chebyshev
@@ -389,7 +392,8 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
     mpoly = ones(out_type, length(λ))
     if cube_fitter.mpoly_degree ≥ 1
         coeffs = [1.0; params[pᵢ:pᵢ+cube_fitter.mpoly_degree-1]]
-        x = range(-1., 1., length=length(λ))
+        # rescale wavelengths to range from -1 to +1
+        x = ustrip.(-1.0 .+ 2.0 ./ (s.λ[end].-s.λ[1]) .* (s.λ.-s.λ[1]))
         if cube_fitter.mpoly_type == :Legendre 
             mpoly .= Legendre(coeffs).(x)
         elseif cube_fitter.mpoly_type == :Chebyshev 

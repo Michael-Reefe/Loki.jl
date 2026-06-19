@@ -83,9 +83,10 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter; init::Boo
     # Create a copy of the original intensity vector so that we can replace it at the end after doing the line fitting
     s = copy(spaxel)
     # Interpolate over the MIR emission lines
-    interpolate_over_lines!(s, 7)
+    interpolate_over_lines!(s, 7, fit_options(cube_fitter).fit_stellar_continuum)
     # Get a mask that excludes bad pixels, optical emission lines, and the user mask
-    spaxel_mask = .~get_vector_mask(s; lines=true, user_mask=cube_fitter.cube.spectral_region.mask)
+    spaxel_mask = .~get_vector_mask(s; lines=fit_options(cube_fitter).fit_stellar_continuum, 
+                                    user_mask=cube_fitter.cube.spectral_region.mask)
 
     # Get the priors and "locked" booleans for each parameter, split up by the 2 steps for the continuum fit
     pnames, plims, plock, tied_pairs, tied_indices, tie_vec = get_continuum_parameter_limits(cube_fitter, 
@@ -206,9 +207,10 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter, split_fla
     # Create a copy of the original intensity vector so that we can replace it at the end after doing the line fitting
     s = copy(spaxel)
     # Interpolate over the MIR emission lines
-    interpolate_over_lines!(s, 7)
+    interpolate_over_lines!(s, 7, fit_options(cube_fitter).fit_stellar_continuum)
     # Get a mask that excludes bad pixels, optical emission lines, and the user mask
-    spaxel_mask = .~get_vector_mask(s; lines=true, user_mask=cube_fitter.cube.spectral_region.mask)
+    spaxel_mask = .~get_vector_mask(s; lines=fit_options(cube_fitter).fit_stellar_continuum, 
+                                    user_mask=cube_fitter.cube.spectral_region.mask)
 
     # Split up the initial parameter vector into the components that we need for each fitting step
     pnames_1, pnames_2, plims_1, plims_2, lock_1, lock_2, tied_pairs, tied_indices, tie_1, tie_2 = 
@@ -1096,7 +1098,8 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, coords::Cart
     # cube_data.σ[coords, :] .= spax.σ .* spax.N
 
     # Check that there is enough data within the masked region
-    spaxel_mask = .~get_vector_mask(spax; lines=true, user_mask=cube_fitter.cube.spectral_region.mask)
+    spaxel_mask = .~get_vector_mask(spax; lines=fit_options(cube_fitter).fit_stellar_continuum, 
+                                    user_mask=cube_fitter.cube.spectral_region.mask)
     if length(spax.I[spaxel_mask]) < (cube_fitter.n_params_cont + cube_fitter.n_params_lines)
         @debug "The masked region is too small to contain enough data to fit! Not fitting spaxel $coords"
         return nothing, nothing, nothing

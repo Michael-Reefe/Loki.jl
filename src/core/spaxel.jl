@@ -105,7 +105,7 @@ end
 
 Fills in the data where the emission lines are with linear interpolation of the continuum.
 """
-function interpolate_over_lines!(s::Spaxel, scale::Integer)
+function interpolate_over_lines!(s::Spaxel, scale::Integer, fit_stellar_continuum::Bool)
 
     # Make coarse knots to perform a smooth interpolation across any gaps of NaNs in the data
     λknots = s.λ[.~s.mask_lines][(1+scale):scale:(length(s.λ[.~s.mask_lines])-scale)]
@@ -120,7 +120,10 @@ function interpolate_over_lines!(s::Spaxel, scale::Integer)
     # However, in the infrared, there is no stellar absorption.  But there are PAH emission features,
     # which sometimes may be fit with amplitudes too large if they fall on top of a masked region due
     # to a line. So here, it's better to interpolate over the lines.
-    mask_ir = s.mask_lines .& (s.λ .≥ 3.0u"μm")
+    mask_ir = s.mask_lines 
+    if fit_stellar_continuum
+        mask_ir .&= (s.λ .≥ 3.0u"μm")
+    end
 
     # Replace the masked lines with a linear interpolation
     if (sum(mask_ir) > 0) & (length(λknots) > 0)
