@@ -120,7 +120,7 @@ function interpolate_over_lines!(s::Spaxel, scale::Integer, fit_stellar_continuu
     # However, in the infrared, there is no stellar absorption.  But there are PAH emission features,
     # which sometimes may be fit with amplitudes too large if they fall on top of a masked region due
     # to a line. So here, it's better to interpolate over the lines.
-    mask_ir = s.mask_lines 
+    mask_ir = copy(s.mask_lines)
     if fit_stellar_continuum
         mask_ir .&= (s.λ .≥ 3.0u"μm")
     end
