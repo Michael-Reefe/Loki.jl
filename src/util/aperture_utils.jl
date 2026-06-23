@@ -123,6 +123,8 @@ function make_aperture(cube::DataCube, ap_type::Symbol, ra::Union{String,Real}, 
         coords = ICRSCoords
     elseif frame == "fk5"
         coords = FK5Coords
+    else
+        error("Unrecognized coordinate frame: $(frame)")
     end
 
     # Dictionary mapping symbols to aperture types
@@ -146,7 +148,7 @@ function make_aperture(cube::DataCube, ap_type::Symbol, ra::Union{String,Real}, 
     angle = atan(dy, dx) |> rad2deg  # rotation angle in degrees
 
     # Convert parameters to pixel units
-    pix_params = [params...]
+    pix_params = float.([params...])
     if length(params) == 1
         pix_params[1] *= pixscale
     elseif length(params) == 3
@@ -160,7 +162,8 @@ function make_aperture(cube::DataCube, ap_type::Symbol, ra::Union{String,Real}, 
         mask = trues(size(data))
         p0 = round.(Int, [x_cent, y_cent])
         box_half = fld(box_size, 2)
-        mask[p0[1]-box_half:p0[1]+box_half, p0[2]-box_half:p0[2]+box_half] .= 0
+        mask[max(1,p0[1]-box_half):min(size(mask,1),p0[1]+box_half), 
+             max(1,p0[2]-box_half):min(size(mask,2),p0[2]+box_half)] .= 0
 
         # Find the centroid using a center-of-mass estimation
         x_cent, y_cent = centroid_com(data, mask)

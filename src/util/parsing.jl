@@ -398,8 +398,8 @@ function read_dust_κ(x::Real, y::Real, a::QLength, λunit::Unitful.Units)
     a_cm = uconvert(u"cm", a)  # convert a from μm to cm
 
     # Read in the Qabs/Qsca arrays
-    q_abs_oli = readdlm(joinpath(@__DIR__, "..", "templates", "dorschner_qabs_oli_$(y)_$(a).txt"), ' ', Float64, '\n')[:,1]
-    q_abs_pyr = readdlm(joinpath(@__DIR__, "..", "templates", "dorschner_qabs_pyr_$(x)_$(a).txt"), ' ', Float64, '\n')[:,1]
+    q_abs_oli = readdlm(joinpath(@__DIR__, "..", "templates", "dorschner_qabs_oli_$(y)_$(ustrip(a)).txt"), ' ', Float64, '\n')[:,1]
+    q_abs_pyr = readdlm(joinpath(@__DIR__, "..", "templates", "dorschner_qabs_pyr_$(x)_$(ustrip(a)).txt"), ' ', Float64, '\n')[:,1]
 
     # Convert absorption efficiencies into mass absorption coefficients (cm^2/g)
     κ_abs_oli = @. 3 * q_abs_oli / (4 * a_cm * ρ_oli)
@@ -516,7 +516,7 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
                 end
                 fpath = joinpath(@__DIR__, "..", "templates", "single_stars", "powr", "loki.single_star_wc_z$(zwr).fits.gz")
                 if isfile(fpath)
-                    @debug "Reading $path"
+                    @debug "Reading $fpath"
                     push!(stellar_templates, FITS(fpath))
                 end
                 fpath = joinpath(@__DIR__, "..", "templates", "single_stars", "powr", "loki.single_star_wn_z$(zwr).fits.gz")
@@ -644,7 +644,7 @@ function generate_stellar_populations(λ::Vector{<:QWave}, intensity_units::Unit
         gt_mask = (stars_options.logg.min .≤ logg_in .≤ stars_options.logg.max) .&
                   (stars_options.teff.min .≤ (10 .^ logt_in) .≤ stars_options.teff.max)
         ssp_templates_in = ssp_templates_in[gt_mask,:]
-        @assert size(ssp_templates_in, 2) > 0 "No stellar templates exist within the specified Teff, logg, logz, and alpha ranges!"
+        @assert size(ssp_templates_in, 1) > 0 "No stellar templates exist within the specified Teff, logg, logz, and alpha ranges!"
 
         ages_in = ages_out = ones(size(ssp_templates_in, 1)) .* NaN .* u"Gyr"
         logzs_in = logzs_out = [NaN]
@@ -865,7 +865,7 @@ function generate_feii_templates(λ::Vector{<:QWave}, intensity_units::Unitful.U
 
     # if the input flux units are not per wavelength, we need to convert the templates
     # (the templates are normalized, but in per-wavelength units, so they still need to be converted)
-    if typeof(intensity_units) <: QPerFreq
+    if typeof(1.0*intensity_units) <: QPerFreq
         na_feii_temp = ustrip.(fluxconvert.(na_feii_temp .* u"erg/s/cm^2/angstrom", feii_lnλ))
         br_feii_temp = ustrip.(fluxconvert.(br_feii_temp .* u"erg/s/cm^2/angstrom", feii_lnλ))
         # (the normalization doesnt matter because it's divided out later)

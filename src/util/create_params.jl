@@ -633,7 +633,7 @@ function check_tied_kinematics!(lines::Dict, prefix::String, line::String, kinem
                                 @debug "Overriding $param limits for $line in group $group"
                                 units = unit(fit_profiles[1].fit_parameters[ind].value)
                                 set_plim!(fit_profiles[1].fit_parameters[ind], 
-                                          (lines["parameters"][line][param]["plim"]...,) .* units)
+                                          (lines["parameters"][group][param]["plim"]...,) .* units)
                             end
                             if haskey(lines["parameters"][group][param], "locked")
                                 @debug "Overriding $param locked value for $line in group $group"
@@ -646,7 +646,7 @@ function check_tied_kinematics!(lines::Dict, prefix::String, line::String, kinem
                             if haskey(lines["parameters"][group][param], "val")
                                 @debug "Overriding $param initial value for $line"
                                 units = unit(fit_profiles[1].fit_parameters[ind].value)
-                                set_val!(fit_profiles[1].fit_parameters[ind], lines["parameters"][line][param]["val"] * units)
+                                set_val!(fit_profiles[1].fit_parameters[ind], lines["parameters"][group][param]["val"] * units)
                             end 
                         end
                     end       
@@ -685,7 +685,7 @@ function check_acomp_tied_kinematics!(lines::Dict, prefix::String, line::String,
                     end
                     # Check if fwhm should be tied
                     push!(params, "fwhm")
-                    if haskey(lines, "tie_acomp_$(j)_fwhm_" * group) && lines["tie_acomp_$(j)_fwhm_" * group]
+                    if haskey(lines, "tie_acomp_$(j)_fwhm_" * group) && !lines["tie_acomp_$(j)_fwhm_" * group]
                         pop!(params)
                     end
 
@@ -709,22 +709,22 @@ function check_acomp_tied_kinematics!(lines::Dict, prefix::String, line::String,
                             if haskey(lines["parameters"][group], param_key)
                                 if haskey(lines["parameters"][group][param_key][j], "plim")
                                     @debug "Overriding $param_key $j limits for $line in group $group"
-                                    units = unit(fit_profiles[1].fit_parameters[ind])
-                                    set_plim!(fit_profiles[1].fit_parameters[ind], 
-                                              (lines["parameters"][line][param_key][j]["plim"]...,) .* units)
+                                    units = unit(fit_profiles[j+1].fit_parameters[ind].value)
+                                    set_plim!(fit_profiles[j+1].fit_parameters[ind], 
+                                              (lines["parameters"][group][param_key][j]["plim"]...,) .* units)
                                 end
                                 if haskey(lines["parameters"][group][param_key][j], "locked")
                                     @debug "Overriding $param_key $j locked value for $line in group $group"
                                     if lines["parameters"][group][param_key][j]["locked"]
-                                        lock!(fit_profiles[1].fit_parameters[ind])
+                                        lock!(fit_profiles[j+1].fit_parameters[ind])
                                     else
-                                        unlock!(fit_profiles[1].fit_parameters[ind])
+                                        unlock!(fit_profiles[j+1].fit_parameters[ind])
                                     end
                                 end
                                 if haskey(lines["parameters"][group][param_key][j], "val")
                                     @debug "Overriding $param initial value for $line"
-                                    units = unit(fit_profiles[1].fit_parameters[ind])
-                                    set_val!(fit_profiles[1].fit_parameters[ind], lines["parameters"][line][param_key][j]["val"] * units)
+                                    units = unit(fit_profiles[j+1].fit_parameters[ind].value)
+                                    set_val!(fit_profiles[j+1].fit_parameters[ind], lines["parameters"][group][param_key][j]["val"] * units)
                                 end 
                             end
                         end    
@@ -833,7 +833,7 @@ function default_line_parameters(out::Dict, lines::Dict, λunit::Unitful.Units, 
         nptrans = [out[:lines_allow_negative] ? Transformation[] : [LogTransform], [RestframeTransform], Transformation[]]
         nonfit_parameters = NonFitParameters(npnames, nplabels, nptrans, nparams)
 
-        push!(profs, FitProfile(profile, fit_parameters, nonfit_parameters))
+        push!(profs, FitProfile(all_profiles[component], fit_parameters, nonfit_parameters))
     end
 
     funit = u"erg/s/cm^2"

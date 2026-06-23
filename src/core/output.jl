@@ -62,7 +62,7 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
         stellar_vals = nothing
         results_stellar = nothing
         if fopt.fit_stellar_continuum
-            fname = !isnothing(cube_fitter.cube.voronoi_bins) ? "voronoi_bin_$(index[1])" : "spaxel_$(index[1])_$(index[2])"
+            fname = !isnothing(cube_fitter.cube.voronoi_bins) ? "voronoi_bin_$(data_index)" : "spaxel_$(index[1])_$(index[2])"
             @debug "assign_outputs: loading stellar binary $fname.ssp"
             results_stellar = deserialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.ssp"))
             stellar_vals = Array{Quantity{Float64}}(undef, 1+2np_ssp)
@@ -101,7 +101,7 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
             # Get the values
             if pᵢ ≤ size(out_params, 3)
                 val = out_params[index, pᵢ]
-                err_upp, err_low = out_errs[index, pᵢ, 1:2]
+                err_low, err_upp = out_errs[index, pᵢ, 1:2]
             else
                 @assert fopt.fit_stellar_continuum 
                 val = stellar_vals[pᵢ-size(out_params, 3)]
@@ -226,7 +226,7 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
             cube_model.model[:, index] .= I_model .* restframe_factor
             cube_model.extinction_stars[:, index] .= comps["total_extinction_stars"]
             cube_model.extinction_gas[:, index] .= comps["total_extinction_gas"]
-            if fopt.extinction_curve == "decompose"
+            if fopt.silicate_absorption == "decompose"
                 cube_model.absorption_silicates[:, index, 1] .= comps["absorption_oli"]
                 cube_model.absorption_silicates[:, index, 2] .= comps["absorption_pyr"]
                 cube_model.absorption_silicates[:, index, 3] .= comps["absorption_for"]
@@ -321,7 +321,7 @@ function assign_qso3d_outputs(param_maps::ParamMaps, cube_model::CubeModel, cube
         # convert to an index
         w = argmin(abs.(cube_fitter.cube.λ .- λi))
         dont_log = (namelist[1] == "lines") && fopt.lines_allow_negative
-        amp_factor = contains(name, "amp") ? n_pix[k] : 1.
+        amp_factor = contains(name, "amp") ? n_pix[w] : 1.
         # intensities need an extra conversion factor
         # (because the intensities recorded in param_maps are over the whole FOV
         #  whereas these intensities are over single spaxels: area_FOV / area_spaxel = number of spaxels)
@@ -343,7 +343,7 @@ function assign_qso3d_outputs(param_maps::ParamMaps, cube_model::CubeModel, cube
     cube_model_3d.model .= extendp(cube_model.model[:,1,1], _shape) .* psf_norm_p
     cube_model_3d.extinction_stars .= cube_model.extinction_stars[:,1,1] 
     cube_model_3d.extinction_gas .= cube_model.extinction_gas[:,1,1]
-    if fopt.extinction_curve == "decompose"
+    if fopt.silicate_absorption == "decompose"
         cube_model_3d.absorption_silicates[:,:,:,1] .= cube_model.absorption_silicates[:,1,1,1]
         cube_model_3d.absorption_silicates[:,:,:,2] .= cube_model.absorption_silicates[:,1,1,2]
         cube_model_3d.absorption_silicates[:,:,:,3] .= cube_model.absorption_silicates[:,1,1,3]
@@ -455,19 +455,19 @@ function plot_multiline_parameters(cube_fitter::CubeFitter, param_maps::ParamMap
             # Get the minimum/maximum for the color scale based on the combined dataset
             vmin, vmax = 0., 0.
             if parameter == "flux" && plot_total
-                vmin = quantile([0.; total_flux[isfinite.(total_flux) .& (snr_filter .> 3)]], 0.01)
-                vmax = quantile([0.; total_flux[isfinite.(total_flux) .& (snr_filter .> 3)]], 0.99)
+                vmin = quantile([0.; total_flux[isfinite.(total_flux) .& (snr_filter .> snr_thresh)]], 0.01)
+                vmax = quantile([0.; total_flux[isfinite.(total_flux) .& (snr_filter .> snr_thresh)]], 0.99)
             elseif parameter == "eqw" && plot_total
-                vmin = quantile([0.; total_eqw[isfinite.(total_eqw) .& (snr_filter .> 3)]], 0.01)
-                vmax = quantile([0.; total_eqw[isfinite.(total_eqw) .& (snr_filter .> 3)]], 0.99)
+                vmin = quantile([0.; total_eqw[isfinite.(total_eqw) .& (snr_filter .> snr_thresh)]], 0.01)
+                vmax = quantile([0.; total_eqw[isfinite.(total_eqw) .& (snr_filter .> snr_thresh)]], 0.99)
             else
                 # Each element of 'minmax' is a tuple with the minimum and maximum for that spaxel
                 minmax = dropdims(nanextrema(ustrip.(get_val(param_maps, ["lines.$comp.$parameter" for comp in component_keys])), 
                     dims=3), dims=3)
                 mindata = [m[1] for m in minmax]
                 maxdata = [m[2] for m in minmax]
-                mask1 = isfinite.(mindata) .& (snr_filter .> 3)
-                mask2 = isfinite.(maxdata) .& (snr_filter .> 3)
+                mask1 = isfinite.(mindata) .& (snr_filter .> snr_thresh)
+                mask2 = isfinite.(maxdata) .& (snr_filter .> snr_thresh)
                 if sum(mask1) > 0 && sum(mask2) > 0
                     vmin = quantile(mindata[mask1], 0.01)
                     vmax = quantile(maxdata[mask2], 0.99)
@@ -674,7 +674,7 @@ function plot_parameter_maps(cube_fitter::CubeFitter, param_maps::ParamMaps; snr
     end
 
     # Calculate a tau_9.7 map if using the "decompose" method
-    if fopt.extinction_curve == "decompose"
+    if fopt.silicate_absorption == "decompose"
         N_oli = exp10.(get_val(param_maps, "extinction.N_oli"))
         N_oli[.~isfinite.(N_oli)] .= 0.
         N_pyr = exp10.(get_val(param_maps, "extinction.N_pyr"))
@@ -1103,7 +1103,7 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
     for (index, param_data) ∈ enumerate([param_maps.data, param_maps.err_upp, param_maps.err_low])
 
         FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_$(nuc_temp_fit ? "nuc_" : "")parameter_" * 
-            ("maps", "errs_low", "errs_upp")[index] * "$(qso3d ? "_3d" : "").fits"), "w") do f
+            ("maps", "errs_upp", "errs_low")[index] * "$(qso3d ? "_3d" : "").fits"), "w") do f
 
             @debug "Writing 2D parameter map FITS HDUs"
 
@@ -1134,6 +1134,13 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
     @debug "write_fits: done — parameter map FITS files written for $(cube_fitter.name)"
 end
 
+
+function model_wavelength_grid(cube_fitter::CubeFitter, λ_data::Vector{<:QWave})
+    length(cube_fitter.spectral_region.gaps) == 0 && return λ_data
+    logscale = λ_data[2] / λ_data[1]
+    nλ = floor(Int, log(λ_data[end] / λ_data[1]) / log(logscale))
+    λ_data[1] .* logscale .^ collect(0:nλ)
+end
 
 # Helper function for writing the output for a MIR cube model
 function write_fits_full_model(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel,
@@ -1185,7 +1192,7 @@ function write_fits_full_model(cube_fitter::CubeFitter, cube_data::NamedTuple, c
 
         write(f, Float32.(permutedims(cube_model.extinction_stars, (2,3,1))); name="EXTINCTION.STARS") # Stellar extinction
         write(f, Float32.(permutedims(cube_model.extinction_gas, (2,3,1))); name="EXTINCTION.GAS")     # Gas extinction
-        ext_names = fopt.extinction_curve == "decompose" ? 
+        ext_names = fopt.silicate_absorption == "decompose" ? 
             ["EXTINCTION.ABS_OLIVINE", "EXTINCTION.ABS_PYROXENE", "EXTINCTION.ABS_FORSTERITE"] : 
             ["EXTINCTION.ABS_SILICATES"]
         for r ∈ axes(cube_model.absorption_silicates, 4)                                               # Silicate absorption
@@ -1255,9 +1262,19 @@ function write_fits_full_model(cube_fitter::CubeFitter, cube_data::NamedTuple, c
             @debug "write_fits_full_model: no Voronoi bins HDU to write"
         end
 
-        write(f, ["wave"], [reshape(ustrip.(cube_data.λ) .* (1 .+ cube_fitter.z), (1, length(cube_data.λ), 1))],  # wavelength vector
+        # DATA grid
+        write(f, ["wave"], [reshape(ustrip.(cube_data.λ) .* (1 .+ cube_fitter.z), (1, length(cube_data.λ), 1))],
             hdutype=TableHDU, name="WAVELENGTH", units=Dict(:wave => λunit))
         write_key(f["WAVELENGTH"], "TDIM2", "(1,$(length(cube_data.λ)))", "Wavetable dimension")
+
+        # MODEL grid -- equal to the data grid unless gaps put the model on a finer log grid (and the qso3d
+        # model, which is built on the data grid).
+        n_model = size(cube_model.model, 1)
+        model_λ = n_model == length(cube_data.λ) ? cube_data.λ : model_wavelength_grid(cube_fitter, cube_data.λ)
+        @assert length(model_λ) == n_model "model wavelength grid ($(length(model_λ))) ≠ MODEL axis length ($n_model)"
+        write(f, ["wave"], [reshape(ustrip.(model_λ) .* (1 .+ cube_fitter.z), (1, length(model_λ), 1))],
+            hdutype=TableHDU, name="WAVELENGTH_MODEL", units=Dict(:wave => λunit))
+        write_key(f["WAVELENGTH_MODEL"], "TDIM2", "(1,$(length(model_λ)))", "Wavetable dimension")
     end
     @debug "write_fits_full_model: done — 3D model FITS written for $(cube_fitter.name)"
 end

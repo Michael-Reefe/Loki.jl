@@ -113,7 +113,7 @@ function plot_spaxel_fit_plotly(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_
                 line=Dict(:color => "black", :width => 0.5, :dash => "dash"), name="Pyroxene Absorption", yaxis="y2")])
         elseif comp == "absorption_for"
             append!(traces, [PlotlyJS.scatter(x=λ_model, y=ustrip.(comps[comp]), mode="lines", 
-                line=Dict(:color => "black", :width => 0.5, :dash => "dash"), name="Forsterite Absorption", yaixs="y2")])
+                line=Dict(:color => "black", :width => 0.5, :dash => "dash"), name="Forsterite Absorption", yaxis="y2")])
         elseif comp == "mpoly"
             append!(traces, [PlotlyJS.scatter(x=λ_model, y=ustrip.(comps[comp]), mode="lines",
                 line=Dict(:color => "brown", :width => 0.5, :dash => "dash"), name="Multiplicative Polynomial", yaxis="y2")])
@@ -292,7 +292,7 @@ function plot_spaxel_fit_pyplot(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_
     if !logy || !isnothing(range)
         min_inten = (sum((I ./ norm .* factor_data) .< 0.0) > (length(λ_data)/10)) ? -2nanstd(I ./ norm .* factor_data) : 0.0
     else
-        min_inten = 0.1nanminimum(I[I .> 0.0*Nunit] ./ norm .* factor_data)
+        min_inten = 0.1nanminimum(I[I .> 0.0*Nunit] ./ norm .* factor_data[I .> 0.0*Nunit])
     end
 
     if !logy || !isnothing(range)
@@ -325,6 +325,7 @@ function plot_spaxel_fit_pyplot(cube_fitter::CubeFitter, spaxel::Spaxel, spaxel_
 
     if (max_inten < 1) && (norm ≠ 1.0Iunit)
         norm /= 10
+        min_inten *= 10
         max_inten *= 10
         max_resid *= 10
         min_resid *= 10

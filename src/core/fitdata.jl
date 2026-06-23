@@ -34,7 +34,7 @@ function fill_bad_pixels(I::Vector{<:Number}, σ::Vector{<:Number}, templates::U
     end
     if !isfinite(I[end])
         i = findfirst(isfinite, I[end:-1:1])
-        I[end] = I[i]
+        I[end] = I[end:-1:1][i]
     end
     if !isfinite(σ[1])
         i = findfirst(isfinite, σ)
@@ -42,7 +42,7 @@ function fill_bad_pixels(I::Vector{<:Number}, σ::Vector{<:Number}, templates::U
     end
     if !isfinite(σ[end])
         i = findfirst(isfinite, σ[end:-1:1])
-        σ[end] = σ[i]
+        σ[end] = σ[end:-1:1][i]
     end
     if !isnothing(templates)
         for s in axes(templates, 2)
@@ -52,7 +52,7 @@ function fill_bad_pixels(I::Vector{<:Number}, σ::Vector{<:Number}, templates::U
             end
             if !isfinite(templates[end,s])
                 i = findfirst(isfinite, templates[end:-1:1,s])
-                templates[end,s] = templates[i,s]
+                templates[end,s] = templates[end:-1:1,s][i]
             end
         end
     end
@@ -475,7 +475,7 @@ function create_cube_data(cube_fitter::CubeFitter, shape::Tuple)
             σ_vorbin[n, .~isfinite.(σ_vorbin[n, :])] .= nanmedian(ustrip.(σ_vorbin[n, isfinite.(σ_vorbin[n, :])]))*unit(cube_data.σ[1])
             for s in 1:cube_fitter.n_templates
                 template_vorbin[n, :, s] ./= length(w)
-                template_vorbin[n, .~isfinite.(template_vorbin), s] .= 0*unit(cube_fitter.templates[n, 1, s])
+                template_vorbin[n, .~isfinite.(template_vorbin[n, :, s]), s] .= 0*unit(cube_fitter.templates[n, 1, s])
             end
         end
         cube_data = (λ=cube_fitter.cube.λ, I=I_vorbin, σ=σ_vorbin, area_sr=area_vorbin, templates=template_vorbin)

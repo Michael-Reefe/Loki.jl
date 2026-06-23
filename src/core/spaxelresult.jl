@@ -48,8 +48,8 @@ end
 
 
 # Function for nicely printing out results
-function pretty_print_results(result::SpaxelFitResult; round::Bool=false)
-    @debug "pretty_print_results: n_params=$(length(result.pnames)), round=$round, n_locked=$(sum(result.plock))"
+function pretty_print_results(result::SpaxelFitResult; do_round::Bool=false)
+    @debug "pretty_print_results: n_params=$(length(result.pnames)), do_round=$do_round, n_locked=$(sum(result.plock))"
     # prettify locked and tied vectors
     locked = ifelse.(result.plock, "yes", "")
     tie_groups = Vector{String}([!isnothing(tie) ? string(tie.group) : "" for tie in result.ptie])
@@ -61,7 +61,7 @@ function pretty_print_results(result::SpaxelFitResult; round::Bool=false)
     _unit = [_ui == "NoUnits" ? "" : _ui for _ui in _unit]
 
     round_to_digits(x, y) = y ≤ 0. || !isfinite(y) ? x : round(x, digits=-Int(floor(log10(y))))
-    if round
+    if do_round
         _perr_l = round.(_perr_l, sigdigits=1)       # rounds the errors to 1 significant figure 
         _perr_u = round.(_perr_u, sigdigits=1)       # rounds the errors to 1 significant figure 
         _popt_temp = round_to_digits.(_popt, _perr_l)     # rounds the values to match the number of significant figures that the errors have

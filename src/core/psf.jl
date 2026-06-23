@@ -80,7 +80,8 @@ function generate_psf_model!(cube::DataCube, instrument::String, psf_model_dir::
         @debug "Shifting the centroids for $objname to match the observations"
         data_ref2d = dropdims(nansum(ustrip(cube.I), dims=3), dims=3)
         _, mx = findmax(data_ref2d)
-        c1 = centroid_com(data_ref2d[mx[1]-5:mx[1]+5, mx[2]-5:mx[2]+5]) .+ (mx.I .- 5) .- 1
+        c1 = centroid_com(data_ref2d[max(1,mx[1]-5):min(size(data_ref2d,1),mx[1]+5), 
+            max(1,mx[2]-5):min(size(data_ref2d,2),mx[2]+5)]) .+ (mx.I .- 5) .- 1
 
         data2d = dropdims(nansum(data, dims=3), dims=3)
         data2d[data2d .< 0] .= 0.
@@ -123,7 +124,8 @@ function generate_psf_model!(cube::DataCube, instrument::String, psf_model_dir::
         data2d = dropdims(nansum(data, dims=3), dims=3)
         data2d[data2d .< 0] .= 0.
         _, mx2 = findmax(data2d)
-        c2 = centroid_com(data2d[mx2[1]-5:mx2[1]+5, mx2[2]-5:mx2[2]+5]) .+ (mx2.I .- 5) .- 1
+        c2 = centroid_com(data2d[max(1,mx2[1]-5):min(size(data2d,1),mx2[1]+5), 
+            max(1,mx2[2]-5):min(size(data2d,2),mx2[2]+5)]) .+ (mx2.I .- 5) .- 1
         dx = c1 .- c2
         
         data_shift = zeros(eltype(data), size(data))
@@ -204,7 +206,8 @@ function generate_psf_model!(obs::Observation, psf_model_dir::String=""; interpo
 
         data2d = dropdims(nansum(ustrip(obs.channels[:B4].I), dims=3), dims=3)
         _, mx = findmax(data2d)
-        c1 = centroid_com(data2d[mx[1]-5:mx[1]+5, mx[2]-5:mx[2]+5]) .+ (mx.I .- 5) .- 1
+        c1 = centroid_com(data2d[max(1,mx[1]-5):min(size(data2d,1),mx[1]+5), 
+            max(1,mx[2]-5):min(size(data2d,2),mx[2]+5)]) .+ (mx.I .- 5) .- 1
 
         psf = obs.channels[:C4].psf_model
         psf2d = dropdims(nansum(psf, dims=3), dims=3)

@@ -150,6 +150,8 @@ mutable struct DataCube{T<:Vector{<:QWave}, S<:Array{<:QSIntensity, 3}}
         elseif dimension(I_unit) == u"𝐌*𝐋^-1*𝐓^-3"
             λ_unit = string(unit(λ[1]))
             new_I_unit = uparse("erg*s^-1*cm^-2*$(λ_unit)^-1*sr^-1"; unit_context=[Unitful, UnitfulAstro])
+        else
+            error("Intensities must be given in units that are convertible to erg/s/cm2/Hz/sr or erg/s/cm2/Ang/sr")
         end
         I = uconvert.(new_I_unit, I)
         σ = uconvert.(new_I_unit, σ)
@@ -516,7 +518,7 @@ function from_data(Ω::typeof(1.0u"sr"), z::Real, λ::AbstractVector{<:Quantity}
     end
     _psf = Float64.(_psf)
 
-    # if no spectral resolution FWHM is given, assume that it's the size of 6 pixels
+    # if no spectral resolution FWHM is given, assume that it's the size of 3 pixels
     _R = R
     if isnothing(R)
         _R = _λ ./ (3 .* [_λ[2]-_λ[1]; diff(_λ)])
@@ -546,7 +548,9 @@ function from_data(Ω::typeof(1.0u"sr"), z::Real, λ::AbstractVector{<:Quantity}
         pix_res_deg = uconvert(u"°", sqrt(Ω))
         x_cent, y_cent = (1.0,1.0)
         if size(_I)[1:2] ≠ (1,1)
-            x_cent, y_cent = centroid_com(sumdim(ustrip.(_I), 3)[mx[1]-5:mx[1]+5, mx[2]-5:mx[2]+5]) .+ (mx.I .- 5) .- 1
+            x_cent, y_cent = centroid_com(sumdim(ustrip.(_I), 3)[
+                max(1,mx[1]-5):min(size(_I,1),mx[1]+5), max(1,mx[2]-5):min(size(_I,2),mx[2]+5)
+                ]) .+ (mx.I .- 5) .- 1
         end
         waveunit_str = replace(string(unit(_λ[1])), 'μ' => 'u', "Å" => "angstrom")
         _wcs = WCSTransform(3; 
@@ -666,12 +670,12 @@ function get_n_channels(_λ::Vector{<:QWave}, rest_frame::Bool, z::Union{Real,No
         end
     end
     # filter out small beginning/end sections
-    if (sum(channel_masks[1]) < 200) && (length(channel_masks) ≥ 2)
+    if (length(channel_masks) ≥ 2) && (sum(channel_masks[1]) < 200)
         channel_masks[2] .|= channel_masks[1]
         popfirst!(channel_masks)
         n_channels -= 1
     end
-    if (sum(channel_masks[end]) < 200) && (length(channel_masks) ≥ 2)
+    if (length(channel_masks) ≥ 2) && (sum(channel_masks[end]) < 200)
         channel_masks[end-1] .|= channel_masks[end]
         pop!(channel_masks)
         n_channels -= 1
@@ -1314,7 +1318,7 @@ function make_subcube(data::DataCube, redshift::Real,
     out_vorbins = nothing
     if !isnothing(out_data.voronoi_bins)
         new_vorbins = out_data.voronoi_bins[xmin:xmax, ymin:ymax]
-        out_vorbins = zeros(size(new_vorbins))
+        out_vorbins = zeros(Int, size(new_vorbins))
         # need to remap voronoi bin labels because some may have been completely lost
         @warn "Voronoi bins were found in the full cube. Their labels will be remapped in the subcube."
         bin_labels = unique(new_vorbins[new_vorbins .> 0])
@@ -1557,8 +1561,8 @@ function plot_1d(data::DataCube, fname::String; intensity::Bool=true, err::Bool=
 
     # If specified, take the logarithm of the data with the given base
     if logᵢ ≠ false
-        I = log.(ustrip.(I)) ./ log.(logᵢ)
         σ = σ ./ abs.(I .* log.(logᵢ)) 
+        I = log.(ustrip.(I)) ./ log.(logᵢ)
         λ = log.(ustrip.(λ)) ./ log.(logᵢ)
     end
 
@@ -1989,7 +1993,7 @@ function log_rebin!(obs::Observation, factor::Integer=1)
     """
 
     for k ∈ keys(obs.channels)
-        log_rebin!(obs.channels[k], factor)
+        log_rebin!(obs.channels[k], obs.z; factor=factor)
     end
     obs.log_binned = true
     
@@ -2265,8 +2269,8 @@ function get_optimal_2dwcs(cubes::Vector{<:DataCube}; frame::Union{String,Nothin
     # causes it to go back to being blank
     setproperty!(wcs_out, :radesys, out_sframe)
 
-    naxis1 = round(Int, xmax - xmin)
-    naxis2 = round(Int, ymax - ymin)
+    naxis1 = round(Int, xmax - xmin + 1)
+    naxis2 = round(Int, ymax - ymin + 1)
 
     return wcs_out, (naxis1, naxis2)
 end
@@ -2432,12 +2436,18 @@ function extract_from_aperture!(obs::Observation, channels::Vector, ap_r::Real; 
                 ap_size = ap_r * maximum(obs.channels[ch_in].psf) / pixel_scale
             end
 
+            I_slice = copy(obs.channels[ch_in].I[:,:,wi])
+            σ_slice = copy(obs.channels[ch_in].σ[:,:,wi])
+            psf_slice = nothing
+            if !isnothing(obs.channels[ch_in].psf_model)
+                psf_slice = copy(obs.channels[ch_in].psf_model[:,:,wi])
+            end
             for c ∈ CartesianIndices(size(obs.channels[ch_in].I)[1:2])
                 aperture_spax = CircularAperture(c.I..., ap_size)
-                obs.channels[ch_in].I[c, wi] = photometry(aperture_spax, obs.channels[ch_in].I[:, :, wi]).aperture_sum / get_area(aperture_spax)
-                obs.channels[ch_in].σ[c, wi] = sqrt(photometry(aperture_spax, obs.channels[ch_in].σ[:, :, wi].^2).aperture_sum) / get_area(aperture_spax)
+                obs.channels[ch_in].I[c, wi] = photometry(aperture_spax, I_slice).aperture_sum / get_area(aperture_spax)
+                obs.channels[ch_in].σ[c, wi] = sqrt(photometry(aperture_spax, σ_slice.^2).aperture_sum) / get_area(aperture_spax)
                 if !isnothing(obs.channels[ch_in].psf_model)
-                    obs.channels[ch_in].psf_model[c, wi] = photometry(aperture_spax, obs.channels[ch_in].psf_model[:, :, wi]).aperture_sum / get_area(aperture_spax)
+                    obs.channels[ch_in].psf_model[c, wi] = photometry(aperture_spax, psf_slice).aperture_sum / get_area(aperture_spax)
                 end
             end
         end
@@ -2588,7 +2598,7 @@ function resample_channel_wavelengths!(λ_out::Vector{<:QWave}, jumps::Vector{<:
         if do_psf_model
             psf_con = zeros(eltype(psf_out), size(I_out)[1:2]..., 0)
         end
-        prev_i2 = 1
+        prev_i2 = 0
 
         for (i, jump) ∈ enumerate(jumps)
             # find the full scale of the overlapping region
@@ -2781,9 +2791,17 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
 
     # New PSF FWHM function with input in the rest frame
     if obs.rest_frame
-        psf_fwhm_out = mrs_psf.(@. λ_out * (1 + obs.z))
+        if obs.instrument == "MIRI"
+            psf_fwhm_out = mrs_psf.(@. λ_out * (1 + obs.z))
+        elseif obs.instrument == "NIRSPEC"
+            psf_fwhm_out = nirspec_psf.(@. λ_out * (1 + obs.z))
+        end
     else
-        psf_fwhm_out = mrs_psf.(λ_out)
+        if obs.instrument == "MIRI"
+            psf_fwhm_out = mrs_psf.(λ_out)
+        elseif obs.instrument == "NIRSPEC"
+            psf_fwhm_out = nirspec_psf.(λ_out)
+        end
     end
     if match_psf
         psf_fwhm_out = repeat([out_fwhm], length(λ_out))
@@ -2791,9 +2809,17 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
 
     # New LSF FWHM function with input in the rest frame
     if obs.rest_frame
-        lsf_fwhm_out = mrs_lsf.(@. λ_out * (1 + obs.z))
+        if obs.instrument == "MIRI"
+            lsf_fwhm_out = mrs_lsf.(@. λ_out * (1 + obs.z))
+        elseif obs.instrument == "NIRSPEC"
+            lsf_fwhm_out = nirspec_lsf.(@. λ_out * (1 + obs.z), obs.channels[channels[1]].band)
+        end
     else
-        lsf_fwhm_out = mrs_lsf.(λ_out)
+        if obs.instrument == "MIRI"
+            lsf_fwhm_out = mrs_lsf.(λ_out)
+        elseif obs.instrument == "NIRSPEC"
+            lsf_fwhm_out = nirspec_lsf.(λ_out, obs.channels[channels[1]].band)
+        end
     end
 
     if obs.masked
@@ -3068,244 +3094,5 @@ function combine_observations(observations::Vector{Observation}; frames=nothing,
         observations[1].dereddened,
         observations[1].sky_aligned
     )
-end
-
-
-"""
-    fshift(array, Δx, Δy)
-
-Shift a 2D image by a non-integer amount Δx and Δy using bilinear interpolation.
-Originally written in IDL for the IDLAstronomy Library: https://idlastro.gsfc.nasa.gov/ftp/contrib/malumuth/fshift.pro
-
-Original docstring is copied below:
-
-;+
-;			fshift
-;
-; Routine to shift an image by non-integer values
-;
-; CALLING SEQUENCE:
-;	results = fshift(image,delx,dely)
-;
-; INPUTS:
-;	image - 2D image to be shifted
-;	delx - shift in x (same direction as IDL SHIFT function)
-;	dely - shift in y
-;
-; OUTPUTS:
-;	shifted image is returned as the function results
-;
-; HISTORY:
-;	version 2  D. Lindler  May, 1992 - rewritten for IDL version 2
-;	19-may-1992	JKF/ACC		- move to GHRS DAF.
-;-
-;--------------------------------------------------------------------
-
-"""
-function fshift(array::AbstractArray, Δx::T, Δy::T) where {T<:Real}
-
-    # Separate shift into an integer and fractional shift
-    intx = floor(Int, Δx)
-    inty = floor(Int, Δy)
-    fracx = Δx - intx
-    fracy = Δy - inty
-    if fracx < 0
-        fracx += 1
-        intx -= 1
-    end
-    if fracy < 0
-        fracy += 1
-        inty -= 1
-    end
-
-    # Shift by the integer portion
-    s = circshift(array, (intx, inty))
-    if iszero(fracx) && iszero(fracy)
-        return s
-    end
-
-    # Use bilinear interpolation between four pixels
-    return s .* ((1 .- fracx) .* (1 .- fracy)) .+ 
-           circshift(s, (0,1)) .* ((1 .- fracx) .* fracy) .+
-           circshift(s, (1,0)) .* (fracx .* (1 .- fracy)) .+
-           circshift(s, (1,1)) .* fracx .* fracy
-
-end
-
-
-"""
-    frebin(array, nsout, nlout=1, total=false)
-
-Rebin a 1D or 2D array onto a new pixel grid that may or may not be an integer fraction or multiple
-of the original grid. Originally written in IDL for the IDLAstronomy Library: https://idlastro.gsfc.nasa.gov/ftp/pro/image/frebin.pro
-
-Original docstring is copied below:
-
-;+
-; NAME:
-;   FREBIN
-;
-; PURPOSE:
-;   Shrink or expand the size of an array an arbitrary amount using interpolation
-;
-; EXPLANATION: 
-;   FREBIN is an alternative to CONGRID or REBIN.    Like CONGRID it
-;   allows expansion or contraction by an arbitrary amount. ( REBIN requires 
-;   integral factors of the original image size.)    Like REBIN it conserves 
-;   flux by ensuring that each input pixel is equally represented in the output
-;   array.       
-;
-; CALLING SEQUENCE:
-;   result = FREBIN( image, nsout, nlout, [ /TOTAL] )
-;
-; INPUTS:
-;    image - input image, 1-d or 2-d numeric array
-;    nsout - number of samples in the output image, numeric scalar
-;
-; OPTIONAL INPUT:
-;    nlout - number of lines in the output image, numeric scalar
-;            If not supplied, then set equal to 1
-;
-; OPTIONAL KEYWORD INPUTS:
-;   /total - if set, the output pixels will be the sum of pixels within
-;          the appropriate box of the input image.  Otherwise they will
-;          be the average.    Use of the /TOTAL keyword conserves total counts.
-; 
-; OUTPUTS:
-;    The resized image is returned as the function result.    If the input
-;    image is of type DOUBLE or FLOAT then the resized image is of the same
-;    type.     If the input image is BYTE, INTEGER or LONG then the output
-;    image is usually of type FLOAT.   The one exception is expansion by
-;    integral amount (pixel duplication), when the output image is the same
-;    type as the input image.  
-;     
-; EXAMPLE:
-;     Suppose one has an 800 x 800 image array, im, that must be expanded to
-;     a size 850 x 900 while conserving the total counts:
-;
-;     IDL> im1 = frebin(im,850,900,/total) 
-;
-;     im1 will be a 850 x 900 array, and total(im1) = total(im)
-; NOTES:
-;    If the input image sizes are a multiple of the output image sizes
-;    then FREBIN is equivalent to the IDL REBIN function for compression,
-;    and simple pixel duplication on expansion.
-;
-;    If the number of output pixels are not integers, the output image
-;    size will be truncated to an integer.  The platescale, however, will
-;    reflect the non-integer number of pixels.  For example, if you want to
-;    bin a 100 x 100 integer image such that each output pixel is 3.1
-;    input pixels in each direction use:
-;           n = 100/3.1   ; 32.2581
-;          image_out = frebin(image,n,n)
-;
-;     The output image will be 32 x 32 and a small portion at the trailing
-;     edges of the input image will be ignored.
-; 
-; PROCEDURE CALLS:
-;    None.
-; HISTORY:
-;    Adapted from May 1998 STIS  version, written D. Lindler, ACC
-;    Added /NOZERO, use INTERPOLATE instead of CONGRID, June 98 W. Landsman  
-;    Fixed for nsout non-integral but a multiple of image size  Aug 98 D.Lindler
-;    DJL, Oct 20, 1998, Modified to work for floating point image sizes when
-;		expanding the image. 
-;    Improve speed by addressing arrays in memory order W.Landsman Dec/Jan 2001
-;-
-;----------------------------------------------------------------------------
-"""
-function frebin(array::AbstractArray, nsout::S, nlout::S=1; total::Bool=false) where {S<:Integer}
-    @debug "frebin: input_shape=$(size(array)), nsout=$nsout, nlout=$nlout, total=$total"
-    # Determine the size of the input array
-    ns = size(array, 1)
-    nl = length(array)/ns
-
-    # Determine if the new sizes are integral factors of the original sizes
-    sbox = ns/nsout
-    lbox = nl/nlout
-
-    # Contraction by an integral amount
-    if (sbox == round(Int, sbox)) && (lbox == round(Int, lbox)) && (ns % nsout == 0) && (nl % nlout == 0)
-        array_shaped = reshape(array, (Int(sbox), nsout, Int(lbox), nlout))
-        return dropdims((total ? sum : mean)(array_shaped, dims=(1,3)), dims=(1,3))
-    end
-
-    # Expansion by an integral amount
-    if (nsout % ns == 0) && (nlout % nl == 0)
-        xindex = (1:nsout) / (nsout/ns)
-        if isone(nl)  # 1D case, linear interpolation
-            return Spline1D(1:ns, array, k=1)(xindex) * (total ? sbox : 1.)
-        end
-        yindex = (1:nlout) / (nlout/nl)
-        interpfunc = Spline2D(1:ns, 1:Int(nl), array, kx=1, ky=1)
-        return [interpfunc(x, y) for x in xindex, y in yindex] .* (total ? sbox.*lbox : 1.)
-    end
-
-    ns1 = ns-1
-    nl1 = nl-1
-
-    # Do 1D case separately
-    if isone(nl)
-        result = zeros(eltype(array), nsout)
-        for i ∈ 0:nsout-1
-            rstart = i*sbox                # starting position for each box
-            istart = floor(Int, rstart)
-            rstop = rstart + sbox          # ending position for each box
-            istop = Int(clamp(floor(rstop), 0, ns1))
-            frac1 = rstart-istart
-            frac2 = 1.0 - (rstop-istop)
-
-            # add pixel values from istart to istop and subtract fractional pixel from istart to start and
-            # fractional pixel from rstop to istop
-
-            result[i+1] = sum(array[istart+1:istop+1]) - frac1*array[istart+1] - frac2*array[istop+1]
-        end
-        return result .* (total ? 1.0 : 1 ./ (sbox.*lbox))
-    end
-
-    # Now, do 2D case
-    # First, bin second dimension
-    temp = zeros(eltype(array), ns, nlout)
-    # Loop on output image lines
-    for i ∈ 0:nlout-1
-        rstart = i*lbox                # starting position for each box 
-        istart = floor(Int, rstart)
-        rstop = rstart + lbox
-        istop = Int(clamp(floor(rstop), 0, nl1))
-        frac1 = rstart-istart
-        frac2 = 1.0 - (rstop-istop)
-
-        # add pixel values from istart to istop and subtract fractional pixel from istart to start and
-        # fractional pixel from rstop to istop
-
-        if istart == istop
-            temp[:,i+1] .= (1 .- frac1 .- frac2).*array[:,istart+1]
-        else
-            temp[:,i+1] .= sumdim(array[:,istart+1:istop+1], 2) .- frac1.*array[:,istart+1] .- frac2.*array[:,istop+1]
-        end
-    end
-    temp = temp'
-    # Bin in first dimension
-    result = zeros(eltype(array), nlout, nsout)
-    # Loop on output image samples
-    for i ∈ 0:nsout-1
-        rstart = i*sbox                # starting position for each box
-        istart = floor(Int, rstart)
-        rstop = rstart + sbox          # ending position for each box
-        istop = Int(clamp(floor(rstop), 0, ns1))
-        frac1 = rstart-istart
-        frac2 = 1.0 - (rstop-istop)
-
-        # add pixel values from istart to istop and subtract fractional pixel from istart to start and
-        # fractional pixel from rstop to istop
-
-        if istart == istop
-            result[:,i+1] .= (1 .- frac1 .- frac2).*temp[:,istart+1]
-        else
-            result[:,i+1] .= sumdim(temp[:,istart+1:istop+1], 2) .- frac1.*temp[:,istart+1] .- frac2.*temp[:,istop+1]
-        end
-    end
-    return transpose(result) .* (total ? 1.0 : 1 ./ (sbox.*lbox))
-
 end
 

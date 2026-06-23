@@ -311,7 +311,10 @@ function get_continuum_initial_values_from_estimation(cube_fitter::CubeFitter, Î
     if !isnothing(fopt.ebv_map)
         @debug "Using the provided E(B-V) values from the extinction_map"
         # use the intensity-weighted EBV value from the cube
-        ebv_avg = sum(fopt.ebv_map[:, :, 1] .* sumdim(ustrip.(cube_fitter.cube.I), 3)) ./ nansum(ustrip.(cube_fitter.cube.I))
+        ebv_avg = nansum(fopt.ebv_map[:, :, 1] .* sumdim(ustrip.(cube_fitter.cube.I), 3)) ./ nansum(ustrip.(cube_fitter.cube.I))
+        if !isfinite(ebv_avg)
+            ebv_avg = 0.
+        end
         ind = fast_indexin("extinction.E_BV", pnames)
         pâ‚€[ind] = ebv_avg
     end

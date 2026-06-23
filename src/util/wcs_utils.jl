@@ -113,10 +113,10 @@ function extend_wcs_dimensions(wcs::WCSTransform, λ::Vector{<:QWave})
     @debug "extend_wcs_dimensions: naxis=$(wcs.naxis) → $(wcs.naxis+1), nλ=$(length(λ)), λ_unit=$(unit(λ[1]))"
     pc = zeros(3, 3)
     cd = zeros(3, 3)
-    if any(wcs.pc .> 0)
+    if any(.!iszero.(wcs.pc))
         pc = [wcs.pc[1,1] wcs.pc[1,2] 0.; wcs.pc[2,1] wcs.pc[2,2] 0.; 0. 0. 1.]
     end
-    if any(wcs.cd .> 0)
+    if any(.!iszero.(wcs.cd))
         cd = [wcs.cd[1,1] wcs.cd[1,2] 0.; wcs.cd[2,1] wcs.cd[2,2] 0.; 0. 0. 1.]
     end
 
@@ -124,6 +124,8 @@ function extend_wcs_dimensions(wcs::WCSTransform, λ::Vector{<:QWave})
         cunit3 = "um"
     elseif unit(λ[1]) == u"angstrom"
         cunit3 = "Angstrom"
+    else
+        error("Unrecognized wavelength unit: $(unit(λ[1]))")
     end
 
     # Decide whether or not we need to use a WAVE-TAB or a regular WAVE for ctype3

@@ -496,6 +496,16 @@ function hermite(x::Vector{T}, n::Integer) where {T<:Number}
     end
 end
 
+function hermite(x::T, n::Integer) where {T<:Number}
+    if iszero(n)
+        one(T)
+    elseif isone(n)
+        2 * x
+    else
+        2 * x * hermite(x, n-1) - 2 * (n-1) * hermite(x, n-2)
+    end
+end
+
 
 ############################################### CONTINUUM FUNCTIONS ##############################################
 
@@ -1177,7 +1187,7 @@ function τ_decompose(λ::Vector{<:QWave}, params::Vector{<:Number}, κ_abs::Vec
     τ_tot = @. τ_oli + τ_pyr + τ_for
     ind = argmin(abs.(λ .- 9.7u"μm"))
     τ_97 = τ_tot[ind] 
-    ext = @. (1 - β) * τ_tot + β * τ_97 * (9.7/λ)^1.7
+    ext = @. (1 - β) * τ_tot + β * τ_97 * (9.7u"μm"/λ)^1.7
     ext, τ_oli, τ_pyr, τ_for
 end
 

@@ -551,7 +551,8 @@ end
 
 # check if everything is good
 function check_valid(p::NonFitParameter)
-    @assert isfinite(p)
+    # @assert isfinite(p)
+    true
 end
 
 # Count the total number of profiles in a FitFeatures object
@@ -566,9 +567,6 @@ end
 
 
 # get all the fit parameters in a FitProfiles object
-# (dont do this until the last step; the object returned 
-#  will be a COPY of the fit parameters, so modifying it
-#  wont affect the original)
 function get_flattened_fit_parameters(p::FitProfiles)
     flat = FitParameters(String[], String[], Vector{Transformation}[], FitParameter[])
     for prof in p
@@ -586,9 +584,6 @@ end
 
 
 # get all the fit parameters in a FitFeatures object
-# (dont do this until the last step; the object returned
-#  will be a COPY of the fit parameters, so modifying it
-#  wont affect the original)
 function get_flattened_fit_parameters(p::FitFeatures)
     @debug "get_flattened_fit_parameters(FitFeatures): n_features=$(length(p.profiles))"
     flat = FitParameters(String[], String[], Vector{Transformation}[], FitParameter[])

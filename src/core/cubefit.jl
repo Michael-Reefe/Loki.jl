@@ -337,7 +337,11 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
         cubefitter_prepare_output_directories(name, out)
         # add the user mask, if given
         if !isnothing(out[:user_mask])
-            append!(spectral_region.mask, out[:user_mask])
+            for umi in out[:user_mask]
+                if umi ∉ spectral_region.mask
+                    push!(spectral_region.mask, umi)
+                end
+            end
         end
         # Disable regularization for any non-SSP stellar templates
         if haskey(out, :stellar_template_type) && (out[:stellar_template_type] != "ssp")
@@ -698,27 +702,29 @@ function cubefitter_prepare_custom_stellar_templates(out::Dict, cube::DataCube)
             error("Please input custom_stellar_template_wave in units that can be converted into $(λunit)")
         end
         temp_λ = ustrip.(temp_λ)
-    end
-    if haskey(out, :custom_stellar_template_R) && !isnothing(out[:custom_stellar_template_R])
-        temp_R = out[:custom_stellar_template_R]
-        @assert ndims(temp_R) == 1 "Please input a 1-dimensional resolution vector for the stellar templates"
-        @assert size(temp_R, 1) == size(temp_λ, 1) "Please ensure the custom_stellar_template_R has the same length as the " *
-            "custom_stellar_template_wave"
-        temp_R = ustrip.(temp_R)
-    end
-    if haskey(out, :custom_stellar_templates) && !isnothing(out[:custom_stellar_templates])
-        temps = out[:custom_stellar_templates]
-        @assert ndims(temps) == 2 "Please input a 2-dimensional array for the stellar templates"
-        @assert size(temps, 1) == size(temp_λ, 1) "Please ensure the first axis of custom_stellar_templates matches " *
-            "the first axis of custom_stellar_template_wave"
-        try
-            temps = match_fluxunits.(temps, 1.0Iunit, temp_λ.*λunit)
-        catch
-            error("Please input custom_stellar_templates in units that can be converted into $(Iunit)" *
-            " (Note: the normalization does not matter, but per-unit-frequency or per-unit-wavelength does matter)")
+
+        if haskey(out, :custom_stellar_template_R) && !isnothing(out[:custom_stellar_template_R])
+            temp_R = out[:custom_stellar_template_R]
+            @assert ndims(temp_R) == 1 "Please input a 1-dimensional resolution vector for the stellar templates"
+            @assert size(temp_R, 1) == size(temp_λ, 1) "Please ensure the custom_stellar_template_R has the same length as the " *
+                "custom_stellar_template_wave"
+            temp_R = ustrip.(temp_R)
         end
-        temps = ustrip.(temps)
-        @debug "cubefitter_prepare_custom_stellar_templates: temps shape=$(size(temps)), λ range=$(extrema(temp_λ)) $λunit"
+
+        if haskey(out, :custom_stellar_templates) && !isnothing(out[:custom_stellar_templates])
+            temps = out[:custom_stellar_templates]
+            @assert ndims(temps) == 2 "Please input a 2-dimensional array for the stellar templates"
+            @assert size(temps, 1) == size(temp_λ, 1) "Please ensure the first axis of custom_stellar_templates matches " *
+                "the first axis of custom_stellar_template_wave"
+            try
+                temps = match_fluxunits.(temps, 1.0Iunit, temp_λ.*λunit)
+            catch
+                error("Please input custom_stellar_templates in units that can be converted into $(Iunit)" *
+                " (Note: the normalization does not matter, but per-unit-frequency or per-unit-wavelength does matter)")
+            end
+            temps = ustrip.(temps)
+            @debug "cubefitter_prepare_custom_stellar_templates: temps shape=$(size(temps)), λ range=$(extrema(temp_λ)) $λunit"
+        end
     end
     if isnothing(temps)
         @debug "cubefitter_prepare_custom_stellar_templates: no custom stellar templates provided"

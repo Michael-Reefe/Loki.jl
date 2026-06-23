@@ -54,7 +54,6 @@ function sort_line_components!(cube_fitter::CubeFitter, result::SpaxelFitResult;
 
         for (j, component) in enumerate(line)    # <- iterates over each velocity component in one line (for multi-component fits)
 
-            n_prof += 1
             # set parameters to nan so they are ignored when calculating the percentiles
             amps[j], voffs[j], fwhms[j] = fast_indexin(["lines.$line_name.$j.amp", "lines.$line_name.$j.voff", "lines.$line_name.$j.fwhm"], result.pnames)
             mask_line = (params[amps[j]] == 0.) && (j > 1) && mask_zeros
@@ -191,10 +190,10 @@ function sort_line_components!(cube_fitter::CubeFitter, param_maps::ParamMaps, i
 
         # Reassign the parameters in this order
         params_to_sort = ["amp", "voff", "fwhm"]
-        if lines.profiles[k][1] == :GaussHermite
+        if lines.profiles[k][1].profile == :GaussHermite
             append!(params_to_sort, ["h3", "h4"])
         end
-        if lines.profiles[k][1] == :Voigt
+        if lines.profiles[k][1].profile == :Voigt
             append!(params_to_sort, ["mixing"])
         end
         append!(params_to_sort, ["flux", "eqw", "SNR"])

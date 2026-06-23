@@ -64,7 +64,7 @@ function generate_cubemodel(cube_fitter::CubeFitter, _shape::Tuple, floattype::D
     model = zeros(qtype, shape2...)
     extinction_stars = zeros(floattype, shape2...)
     extinction_gas = zeros(floattype, shape2...)
-    absorption_silicates = zeros(floattype, shape2..., fopt.extinction_curve == "decompose" ? 4 : 1)
+    absorption_silicates = zeros(floattype, shape2..., fopt.silicate_absorption == "decompose" ? 4 : 1)
     abs_ice = fopt.fit_ch_abs ? zeros(floattype, shape2...) : nothing
     abs_ch = fopt.fit_ch_abs ? zeros(floattype, shape2...) : nothing
     apoly = cube_fitter.apoly_degree ≥ 0 ? zeros(qtype, shape2...) : nothing

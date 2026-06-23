@@ -204,9 +204,8 @@ end
 
 
 function calculate_statistical_errors!(s::Spaxel)
-    @assert haskey(s.aux, "mask_lines") "Need to have a line mask first! Run continuum_cubic_spline! to generate it."
-    @debug "calculate_statistical_errors!: coords=$(s.coords), nλ=$(length(s.λ)), $(sum(s.aux["mask_lines"])) line-masked pixels"
-    σ_stat = calculate_statistical_errors(s.I, s.I_spline, s.aux["mask_lines"])
+    @debug "calculate_statistical_errors!: coords=$(s.coords), nλ=$(length(s.λ)), $(sum(s.mask_lines)) line-masked pixels"
+    σ_stat = calculate_statistical_errors(s.I, s.I_spline, s.mask_lines)
     @debug "calculate_statistical_errors!: done — σ_stat range=$(extrema(filter(isfinite, ustrip.(σ_stat))))"
     σ_stat
 end

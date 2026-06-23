@@ -214,7 +214,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         conv_br_feii = zeros(nλ, 1)
         for (gi, gap_mask) in enumerate(gap_masks)
             conv_br_feii[gap_mask, 1] .= convolve_losvd(cube_fitter.feii.br_fft, cube_fitter.feii.vsysts[gi], 
-                params[pᵢ+1]*u"km/s", params[pᵢ+2]*u"km/s", s.vres, length(λ), temp_fft=true, 
+                params[pᵢ+1]*u"km/s", params[pᵢ+2]*u"km/s", s.vres, sum(gap_mask), temp_fft=true, 
                 npad_in=cube_fitter.feii.npad)
         end
         conv_br_feii[:, 1] ./= s.area_sr
@@ -445,7 +445,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         conv_br_feii = zeros(nλ, 1)
         for (gi, gap_mask) in enumerate(gap_masks)
             conv_br_feii[gap_mask, 1] .= convolve_losvd(cube_fitter.feii.br_fft, cube_fitter.feii.vsysts[gi], 
-                params[pᵢ+1]*u"km/s", params[pᵢ+2]*u"km/s", s.vres, length(λ), temp_fft=true, 
+                params[pᵢ+1]*u"km/s", params[pᵢ+2]*u"km/s", s.vres, sum(gap_mask), temp_fft=true, 
                 npad_in=cube_fitter.feii.npad)
         end
         conv_br_feii[:, 1] ./= s.area_sr
@@ -1248,7 +1248,11 @@ function calculate_extra_parameters(s::Spaxel, s_model::Spaxel, cube_fitter::Cub
             if iszero(amp) 
                 amp_cgs_err = propagate_err ? match_fluxunits(amp_err*N, 1.0perwave_unit, mean_wave) : 0.0perwave_unit
             else
-                amp_cgs_err = propagate_err ? hypot(amp_err/amp, 2(mean_wave_err/mean_wave))*amp_cgs : 0.0perwave_unit
+                if typeof(N) <: QPerFreq
+                    amp_cgs_err = propagate_err ? hypot(amp_err/amp, 2(mean_wave_err/mean_wave))*amp_cgs : 0.0perwave_unit
+                else
+                    amp_cgs_err = propagate_err ? abs(amp_err/amp*amp_cgs) : 0.0perwave_unit
+                end
             end
 
             # Get the index of the central wavelength
