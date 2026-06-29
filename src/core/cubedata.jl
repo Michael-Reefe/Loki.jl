@@ -2812,7 +2812,7 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
         if obs.instrument == "MIRI"
             lsf_fwhm_out = mrs_lsf.(@. λ_out * (1 + obs.z))
         elseif obs.instrument == "NIRSPEC"
-            lsf_fwhm_out = nirspec_lsf.(@. λ_out * (1 + obs.z), obs.channels[channels[1]].band)
+            lsf_fwhm_out = nirspec_lsf.(λ_out .* (1 .+ obs.z), obs.channels[channels[1]].band)
         end
     else
         if obs.instrument == "MIRI"
