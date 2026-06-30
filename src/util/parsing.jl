@@ -157,6 +157,18 @@ function validate_lines_file(lines)
 
     @assert haskey(lines["profiles"], "default") "default not found in line profile options!"
 
+    # Amplitude tie ratios must be non-negative. A negative ratio would invert the propagated
+    # parameter limits (lower > upper) downstream (get_tied_pairs / set_plim!), so reject it here.
+    amp_tie_re = r"^tie_(acomp_\d+_)?amp_"      # matches tie_amp_<group> and tie_acomp_<j>_amp_<group>
+    for key ∈ keys(lines)
+        if occursin(amp_tie_re, key) && (lines[key] isa AbstractDict)
+            for (ln, ratio) ∈ lines[key]
+                @assert (ratio isa Real) && (ratio ≥ 0) "Amplitude tie ratio for \"$ln\" in [$key] is " *
+                    "$ratio; amplitude tie ratios must be real and ≥ 0 (negative ratios are not allowed)."
+            end
+        end
+    end
+
 end
 
 

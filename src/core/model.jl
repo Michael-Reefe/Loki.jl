@@ -871,7 +871,7 @@ function calculate_flux(profile::Symbol, λ::AbstractVector{<:QWave}, amp::T, am
         flux = ∫PearsonIV(amp, fwhm, m, ν)
         if propagate_err
             e_upp = ∫PearsonIV(amp+amp_err, fwhm+fwhm_err, m+m_err, ν+ν_err) - flux
-            e_low = flux - ∫PearsonIV(max(amp-amp_err, 0.0*amp), max(fwhm-fwhm_err, eps()*fwhm), max(m-m_err, 0.5), ν-ν_err)
+            e_low = flux - ∫PearsonIV(max(amp-amp_err, 0.0*amp), max(fwhm-fwhm_err, eps()*fwhm), max(m-m_err, 0.51), ν-ν_err)
             f_err = (e_upp + e_low) / 2
         else
             f_err = 0.0*amp*fwhm

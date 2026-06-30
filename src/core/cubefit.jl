@@ -364,6 +364,13 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
             name, cube, custom_stellar_template_wave, custom_stellar_template_R, custom_stellar_templates)
         lines, n_lines, n_acomps, n_fit_comps = cubefitter_prepare_lines(lines_file, out, λunit, Iunit, cube, spectral_region)
 
+        # Every line requested for component testing must actually be present in the fitting region.
+        requested_test_lines = reduce(vcat, out[:line_test_lines]; init=Symbol[])
+        absent_test_lines = setdiff(requested_test_lines, Symbol.(lines.names))
+        @assert isempty(absent_test_lines) "Line component test requested for line(s) not present in " *
+            "the fitting region: $(absent_test_lines). Either these lines fall outside the spectrum's " *
+            "wavelength range, or the names don't match those in the lines configuration file."
+
         # Count total parameters
         n_params_cont = count_cont_parameters(model_parameters; split=false)
         n_params_dust = count_dust_parameters(model_parameters)
