@@ -122,14 +122,14 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
                         pstr = contains(pname, "amp") ? "amp" : "fwhm"
                         ind_1 = findfirst(param_maps.parameters.names .== replace(pname, "$line_comp.$pstr" => "1.$pstr"))
                         # apply multiplicative transformation
-                        err_upp = √((out_errs[index, ind_1, 1] * val)^2 + (err_upp * out_params[index, ind_1])^2) 
-                        err_low = √((out_errs[index, ind_1, 2] * val)^2 + (err_low * out_params[index, ind_1])^2) 
+                        err_low = √((out_errs[index, ind_1, 1] * val)^2 + (err_low * out_params[index, ind_1])^2) 
+                        err_upp = √((out_errs[index, ind_1, 2] * val)^2 + (err_upp * out_params[index, ind_1])^2) 
                         val *= out_params[index, ind_1]
                     elseif !isone(line_comp) && contains(pname, "voff") && line_config.rel_voff
                         # get the voff of the first line component
                         voff_1_ind = findfirst(param_maps.parameters.names .== replace(pname, "$line_comp.voff" => "1.voff"))
-                        err_upp = √(err_upp^2 + out_errs[index, voff_1_ind, 1]^2) 
-                        err_low = √(err_low^2 + out_errs[index, voff_1_ind, 2]^2) 
+                        err_low = √(err_low^2 + out_errs[index, voff_1_ind, 1]^2) 
+                        err_upp = √(err_upp^2 + out_errs[index, voff_1_ind, 2]^2) 
                         # apply additive transformation
                         val += out_params[index, voff_1_ind]
                     end
