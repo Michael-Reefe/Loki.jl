@@ -1064,12 +1064,15 @@ function clean_line_parameters(cube_fitter::CubeFitter, popt::Vector{<:Number}, 
         end
 
         # resort line components by decreasing flux
-        if !lines.config.rel_amp && !lines.config.rel_voff && !lines.config.rel_fwhm
+        # -- this is only valid when all components of a line share the same type of
+        #    profile (and therefore have equal-length parameter blocks).
+        same_profile = all(c.profile == line[1].profile for c in line)
+        if same_profile && !lines.config.rel_amp && !lines.config.rel_voff && !lines.config.rel_fwhm
             pnew = copy(popt)
             # pstart gives the amplitude indices
             ss = sortperm(popt[pstart].*popt[pfwhm], rev=true)
-            for k in eachindex(ss)
-                pnew[pstart[k]:pend[k]] .= popt[pstart[ss[k]]:pend[ss[k]]]
+            for kk in eachindex(ss)
+                pnew[pstart[kk]:pend[kk]] .= popt[pstart[ss[kk]]:pend[ss[kk]]]
             end
             popt = pnew
         end
