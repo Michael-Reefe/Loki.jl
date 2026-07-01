@@ -172,6 +172,22 @@ function construct_extinction_params!(params::Vector{FitParameter}, pnames::Vect
     E_BV_factor = parameter_from_dict(optical["extinction"]["E_BV_factor"])
     msg *= "\nE(B-V) $E_BV"
     msg *= "\nE(B-V) factor $E_BV_factor"
+    # Degeneracy guards (warn + auto-lock). These lock the local FitParameter, which propagates to every
+    # spaxel since get_continuum_parameter_limits seeds plock from continuum.locked. Each is gated on
+    # !p.locked so a config-default or user-set lock is neither overridden nor re-warned.
+    # (1) E(B-V) and the multiplicative polynomial both scale the continuum -> degenerate.
+    if out[:mpoly_degree] ≥ 1 && !E_BV.locked
+        @warn "E(B-V) is degenerate with the multiplicative polynomial (mpoly_degree=$(out[:mpoly_degree])); " *
+              "both scale the continuum. Locking E(B-V) at its input value ($(E_BV.value)) to break the degeneracy."
+        lock!(E_BV)
+    end
+    # (2) E_BV_factor (stellar/gas reddening ratio) only affects the continuum, so it is unconstrained
+    #     when the continuum and lines are fit separately (fit_joint=false).
+    if !out[:fit_joint] && !E_BV_factor.locked
+        @warn "E(B-V)_factor only affects the continuum and is unconstrained when fit_joint=false (the " *
+              "continuum and lines are fit separately). Locking it at its input value ($(E_BV_factor.value))."
+        lock!(E_BV_factor)
+    end
     append!(params, [E_BV, E_BV_factor])
     append!(pnames, prefix .* ["E_BV", "E_BV_factor"])
     append!(plabels, [L"$E(B-V)_{\rm gas}$", L"$E(B-V)_{\rm stars}/E(B-V)_{\rm gas}$"])

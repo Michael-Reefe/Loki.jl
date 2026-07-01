@@ -128,8 +128,9 @@ function continuum_fit_spaxel(spaxel::Spaxel, cube_fitter::CubeFitter; init::Boo
     # This function checks how many iterations the first fit took, and if its less than 5 it repeats it with slightly different
     # starting parameters to try to get it to converge better. This is because rarely the first fit can get stuck in the starting
     # position.
-    res = repeat_fit_jitter(s.λ[spaxel_mask], s.I[spaxel_mask], s.σ[spaxel_mask], fit_cont, pfree_tied, lbfree_tied, ubfree_tied, 
+    res = repeat_fit_jitter(s.λ[spaxel_mask], s.I[spaxel_mask], s.σ[spaxel_mask], fit_cont, pfree_tied, lbfree_tied, ubfree_tied,
         parinfo, config, res, "continuum", s.coords; check_cont_snr=true)
+    validate_fit_result(res, "continuum", s.coords)
     chi2 = res.bestnorm
     n_free = length(pfree_tied)
     @debug "Continuum CMPFit Status: $(res.status)"
@@ -709,6 +710,7 @@ function line_fit_spaxel(s::Spaxel, s_model::Spaxel, cube_fitter::CubeFitter, co
     res = cmpfit(s.λ, s.I, s.σ, fit_step3, p₁, parinfo=parinfo, config=config)
     res = repeat_fit_jitter(s.λ, s.I, s.σ, fit_step3, p₁, lbfree_tied, ubfree_tied,
         parinfo, config, res, "line", s.coords)
+    validate_fit_result(res, "line", s.coords)
 
     @debug "Line CMPFit status: $(res.status)"
 
@@ -869,8 +871,9 @@ function all_fit_spaxel(s::Spaxel, cube_fitter::CubeFitter; init::Bool=false, us
     parinfo, config = get_continuum_parinfo(n_free_cont+n_free_lines, lower_bounds, upper_bounds, dstep)
 
     res = cmpfit(s.λ[spaxel_mask], s.I[spaxel_mask], s.σ[spaxel_mask], fit_joint, p₁, parinfo=parinfo, config=config)
-    res = repeat_fit_jitter(s.λ[spaxel_mask], s.I[spaxel_mask], s.σ[spaxel_mask], fit_joint, p₁, lower_bounds, upper_bounds, 
+    res = repeat_fit_jitter(s.λ[spaxel_mask], s.I[spaxel_mask], s.σ[spaxel_mask], fit_joint, p₁, lower_bounds, upper_bounds,
         parinfo, config, res, "continuum+lines", s.coords; check_cont_snr=true)
+    validate_fit_result(res, "continuum+lines", s.coords)
 
     @debug "Continuum+Lines CMPFit Status: $(res.status)"
     popt_cont, perr_cont, I_cont, comps_cont, norms, popt_lines, perr_lines, I_lines, comps_lines, result_stellar, s_model = 
@@ -1085,10 +1088,21 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, coords::Cart
     end
     for t in 1:cube_fitter.n_templates
         if any(.~isfinite.(cube_data.templates[coords, :, t]))
-            # If a template is fully NaN/Inf, we can't fit 
+            # If a template is fully NaN/Inf, we can't fit
             @debug "Non-finite values found in the templates! Not fitting spaxel $coords"
             return nothing, nothing, nothing
         end
+    end
+    # Skip an all-zero spectrum (the normalization N = max|I| would collapse to 0, giving a meaningless
+    # fit) or a spectrum too short to build a continuum spline. These route through the same graceful skip
+    # as the non-finite cases above (NaN in the output maps); a bad spaxel never aborts a full-cube fit.
+    if !any(!iszero, ustrip.(cube_data.I[coords, :]))
+        @debug "Intensity is entirely zero for spaxel $coords (normalization undefined). Not fitting spaxel $coords"
+        return nothing, nothing, nothing
+    end
+    if length(cube_data.I[coords, :]) < 4
+        @debug "Fewer than 4 wavelength points for spaxel $coords; too few to fit. Not fitting spaxel $coords"
+        return nothing, nothing, nothing
     end
 
     # Make a spaxel object

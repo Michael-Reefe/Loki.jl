@@ -323,6 +323,11 @@ A constructor function for Parameter structs given a Dictionary
 """
 function parameter_from_dict(dict::Dict; units::Unitful.Units=unit(1.0))
     @debug "parameter_from_dict: val=$(dict["val"]), locked=$(dict["locked"]), plim=$(dict["plim"]), units=$units"
+    # Validate the limits up front with friendly messages (the FitParameter constructor only does a bare assert)
+    @assert length(dict["plim"]) == 2 "Parameter limits (plim) must have exactly 2 elements [lower, upper]; got $(dict["plim"])."
+    @assert dict["plim"][1] < dict["plim"][2] "Parameter limits plim = $(dict["plim"]) must satisfy lower < upper."
+    @assert dict["plim"][1] ≤ dict["val"] ≤ dict["plim"][2] "Parameter initial value $(dict["val"]) is outside " *
+        "its limits $(dict["plim"]); ensure plim[1] ≤ val ≤ plim[2]."
     # Unpack the dictionary into fields of the Parameter
     value = dict["val"] * units
     locked = dict["locked"]

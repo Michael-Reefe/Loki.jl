@@ -436,7 +436,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         # These templates also need the solid angle divided out
         conv_na_feii[:, 1] ./= s.area_sr
         conv_na_feii[.~isfinite.(conv_na_feii[:, 1]), 1] .= 0.0   # (area_sr may be 0 at some points)
-        contin .+= params[pᵢ] .* conv_na_feii[:, 1]./maximum(conv_na_feii[:, 1]) .* ext_gas
+        contin .+= params[pᵢ] .* safenorm(conv_na_feii[:, 1]) .* ext_gas
         pᵢ += 3
     end
     if fopt.fit_opt_br_feii
@@ -450,7 +450,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         end
         conv_br_feii[:, 1] ./= s.area_sr
         conv_br_feii[.~isfinite.(conv_br_feii[:, 1]), 1] .= 0.0   # (area_sr may be 0 at some points)
-        contin .+= params[pᵢ] .* conv_br_feii[:, 1]./maximum(conv_br_feii[:, 1]) .* ext_gas
+        contin .+= params[pᵢ] .* safenorm(conv_br_feii[:, 1]) .* ext_gas
         pᵢ += 3
     end
 
@@ -459,7 +459,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
     for j ∈ 1:cube_fitter.n_power_law
         # Reference wavelength at the median wavelength of the input spectrum
         pl = power_law(λ, params[pᵢ+1], median(λ))
-        contin .+= params[pᵢ] .* pl./maximum(pl) .* ext_gas .* mpoly
+        contin .+= params[pᵢ] .* safenorm(pl) .* ext_gas .* mpoly
         pᵢ += 2
     end
 
@@ -468,7 +468,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
     for i ∈ 1:cube_fitter.n_dust_cont
         unit_check(punits[pᵢ+1], u"K")
         bb = Blackbody_modified.(λ, params[pᵢ+1]*u"K", N)
-        contin .+= params[pᵢ] .* bb./maximum(bb) .* ext_gas .* mpoly
+        contin .+= params[pᵢ] .* safenorm(bb) .* ext_gas .* mpoly
         pᵢ += 2
     end
 
@@ -481,7 +481,7 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
         unit_check(punits[pᵢ+5], λunit)
         sil_emission = silicate_emission(λ, params[pᵢ+1]*u"K", params[pᵢ+2], params[pᵢ+3], params[pᵢ+4], 
             params[pᵢ+5]*λunit, N, cube_fitter)
-        contin .+= params[pᵢ] .* sil_emission./maximum(sil_emission) .* abs_tot .* mpoly
+        contin .+= params[pᵢ] .* safenorm(sil_emission) .* abs_tot .* mpoly
         pᵢ += 6
     end
 
@@ -1404,12 +1404,14 @@ function calculate_eqw(λ::Vector{<:QWave}, feature::Vector{T}, comps::Dict, lin
     @debug "calculate_eqw: line=$line, nλ=$(length(λ)), propagate_err=$propagate_err"
     contin = line ? comps["continuum_and_pahs"] : comps["continuum"]
 
-    # May blow up for spaxels where the continuum is close to 0
-    eqw = NumericalIntegration.integrate(λ, feature ./ contin, Trapezoidal())
+    # The integrand feature/contin blows up where the continuum crosses or approaches zero; zero out any
+    # non-finite points so the equivalent width stays finite instead of silently becoming Inf/NaN.
+    safe_ratio(f) = (r = f ./ contin; r[.~isfinite.(r)] .= zero(eltype(r)); r)
+    eqw = NumericalIntegration.integrate(λ, safe_ratio(feature), Trapezoidal())
     err = 0. * unit(λ[1])
     if propagate_err
-        err_lo = eqw - NumericalIntegration.integrate(λ, feature_err[:,1] ./ contin, Trapezoidal())
-        err_up = NumericalIntegration.integrate(λ, feature_err[:,2] ./ contin, Trapezoidal()) - eqw
+        err_lo = eqw - NumericalIntegration.integrate(λ, safe_ratio(feature_err[:,1]), Trapezoidal())
+        err_up = NumericalIntegration.integrate(λ, safe_ratio(feature_err[:,2]), Trapezoidal()) - eqw
         err = (err_up + err_lo) / 2
     end
 

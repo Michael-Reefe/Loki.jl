@@ -180,6 +180,10 @@ mutable struct DataCube{T<:Vector{<:QWave}, S<:Array{<:QSIntensity, 3}}
             @assert size(psf_model) == size(I) "The PSF model must be the same size as the intensity cube!"
         end
 
+        # Validate the core arrays up front (wavelength monotonicity/positivity/units, shape consistency,
+        # and finite/positive PSF/LSF values) with friendly errors before anything downstream uses them
+        validate_datacube_inputs(λ; psf=psf, lsf=lsf)
+
         restframe_factor = rest_frame ? 1.0 : 1 / (1 + z)
         λlim = extrema(λ .* restframe_factor)
         λrange = get_λrange(λlim)
@@ -190,6 +194,8 @@ mutable struct DataCube{T<:Vector{<:QWave}, S<:Array{<:QSIntensity, 3}}
             gaps = Vector{Tuple{eltype(λ),eltype(λ)}}()
         end
         for gap in gaps
+            @assert all(isfinite, ustrip.(gap)) && (gap[1] < gap[2]) "Invalid gap $gap: gap bounds must be " *
+                "finite and in ascending order (lower < upper)."
             @assert sum(gap[1] .< (λ.*restframe_factor) .< gap[2]) == 0 "Data was detected within the gap $gap"
         end
         spectral_region = SpectralRegion(λlim, umask, n_channels, channel_masks, ch_bounds, gaps, λrange)
@@ -477,7 +483,11 @@ function from_data(Ω::typeof(1.0u"sr"), z::Real, λ::AbstractVector{<:Quantity}
 
     _σ = σ
     if isnothing(σ)
-        _σ = ones(eltype(_I), size(_I)...) .* nanmedian(ustrip.(_I)[ustrip.(_I) .> 0.])./10
+        _Ius = ustrip.(_I)
+        _pos = _Ius[_Ius .> 0.]
+        @assert !isempty(_pos) "Cannot auto-generate a default error array: the input intensity has no " *
+            "positive finite values from which to estimate a noise level. Please pass an explicit error array (σ)."
+        _σ = ones(eltype(_I), size(_I)...) .* nanmedian(_pos)./10
     end
     if ndims(_σ) == 1
         _σ = reshape(_σ, (1,1,length(_σ)))
@@ -792,6 +802,8 @@ function log_rebin!(cube::DataCube, z::Real;
     factor::Integer=1)
 
     @assert factor > 0 "factor must be > 0"
+    @assert isfinite(logscale) && logscale > 0 "log_rebin!: the logarithmic spacing (logscale=$logscale) is " *
+        "non-finite or non-positive. This usually means the wavelength vector is not strictly increasing."
     @debug "log_rebin!(DataCube): channel=$(cube.channel), band=$(cube.band), nλ=$(length(cube.λ)), factor=$factor, already_binned=$(cube.log_binned)"
     if !cube.log_binned
         # rebin onto a logarithmically spaced wavelength grid
@@ -1146,6 +1158,8 @@ function voronoi_rebin!(cube::DataCube, target_SN::Real, window::Union{Tuple{QWa
     noise = noise[.~mask]
     x = x[.~mask]
     y = y[.~mask]
+    @assert !isempty(signal) "voronoi_rebin!: no unmasked, finite, nonzero signal/noise pixels remain after " *
+        "masking; cannot compute Voronoi bins. Check the input data and mask."
     # make sure signals are nonnegative
     signal = clamp.(signal, 0*unit(signal[1]), Inf*unit(signal[1]))
     noise = clamp.(noise, 0*unit(noise[1]), Inf*unit(noise[1]))
@@ -1154,6 +1168,8 @@ function voronoi_rebin!(cube::DataCube, target_SN::Real, window::Union{Tuple{QWa
     # calculated as 1.4826 * MAD (median absolute deviation), which is more robust against outliers than
     # the standard deviation.
     noise_thresh = (nanmedian(ustrip.(noise)) + 1.4826*nanmad(ustrip.(noise))*noise_sigma_clip) * unit(noise[1])
+    @assert isfinite(ustrip(noise_thresh)) "voronoi_rebin!: the noise threshold is non-finite (no usable " *
+        "noise values). Check that the input error array has finite, positive values."
     noise_mask = noise .< noise_thresh
     x = x[noise_mask]
     y = y[noise_mask]

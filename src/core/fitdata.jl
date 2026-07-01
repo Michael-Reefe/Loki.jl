@@ -140,8 +140,12 @@ function continuum_cubic_spline(λ::Vector{<:Quantity}, I::Vector{S}, σ::Vector
     end
     @debug "continuum_cubic_spline: $(sum(mask_lines))/$(length(mask_lines)) pixels masked as lines, $(length(λknots)) spline knots"
 
-    # Do a full cubic spline interpolation of the data
-    I_spline = Spline1D(_λ[.~mask_lines], _I[.~mask_lines], λknots, k=3, bc="extrapolate").(_λ) .* unit(I[1])
+    # Do a full cubic spline interpolation of the data. Reduce the spline order if there are too few
+    # unmasked continuum points for a cubic fit (Dierckx requires more points than the order), so this
+    # never crashes on a very short or heavily-masked spectrum; such spaxels are skipped upstream by
+    # fit_spaxel's data-sufficiency checks. For a normal spectrum (≥4 unmasked points) kspl==3 as before.
+    kspl = clamp(sum(.~mask_lines) - 1, 1, 3)
+    I_spline = Spline1D(_λ[.~mask_lines], _I[.~mask_lines], λknots, k=kspl, bc="extrapolate").(_λ) .* unit(I[1])
     # Linear interpolation over the lines
     I_spline[mask_lines] .= Spline1D(_λ[.~mask_lines], _I[.~mask_lines], λknots, k=1, bc="extrapolate").(_λ[mask_lines]) .* unit(I[1])
 
@@ -153,7 +157,7 @@ function continuum_cubic_spline(λ::Vector{<:Quantity}, I::Vector{S}, σ::Vector
     end
 
     if do_err
-        σ_spline = Spline1D(_λ[.~mask_lines], _σ[.~mask_lines], λknots, k=3, bc="extrapolate").(_λ) * unit(σ[1])
+        σ_spline = Spline1D(_λ[.~mask_lines], _σ[.~mask_lines], λknots, k=kspl, bc="extrapolate").(_λ) * unit(σ[1])
         σ_spline[mask_lines] .= Spline1D(_λ[.~mask_lines], _σ[.~mask_lines], λknots, k=1, bc="extrapolate").(_λ[mask_lines]) .* unit(σ[1])
 
         return mask_lines, I_spline, σ_spline
@@ -365,6 +369,8 @@ function get_aperture_integrated_intensities(cube_fitter::CubeFitter, shape::Tup
 
         # Convert back to intensity by dividing out the aperture area
         area_sr[1,1,z] = get_area(aperture[z]) * cube_fitter.cube.Ω
+        @assert ustrip(area_sr[1,1,z]) > 0 "Aperture at wavelength index $z has zero area; check the aperture " *
+            "definition (it may be degenerate or fall entirely outside the cube)."
         I[1,1,z] = F_ap / area_sr[1,1,z]
         σ[1,1,z] = eF_ap / area_sr[1,1,z]
 

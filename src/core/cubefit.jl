@@ -328,7 +328,9 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
 
         # Set up and reformat some default options
         cubefitter_add_default_options!(cube, out)
-        # Set up the extinction map and PAH template boolean map 
+        # Validate the merged options (TOML + keyword overrides) up front, with friendly errors
+        validate_fit_settings(out)
+        # Set up the extinction map and PAH template boolean map
         ebv_map, sil_abs_map = cubefitter_prepare_extinction_maps(out, cube)
         # Set up potential custom stellar templates 
         custom_stellar_template_wave, custom_stellar_template_R, custom_stellar_templates = 
@@ -363,6 +365,15 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
             cubefitter_prepare_continuum(optical_file, infrared_file, lines_file, λ, z, out, λunit, Iunit, spectral_region, 
             name, cube, custom_stellar_template_wave, custom_stellar_template_R, custom_stellar_templates)
         lines, n_lines, n_acomps, n_fit_comps = cubefitter_prepare_lines(lines_file, out, λunit, Iunit, cube, spectral_region)
+
+        # Stellar-population / Fe II fitting convolves templates on a constant-velocity (logarithmically
+        # spaced) grid; if the cube is not log-spaced the velocity resolution is undefined and the
+        # convolution would crash. 
+        if (!isnothing(ssps) || !isnothing(feii)) && (isnothing(vres) || !isfinite(ustrip(vres)))
+            error("Fitting stellar populations or Fe II requires a logarithmically-spaced wavelength grid " *
+                  "(constant velocity resolution per pixel), but the cube's velocity resolution is undefined. " *
+                  "Run log_rebin! on the data before constructing the CubeFitter.")
+        end
 
         # Every line requested for component testing must actually be present in the fitting region.
         requested_test_lines = reduce(vcat, out[:line_test_lines]; init=Symbol[])
@@ -587,6 +598,9 @@ function cubefitter_add_default_options!(cube::DataCube, out::Dict)
     out[:plot_spaxels] = Symbol(out[:plot_spaxels])
     out[:apoly_type] = Symbol(out[:apoly_type])
     out[:mpoly_type] = Symbol(out[:mpoly_type])
+    # extinction_curve / silicate_absorption are String-typed FittingOptions fields
+    out[:extinction_curve] = string(out[:extinction_curve])
+    out[:silicate_absorption] = string(out[:silicate_absorption])
 
     λunit = unit(cube.λ[1])
     if !haskey(out, :plot_range)

@@ -254,6 +254,7 @@ export DataCube,   # DataCube struct
 # Include all of the files that we need to create the module
 
 include("util/parameters.jl")
+include("util/validation.jl")
 include("util/wcs_utils.jl")
 include("core/cubedata.jl")
 include("core/cubefit.jl")

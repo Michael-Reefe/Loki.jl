@@ -37,6 +37,12 @@ function validate_options_file(options)
     for key ∈ keylist2
         @assert key ∈ keys(options["cosmology"]) "Missing option $key in cosmology options!"
     end
+
+    # Cosmology values must be physical (omega_K may be negative for a closed geometry, so it is not constrained)
+    cosmo = options["cosmology"]
+    @assert cosmo["h"] > 0 "Cosmology h must be > 0 (got $(cosmo["h"]))."
+    @assert cosmo["omega_m"] ≥ 0 "Cosmology omega_m must be ≥ 0 (got $(cosmo["omega_m"]))."
+    @assert cosmo["omega_r"] ≥ 0 "Cosmology omega_r must be ≥ 0 (got $(cosmo["omega_r"]))."
 end
 
 
@@ -156,6 +162,23 @@ function validate_lines_file(lines)
     end
 
     @assert haskey(lines["profiles"], "default") "default not found in line profile options!"
+
+    # Profile types must be recognized (mirror the line-profile dispatch in model.jl model_line_residuals)
+    valid_line_profiles = ("Gaussian", "Lorentzian", "Voigt", "GaussHermite")
+    for (ln, prof) ∈ lines["profiles"]
+        @assert prof in valid_line_profiles "Unrecognized line profile \"$prof\" for \"$ln\" in [profiles]; " *
+            "must be one of $(valid_line_profiles)."
+    end
+    @assert (lines["n_acomps"] isa Integer) && (lines["n_acomps"] ≥ 0) "n_acomps must be a non-negative " *
+        "integer (got $(lines["n_acomps"]))."
+    for (ln, profs) ∈ lines["acomps"]
+        for prof ∈ profs
+            @assert prof in valid_line_profiles "Unrecognized additional-component profile \"$prof\" for " *
+                "\"$ln\" in [acomps]; must be one of $(valid_line_profiles)."
+        end
+        @assert length(profs) ≤ lines["n_acomps"] "Line \"$ln\" lists $(length(profs)) additional-component " *
+            "profile(s) in [acomps], exceeding n_acomps = $(lines["n_acomps"]). Increase n_acomps or shorten the list."
+    end
 
     # Amplitude tie ratios must be non-negative. A negative ratio would invert the propagated
     # parameter limits (lower > upper) downstream (get_tied_pairs / set_plim!), so reject it here.

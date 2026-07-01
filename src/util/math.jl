@@ -135,6 +135,20 @@ julia> sumdim([1 2; 3 NaN], 1)
 
 
 """
+    safenorm(x)
+
+Normalize a model component to a peak of 1 (`x ./ maximum(x)`), returning a dimensionless vector. If
+the maximum is non-positive or non-finite (e.g. an all-zero component when the solid angle is 0
+everywhere), return dimensionless zeros instead of propagating `0/0 = NaN`. For a normal positive
+component this is identical to `x ./ maximum(x)`.
+"""
+function safenorm(x::AbstractVector)
+    m = maximum(x)
+    (isfinite(ustrip(m)) && m > zero(m)) ? x ./ m : fill(0.0, length(x))
+end
+
+
+"""
     extend(array1d, shape)
 
 Extend `array1d` into other dimensions specified by `shape`
@@ -755,6 +769,10 @@ function stellar_populations_nnls(s::Spaxel, contin::Vector{<:Real}, ext_stars::
 
     # divide out the solid angle and apply the extinction
     @views A_cache[1:nλ, :] .*= ext_stars ./ s.area_sr
+    # the solid angle (area_sr) may be 0 at some points -> zero out any resulting non-finite entries so
+    # they do not propagate Inf/NaN into the NNLS solve (mirrors the Fe II handling in model_continuum)
+    Acont = @view A_cache[1:nλ, :]
+    Acont[.~isfinite.(Acont)] .= 0.0
     # normalize the stellar templates
     stellar_N = haskey(s.aux, "stellar_norm") ? ustrip(s.aux["stellar_norm"]) : @views nanmaximum(A_cache[1:nλ, :])
     # stellar_N = ustrip(nanmedian(cube_fitter.ssps.templates) * nanmedian(ext_stars ./ s.area_sr))
