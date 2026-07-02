@@ -33,6 +33,12 @@
 ---
 ## Changelog
 
+### 07/02/26
+
+- Adjusted the `ssp_regularize` option to make it closer to the definition of `regul` in ppxf.  Note that they are not identical, because Loki fits stellar weights with physical units whereas ppxf fits normalized weights.  However, the regularization scaling has been modified such that the value of `ssp_regularize` is now independent of the physical scaling of the stellar mass weights.  In other words, `ssp_regularize` is now scale-invariant and should produce the same level of smoothing in all spectra.  A cross-term has also been removed in the regularization constraints which forced the same level of smoothing along both axes (age and metallicity).  The smoothing now acts independently along each axis, again bringing the definition closer to that used in ppxf.
+- `save_full_model` output cubes now include two wavelength tables: `WAVELENGTH` (for the `DATA`/`ERROR` HDUs) and `WAVELENGTH_MODEL` (for the `MODEL` and all model-component HDUs), since the model may be evaluated on a different grid than the data (e.g. a gap-free grid across NIRSpec chip gaps).
+- Various small performance optimizations and other minor bugfixes.
+
 ### 06/23/26
 
 Updates: New SSPs are now available at non-Salpeter IMFs.  The IMF can be changed with the "imf" option in options.toml.
@@ -314,12 +320,6 @@ This option determines whether emission line amplitudes are allowed to go negati
 
 This option sets the number of bootstrap iterations that are performed on each fit. Setting it to 0 (the default) disables bootstrapping. When bootstrapping is disabled, the provided uncertainties will be calculated based on the covariance matrix of the LM fit.
 
-`bootstrap_use = "med"`
-
-Determines what the output values are when bootstrapping. The default "med" outputs the median (50th percentile) of each bootstrap
-iteration. The other option is "best" which outputs the best-fit parameters for the actual non-bootstrapped data. This option does
-not affect the uncertainties, which are always calculated as the (84.1st - 50th, 50th - 15.9th) percentiles.
-
 `random_seed = 123456789`
 
 This option sets the random seed that is used when resampling the data for bootstrapping iterations. By using the same seed, you are guaranteed to get the same results after repeated runs (assuming all other inputs are the same).
@@ -365,7 +365,7 @@ This option determines what dust extinction profile to use. The possible values 
 `apoly_degree = -1`
 `mpoly_degree = -1`
 
-These two options determine the maximum degree for additive ("apoly") and multiplicative ("mpoly") polynomial components, respectively.  If they are set to any number < 0, the component is disabled (both are disabled by default).  For additive polynomials, the minimum degree that can be included in a fit is 0.  For multiplicative polynomials, the minimum degree that will be included in a fit is 1, since the 0th degree is degenerate with the normalizations of all other fitting components.  Therefore, to actually include a multiplicative polynomial, "mpoly_degree" must be at least 1.  BE CAREFUL WHEN ENABLING POLYNOMIAL COMPONENTS!  Most of the model component options in Loki are at least somewhat physically motivated.  Polynomials are not, and are treated conceptually as "calibration corrections" to your continuum model.  For example, additive polynomials can be a good way to subtract out a foreground/background signal, whereas multiplicative polynomials can be a good way to model a non-uniform flux calibration as a function of wavelength from your instrument. They can be very powerful fitting tools, but as they say, "with great power comes great responsibility."  Just as one example of how things can go wrong, I would not recommend that you marginalize over any kind of extinction/reddening at the same time as multiplicative polynomials, because they will inevitably be degenerate with the lower-order polynomial components. 
+These two options determine the maximum degree for additive ("apoly") and multiplicative ("mpoly") polynomial components, respectively.  If they are set to any number < 0, the component is disabled (both are disabled by default).  For additive polynomials, the minimum degree that can be included in a fit is 0.  For multiplicative polynomials, the minimum degree that will be included in a fit is 1, since the 0th degree is degenerate with the normalizations of all other fitting components.  Therefore, to actually include a multiplicative polynomial, "mpoly_degree" must be at least 1.  BE CAREFUL WHEN ENABLING POLYNOMIAL COMPONENTS!  Most of the model component options in Loki are at least somewhat physically motivated.  Polynomials are not, and are treated conceptually as "calibration corrections" to your continuum model.  For example, additive polynomials can be a good way to subtract out a foreground/background signal, whereas multiplicative polynomials can be a good way to model a non-uniform flux calibration as a function of wavelength from your instrument. They can be very powerful fitting tools, but as they say, "with great power comes great responsibility."  Just as one example of how things can go wrong, I would not recommend that you marginalize over any kind of extinction/reddening at the same time as multiplicative polynomials, because they will inevitably be degenerate with the lower-order polynomial components.  In fact, Loki now guards against exactly this case: whenever a multiplicative polynomial is active (`mpoly_degree` ≥ 1), the reddening $E(B-V)$ is automatically locked to its input value (with a warning), so that the polynomial rather than the extinction carries the smooth continuum shape.  If you specifically want to fit the reddening, disable the multiplicative polynomial. 
 
 `apoly_type = "Chebyshev"`
 `mpoly_type = "Chebyshev"`
@@ -394,7 +394,7 @@ This boolean option determines whether or not to include the stellar continuum c
 
 `ssp_regularize = 100.0`
 
-This sets the regularization value for the SSPs if they are being fit. This determines how much the weights for the individual stellar populations are "smoothed" to produce a more realistic (but equally statistically likely) distribution. The value of this parameter can be thought of roughly at the inverse of the relative error in your spectrum.  So, if you have 1% errors, ssp_regularize should be 100. You can disable regularization entirely by setting this to 0.
+This sets the regularization value for the SSPs if they are being fit. This determines how much the weights for the individual stellar populations are "smoothed" to produce a more realistic (but equally statistically likely) distribution; larger values impose more smoothing. The regularization is *scale-invariant*: its effect does not depend on the physical scale of the stellar mass weights (which themselves depend on the flux units, luminosity distance, IMF, etc.), so the same value produces a comparable level of smoothing across different spectra. Second-difference smoothing is applied *independently* along the age and metallicity axes. These properties bring the definition close to — but not numerically identical to — the `regul` parameter in [ppxf](https://www-astro.physics.ox.ac.uk/~cappellari/software/#ppxf); the two cannot be transferred one-to-one because Loki fits stellar weights in physical units whereas ppxf fits normalized weights (to match ppxf's `regul` exactly you would need to rescale by the ratio of the two codes' weight scales). You can disable regularization entirely by setting this to 0.
 
 `fit_opt_na_feii = false`
 
@@ -415,7 +415,10 @@ This boolean option determines whether or not to include absorption from CH and 
 `fit_temp_multexp = false`
 
 This option, if enabled, will apply 4 multiplicative exponential profiles onto all of the input templates. This option can be utilized if one does not know the spatial or spectral shape of the PSF model ahead of time, with the hope that the flexibility afforded by these profiles will allow any generic PSF shape to be modeled. The exponential profiles obtained from [Rupke et al. (2017)](https://arxiv.org/pdf/1708.05139.pdf) equation 2: 
+
 $$a_1e^{-b_1\bar{\lambda}},~a_2e^{-b_2(1-\bar{\lambda})},~a_3(1-e^{-b_3\bar{\lambda}}),~{\rm and}~a_4(1-e^{-b_4(1-\bar{\lambda})})$$
+
+Note that these exponential profiles and a multiplicative polynomial both smoothly modulate the template continuum, so enabling `fit_temp_multexp` together with an active multiplicative polynomial (`mpoly_degree` ≥ 1) is partially degenerate; Loki will print a warning in this case, and you should generally use one or the other.
 
 `use_pah_templates = true`
 
@@ -480,6 +483,7 @@ This options determines the mode of stellar template usage.  There are three opt
 
 ```toml
 [ssps]
+imf = "salpeter"
 
 [ssps.age]
 min = 0.001 
@@ -492,6 +496,14 @@ max = 0.4
 num = 10
 ```
 The SSP options determine how the grid of Simple Stellar Populations (SSPs) is generated.  You can set a minimum, maximum, and number of grid points for the ages (in Gyr) and the metallicities (in log(Z/Zsun)).  Note that both quantities are logarithmically spaced in the grid, even though the ages are measured in linear Gyr while the metallicities are measured in the logarithmic quantity by default.  The total number of SSPs generated will be the multiplation of both "nums", which by default is 400.  Note that these options are only relevant if "stellar_template_type" is "ssp".
+
+The `imf` option selects the stellar initial mass function used when generating the SSP templates.  The available options are:
+- `"salpeter"` (default): a single Salpeter power law with slope 2.35 across all mass ranges.
+- `"bottom-heavy-1"`: a steeper slope of 3.0 across all mass ranges.
+- `"bottom-heavy-2"`: slopes of (3.0, 3.0, 2.35) across three successive mass ranges.
+- `"bottom-heavy-3"`: slopes of (2.97, 2.13, 2.35) across three successive mass ranges.
+
+The "bottom-heavy" options place relatively more mass in low-mass stars, which can be appropriate for massive early-type galaxies.  Note that changing the IMF affects the inferred stellar masses, and that this option is only relevant if "stellar_template_type" is "ssp".
 
 ```toml
 [stars]
@@ -589,14 +601,18 @@ Gives the threshold that the signal to noise ratio must reach in order for a giv
 
 You may optionally specify a position to mark on the output 2D parameter maps with a red "X".  This must be a length-2 Vector of real values (i.e. [32.4, 41.9]).  If nothing is given for this parameter, the default marked position will be the centroid of data, calculated as the weighted average of pixel positions, with the integrated flux used as weights for each pixel.  This can be thought of as a "center of mass" centroid, or perhaps a "center of light."
 
+`map_disable_psfcirc = false`
+
+A boolean option that, if set to `true`, disables the circle indicating the FWHM of the point-spread function (PSF) that is otherwise drawn in the bottom-right corner of each 2D parameter map. This is useful when the PSF FWHM is large relative to the field of view and the circle would clutter the maps. Defaults to `false`.
+
 `guess_tau`
 
 This may be a vector of two tuples specifying wavelength ranges, in the same format as `user_mask`. These wavelength ranges should be relatively free of PAH and line emission if possible, and they should be to the left and right of the 9.7 micron silicate absorption feature. If provided, flux is linearly interpolated between them to estimate the "unextincted" continuum level at 9.7 microns, which is then compared to the observed flux level to provide an initial estimate for the optical depth parameter.
 
-`extinction_map`
+`ebv_map`
+`sil_abs_map`
 
-This allows the user to provide a 2D grid of either the 9.7-micron optical depth (for MIR fitting) or the reddening E(B-V) (for optical fitting) for each spaxel. The values in the grid will be used as the values for the corresponding spaxels in the fitting process, and they will be locked to these values. This is useful in cases where one wishes to fit a region of the spectrum that doesn't constrain the extinction very well, but has results from fitting another region of the spectrum that does constrain it well and can use those results to constrain the extinction in the other region. If using a "decompose"-type extinction curve, one may provide a 3D array where
-the third axis runs over the olivine, pyroxene, and forsterite column densities.
+These allow the user to provide a 2D grid of pre-computed extinction values, one per spaxel, which will be used and *locked* to for the corresponding spaxels during fitting. Use `ebv_map` to supply the reddening $E(B-V)$ (for optical fitting) and `sil_abs_map` to supply the 9.7-micron optical depth $\tau_{9.7}$ (for MIR fitting). This is useful in cases where one wishes to fit a region of the spectrum that doesn't constrain the extinction very well, but has results from fitting another region of the spectrum that does constrain it well, and can use those results to constrain the extinction in the other region. The map must match the first two (spatial) dimensions of the input cube. If using a "decompose"-type extinction curve, one may provide a 3D array (for `sil_abs_map`) where the third axis runs over the olivine, pyroxene, and forsterite column densities.
 
 `custom_ext_template`
 
@@ -888,10 +904,32 @@ plim = [-6.0, 6.0]
 locked = false
 ```
 
-**Dust extinction:**
+**Polynomials:**
+
+If additive and/or multiplicative polynomials are enabled (via the `apoly_degree` / `mpoly_degree` general options), the starting value and limits for each polynomial coefficient are set here. Both blocks apply the same `(val, plim, locked)` to every coefficient of the corresponding polynomial:
+
+```toml
+[polynomials.acoeff]
+val = 0.0
+plim = [0.0, 100.0]
+locked = false
+
+[polynomials.mcoeff]
+val = 0.0
+plim = [-1.0, 1.0]
+locked = false
+```
+
+`acoeff` sets the coefficients of the additive polynomial and `mcoeff` sets those of the multiplicative polynomial. The number of coefficients is determined by the polynomial degrees; these entries only control the per-coefficient starting values and bounds.
+
+**Dust Extinction:**
 
 The extinction curve will always have at least 2 parameters, the reddening on the gas $E(B-V)$, and the conversion factor
 between the reddening on the gas and the reddening on the stars, which is usually locked to 0.44.
+
+Note that Loki applies two automatic locks to these parameters to avoid degenerate or unconstrained fits (each fires only if the parameter is not already locked, and prints a warning when it does):
+- $E(B-V)$ is locked to its input value whenever a multiplicative polynomial is active (`mpoly_degree` ≥ 1), since the two are degenerate (see the `mpoly_degree` option above).
+- `E_BV_factor` is locked to its input value whenever `fit_joint = false`, because it only affects the *continuum* model and is therefore unconstrained when the continuum and emission lines are fit separately. It can only be meaningfully fit when `fit_joint = true`.
 
 ```toml
 [attenuation.E_BV]
@@ -1415,8 +1453,11 @@ No.  Name                 Ver Type         Cards   Dimensions       Format
  97  EXTINCTION.ABS_ICE     1 ImageHDU        10   (47, 42, 8985)   float32
  98  EXTINCTION.ABS_CH      1 ImageHDU        10   (47, 42, 8985)   float32
  99  WAVELENGTH             1 BinTableHDU     12   8985R x 1C       [1D]
+100  WAVELENGTH_MODEL       1 BinTableHDU     12   8985R x 1C       [1D]
 ```
-They can be loaded in the same manner as the parameter maps, bearing in mind that there are now 3 dimensions to index for each HDU instead of 2. The "WAVELENGTH" HDU is an exception, being a table with one entry ("wave") that gives the 1-dimensional wavelength array that corresponds to the third axis of all the other HDUs. This was necessary because the wavelength arrays fitted by the code may not strictly be linear, especially when fitting multi-channel data, and trying to represent this with a 3D WCS is not possible. This is why the included WCS information in these outputs is strictly 2-dimensional, covering the 2 spatial dimensions of the cubes.
+They can be loaded in the same manner as the parameter maps, bearing in mind that there are now 3 dimensions to index for each HDU instead of 2. The wavelength HDUs are an exception, each being a table with one entry ("wave") giving a 1-dimensional wavelength array. This was necessary because the wavelength arrays fitted by the code may not strictly be linear, especially when fitting multi-channel data, and trying to represent this with a 3D WCS is not possible. This is why the included WCS information in these outputs is strictly 2-dimensional, covering the 2 spatial dimensions of the cubes.
+
+There are **two** wavelength tables because the data and the model are not always evaluated on the same grid: `DATA` and `ERROR` correspond to the `WAVELENGTH` HDU (the data's wavelength grid), while `MODEL` and every individual model-component HDU correspond to the `WAVELENGTH_MODEL` HDU (the model's wavelength grid). Usually these two grids are identical and the tables match. They differ, for example, when the model is evaluated on a finer, gap-free logarithmic grid (as can happen with NIRSpec chip gaps), in which case the `MODEL`/component HDUs will have a different third-axis length than `DATA`/`ERROR`. Always index the model and its components against `WAVELENGTH_MODEL`, and the data and error against `WAVELENGTH`.
 
 ### ix. CSV Tables
 As promised, the output best-fit parameters can also be saved in CSV format in addition to FITS format.  They will be found under the "output_tables" folder, assuming you've enabled the "save_tables" boolean option.  If you want to use CSV tables, then these are what you should be using, not the CSV files under "spaxel_binaries".  They have the same format, barring the omission of lower/upper limit values.  Importantly, all of the parameters in these files will have the appropriate scalings and transformations applied to them so that they are in true physical units in the observed frame.
@@ -1548,6 +1589,8 @@ correct!(obs)
 combine_channels!(obs, [1,2,3], out_id=0, order=1, adjust_wcs_headerinfo=true, extract_from_ap=0.)
 ```
 Protip: `combine_channels!` can also be used to create zoomed-in cutouts in the wavelength dimension, even if you only have one channel!  Just call the function requesting only one channel, and supply the keyword arguments `min_λ` and `max_λ`.  For example: `combine_channels!(obs, [1]; min_λ=10.0u"μm", max_λ=20.0u"μm")`
+
+To instead extract a *spatial* sub-region of a cube, use the `make_subcube` function, which takes lower/upper pixel limits in the x and y dimensions: `obs_small = make_subcube(obs, xmin, xmax, ymin, ymax)`.  This is handy for pulling out a small region of interest to fit with a different model than the rest of the cube.
 
 5. (Optional) It is often desirable to rotate the cubes to be aligned with the sky axes rather than the IFU axes, which can be achieved using the `rotate_to_sky_axes!` function. Depending on how you reduced your JWST data products, your cubes may already be aligned to the sky axes, in which case this function won't do anything.  But please note that if you wish to use the PSF decomposition functionality of Loki, you will need to provide cubes aligned with the IFU axes.  This is necessary in order to generate PSF models that are appropriately aligned and rotated with the observations.  One can then rotate to the sky axes with this function *after* generating the PSF models (see the relevant functions for that below), which will rotate both the observations and the PSF models by the same amount.
 ```julia

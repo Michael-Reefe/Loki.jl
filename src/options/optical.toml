@@ -26,7 +26,7 @@ locked = false
 # degrees as you have configured to include.
 [polynomials.acoeff]
 val = 0.0
-plim = [0.0, 100.0]
+plim = [-100.0, 100.0]
 locked = false
 
 # Multiplicative polynomial coefficients.

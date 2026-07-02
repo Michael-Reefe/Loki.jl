@@ -1306,6 +1306,11 @@ function calculate_extra_parameters(s::Spaxel, s_model::Spaxel, cube_fitter::Cub
             p_lines[pₒ], p_lines_err[pₒ] = calculate_flux(component.profile, cube_fitter.cube.λ, amp_cgs, amp_cgs_err, 
                 mean_wave, mean_wave_err, fwhm_wave, fwhm_wave_err, h3=h3, h3_err=h3_err, h4=h4, h4_err=h4_err, η=η, η_err=η_err, 
                 propagate_err=propagate_err)
+            fopt = fit_options(cube_fitter)
+            if !fopt.lines_allow_negative
+                # Gauss-Hermite profiles may produce negative fluxes in some edge cases
+                p_lines[pₒ] = max(p_lines[pₒ], 0.0*unit(p_lines[pₒ]))
+            end
             
             # Calculate equivalent width using the helper function
             p_lines[pₒ+1], p_lines_err[pₒ+1] = calculate_eqw(s_model.λ, feature, comps, true, feature_err=feature_err, 
