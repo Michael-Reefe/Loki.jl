@@ -439,15 +439,15 @@ struct CubeFitter{T<:Real,S<:Integer,Q<:QSIntensity,Qv<:QVelocity,Qw<:QWave}
             line_annotation_positions = readdlm(joinpath("output_$name", "line_annotation_positions.csv"), ',', Float64, '\n')[:,1]
         end
 
-        # Reset all global variables 
-        # (these are defined in math.jl)
-        global nnls_workspace = NNLSWorkspace(0, 0)
-        global rfft_cache = nothing
-        global irfft_plan = nothing
-        global A_cache    = nothing 
-        global b_cache    = nothing 
-        global A1_cache   = nothing 
-        global b1_cache   = nothing
+        # Reset all caches used by convolve_losvd / stellar_populations_nnls
+        # (these typed Refs are defined in math.jl; reset their contents in lockstep)
+        _NNLS_WS[]    = NNLSWorkspace(0, 0)
+        _RFFT_CACHE[] = nothing
+        _IRFFT_PLAN[] = nothing
+        _A_CACHE[]    = nothing
+        _b_CACHE[]    = nothing
+        _A1_CACHE[]   = nothing
+        _b1_CACHE[]   = nothing
 
         # Create options structs
         output_options = OutputOptions(

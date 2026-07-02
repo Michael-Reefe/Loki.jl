@@ -456,9 +456,11 @@ function model_continuum(s::Spaxel, N::QSIntensity, params::Vector{<:Real}, puni
 
     ##### 4. POWER LAWS #####
 
+    # Reference wavelength = median wavelength of the (strictly increasing) input spectrum.
+    npl = length(λ); midpl = (1 + npl) ÷ 2
+    λ_ref = isodd(npl) ? λ[midpl] : λ[midpl]/2 + λ[midpl+1]/2
     for j ∈ 1:cube_fitter.n_power_law
-        # Reference wavelength at the median wavelength of the input spectrum
-        pl = power_law(λ, params[pᵢ+1], median(λ))
+        pl = power_law(λ, params[pᵢ+1], λ_ref)
         contin .+= params[pᵢ] .* safenorm(pl) .* ext_gas .* mpoly
         pᵢ += 2
     end

@@ -27,20 +27,28 @@ const b_Wein = 2897.771955*u"μm*K"
 # A few other random constants
 const o_peak = 10.0178u"μm"
 
-# Global variable to hold a workspace for solving NNLS problems 
-# (this is used in stellar_populations_nnls)
-global nnls_workspace = NNLSWorkspace(0, 0)
+# Precomputed transcendental factors used inside the per-wavelength line profiles (see Gaussian, Voigt,
+# ∫Voigt, GaussHermite). These are ordinary √/log calls, so folding them into module constants avoids
+# recomputing them on every element of every profile broadcast. Each value is written exactly as it
+# appears in the profile so the substitution is bit-for-bit identical to the original expression.
+const _FWHM_TO_σ_DENOM = 2 * √(2 * log(2))   # FWHM → σ:  σ = FWHM / _FWHM_TO_σ_DENOM
+const _INV_π           = 1 / π               # normalized Lorentzian prefactor in Voigt
+const _SQRT_π_LN2      = √(π * log(2))        # ∫Voigt normalization
+const _GH_NORM3        = √48.0               # √(factorial(3)*2^3), Gauss–Hermite h₃ coefficient
+const _GH_NORM4        = √384.0              # √(factorial(4)*2^4), Gauss–Hermite h₄ coefficient
 
-# Global variable to hold an allocated array for the convolve_losvd function
-global rfft_cache = nothing
-# Global variable to hold a plan for computing irffts quickly on input arrays of a given size
-global irfft_plan = nothing
-
-# More global caching variables for the stellar_populations_nnls function
-global A_cache = nothing 
-global b_cache = nothing 
-global A1_cache = nothing 
-global b1_cache = nothing
+# Module-level caches reused across optimizer iterations by convolve_losvd and stellar_populations_nnls.
+# These are typed `const Ref` containers (rather than untyped `global x = nothing`) so that binding them to
+# locals inside those hot functions is type-stable — the previous untyped globals forced dynamic dispatch
+# on every access. The caching/resizing/reset behavior is unchanged; only the binding types differ. The
+# per-fit reset lives in cubefit.jl and mutates these Refs in lockstep.
+const _NNLS_WS    = Ref{NNLSWorkspace{Float64,Int64}}(NNLSWorkspace(0, 0))   # NNLS workspace (mutated in place)
+const _RFFT_CACHE = Ref{Union{Nothing,Matrix{ComplexF64}}}(nothing)          # convolve_losvd: cached rFFT product
+const _IRFFT_PLAN = Ref{Any}(nothing)                                        # convolve_losvd: cached irfft plan
+const _A_CACHE    = Ref{Union{Nothing,Matrix{Float64}}}(nothing)             # stellar_populations_nnls buffers
+const _b_CACHE    = Ref{Union{Nothing,Vector{Float64}}}(nothing)
+const _A1_CACHE   = Ref{Union{Nothing,Matrix{Float64}}}(nothing)
+const _b1_CACHE   = Ref{Union{Nothing,Vector{Float64}}}(nothing)
 
 
 # Load the appropriate templates that we need into the cache
@@ -432,7 +440,7 @@ julia> ∫Voigt(600, 1.2, 0.0)
 1130.9733552923256
 ```
 """
-∫Voigt(A, FWHM, η) =  A * FWHM * π / (2 * (1 + (√(π*log(2)) - 1)*η))
+∫Voigt(A, FWHM, η) =  A * FWHM * π / (2 * (1 + (_SQRT_π_LN2 - 1)*η))
 ∫Voigt(A, A_err, FWHM, FWHM_err, η, η_err) = ∫Voigt(A, FWHM, η), 
     π / (2 * (1 + (√(π*log(2)) - 1)*η)) * hypot(A*FWHM_err, FWHM*A_err, A*FWHM*(√(π*log(2)) - 1)/(1 + (√(π*log(2)) - 1)*η)*η_err)
 
@@ -605,9 +613,10 @@ end
 Calculate a Drude profile at location `x`, with amplitude `A`, central value `μ`, and full-width at half-max `FWHM`
 Optional asymmetry parameter `asym`
 """
-@inline function Drude(x, A, μ, FWHM, asym) 
+@inline function Drude(x, A, μ, FWHM, asym)
     γ = 2FWHM / (1 + exp(ustrip(asym*(x-μ))))
-    A * (γ/μ)^2 / ((x/μ - μ/x)^2 + (γ/μ)^2)
+    gm2 = (γ/μ)^2
+    A * gm2 / ((x/μ - μ/x)^2 + gm2)
 end
 
 
@@ -684,42 +693,73 @@ function convolve_losvd(_templates::AbstractArray{T}, vsyst::S, v::S, σ::S, vre
     # see, i.e. https://en.wikipedia.org/wiki/Convolution_theorem
     if !use_cache
         template_convolved = irfft(temp_rfft .* losvd_rfft, npad, 1)
+        # Take only enough pixels to match the length of the input spectrum
+        return @view template_convolved[1:npix, :]
     else
-        global rfft_cache, irfft_plan
-        if isnothing(rfft_cache) || (size(rfft_cache) != size(temp_rfft))
-            rfft_cache = temp_rfft .* losvd_rfft
-            irfft_plan = plan_irfft(rfft_cache, npad, 1; flags=FFTW.ESTIMATE, timelimit=Inf)
+        # bind the typed cache Refs to a local; after the branch below `rc` is a concrete Matrix{ComplexF64}
+        rc = _RFFT_CACHE[]
+        if isnothing(rc) || (size(rc) != size(temp_rfft))
+            rc = temp_rfft .* losvd_rfft
+            _RFFT_CACHE[] = rc
+            _IRFFT_PLAN[] = plan_irfft(rc, npad, 1; flags=FFTW.ESTIMATE, timelimit=Inf)
         else
-            rfft_cache .= temp_rfft .* losvd_rfft
+            rc .= temp_rfft .* losvd_rfft
         end
-        template_convolved = irfft_plan * rfft_cache
+        # the plan (created for `rc`'s size) always maps a ComplexF64 matrix to a Float64 matrix
+        template_convolved::Matrix{Float64} = _IRFFT_PLAN[] * rc
+        # Take only enough pixels to match the length of the input spectrum
+        return @view template_convolved[1:npix, :]
     end
-
-    # Take only enough pixels to match the length of the input spectrum
-    @view template_convolved[1:npix, :]
 end
 
 
-# get constraint equations for regularization for the least-squares fitting of the stellar templates
-function add_reg_constraints!(A::Matrix{<:Real}, nλ::Int, cube_fitter::CubeFitter)
-    # reshape into N_ages x N_logzs sized array
-    reg_dims = (length(cube_fitter.ssps.ages), length(cube_fitter.ssps.logzs))
-    # get a "view" so modifying a also modifies A
-    @assert size(A, 2) == prod(reg_dims)
-    a = reshape(A, (size(A, 1), reg_dims...))
-    reg_diffs = [1., -2., 1.] .* cube_fitter.fitting.ssp_regularize
-    # add constraint equations for regularization
-    i = nλ+1
-    for j in axes(a, 2)
-        for k in axes(a, 3)
-            if 1 < k < size(a, 3)
-                a[i, j, k-1:k+1] .= reg_diffs
-            end
-            if 1 < j < size(a, 2)
-                a[i, j-1:j+1, k] .+= reg_diffs
-            end
-            i += 1
+# Append regularization constraint equations to the stellar-template least-squares system. The operator
+# is a separable 2nd-difference (ppxf reg_ord=2) along the age and metallicity axes: one row per interior
+# triple along each axis, with RHS 0 (b's regularization rows are left at their zero-initialized values).
+#
+# The coefficient is made SCALE-INVARIANT: ssp_regularize is divided by a characteristic magnitude of the
+# fitted weights (≈ RMS of the residual `b` over the good pixels / RMS of the noise-weighted design matrix
+# `A` over the good pixels), estimated over only the pixels that actually enter the fit (`mask` false).
+# This makes the penalty act on the *fractional* curvature of the weights, so the effective smoothing no
+# longer depends on the flux units, stellar_N, area_sr, or noise scale — matching ppxf's convention of
+# regularizing normalized (~unity) inputs (where this weight scale is ≈ 1 and the coefficient reduces to
+# ssp_regularize itself). `mask` is the full-length (nλ + n_reg) NNLS mask; only its first nλ data entries
+# are consulted here.
+function add_reg_constraints!(A::Matrix{<:Real}, b::Vector{<:Real}, nλ::Int, mask::BitVector, cube_fitter::CubeFitter)
+    na, nz = length(cube_fitter.ssps.ages), length(cube_fitter.ssps.logzs)
+    ntemp = size(A, 2)
+
+    # characteristic weight scale from the good (unmasked) fit pixels — emission-line / user-masked /
+    # gap pixels are excluded so line residuals don't inflate the estimate
+    a_ss = 0.0; b_ss = 0.0; ngd = 0
+    @inbounds for p in 1:nλ
+        mask[p] && continue
+        ngd += 1
+        b_ss += b[p]^2
+        for t in 1:ntemp
+            a_ss += A[p, t]^2
         end
+    end
+    a_rms = ngd > 0 ? sqrt(a_ss / (ngd*ntemp)) : 0.0
+    b_rms = ngd > 0 ? sqrt(b_ss / ngd)         : 0.0
+    w_scale = a_rms > 0 ? b_rms / a_rms : 0.0
+    # r = ssp_regularize / w_scale (fall back to the raw value if the scale is degenerate)
+    r = (isfinite(w_scale) && w_scale > 0) ? cube_fitter.fitting.ssp_regularize / w_scale :
+                                             cube_fitter.fitting.ssp_regularize
+
+    a = reshape(A, (size(A, 1), na, nz))
+    i = nλ + 1
+    for k in 1:nz, j in 2:(na-1)          # second differences along AGE (∀ metallicity)
+        a[i, j-1, k] = r
+        a[i, j, k]   = -2r
+        a[i, j+1, k] = r
+        i += 1
+    end
+    for j in 1:na, k in 2:(nz-1)          # second differences along METALLICITY (∀ age)
+        a[i, j, k-1] = r
+        a[i, j, k]   = -2r
+        a[i, j, k+1] = r
+        i += 1
     end
 end
 
@@ -728,29 +768,35 @@ end
 function stellar_populations_nnls(s::Spaxel, contin::Vector{<:Real}, ext_stars::Vector{<:Real}, 
     stel_vel::QVelocity, stel_sig::QVelocity, cube_fitter::CubeFitter; do_gaps::Bool=true, mask_lines::Bool=true)
 
-    # Using an NNLS workspace will save us from re-allocating memory for the NNLS fit 
-    # for every iteration of the outer non-linear least-squares fitting
-    global nnls_workspace
-    global A_cache, b_cache, A1_cache, b1_cache
+    # Using an NNLS workspace will save us from re-allocating memory for the NNLS fit
+    # for every iteration of the outer non-linear least-squares fitting. Bind the typed cache Refs
+    # (declared near the top of this file) to locals so the body is type-stable; `A_cache`/`b_cache` are
+    # narrowed to concrete arrays after the size checks below, and reallocations are written back to the
+    # Refs so the next iteration reuses them. The NNLS workspace is mutated in place.
+    ws = _NNLS_WS[]
+    A_cache  = _A_CACHE[]
+    b_cache  = _b_CACHE[]
+    A1_cache = _A1_CACHE[]
+    b1_cache = _b1_CACHE[]
 
     # prepare buffer arrays for NNLS
     nλ = length(s.λ)
-    if cube_fitter.fitting.ssp_regularize > 0.
-        reg_dims = (length(cube_fitter.ssps.ages), length(cube_fitter.ssps.logzs))
-    else
-        reg_dims = (0, 0)
-    end
+    na = length(cube_fitter.ssps.ages)
+    nz = length(cube_fitter.ssps.logzs)
+    # regularization rows: separable 2nd differences, one per interior triple along each axis. This MUST
+    # equal exactly what add_reg_constraints! writes (max(·,0) keeps it valid for axes with < 3 nodes).
+    n_reg = cube_fitter.fitting.ssp_regularize > 0. ? nz*max(na-2, 0) + na*max(nz-2, 0) : 0
 
     # Use the cache to store A and b
-    A_size = (nλ+prod(reg_dims), cube_fitter.n_ssps)
-    b_size = (nλ+prod(reg_dims),)
+    A_size = (nλ+n_reg, cube_fitter.n_ssps)
+    b_size = (nλ+n_reg,)
     if isnothing(A_cache) || (size(A_cache) != A_size)
-        A_cache = zeros(A_size)
+        A_cache = zeros(A_size); _A_CACHE[] = A_cache
     else
         A_cache .= 0.
     end
     if isnothing(b_cache) || (size(b_cache) != b_size)
-        b_cache = zeros(b_size)
+        b_cache = zeros(b_size); _b_CACHE[] = b_cache
     else
         b_cache .= 0.
     end
@@ -781,33 +827,36 @@ function stellar_populations_nnls(s::Spaxel, contin::Vector{<:Real}, ext_stars::
     # weight by the errors
     @views A_cache[1:nλ, :] ./= s.σ
     @views b_cache[1:nλ] ./= s.σ
-    # add the regularization constraints
-    # (we dont need to modify b here as it is already initialized with 0s)
-    if cube_fitter.fitting.ssp_regularize > 0.
-        add_reg_constraints!(A_cache, nλ, cube_fitter)
-    end
     # perform a non-negative least-squares fit
     if !haskey(s.aux, "stellar_weights") || isnothing(s.aux["stellar_weights"])
         spaxel_mask_extended = falses(length(b_cache))
         spaxel_mask_extended[1:nλ] .= get_vector_mask(s; lines=mask_lines, user_mask=cube_fitter.cube.spectral_region.mask)
 
+        # add the (scale-invariant) regularization constraints — after the good-pixel mask is known and
+        # before A1/b1 are extracted, so the reg rows use the correct fit-pixel scale and are included in
+        # the NNLS. b's reg rows stay 0 (already zero-initialized). Skipped when weights are cached below.
+        if cube_fitter.fitting.ssp_regularize > 0.
+            add_reg_constraints!(A_cache, b_cache, nλ, spaxel_mask_extended, cube_fitter)
+        end
+
         # Use the cache to store A1 and b1 
         A1_size = (sum(.~spaxel_mask_extended), cube_fitter.n_ssps)
         b1_size = (sum(.~spaxel_mask_extended),)
         if isnothing(A1_cache) || (size(A1_cache) != A1_size)
-            A1_cache  = A_cache[.~spaxel_mask_extended, :]
+            A1_cache  = A_cache[.~spaxel_mask_extended, :]; _A1_CACHE[] = A1_cache
         else
-            A1_cache .= A_cache[.~spaxel_mask_extended, :]
+            # copy into the preallocated cache from a view, avoiding a full masked-copy allocation on the RHS
+            A1_cache .= @view A_cache[.~spaxel_mask_extended, :]
         end
         if isnothing(b1_cache) || (size(b1_cache) != b1_size)
-            b1_cache  = b_cache[.~spaxel_mask_extended]
+            b1_cache  = b_cache[.~spaxel_mask_extended]; _b1_CACHE[] = b1_cache
         else
-            b1_cache .= b_cache[.~spaxel_mask_extended]
+            b1_cache .= @view b_cache[.~spaxel_mask_extended]
         end
 
-        load!(nnls_workspace, A1_cache, b1_cache)
-        solve!(nnls_workspace)
-        weights = nnls_workspace.x
+        load!(ws, A1_cache, b1_cache)
+        solve!(ws)
+        weights = ws.x
         # weights = nonneg_lsq(A[.~spaxel_mask_extended, :], b[.~spaxel_mask_extended], alg=:fnnls)  # mask out the emission lines!
     else
         weights = s.aux["stellar_weights"]
@@ -830,9 +879,9 @@ end
 Evaluate a Gaussian profile at `x`, parameterized by the amplitude `A`, mean value `μ`, and 
 full-width at half-maximum `FWHM`
 """
-@inline function Gaussian(x, A, μ, FWHM) 
-    # Reparametrize FWHM as dispersion σ
-    σ = FWHM / (2√(2log(2)))
+@inline function Gaussian(x, A, μ, FWHM)
+    # Reparametrize FWHM as dispersion σ (denominator folded into _FWHM_TO_σ_DENOM == 2√(2log(2)))
+    σ = FWHM / _FWHM_TO_σ_DENOM
     A * exp(-(x-μ)^2 / (2σ^2))
 end
 
@@ -845,25 +894,29 @@ full-width at half-maximum `FWHM`, 3rd moment / skewness `h₃`, and 4th moment 
 
 See Riffel et al. (2010)
 """
-function GaussHermite(x, A, μ, FWHM, h₃, h₄) 
+@inline function GaussHermite(x, A, μ, FWHM, h₃, h₄)
 
-    h = [h₃, h₄]
-    # Reparametrize FWHM as dispersion σ
-    σ = FWHM / (2√(2log(2)))
+    # Reparametrize FWHM as dispersion σ (denominator folded into _FWHM_TO_σ_DENOM == 2√(2log(2)))
+    σ = FWHM / _FWHM_TO_σ_DENOM
     # Gaussian exponential argument w
     w = (x - μ) / σ
     # Normalized Gaussian
     α = exp(-w^2 / 2)
 
-    # Calculate coefficients for the Hermite basis
-    n = 3:(length(h)+2)
-    norm = .√(factorial.(n) .* 2 .^ n)
-    coeff = vcat([1, 0, 0], h./norm)
-    # Calculate hermite basis
-    Herm = sum([coeff[nᵢ] * hermite(w, nᵢ-1) for nᵢ ∈ eachindex(coeff)])
+    # Hermite polynomials H₀..H₄ from the same forward recurrence as `hermite` (2x·Hₙ₋₁ − 2(n−1)·Hₙ₋₂),
+    # evaluated once each with no allocation and no exponential re-recursion. Only the H₃ and H₄ terms
+    # have nonzero coefficients, so this reproduces the old sum([coeff·hermite]) bit-for-bit.
+    H0 = one(w)
+    H1 = 2*w
+    H2 = 2*w*H1 - 2*1*H0
+    H3 = 2*w*H2 - 2*2*H1
+    H4 = 2*w*H3 - 2*3*H2
+    c₃ = h₃ / _GH_NORM3     # == coeff[4] = h₃ / √(factorial(3)*2^3)
+    c₄ = h₄ / _GH_NORM4     # == coeff[5] = h₄ / √(factorial(4)*2^4)
 
-    # Calculate peak height (i.e. value of function at w=0)
-    Herm0 = sum([coeff[nᵢ] * hermite(0., nᵢ-1) for nᵢ ∈ eachindex(coeff)])
+    # Hermite basis at w and its peak height at w=0 (H₃(0)=0, H₄(0)=12)
+    Herm  = 1 + c₃*H3 + c₄*H4
+    Herm0 = 1 + 12*c₄
 
     # Combine the Gaussian and Hermite profiles
     A * α * Herm / Herm0
@@ -876,8 +929,9 @@ end
 Evaluate a Lorentzian profile at `x`, parametrized by the amplitude `A`, mean value `μ`,
 and full-width at half-maximum `FWHM`
 """
-@inline function Lorentzian(x, A, μ, FWHM) 
-    A * (FWHM/2)^2 / ((x-μ)^2 + (FWHM/2)^2)
+@inline function Lorentzian(x, A, μ, FWHM)
+    hwhm = FWHM/2
+    A * hwhm^2 / ((x-μ)^2 + hwhm^2)
 end
 
 
@@ -891,12 +945,13 @@ https://docs.mantidproject.org/nightly/fitting/fitfunctions/PseudoVoigt.html
 """
 function Voigt(x, A, μ, FWHM, η)
 
-    # Reparametrize FWHM as dispersion σ
-    σ = FWHM / (2√(2log(2))) 
-    # Normalized Gaussian
+    # Reparametrize FWHM as dispersion σ (denominator folded into _FWHM_TO_σ_DENOM == 2√(2log(2)))
+    σ = FWHM / _FWHM_TO_σ_DENOM
+    # Normalized Gaussian (kept verbatim: folding √(2π) out of √(2π*σ^2) would not be bit-identical)
     G = 1/√(2π * σ^2) * exp(-(x-μ)^2 / (2σ^2))
-    # Normalized Lorentzian
-    L = 1/π * (FWHM/2) / ((x-μ)^2 + (FWHM/2)^2)
+    # Normalized Lorentzian (1/π folded into _INV_π; half-width FWHM/2 computed once)
+    hwhm = FWHM/2
+    L = _INV_π * hwhm / ((x-μ)^2 + hwhm^2)
 
     # Normalize the function so that the integral is given by this
     I = ∫Voigt(A, FWHM, η)
