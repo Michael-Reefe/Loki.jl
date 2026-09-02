@@ -33,6 +33,10 @@
 ---
 ## Changelog
 
+### 08/25/26
+
+- Bugfix in line SNR calculations, which inadvertently ignored user-masked regions of the spectrum.  Therefore, SNRs of lines next to masked regions could be artifically reduced due to a mismatch between the data and the continuum model within the user-masked region, inflating the calculated variance of the residuals.
+
 ### 07/02/26
 
 - Adjusted the `ssp_regularize` option to make it closer to the definition of `regul` in ppxf.  Note that they are not identical, because Loki fits stellar weights with physical units whereas ppxf fits normalized weights.  However, the regularization scaling has been modified such that the value of `ssp_regularize` is now independent of the physical scaling of the stellar mass weights.  In other words, `ssp_regularize` is now scale-invariant and should produce the same level of smoothing in all spectra.  A cross-term has also been removed in the regularization constraints which forced the same level of smoothing along both axes (age and metallicity).  The smoothing now acts independently along each axis, again bringing the definition closer to that used in ppxf.

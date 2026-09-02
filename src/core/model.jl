@@ -1317,7 +1317,8 @@ function calculate_extra_parameters(s::Spaxel, s_model::Spaxel, cube_fitter::Cub
                 propagate_err=propagate_err)
 
             # SNR
-            region = .~s.mask_lines .& ((abs.(s.λ .- mean_wave)./mean_wave.*C_KMS) .< 5000.0u"km/s")
+            region = (.~s.mask_lines) .& (.~get_vector_mask(s; lines=true, user_mask=cube_fitter.cube.spectral_region.mask)) .& 
+                     ((abs.(s.λ .- mean_wave)./mean_wave.*C_KMS) .< 5000.0u"km/s")
             continuum_d = continuum
             if s != s_model
                 continuum_d = Spline1D(ustrip.(s_model.λ), continuum, k=1)(ustrip.(s.λ))
