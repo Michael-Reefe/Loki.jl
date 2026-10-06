@@ -3,8 +3,133 @@
 const ascii_lowercase = "abcdefghijklmnopqrstuvwxyz"
 
 
-function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractArray{<:Number},
-    out_np_ssp::AbstractArray{Int}, cube_fitter::CubeFitter, cube_data::NamedTuple, aperture::Bool=false)
+# Helper function that applies all of the output transformations (relative line parameters, rest-frame
+# transformations, normalizations, log10s) to one spaxel's parameters and stores them in the ParamMaps object.
+# The norms dict must come from evaluating model_continuum with the same parameter vector.
+function assign_parammap_values!(param_maps::ParamMaps, param_units::Vector{String}, index::CartesianIndex,
+    params::AbstractVector{<:Number}, errs::AbstractMatrix{<:Number}, stellar_vals::Union{Nothing,AbstractVector},
+    norms::Dict, spax_model::Spaxel, cube_fitter::CubeFitter, restframe_factor::Real)
+
+    fopt = fit_options(cube_fitter)
+    line_config = model(cube_fitter).lines.config
+
+    for (pᵢ, pname) in enumerate(param_maps.parameters.names)
+
+        # Get the values
+        if pᵢ ≤ length(params)
+            val = params[pᵢ]
+            err_low, err_upp = errs[pᵢ, 1:2]
+        else
+            @assert fopt.fit_stellar_continuum 
+            val = stellar_vals[pᵢ-length(params)]
+            err_upp = NaN * unit(val)
+            err_low = NaN * unit(val)
+        end
+        unit_check(unit(val), unit(err_upp))
+        unit_check(unit(err_upp), unit(err_low))
+
+        # Handle line parameters
+        # if param_maps.line_transform[pᵢ]
+        if contains(pname, "lines")
+            line_comp = split(pname, ".")[end-1]
+            if isdigit(line_comp[1])
+                line_comp = parse(Int, line_comp)
+                if !isone(line_comp) && ((contains(pname, "amp") && line_config.rel_amp) || (contains(pname, "fwhm") && line_config.rel_fwhm))
+                    # get the amp/fwhm of the first line component
+                    pstr = contains(pname, "amp") ? "amp" : "fwhm"
+                    ind_1 = findfirst(param_maps.parameters.names .== replace(pname, "$line_comp.$pstr" => "1.$pstr"))
+                    # apply multiplicative transformation
+                    err_low = √((errs[ind_1, 1] * val)^2 + (err_low * params[ind_1])^2) 
+                    err_upp = √((errs[ind_1, 2] * val)^2 + (err_upp * params[ind_1])^2) 
+                    val *= params[ind_1]
+                elseif !isone(line_comp) && contains(pname, "voff") && line_config.rel_voff
+                    # get the voff of the first line component
+                    voff_1_ind = findfirst(param_maps.parameters.names .== replace(pname, "$line_comp.voff" => "1.voff"))
+                    err_low = √(err_low^2 + errs[voff_1_ind, 1]^2) 
+                    err_upp = √(err_upp^2 + errs[voff_1_ind, 2]^2) 
+                    # apply additive transformation
+                    val += params[voff_1_ind]
+                end
+            end
+        end
+
+        # Apply other transformations
+        # Shift back to observed frame
+        do_log = false
+        for transform in param_maps.parameters.transformations[pᵢ]
+            if transform == RestframeTransform 
+                if typeof(val) <: QWave
+                    # if it's some kind of wavelength, ALWAYS do the wavelength transformation
+                    val *= 1 + cube_fitter.z
+                    err_upp *= 1 + cube_fitter.z
+                    err_low *= 1 + cube_fitter.z
+                elseif typeof(val) <: QInvWave
+                    # Drude asymmetry profiles (units of inverse wavelength)
+                    val /= 1 + cube_fitter.z
+                    err_upp /= 1 + cube_fitter.z
+                    err_low /= 1 + cube_fitter.z
+                else
+                    # otherwise, assume it's some kind of amplitude with specific intensity units
+                    val *= restframe_factor
+                    err_upp *= restframe_factor
+                    err_low *= restframe_factor
+                end
+            end
+            # Normalize units
+            if transform == NormalizeTransform
+                # grab a potential extra normalization constant from the fitting function
+                if pname in keys(norms)
+                    norm_i = norms[pname]
+                else
+                    norm_i = 1.0
+                end
+                val *= spax_model.N / norm_i
+                err_upp *= spax_model.N / norm_i
+                err_low *= spax_model.N / norm_i
+            end
+            # Take the log10 --> do it this way to ensure that this is always done LAST
+            if transform == LogTransform
+                do_log = true
+            end
+        end
+        @debug "Output parameter: $pname | Value: $(ustrip(val)) + $(ustrip(err_upp)) - $(ustrip(err_low)) | Units: $(unit(val))"
+        punit = replace(string(unit(val)), "μ" => "u", "Å" => "angstrom")
+        if punit == "NoUnits"
+            punit = ""
+        end
+
+        if do_log
+            # edit the unit string to indicate logarithmic units
+            punit = "[" * punit * "]"
+            err_upp = err_upp / (log(10) * val)
+            err_low = err_low / (log(10) * val) 
+            val = log10(ustrip(val))
+        end
+
+        # a few special cases
+        if split(pname, ".")[end] == "metallicity"
+            punit = "[Fe/H]"
+        end
+        if split(pname, ".")[end] == "E_BV"
+            punit = "mag"
+        end
+
+        # Set the values
+        param_maps.data[index, pᵢ] = val
+        param_maps.err_upp[index, pᵢ] = err_upp
+        param_maps.err_low[index, pᵢ] = err_low
+        param_units[pᵢ] = punit
+    end
+end
+
+
+# out_params/out_errs hold the reported parameter values (the bootstrapped medians when bootstrapping, otherwise identical 
+# to the best-fit values) and out_params_best holds the best-fit values.  When bootstrapping, two ParamMaps are generated,
+# one for each, otherwise param_maps_best is nothing.  The model cube is always constructed from the best-fit values since 
+# these are guaranteed to be self-consistent.
+function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractArray{<:Number}, 
+    out_params_best::AbstractArray{<:Number}, out_np_ssp::AbstractArray{Int}, cube_fitter::CubeFitter, cube_data::NamedTuple, 
+    aperture::Bool=false)
 
     # Create the CubeModel and ParamMaps structs to be filled in
     np_ssp = maximum(out_np_ssp)
@@ -28,11 +153,10 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
 
     cube_model = generate_cubemodel(cube_fitter, (size(cube_fitter.cube.I)[1:2]..., size3); do_1d=aperture)
     param_maps = generate_parammaps(cube_fitter; do_1d=aperture, stellar_params=np_ssp)
-
     fopt = fit_options(cube_fitter)
     oopt = out_options(cube_fitter)
+    param_maps_best = fopt.n_bootstrap > 0 ? generate_parammaps(cube_fitter; do_1d=aperture, stellar_params=np_ssp) : nothing
 
-    line_config = model(cube_fitter).lines.config
     if eltype(cube_data.I) <: QPerFreq
         restframe_factor = 1 + cube_fitter.z
     else
@@ -92,132 +216,43 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
             add_stellar_weights!(spax_model, results_stellar)
         end
 
-        I_cont, comps_c, norms = model_continuum(spax_model, spax_model.N, ustrip.(out_params[index, 1:pc-1]), unit.(out_params[index, 1:pc-1]),
-            cube_fitter, false, spax_model == spax, true, true)
-        
-        # Loop through parameters and save them in the parammaps data structure 
-        for (pᵢ, pname) in enumerate(param_maps.parameters.names)
+        # The best-fit parameters are used to construct the model
+        I_cont, comps_c, norms_best = model_continuum(spax_model, spax_model.N, ustrip.(out_params_best[index, 1:pc-1]), 
+            unit.(out_params_best[index, 1:pc-1]), cube_fitter, false, spax_model == spax, true, true)
+        # The reported (median) parameters are only used to get the normalizations of the individual components,
+        # since they do not necessarily produce a self-consistent model when parameters are degenerate
+        norms = norms_best
+        if !isequal(out_params[index, 1:pc-1], out_params_best[index, 1:pc-1])
+            _, _, norms = model_continuum(spax_model, spax_model.N, ustrip.(out_params[index, 1:pc-1]), unit.(out_params[index, 1:pc-1]),
+                cube_fitter, false, spax_model == spax, true, true)
+        end
 
-            # Get the values
-            if pᵢ ≤ size(out_params, 3)
-                val = out_params[index, pᵢ]
-                err_low, err_upp = out_errs[index, pᵢ, 1:2]
-            else
-                @assert fopt.fit_stellar_continuum 
-                val = stellar_vals[pᵢ-size(out_params, 3)]
-                err_upp = NaN * unit(val)
-                err_low = NaN * unit(val)
-            end
-            unit_check(unit(val), unit(err_upp))
-            unit_check(unit(err_upp), unit(err_low))
-
-            # Handle line parameters
-            # if param_maps.line_transform[pᵢ]
-            if contains(pname, "lines")
-                line_comp = split(pname, ".")[end-1]
-                if isdigit(line_comp[1])
-                    line_comp = parse(Int, line_comp)
-                    if !isone(line_comp) && ((contains(pname, "amp") && line_config.rel_amp) || (contains(pname, "fwhm") && line_config.rel_fwhm))
-                        # get the amp/fwhm of the first line component
-                        pstr = contains(pname, "amp") ? "amp" : "fwhm"
-                        ind_1 = findfirst(param_maps.parameters.names .== replace(pname, "$line_comp.$pstr" => "1.$pstr"))
-                        # apply multiplicative transformation
-                        err_low = √((out_errs[index, ind_1, 1] * val)^2 + (err_low * out_params[index, ind_1])^2) 
-                        err_upp = √((out_errs[index, ind_1, 2] * val)^2 + (err_upp * out_params[index, ind_1])^2) 
-                        val *= out_params[index, ind_1]
-                    elseif !isone(line_comp) && contains(pname, "voff") && line_config.rel_voff
-                        # get the voff of the first line component
-                        voff_1_ind = findfirst(param_maps.parameters.names .== replace(pname, "$line_comp.voff" => "1.voff"))
-                        err_low = √(err_low^2 + out_errs[index, voff_1_ind, 1]^2) 
-                        err_upp = √(err_upp^2 + out_errs[index, voff_1_ind, 2]^2) 
-                        # apply additive transformation
-                        val += out_params[index, voff_1_ind]
-                    end
-                end
-            end
-
-            # Apply other transformations
-            # Shift back to observed frame
-            do_log = false
-            for transform in param_maps.parameters.transformations[pᵢ]
-                if transform == RestframeTransform 
-                    if typeof(val) <: QWave
-                        # if it's some kind of wavelength, ALWAYS do the wavelength transformation
-                        val *= 1 + cube_fitter.z
-                        err_upp *= 1 + cube_fitter.z
-                        err_low *= 1 + cube_fitter.z
-                    elseif typeof(val) <: QInvWave
-                        # Drude asymmetry profiles (units of inverse wavelength)
-                        val /= 1 + cube_fitter.z
-                        err_upp /= 1 + cube_fitter.z
-                        err_low /= 1 + cube_fitter.z
-                    else
-                        # otherwise, assume it's some kind of amplitude with specific intensity units
-                        val *= restframe_factor
-                        err_upp *= restframe_factor
-                        err_low *= restframe_factor
-                    end
-                end
-                # Normalize units
-                if transform == NormalizeTransform
-                    # grab a potential extra normalization constant from the fitting function
-                    if pname in keys(norms)
-                        norm_i = norms[pname]
-                    else
-                        norm_i = 1.0
-                    end
-                    val *= spax_model.N / norm_i
-                    err_upp *= spax_model.N / norm_i
-                    err_low *= spax_model.N / norm_i
-                end
-                # Take the log10 --> do it this way to ensure that this is always done LAST
-                if transform == LogTransform
-                    do_log = true
-                end
-            end
-            @debug "Output parameter: $pname | Value: $(ustrip(val)) + $(ustrip(err_upp)) - $(ustrip(err_low)) | Units: $(unit(val))"
-            punit = replace(string(unit(val)), "μ" => "u", "Å" => "angstrom")
-            if punit == "NoUnits"
-                punit = ""
-            end
-
-            if do_log
-                # edit the unit string to indicate logarithmic units
-                punit = "[" * punit * "]"
-                err_upp = err_upp / (log(10) * val)
-                err_low = err_low / (log(10) * val) 
-                val = log10(ustrip(val))
-            end
-
-            # a few special cases
-            if split(pname, ".")[end] == "metallicity"
-                punit = "[Fe/H]"
-            end
-            if split(pname, ".")[end] == "E_BV"
-                punit = "mag"
-            end
-
-            # Set the values
-            param_maps.data[index, pᵢ] = val
-            param_maps.err_upp[index, pᵢ] = err_upp
-            param_maps.err_low[index, pᵢ] = err_low
-            param_units[pᵢ] = punit
+        # Save the parameters in the parammaps data structures
+        assign_parammap_values!(param_maps, param_units, index, out_params[index, :], out_errs[index, :, :], stellar_vals,
+            norms, spax_model, cube_fitter, restframe_factor)
+        if !isnothing(param_maps_best)
+            # (the best-fit values do not have any errors associated with them)
+            errs_best = repeat(out_params_best[index, :] .* NaN, 1, 2)
+            assign_parammap_values!(param_maps_best, param_units, index, out_params_best[index, :], errs_best, stellar_vals,
+                norms_best, spax_model, cube_fitter, restframe_factor)
         end
 
         # Save marker of the point where the continuum parameters end and the line parameters begin
         vᵢ = pc
         pᵢ = pc + cube_fitter.n_params_lines
 
-        I_line, comps_l = model_line_residuals(spax_model, ustrip.(out_params[index, vᵢ:pᵢ-1]), unit.(out_params[index, vᵢ:pᵢ-1]), 
+        I_line, comps_l = model_line_residuals(spax_model, ustrip.(out_params_best[index, vᵢ:pᵢ-1]), unit.(out_params_best[index, vᵢ:pᵢ-1]), 
             model(cube_fitter).lines, cube_fitter.lsf, comps_c["total_extinction_gas"], trues(length(spax_model.λ)), true)
 
         I_model, comps, = collect_total_fit_results(spax, spax_model, cube_fitter, I_cont, I_line, comps_c, comps_l, 0, 0)
 
-        # Sort the dust continuum parameters based on the temperature
-        sort_temperatures!(cube_fitter, param_maps, index)
+        for pmap in filter(!isnothing, [param_maps, param_maps_best])
+            # Sort the dust continuum parameters based on the temperature
+            sort_temperatures!(cube_fitter, pmap, index)
 
-        # Sort the parameters for multicomponent lines
-        sort_line_components!(cube_fitter, param_maps, index, cube_data)
+            # Sort the parameters for multicomponent lines
+            sort_line_components!(cube_fitter, pmap, index, cube_data)
+        end
 
         if oopt.save_full_model
             @debug "assign_outputs: saving full 3D model for spaxel $index"
@@ -285,7 +320,7 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
     end
 
     @debug "assign_outputs: done — processed $(length(spaxels)) spaxels"
-    param_maps, param_units, cube_model
+    param_maps, param_maps_best, param_units, cube_model
 end
 
 
@@ -887,14 +922,18 @@ end
 
 
 """
-    write_fits(cube_fitter, cube_data, cube_model, param_maps, param_errs; [aperture])
+    write_fits(cube_fitter, cube_data, cube_model, param_maps, param_errs; [aperture, param_maps_best])
 
-Save the best fit results for the cube into two FITS files: one for the full 3D intensity model of the cube, split up by
-individual model components, and one for 2D parameter maps of the best-fit parameters for each spaxel in the cube.
+Save the best fit results for the cube into FITS files: one for the full 3D intensity model of the cube, split up by
+individual model components, and others for 2D parameter maps of the reported parameters for each spaxel in the cube 
+along with their upper/lower errors.  If `param_maps_best` is provided, the best-fit parameter values are also saved
+to a separate file (without errors).  This is only done when bootstrapping, in which case the reported parameters
+are the bootstrapped medians.
 """
 function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::CubeModel, param_maps::ParamMaps,
     param_units::Vector{String}; aperture::Union{Vector{<:Aperture.AbstractAperture},String,Nothing}=nothing, 
-    nuc_temp_fit::Bool=false, nuc_spax::Union{Nothing,CartesianIndex}=nothing, qso3d::Bool=false)
+    nuc_temp_fit::Bool=false, nuc_spax::Union{Nothing,CartesianIndex}=nothing, qso3d::Bool=false,
+    param_maps_best::Union{ParamMaps,Nothing}=nothing)
 
     @debug "write_fits: cube=$(cube_fitter.name), aperture=$(aperture isa Nothing ? "none" : typeof(aperture)), nuc_temp_fit=$nuc_temp_fit, qso3d=$qso3d"
     aperture_keys = []
@@ -1099,11 +1138,15 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
         @debug "write_fits: save_full_model=false — skipping 3D model FITS"
     end
 
-    # Create the 2D parameter map FITS file for the parameters and the errors
-    for (index, param_data) ∈ enumerate([param_maps.data, param_maps.err_upp, param_maps.err_low])
+    # Create the 2D parameter map FITS file for the parameters and the errors (and the best-fit parameters, if given)
+    outputs = [(param_maps.data, "maps", false), (param_maps.err_upp, "errs_upp", true), (param_maps.err_low, "errs_low", true)]
+    if !isnothing(param_maps_best)
+        push!(outputs, (param_maps_best.data, "maps_best", false))
+    end
+    for (param_data, suffix, is_err) ∈ outputs
 
         FITS(joinpath("output_$(cube_fitter.name)", "$(cube_fitter.name)_$(nuc_temp_fit ? "nuc_" : "")parameter_" * 
-            ("maps", "errs_upp", "errs_low")[index] * "$(qso3d ? "_3d" : "").fits"), "w") do f
+            suffix * "$(qso3d ? "_3d" : "").fits"), "w") do f
 
             @debug "Writing 2D parameter map FITS HDUs"
 
@@ -1112,7 +1155,7 @@ function write_fits(cube_fitter::CubeFitter, cube_data::NamedTuple, cube_model::
             # Loop through parameters and write them to the fits file along with the header and units
             for (i, parameter) ∈ enumerate(param_maps.parameters.names)
                 # Skip chi2, dof, and SNRs for the error cubes
-                if (((split(parameter, ".")[1] == "statistics") || (split(parameter, ".")[end] == "SNR")) && (index != 1))
+                if (((split(parameter, ".")[1] == "statistics") || (split(parameter, ".")[end] == "SNR")) && is_err)
                     continue
                 end
                 good = isfinite.(param_data[:, :, i])
@@ -1280,15 +1323,40 @@ function write_fits_full_model(cube_fitter::CubeFitter, cube_data::NamedTuple, c
 end
 
 
+# Helper function for writing a DataFrame to a tab-separated text file with nicely padded column widths
+function write_padded_table(out_path::String, data::DataFrame)
+    textwidths = [maximum(textwidth.(string.([data[:, i]; names(data)[i]]))) for i in axes(data, 2)]
+    # convert to a string with nicely padded column widths
+    msg = ""
+    for (i, header) ∈ enumerate(names(data))
+        msg *= rpad(header, textwidths[i]) * "\t"
+    end
+    msg *= "\n"
+    for i ∈ axes(data, 1)
+        for j ∈ axes(data, 2)
+            msg *= rpad(data[i,j], textwidths[j]) * "\t"
+        end
+        msg *= "\n"
+    end
+    @debug msg
+    open(out_path, "w") do f
+        write(f, msg)
+    end
+end
+
+
 """
     write_table(cube_fitter, cube_data, param_maps)
 
 Save the best fit results for the cube into a simple CSV table file for each spaxel, much like the files 
 that are saved in the "spaxel_binaries" folder to save the progress of the fitting results.  But these tables 
 will instead hold the "canonical" outputs of the code, with all quantities in physical units and transformed 
-to the observed frame.
+to the observed frame.  If `param_maps_best` is provided, an additional table holding the best-fit values (without
+errors) is also saved for each spaxel.  This is only done when bootstrapping, in which case the reported values 
+are the bootstrapped medians.
 """
-function write_table(cube_fitter::CubeFitter, param_maps::ParamMaps, param_units::Vector{String})
+function write_table(cube_fitter::CubeFitter, param_maps::ParamMaps, param_units::Vector{String};
+    param_maps_best::Union{ParamMaps,Nothing}=nothing)
 
     param_names = param_maps.parameters.names
     n_params = length(param_names)
@@ -1340,25 +1408,15 @@ function write_table(cube_fitter::CubeFitter, param_maps::ParamMaps, param_units
         # make a dataframe
         data = DataFrame(name=param_names, best=best, error_lower=err_l, error_upper=err_u, unit=units, 
             locked=locked, tied=tied)
-        textwidths = [maximum(textwidth.(string.([data[:, i]; names(data)[i]]))) for i in axes(data, 2)]
-        # convert to a string with nicely padded column widths
-        msg = ""
-        for (i, header) ∈ enumerate(names(data))
-            msg *= rpad(header, textwidths[i]) * "\t"
-        end
-        msg *= "\n"
-        for i ∈ axes(data, 1)
-            for j ∈ axes(data, 2)
-                msg *= rpad(data[i,j], textwidths[j]) * "\t"
-            end
-            msg *= "\n"
-        end
-        @debug msg
-
         # write the output table
         out_path = joinpath(tblpath, "$fname.final.csv")
-        open(out_path, "w") do f
-            write(f, msg)
+        write_padded_table(out_path, data)
+
+        # same thing for the best-fit values
+        if !isnothing(param_maps_best)
+            data_best = DataFrame(name=param_names, best=ustrip.(param_maps_best.data[spaxel,:]), unit=units, 
+                locked=locked, tied=tied)
+            write_padded_table(joinpath(tblpath, "$(fname)_best.final.csv"), data_best)
         end
         n_written += 1
         @debug "write_table: wrote $out_path (spaxel=$spaxel, n_params=$n_params)"

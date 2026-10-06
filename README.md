@@ -322,7 +322,7 @@ This option determines whether emission line amplitudes are allowed to go negati
 
 `n_bootstrap = 0`
 
-This option sets the number of bootstrap iterations that are performed on each fit. Setting it to 0 (the default) disables bootstrapping. When bootstrapping is disabled, the provided uncertainties will be calculated based on the covariance matrix of the LM fit.
+This option sets the number of bootstrap iterations that are performed on each fit. Setting it to 0 (the default) disables bootstrapping. When bootstrapping is disabled, the provided uncertainties will be calculated based on the covariance matrix of the LM fit. When bootstrapping is enabled, the reported parameter values and uncertainties are the 50th and (15.9th, 84.1st) percentiles of the bootstrap samples of each parameter, and the plotted model is the pointwise median of the bootstrapped models. Note that if some parameters are strongly degenerate (for example, the coefficients of a high-order polynomial), the vector of median parameter values will in general NOT reproduce a good model, so when bootstrapping, the best-fit parameter values are also saved separately (see the `_best` output files), and these are what are used to construct the output model cubes. Without bootstrapping, the regular outputs simply hold the best-fit values with uncertainties from the covariance matrix, and no `_best` files are produced.
 
 `random_seed = 123456789`
 
@@ -1235,7 +1235,8 @@ You may notice at the beginning of the fitting procedure that a series of output
 │   │   ├── loki.spaxel_1_1.log
 │   │   └── ...
 │   ├── output_tables
-│   │   ├── spaxel_1_1.csv
+│   │   ├── spaxel_1_1.final.csv
+│   │   ├── spaxel_1_1_best.final.csv  (only if bootstrapping)
 │   │   └── ...
 │   ├── param_maps
 │   │   ├── absorption_features
@@ -1249,6 +1250,7 @@ You may notice at the beginning of the fitting procedure that a series of output
 │   │   ├── init_fit_cont.csv
 │   │   ├── init_fit_line.csv
 │   │   ├── spaxel_1_1.csv
+│   │   ├── spaxel_1_1_best.csv  (only if bootstrapping)
 │   │   └── ...
 │   ├── spaxel_plots
 │   │   ├── initial_sum_fit.pdf
@@ -1264,6 +1266,7 @@ You may notice at the beginning of the fitting procedure that a series of output
 ├── [name]_parameter_errs_low.fits
 ├── [name]_parameter_errs_upp.fits
 ├── [name]_parameter_maps.fits
+├── [name]_parameter_maps_best.fits  (only if bootstrapping)
 ├── loki.convergence.log
 ├── loki.main.log
 ├── dust_options.archive.toml
@@ -1383,7 +1386,7 @@ When fitting an integrated spectrum within an aperture, plots are generated at t
 ![](./figures/NGC7469_aperture_plot.png)
 
 ### viii. FITS Files
-There are two main categories of output FITS files: parameter maps (2D; `_parameter_maps.fits`, `_parameter_errs_low.fits`, `_parameter_errs_upp.fits`) and model cubes (3D; `_full_model.fits`). As the names suggest, the parameter maps contain 2D maps of each model parameter (and the lower/upper uncertainties, if bootstrapping) for each spaxel, and the model cubes contain the full 3D models decomposed into the individual model components, evaluated at the same points as the data.
+There are two main categories of output FITS files: parameter maps (2D; `_parameter_maps.fits`, `_parameter_errs_low.fits`, `_parameter_errs_upp.fits`, `_parameter_maps_best.fits`) and model cubes (3D; `_full_model.fits`). As the names suggest, the parameter maps contain 2D maps of each model parameter (and the lower/upper uncertainties) for each spaxel, and the model cubes contain the full 3D models decomposed into the individual model components, evaluated at the same points as the data. Without bootstrapping, `_parameter_maps.fits` holds the best-fit values (with uncertainties from the covariance matrix). With bootstrapping, `_parameter_maps.fits` instead holds the median of the bootstrap samples for each parameter, and an additional `_parameter_maps_best.fits` file holds the best-fit values (without uncertainties). The model cubes are always constructed from the best-fit parameters, since these are guaranteed to produce a self-consistent model.
 
 The parameter maps are organized as follows. Each model parameter has its own Header Data Unit (HDU) named appropriately, with a 2D shape corresponding to the spatial axes of the input data. An example of what this might look like, showing the names, dimensions, and formats of each HDU, is given below:
 ```
@@ -1464,7 +1467,7 @@ They can be loaded in the same manner as the parameter maps, bearing in mind tha
 There are **two** wavelength tables because the data and the model are not always evaluated on the same grid: `DATA` and `ERROR` correspond to the `WAVELENGTH` HDU (the data's wavelength grid), while `MODEL` and every individual model-component HDU correspond to the `WAVELENGTH_MODEL` HDU (the model's wavelength grid). Usually these two grids are identical and the tables match. They differ, for example, when the model is evaluated on a finer, gap-free logarithmic grid (as can happen with NIRSpec chip gaps), in which case the `MODEL`/component HDUs will have a different third-axis length than `DATA`/`ERROR`. Always index the model and its components against `WAVELENGTH_MODEL`, and the data and error against `WAVELENGTH`.
 
 ### ix. CSV Tables
-As promised, the output best-fit parameters can also be saved in CSV format in addition to FITS format.  They will be found under the "output_tables" folder, assuming you've enabled the "save_tables" boolean option.  If you want to use CSV tables, then these are what you should be using, not the CSV files under "spaxel_binaries".  They have the same format, barring the omission of lower/upper limit values.  Importantly, all of the parameters in these files will have the appropriate scalings and transformations applied to them so that they are in true physical units in the observed frame.
+As promised, the output best-fit parameters can also be saved in CSV format in addition to FITS format.  They will be found under the "output_tables" folder, assuming you've enabled the "save_tables" boolean option.  If you want to use CSV tables, then these are what you should be using, not the CSV files under "spaxel_binaries".  They have the same format, barring the omission of lower/upper limit values.  Like the FITS files, when bootstrapping, the best-fit values are additionally saved in the `_best.final.csv` tables (without uncertainties).  Importantly, all of the parameters in these files will have the appropriate scalings and transformations applied to them so that they are in true physical units in the observed frame.
 
 ### x. Line Tests
 If any line tests are performed and the `plot_line_test` option is enabled, they will be stored in the `line_tests` directory. They will be fairly simple plots showing the spectrum immediately around the line, and the models with 1, 2, ... up to N components. There will be an annotation showing the F-test results and the final number of profiles that will be fit for the line.

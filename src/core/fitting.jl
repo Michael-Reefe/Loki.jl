@@ -1027,7 +1027,7 @@ function _fit_bootstraps(spax::Spaxel, spax_model::Spaxel, cube_fitter::CubeFitt
     split1 = length(result_c.popt)
     split2 = length(result_c.popt) + length(result_l.popt)
     
-    p_out, p_err, I_boot_min, I_boot_max, I_model, comps, norms, χ2 = collect_bootstrapped_results(spax, spax_model, cube_fitter, 
+    p_out, p_err, I_boot_min, I_boot_max, I_model, norms, χ2 = collect_bootstrapped_results(spax, spax_model, cube_fitter, 
         p_boot, I_model_boot, split1, split2)
     result.popt .= p_out
     result.perr .= p_err
@@ -1039,7 +1039,7 @@ function _fit_bootstraps(spax::Spaxel, spax_model::Spaxel, cube_fitter::CubeFitt
         @debug "_fit_bootstraps: fit_stellar_continuum=false, skipping stellar parameter calculation"
     end
 
-    result, result_stellar, I_boot_min, I_boot_max, I_model, comps, χ2
+    result, result_stellar, I_boot_min, I_boot_max, I_model, χ2
 end
 
 
@@ -1058,6 +1058,12 @@ of a crash.
 - `use_vorbins`: Flag for using voronoi binning 
 - `σ_min`: Optional minimum uncertainty to add in quadrature with the statistical uncertainty. Only applies if
     use_ap or use_vorbins is true.
+
+# Returns
+`(p_out, p_err, p_best, np_ssp)`: the reported parameter values and their (lower, upper) errors, the best-fit
+parameter values, and the number of stellar populations. Without bootstrapping, `p_out == p_best`. With bootstrapping,
+`p_out` and `p_err` are the medians and (15.9th, 84.1st) percentiles of the bootstrap samples, which in general will
+not reproduce a consistent model when parameters are degenerate, so `p_best` should be used to reconstruct models.
 """
 function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, coords::CartesianIndex; use_ap::Bool=false,
     use_vorbins::Bool=false, σ_min::Vector=zeros(eltype(cube_data.σ), size(cube_data.σ)[end]),
@@ -1073,24 +1079,25 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, coords::Cart
         !oopt.overwrite
         # Otherwise, just grab the results from before
         p_out, p_err = read_fit_results_csv(cube_fitter.name, fname)
+        p_best = read_best_fit_results_csv(cube_fitter.name, fname)
         np_ssp = 0
         if fopt.fit_stellar_continuum
             rs = deserialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.ssp"))
             np_ssp = length(rs.ages)
         end
-        return p_out, p_err, np_ssp
+        return p_out, p_err, p_best, np_ssp
     end
 
     # if there are any NaNs, skip over the spaxel
     if any(.!isfinite.(cube_data.I[coords, :]))
         @debug "Non-finite values found in the intensity! Not fitting spaxel $coords"
-        return nothing, nothing, nothing
+        return nothing, nothing, nothing, nothing
     end
     for t in 1:cube_fitter.n_templates
         if any(.~isfinite.(cube_data.templates[coords, :, t]))
             # If a template is fully NaN/Inf, we can't fit
             @debug "Non-finite values found in the templates! Not fitting spaxel $coords"
-            return nothing, nothing, nothing
+            return nothing, nothing, nothing, nothing
         end
     end
     # Skip an all-zero spectrum (the normalization N = max|I| would collapse to 0, giving a meaningless
@@ -1098,11 +1105,11 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, coords::Cart
     # as the non-finite cases above (NaN in the output maps); a bad spaxel never aborts a full-cube fit.
     if !any(!iszero, ustrip.(cube_data.I[coords, :]))
         @debug "Intensity is entirely zero for spaxel $coords (normalization undefined). Not fitting spaxel $coords"
-        return nothing, nothing, nothing
+        return nothing, nothing, nothing, nothing
     end
     if length(cube_data.I[coords, :]) < 4
         @debug "Fewer than 4 wavelength points for spaxel $coords; too few to fit. Not fitting spaxel $coords"
-        return nothing, nothing, nothing
+        return nothing, nothing, nothing, nothing
     end
 
     # Make a spaxel object
@@ -1116,23 +1123,27 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, coords::Cart
                                     user_mask=cube_fitter.cube.spectral_region.mask)
     if length(spax.I[spaxel_mask]) < (cube_fitter.n_params_cont + cube_fitter.n_params_lines)
         @debug "The masked region is too small to contain enough data to fit! Not fitting spaxel $coords"
-        return nothing, nothing, nothing
+        return nothing, nothing, nothing, nothing
     end
 
     # This log should be entirely handled by 1 process, since each spaxel is entirely handled by 1 process
     # so there should be no problems w.ith I/O race conditions
     spaxel_logger = make_spaxel_logger(cube_fitter.name, fname)
 
-    result, np_ssp = with_logger(spaxel_logger) do
+    result, result_best, np_ssp = with_logger(spaxel_logger) do
 
         # Perform the regular fit
         result, result_c, result_l, result_stellar, pahtemp, I_model, comps, spax_model, χ2, dof = _fit_spaxel_iterfunc(
             spax, cube_fitter; bootstrap_iter=false, use_ap=use_ap)
+        # Keep a copy of the best-fit results, which are saved alongside the bootstrapped (median) results
+        result_best = copy(result)
 
         # Perform the bootstrapping iterations, if n_bootstrap > 0
+        # (the plotted model becomes the pointwise median of the bootstrapped models, while the individual
+        #  components are still those of the best fit)
         I_boot_min = I_boot_max = nothing
         if fopt.n_bootstrap > 0
-            result, result_stellar, I_boot_min, I_boot_max, I_model, comps, χ2 = _fit_bootstraps(
+            result, result_stellar, I_boot_min, I_boot_max, I_model, χ2 = _fit_bootstraps(
                 spax, spax_model, cube_fitter, I_model, result, result_c, result_l, pahtemp, fname; use_ap=use_ap)
         end
 
@@ -1154,6 +1165,10 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, coords::Cart
         # serialize(joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "spaxel_$(spaxel[1])_$(spaxel[2]).LOKI"), (p_out=p_out, p_err=p_err))
         # save output as csv file
         write_fit_results_csv(cube_fitter, fname, result)
+        # (the best-fit values are only saved separately when bootstrapping, otherwise they're identical)
+        if fopt.n_bootstrap > 0
+            write_fit_results_csv(cube_fitter, "$(fname)_best", result_best)
+        end
 
         # Plot and save the stellar populations, if relevant
         np_ssp = 0
@@ -1168,10 +1183,10 @@ function fit_spaxel(cube_fitter::CubeFitter, cube_data::NamedTuple, coords::Cart
             write_memory_log(cube_fitter, fname)
         end
 
-        result, np_ssp
+        result, result_best, np_ssp
     end
 
-    return result.popt, result.perr, np_ssp
+    return result.popt, result.perr, result_best.popt, np_ssp
 end
 
 
@@ -1257,9 +1272,10 @@ end
 
 
 # Helper function that loops over previously fit spaxels and adds their results into
-# the out_params and out_errs
+# the out_params, out_errs, and out_params_best
 function spaxel_loop_previous(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxels::Vector,
-    vorbin::Bool, out_params::AbstractArray{<:Real,3}, out_errs::AbstractArray{<:Real,4}, out_np_ssp::AbstractArray{Int,2})
+    vorbin::Bool, out_params::AbstractArray{<:Real,3}, out_errs::AbstractArray{<:Real,4}, out_params_best::AbstractArray{<:Real,3},
+    out_np_ssp::AbstractArray{Int,2})
 
     @debug "spaxel_loop_previous: n_spaxels=$(length(spaxels)), vorbin=$vorbin, overwrite=$(out_options(cube_fitter).overwrite)"
     _m2 = falses(length(spaxels))
@@ -1271,17 +1287,19 @@ function spaxel_loop_previous(cube_fitter::CubeFitter, cube_data::NamedTuple, sp
             fpath2 = joinpath("output_$(cube_fitter.name)", "spaxel_binaries", "$fname.ssp")
             if isfile(fpath1) && (!fit_options(cube_fitter).fit_stellar_continuum || isfile(fpath2))
                 # just loads in the previous fit results since they already exist
-                p_out, p_err, np_ssp = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
+                p_out, p_err, p_best, np_ssp = fit_spaxel(cube_fitter, cube_data, index; use_vorbins=vorbin)
                 if vorbin
                     out_indices = findall(cube_fitter.cube.voronoi_bins .== Tuple(index)[1])
                     for out_index in out_indices
                         out_params[out_index, :] .= ustrip.(p_out)
                         out_errs[out_index, :, :] .= ustrip.(p_err)
+                        out_params_best[out_index, :] .= ustrip.(p_best)
                         out_np_ssp[out_index] = np_ssp
                     end
                 else
                     out_params[index, :] .= ustrip.(p_out)
                     out_errs[index, :, :] .= ustrip.(p_err)
+                    out_params_best[index, :] .= ustrip.(p_best)
                     out_np_ssp[index] = np_ssp
                 end
                 # remove this spaxel from the list of spaxels that still need to be fit
@@ -1295,7 +1313,8 @@ end
 
 
 function spaxel_loop_timeout!(cube_fitter::CubeFitter, cube_data::NamedTuple, spaxels::Vector,
-    vorbin::Bool, out_params::AbstractArray{<:Real,3}, out_errs::AbstractArray{<:Real,4}, out_np_ssp::AbstractArray{Int,2})
+    vorbin::Bool, out_params::AbstractArray{<:Real,3}, out_errs::AbstractArray{<:Real,4}, out_params_best::AbstractArray{<:Real,3},
+    out_np_ssp::AbstractArray{Int,2})
 
 
     fopt = fit_options(cube_fitter)
@@ -1403,7 +1422,7 @@ function spaxel_loop_timeout!(cube_fitter::CubeFitter, cube_data::NamedTuple, sp
                 # whether it timed out, errored, or returned normally.  First we handle the timeout case.
                 result = if status === :timed_out
                     @warn "Spaxel $index timed out on worker $w. Marking process as hanging."
-                    nothing, nothing, nothing
+                    nothing, nothing, nothing, nothing
                 else
                     val = take!(ch)
                     if typeof(val) <: Exception
@@ -1411,7 +1430,7 @@ function spaxel_loop_timeout!(cube_fitter::CubeFitter, cube_data::NamedTuple, sp
                         status = :error
                         ex = val isa RemoteException ? val.captured.ex : val
                         @error "Spaxel $index has reported an error on worker $w: $ex"
-                        nothing, nothing, nothing
+                        nothing, nothing, nothing, nothing
                     else
                         val
                     end
@@ -1436,7 +1455,7 @@ function spaxel_loop_timeout!(cube_fitter::CubeFitter, cube_data::NamedTuple, sp
                 end
 
                 # unpack the result
-                p_out, p_err, np_ssp = result
+                p_out, p_err, p_best, np_ssp = result
 
                 # lock writing to the output arrays to avoid race conditions
                 lock(results_lock) do 
@@ -1446,11 +1465,13 @@ function spaxel_loop_timeout!(cube_fitter::CubeFitter, cube_data::NamedTuple, sp
                             for out_index in out_indices
                                 out_params[out_index, :] .= ustrip.(p_out)
                                 out_errs[out_index, :, :] .= ustrip.(p_err)
+                                out_params_best[out_index, :] .= ustrip.(p_best)
                                 out_np_ssp[out_index] = np_ssp
                             end
                         else
                             out_params[index, :] .= ustrip.(p_out)
                             out_errs[index, :, :] .= ustrip.(p_err)
+                            out_params_best[index, :] .= ustrip.(p_best)
                             out_np_ssp[index] = np_ssp
                         end
                     end  
@@ -1530,6 +1551,7 @@ function fit_cube!(cube_fitter::CubeFitter)
     out_params .= NaN
     out_errs = Array{Float64}(undef, shape[1:2]..., cube_fitter.n_params_total, 2)
     out_errs .= NaN
+    out_params_best = copy(out_params)
     out_np_ssp = zeros(Int, shape[1:2]...)
 
     # "cube_data" object holds the primary wavelength, intensity, and errors
@@ -1565,7 +1587,7 @@ function fit_cube!(cube_fitter::CubeFitter)
     spaxels = spaxels[.~_m]
 
     # First (non-parallel) loop over already-completed spaxels
-    _m2 = spaxel_loop_previous(cube_fitter, cube_data, spaxels, vorbin, out_params, out_errs, out_np_ssp)
+    _m2 = spaxel_loop_previous(cube_fitter, cube_data, spaxels, vorbin, out_params, out_errs, out_params_best, out_np_ssp)
     spaxels = spaxels[.~_m2]
 
     fopt = fit_options(cube_fitter)
@@ -1573,16 +1595,18 @@ function fit_cube!(cube_fitter::CubeFitter)
 
     # Use multiprocessing (not threading) to iterate over multiple spaxels at once using multiple CPUs
     @info "===> Beginning individual spaxel fitting... <==="
-    spaxel_loop_timeout!(cube_fitter, cube_data, spaxels, vorbin, out_params, out_errs, out_np_ssp)
+    spaxel_loop_timeout!(cube_fitter, cube_data, spaxels, vorbin, out_params, out_errs, out_params_best, out_np_ssp)
 
     @info "===> Generating parameter maps and model cubes... <==="
     # apply the units
     out_units = get_units(get_flattened_parameters(model(cube_fitter)))
     out_params = out_params .* repeat(reshape(out_units, (1,1,length(out_units))), outer=[shape[1],shape[2],1])
     out_errs = out_errs .* repeat(reshape(out_units, (1,1,length(out_units),1)), outer=[shape[1],shape[2],1,2])
+    out_params_best = out_params_best .* repeat(reshape(out_units, (1,1,length(out_units))), outer=[shape[1],shape[2],1])
 
     # Create the ParamMaps and CubeModel structs containing the outputs
-    param_maps, param_units, cube_model = assign_outputs(out_params, out_errs, out_np_ssp, cube_fitter, cube_data, false)
+    param_maps, param_maps_best, param_units, cube_model = assign_outputs(out_params, out_errs, out_params_best, out_np_ssp, 
+        cube_fitter, cube_data, false)
 
     if oopt.plot_maps
         @info "===> Plotting parameter maps... <==="
@@ -1593,13 +1617,13 @@ function fit_cube!(cube_fitter::CubeFitter)
 
     if oopt.save_fits
         @info "===> Writing FITS outputs... <==="
-        write_fits(cube_fitter, cube_data, cube_model, param_maps, param_units)
+        write_fits(cube_fitter, cube_data, cube_model, param_maps, param_units; param_maps_best=param_maps_best)
     else
         @debug "fit_cube!: save_fits=false, skipping FITS output"
     end
     if oopt.save_tables
         @info "===> Writing CSV tables... <==="
-        write_table(cube_fitter, param_maps, param_units)
+        write_table(cube_fitter, param_maps, param_units; param_maps_best=param_maps_best)
     else
         @debug "fit_cube!: save_tables=false, skipping CSV table output"
     end
@@ -1656,6 +1680,7 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
     out_params .= NaN
     out_errs = Array{Float64}(undef, shape[1:2]..., cube_fitter.n_params_total, 2)
     out_errs .= NaN
+    out_params_best = copy(out_params)
     out_np_ssp = zeros(Int, shape[1:2]...)
 
     # Loop through each wavelength pixel and perform the aperture photometry
@@ -1694,10 +1719,11 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
     spaxels = CartesianIndices((1,1))
 
     @info "===> Beginning integrated spectrum fitting... <==="
-    p_out, p_err, np_ssp = fit_spaxel(cube_fitter, cube_data, spaxels[1]; use_ap=true, mask_bad=mask_bad)
+    p_out, p_err, p_best, np_ssp = fit_spaxel(cube_fitter, cube_data, spaxels[1]; use_ap=true, mask_bad=mask_bad)
     if !isnothing(p_out)
         out_params[spaxels[1], :] .= ustrip.(p_out)
         out_errs[spaxels[1], :, :] .= ustrip.(p_err)
+        out_params_best[spaxels[1], :] .= ustrip.(p_best)
         out_np_ssp[spaxels[1]] = np_ssp
     end
 
@@ -1706,18 +1732,20 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
     out_units = get_units(get_flattened_parameters(model(cube_fitter)))
     out_params = out_params .* repeat(reshape(out_units, (1,1,length(out_units))), outer=[shape[1],shape[2],1])
     out_errs = out_errs .* repeat(reshape(out_units, (1,1,length(out_units),1)), outer=[shape[1],shape[2],1,2])
+    out_params_best = out_params_best .* repeat(reshape(out_units, (1,1,length(out_units))), outer=[shape[1],shape[2],1])
 
     # Create the ParamMaps and CubeModel structs containing the outputs
-    param_maps, param_units, cube_model = assign_outputs(out_params, out_errs, out_np_ssp, cube_fitter, cube_data, true)
+    param_maps, param_maps_best, param_units, cube_model = assign_outputs(out_params, out_errs, out_params_best, out_np_ssp, 
+        cube_fitter, cube_data, true)
 
     oopt = out_options(cube_fitter)
     if oopt.save_fits
         @info "===> Writing FITS outputs... <==="
-        write_fits(cube_fitter, cube_data, cube_model, param_maps, param_units, aperture=aperture)
+        write_fits(cube_fitter, cube_data, cube_model, param_maps, param_units, aperture=aperture, param_maps_best=param_maps_best)
     end
     if oopt.save_tables
         @info "===> Writing CSV tables... <=== "
-        write_table(cube_fitter, param_maps, param_units)
+        write_table(cube_fitter, param_maps, param_units; param_maps_best=param_maps_best)
     end
 
     # Save a copy of the options file used to run the code, so the settings can be referenced/reused
@@ -1776,6 +1804,7 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, agn_templates::Arra
     out_params .= NaN
     out_errs = Array{Float64}(undef, shape[1:2]..., cube_fitter.n_params_total, 2)
     out_errs .= NaN
+    out_params_best = copy(out_params)
     out_np_ssp = zeros(Int, shape[1:2]...)
     cube_data = create_cube_data_postnuctemp(cube_fitter, agn_templates)
 
@@ -1799,10 +1828,11 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, agn_templates::Arra
     @info "===> Beginning nuclear spectrum fitting... <==="
     # Add a minimum uncertainty to prevent the statistical uncertainties on the model from being close to 0 due to it being
     # a smooth model rather than actual data
-    p_out, p_err, np_ssp = fit_spaxel(cube_fitter, cube_data, CartesianIndex(1,1); use_ap=true, σ_min=σ_sum_init, mask_bad=mask_bad_init)
+    p_out, p_err, p_best, np_ssp = fit_spaxel(cube_fitter, cube_data, CartesianIndex(1,1); use_ap=true, σ_min=σ_sum_init, mask_bad=mask_bad_init)
     if !isnothing(p_out)
         out_params[1, 1, :] .= ustrip.(p_out)
         out_errs[1, 1, :, :] .= ustrip.(p_err)
+        out_params_best[1, 1, :] .= ustrip.(p_best)
         out_np_ssp[1,1] = np_ssp
     end
 
@@ -1811,12 +1841,18 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, agn_templates::Arra
     out_units = get_units(get_flattened_parameters(model(cube_fitter)))
     out_params = out_params .* repeat(reshape(out_units, (1,1,length(out_units))), outer=[shape[1],shape[2],1])
     out_errs = out_errs .* repeat(reshape(out_units, (1,1,length(out_units),1)), outer=[shape[1],shape[2],1,2])
+    out_params_best = out_params_best .* repeat(reshape(out_units, (1,1,length(out_units))), outer=[shape[1],shape[2],1])
 
     # Create the ParamMaps and CubeModel structs containing the outputs
-    param_maps, param_units, cube_model = assign_outputs(out_params, out_errs, out_np_ssp, cube_fitter, cube_data, true)
+    param_maps, param_maps_best, param_units, cube_model = assign_outputs(out_params, out_errs, out_params_best, out_np_ssp, 
+        cube_fitter, cube_data, true)
 
     # Create another set of ParamMaps and CubeModels--this time 3D--containing the features fluxes dispersed by the PSF model
     param_maps_3d, cube_model_3d = assign_qso3d_outputs(param_maps, cube_model, cube_fitter, psf_norm)
+    param_maps_3d_best = nothing
+    if !isnothing(param_maps_best)
+        param_maps_3d_best, = assign_qso3d_outputs(param_maps_best, cube_model, cube_fitter, psf_norm)
+    end
     if oopt.plot_maps
         @info "===> Plotting QSO parameter maps... <==="
         plot_parameter_maps(cube_fitter, param_maps_3d, snr_thresh=oopt.map_snr_thresh, qso3d=true)
@@ -1824,14 +1860,16 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, agn_templates::Arra
 
     if oopt.save_fits
         @info "===> Writing 1D FITS outputs... <==="
-        write_fits(cube_fitter, cube_data, cube_model, param_maps, param_units, nuc_temp_fit=false, aperture="all")
+        write_fits(cube_fitter, cube_data, cube_model, param_maps, param_units, nuc_temp_fit=false, aperture="all",
+            param_maps_best=param_maps_best)
 
         @info "===> Writing 3D FITS outputs... <==="
-        write_fits(cube_fitter, cube_data, cube_model_3d, param_maps_3d, param_units, nuc_temp_fit=false, qso3d=true)
+        write_fits(cube_fitter, cube_data, cube_model_3d, param_maps_3d, param_units, nuc_temp_fit=false, qso3d=true,
+            param_maps_best=param_maps_3d_best)
     end
     if oopt.save_tables
         @info "===> Writing CSV tables... <=== "
-        write_table(cube_fitter, param_maps, param_units)
+        write_table(cube_fitter, param_maps, param_units; param_maps_best=param_maps_best)
     end
 
     # lock the hot dust component for the rest of the fits
@@ -1961,7 +1999,8 @@ function evaluate_model(λ::Vector{<:QWave}, spaxel::CartesianIndex, cube_fitter
     # Map the spaxel to its Voronoi bin for BOTH the result file and the data index. 
     data_index = use_vorbins ? CartesianIndex(cube_fitter.cube.voronoi_bins[spaxel]) : spaxel
     fname = use_vorbins ? "voronoi_bin_$(cube_fitter.cube.voronoi_bins[spaxel])" : "spaxel_$(spaxel[1])_$(spaxel[2])"
-    p_out, p_err = read_fit_results_csv(cube_fitter.name, fname; output_path=output_path)
+    # use the best-fit values (not the bootstrapped medians) since we need a self-consistent model
+    p_out = read_best_fit_results_csv(cube_fitter.name, fname; output_path=output_path)
 
     split1 = cube_fitter.n_params_cont
     split2 = cube_fitter.n_params_cont + cube_fitter.n_params_lines
@@ -2054,7 +2093,8 @@ function evaluate_model(λ::Vector{<:QWave}, aperture::Union{Vector{<:Aperture.A
     # The integrated fit is stored as "spaxel_1_1". read_fit_results_csv appends ".csv" itself, so pass
     # the bare stem (the current code passes "spaxel_1_1.csv", which resolves to spaxel_1_1.csv.csv).
     fname = "spaxel_1_1"
-    p_out, p_err = read_fit_results_csv(cube_fitter.name, fname; output_path=output_path)
+    # use the best-fit values (not the bootstrapped medians) since we need a self-consistent model
+    p_out = read_best_fit_results_csv(cube_fitter.name, fname; output_path=output_path)
     split1 = cube_fitter.n_params_cont
     split2 = cube_fitter.n_params_cont + cube_fitter.n_params_lines
     p_cont = p_out[1:split1]
@@ -2203,7 +2243,8 @@ function evaluate_post_fit_nuclear_template_model(λ::Vector{<:QWave}, cube_fitt
     cube_data = create_cube_data_postnuctemp(cube_fitter, agn_templates)
     use_vorbins = !isnothing(cube_fitter.cube.voronoi_bins)
     fname = use_vorbins ? "voronoi_bin_1" : "spaxel_1_1"
-    p_out, p_err = read_fit_results_csv(cube_fitter.name, fname; output_path=output_path)
+    # use the best-fit values (not the bootstrapped medians) since we need a self-consistent model
+    p_out = read_best_fit_results_csv(cube_fitter.name, fname; output_path=output_path)
 
     split1 = cube_fitter.n_params_cont
     split2 = cube_fitter.n_params_cont + cube_fitter.n_params_lines

@@ -810,6 +810,25 @@ function collect_fit_results(res::CMPFit.Result, pfix_cont_tied::Vector{<:Real},
 end
 
 
+# Helper function to calculate the chi^2 of a (normalized) model against the data, excluding bad pixels and
+# the user mask.  I_model may be on the gap-filled model grid of spaxel_model.  Returns the chi^2 and the
+# number of data points that went into it.
+function calculate_chi2(spaxel::Spaxel, spaxel_model::Spaxel, cube_fitter::CubeFitter, I_model::Vector{<:Real})
+    mask_chi2 = copy(spaxel.mask_bad)
+    for pair in cube_fitter.spectral_region.mask
+        mask_chi2 .|= pair[1] .< spaxel.λ .< pair[2]
+    end
+    I_model_d = I_model
+    if spaxel != spaxel_model
+        # gap interpolation has been done on the model -- bring it back to the same wavelength grid
+        I_model_d = Spline1D(ustrip.(spaxel_model.λ), I_model, k=1)(ustrip.(spaxel.λ))
+    end
+    χ2 = sum((spaxel.I[.~mask_chi2] .- I_model_d[.~mask_chi2]).^2 ./ spaxel.σ[.~mask_chi2].^2)
+    n_data = sum(.~mask_chi2)
+    χ2, n_data
+end
+
+
 # Helper function to get the total fit results for continuum and line fits
 function collect_total_fit_results(spaxel::Spaxel, spaxel_model::Spaxel, cube_fitter::CubeFitter, 
     I_cont::Vector{<:Real}, I_line::Vector{<:Real}, comps_cont::Dict, comps_line::Dict, n_free_c::Integer, 
@@ -821,19 +840,9 @@ function collect_total_fit_results(spaxel::Spaxel, spaxel_model::Spaxel, cube_fi
 
     @debug "collect_total_fit_results: spaxel=$(spaxel.coords), n_free_c=$n_free_c, n_free_l=$n_free_l"
     # chi^2 and reduced chi^2 of the model BEFORE renormalizing
-    mask_chi2 = copy(spaxel.mask_bad)
-    for pair in cube_fitter.spectral_region.mask
-        mask_chi2 .|= pair[1] .< spaxel.λ .< pair[2]
-    end
-    I_model_d = I_model
-    if spaxel != spaxel_model
-        # gap interpolation has been done on the model -- bring it back to the same wavelength grid
-        I_model_d = Spline1D(ustrip.(spaxel_model.λ), I_model, k=1)(ustrip.(spaxel.λ))
-    end
-    χ2 = sum((spaxel.I[.~mask_chi2] .- I_model_d[.~mask_chi2]).^2 ./ spaxel.σ[.~mask_chi2].^2)
+    χ2, n_data = calculate_chi2(spaxel, spaxel_model, cube_fitter, I_model)
     # Degrees of freedom
     n_free = n_free_c + n_free_l
-    n_data = length(spaxel.I[.~mask_chi2])
     dof = n_data - n_free
 
     # Renormalize
@@ -865,33 +874,35 @@ function collect_bootstrapped_results(spaxel::Spaxel, spaxel_model::Spaxel, cube
     p_boot[p_mask] .*= NaN
     p_out = p_med
 
-    # (if set to :best, p_out is already the best-fit values from earlier)
     p_err_lo = p_med .- dropdims(nanquantile(ustrip.(p_boot), 0.159, dims=2), dims=2) .* punits
     p_err_up = dropdims(nanquantile(ustrip.(p_boot), 0.841, dims=2), dims=2) .* punits .- p_med
     p_err = [p_err_lo p_err_up]
 
-    # Get the minimum/maximum pointwise bootstrapped models
-    I_boot_min = dropdims(nanminimum(ustrip.(I_model_boot), dims=2), dims=2) .* unit(I_model_boot[1])
-    I_boot_max = dropdims(nanmaximum(ustrip.(I_model_boot), dims=2), dims=2) .* unit(I_model_boot[1])
-
-    # Replace the best-fit model with the 50th percentile model to be consistent with p_out
-    fopt = fit_options(cube_fitter)
-    I_boot_cont, comps_boot_cont, norms = model_continuum(spaxel_model, spaxel_model.N, ustrip.(p_out[1:split1]), unit.(p_out[1:split1]), 
-        cube_fitter, false, spaxel_model == spaxel, !fopt.fit_joint, true)
-    I_boot_line, comps_boot_line = model_line_residuals(spaxel_model, ustrip.(p_out[split1+1:split2]), unit.(p_out[split1+1:split2]), 
-        model(cube_fitter).lines, cube_fitter.lsf, comps_boot_cont["total_extinction_gas"], trues(length(spaxel_model.λ)), true)
-
-    # Reconstruct the full model
-    I_model, comps, χ2, = collect_total_fit_results(spaxel, spaxel_model, cube_fitter, I_boot_cont, I_boot_line,
-        comps_boot_cont, comps_boot_line, 0, 0)
+    # Get the minimum/maximum/median pointwise bootstrapped models
+    I_unit = unit(I_model_boot[1])
+    I_boot_min = dropdims(nanminimum(ustrip.(I_model_boot), dims=2), dims=2) .* I_unit
+    I_boot_max = dropdims(nanmaximum(ustrip.(I_model_boot), dims=2), dims=2) .* I_unit
+    # N.B. we do NOT rebuild the model from p_out: the median of each parameter is the honest marginal posterior
+    # for that parameter, but when parameters are degenerate (e.g. high-order polynomial coefficients) the vector of
+    # medians need not correspond to any good fit, and the model built from it can be wildly off. The pointwise
+    # median of the bootstrapped models is always well-behaved.
+    I_model = dropdims(nanquantile(ustrip.(I_model_boot), 0.50, dims=2), dims=2) .* I_unit
 
     # Recalculate chi^2 based on the median model
+    χ2, = calculate_chi2(spaxel, spaxel_model, cube_fitter, uconvert.(NoUnits, I_model ./ spaxel.N))
     p_out[end-1] = χ2
+
+    # The normalizations of individual components (used to convert the normalized amplitudes into physical units,
+    # and to compute the stellar population parameters) are still taken from the median parameters, since they only
+    # depend on the parameters of each individual component
+    fopt = fit_options(cube_fitter)
+    _, _, norms = model_continuum(spaxel_model, spaxel_model.N, ustrip.(p_out[1:split1]), unit.(p_out[1:split1]),
+        cube_fitter, fopt.use_pah_templates, spaxel_model == spaxel, false, true)
 
     n_outliers = sum(p_mask)
     @debug "collect_bootstrapped_results: masked $n_outliers outlier bootstrap samples (>5σ)"
-    @debug "collect_bootstrapped_results: median bootstrap χ2=$(round(ustrip(χ2), digits=3))"
-    p_out, p_err, I_boot_min, I_boot_max, I_model, comps, norms, χ2
+    @debug "collect_bootstrapped_results: χ2 of the median bootstrap model=$(round(ustrip(χ2), digits=3))"
+    p_out, p_err, I_boot_min, I_boot_max, I_model, norms, χ2
 end
 
 
