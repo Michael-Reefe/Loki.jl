@@ -1822,8 +1822,11 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, agn_templates::Arra
     mask_bad_init = get_init_badpix_mask(I_sum_init, σ_sum_init, cube_fitter; use_ap=true)
     mask_init = mask_lines_init .| mask_bad_init
     mask_chi2_init = mask_bad_init
-    σ_sum_init  .= calculate_statistical_errors(I_sum_init, I_spline_init, mask_init)
-    σ_sum_init .*= nanmedian(cube_data.I[1,1,:]./I_sum_init)
+    # (σ_min is only used if the statistical errors are recalculated in make_normalized_spaxel)
+    if cube_fitter.cube.statistical_errors
+        σ_sum_init  .= calculate_statistical_errors(I_sum_init, I_spline_init, mask_init)
+        σ_sum_init .*= nanmedian(cube_data.I[1,1,:]./I_sum_init)
+    end
 
     @info "===> Beginning nuclear spectrum fitting... <==="
     # Add a minimum uncertainty to prevent the statistical uncertainties on the model from being close to 0 due to it being

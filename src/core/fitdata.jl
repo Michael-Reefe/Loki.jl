@@ -107,7 +107,7 @@ See also [`mask_emission_lines`](@ref)
 """
 function continuum_cubic_spline(λ::Vector{<:Quantity}, I::Vector{S}, σ::Vector{S},
     overrides::Vector{Tuple{T,T}}=Vector{Tuple{Quantity,Quantity}}(); do_err::Bool=true,
-    scale::Int=7) where {S<:Number,T<:Quantity}
+    scale::Int=7, max_spline_order::Int=3) where {S<:Number,T<:Quantity}
 
     @debug "continuum_cubic_spline: length(λ)=$(length(λ)), λ range=$(extrema(ustrip.(λ))), $(length(overrides)) override region(s), scale=$scale, do_err=$do_err"
     n_nan_I = count(isnan, ustrip.(I))
@@ -144,7 +144,7 @@ function continuum_cubic_spline(λ::Vector{<:Quantity}, I::Vector{S}, σ::Vector
     # unmasked continuum points for a cubic fit (Dierckx requires more points than the order), so this
     # never crashes on a very short or heavily-masked spectrum; such spaxels are skipped upstream by
     # fit_spaxel's data-sufficiency checks. For a normal spectrum (≥4 unmasked points) kspl==3 as before.
-    kspl = clamp(sum(.~mask_lines) - 1, 1, 3)
+    kspl = clamp(sum(.~mask_lines) - 1, 1, max_spline_order)
     I_spline = Spline1D(_λ[.~mask_lines], _I[.~mask_lines], λknots, k=kspl, bc="extrapolate").(_λ) .* unit(I[1])
     # Linear interpolation over the lines
     I_spline[mask_lines] .= Spline1D(_λ[.~mask_lines], _I[.~mask_lines], λknots, k=1, bc="extrapolate").(_λ[mask_lines]) .* unit(I[1])
@@ -173,6 +173,15 @@ end
 Uses the residuals with a cubic spline fit to calculate statistical errors
 purely based on the scatter in the data.
 """
+# Factor by which to scale the (continuum) statistical uncertainty at a line pixel to account for the Poisson noise
+# of the line flux itself, i.e. sqrt(I/I_cont).  Never goes below 1 (so the uncertainty is never reduced below the
+# local continuum level), and falls back to 1 wherever the ratio is undefined (non-finite or non-positive continuum).
+function line_poisson_factor(I::Number, I_cont::Number)
+    r = ustrip(uconvert(NoUnits, I / I_cont))
+    (isfinite(r) && ustrip(I_cont) > 0) ? sqrt(max(r, 1.0)) : 1.0
+end
+
+
 function calculate_statistical_errors(I::Vector{S}, I_spline::Vector{S}, mask::BitVector) where {S<:Number}
 
     @debug "calculate_statistical_errors: length(I)=$(length(I)), $(sum(mask)) masked pixels, $(sum(.~mask)) unmasked for std estimation"
@@ -190,6 +199,8 @@ function calculate_statistical_errors(I::Vector{S}, I_spline::Vector{S}, mask::B
     for line_ind ∈ line_inds
         insert!(σ_stat, line_ind, σ_stat[max(line_ind-1, 1)])
     end
+    # Add the Poisson noise from the line flux itself on top of the continuum noise
+    σ_stat[mask] .*= line_poisson_factor.(I[mask], I_spline[mask])
     n_nan_σ = count(isnan, ustrip.(σ_stat))
     if n_nan_σ > 0
         @debug "calculate_statistical_errors: WARNING — $n_nan_σ NaN values in σ_stat after computation"

@@ -245,8 +245,9 @@ function make_normalized_spaxel(cube_data::NamedTuple, coords::CartesianIndex, c
     mask = mask_lines .| mask_bad
     n_masked = sum(mask)
     @debug "make_normalized_spaxel: n_line_masked=$(sum(mask_lines)), n_bad_masked=$(sum(mask_bad)), total masked=$n_masked / $(length(mask))"
-    # Calculate statistical errors if necessary
-    if use_ap || use_vorbins
+    # Calculate statistical errors if necessary (only if the input cube's errors were themselves replaced with statistical
+    # errors; otherwise keep the propagated errors from the aperture/voronoi bin)
+    if (use_ap || use_vorbins) && cube_fitter.cube.statistical_errors
         σ .= calculate_statistical_errors(I, I_spline, mask)
         # Add in quadrature with minimum uncertainty
         σ .= sqrt.(σ.^2 .+ σ_min.^2)
