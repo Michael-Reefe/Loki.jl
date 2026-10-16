@@ -1209,7 +1209,7 @@ function fit_stack!(cube_fitter::CubeFitter)
     mask_bad_init = get_init_badpix_mask(I_sum_init, σ_sum_init, cube_fitter; use_vorbins=!isnothing(cube_fitter.cube.voronoi_bins))
     mask_init = mask_lines_init .| mask_bad_init
     mask_chi2_init = mask_bad_init
-    σ_sum_init .= calculate_statistical_errors(I_sum_init, I_spline_init, mask_init)
+    σ_sum_init .= calculate_statistical_errors(cube_fitter, λ_init, I_sum_init, σ_sum_init, mask_init)
 
     # Mask out the chip gaps in NIRSPEC observations
     # (they would technically work considering we are measuring surface brightness and not flux, but in practice it doesn't because
@@ -1605,8 +1605,9 @@ function fit_cube!(cube_fitter::CubeFitter)
     out_params_best = out_params_best .* repeat(reshape(out_units, (1,1,length(out_units))), outer=[shape[1],shape[2],1])
 
     # Create the ParamMaps and CubeModel structs containing the outputs
-    param_maps, param_maps_best, param_units, cube_model = assign_outputs(out_params, out_errs, out_params_best, out_np_ssp, 
-        cube_fitter, cube_data, false)
+    # (cube_data is returned with its errors replaced by those used in the fit, so the saved errors are consistent)
+    param_maps, param_maps_best, param_units, cube_model, cube_data = assign_outputs(out_params, out_errs, out_params_best,
+        out_np_ssp, cube_fitter, cube_data, false)
 
     if oopt.plot_maps
         @info "===> Plotting parameter maps... <==="
@@ -1735,8 +1736,9 @@ function fit_cube!(cube_fitter::CubeFitter, aperture::Union{Vector{<:Aperture.Ab
     out_params_best = out_params_best .* repeat(reshape(out_units, (1,1,length(out_units))), outer=[shape[1],shape[2],1])
 
     # Create the ParamMaps and CubeModel structs containing the outputs
-    param_maps, param_maps_best, param_units, cube_model = assign_outputs(out_params, out_errs, out_params_best, out_np_ssp, 
-        cube_fitter, cube_data, true)
+    # (cube_data is returned with its errors replaced by those used in the fit, so the saved errors are consistent)
+    param_maps, param_maps_best, param_units, cube_model, cube_data = assign_outputs(out_params, out_errs, out_params_best,
+        out_np_ssp, cube_fitter, cube_data, true; mask_bad=mask_bad)
 
     oopt = out_options(cube_fitter)
     if oopt.save_fits
@@ -1817,14 +1819,14 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, agn_templates::Arra
     λ_init = cube_fitter.cube.λ
     I_sum_init, σ_sum_init, templates_init, area_sr_init = get_total_integrated_intensities(cube_fitter)
 
-    # Perform a cubic spline fit, also obtaining the line mask
-    mask_lines_init, I_spline_init, _ = continuum_cubic_spline(λ_init, I_sum_init, σ_sum_init, cube_fitter.linemask_overrides)
+    # Get the line mask
+    mask_lines_init = mask_emission_lines(λ_init, cube_fitter.linemask_overrides)
     mask_bad_init = get_init_badpix_mask(I_sum_init, σ_sum_init, cube_fitter; use_ap=true)
     mask_init = mask_lines_init .| mask_bad_init
     mask_chi2_init = mask_bad_init
     # (σ_min is only used if the statistical errors are recalculated in make_normalized_spaxel)
     if cube_fitter.cube.statistical_errors
-        σ_sum_init  .= calculate_statistical_errors(I_sum_init, I_spline_init, mask_init)
+        σ_sum_init  .= calculate_statistical_errors(cube_fitter, λ_init, I_sum_init, σ_sum_init, mask_init)
         σ_sum_init .*= nanmedian(cube_data.I[1,1,:]./I_sum_init)
     end
 
@@ -1847,8 +1849,9 @@ function post_fit_nuclear_template!(cube_fitter::CubeFitter, agn_templates::Arra
     out_params_best = out_params_best .* repeat(reshape(out_units, (1,1,length(out_units))), outer=[shape[1],shape[2],1])
 
     # Create the ParamMaps and CubeModel structs containing the outputs
-    param_maps, param_maps_best, param_units, cube_model = assign_outputs(out_params, out_errs, out_params_best, out_np_ssp, 
-        cube_fitter, cube_data, true)
+    # (cube_data is returned with its errors replaced by those used in the fit, so the saved errors are consistent)
+    param_maps, param_maps_best, param_units, cube_model, cube_data = assign_outputs(out_params, out_errs, out_params_best,
+        out_np_ssp, cube_fitter, cube_data, true; σ_min=σ_sum_init, mask_bad=mask_bad_init)
 
     # Create another set of ParamMaps and CubeModels--this time 3D--containing the features fluxes dispersed by the PSF model
     param_maps_3d, cube_model_3d = assign_qso3d_outputs(param_maps, cube_model, cube_fitter, psf_norm)

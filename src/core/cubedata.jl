@@ -50,6 +50,10 @@ end
 ############################## DATACUBE STRUCTURE AND FUNCTIONS ####################################
 
 
+# Default options for calculating statistical errors (see `calculate_statistical_errors!`)
+const DEFAULT_STAT_ERR_OPTIONS = (knot_spacing=7, window_half=30, max_spline_order=3, median=false)
+
+
 """ 
     DataCube(λ, I, σ[, mask, Ω, α, δ, psf_fwhm, wcs, channel, band, rest_frame, masked])
 
@@ -83,6 +87,8 @@ An object for holding 3D IFU spectroscopy data.
 - `sky_aligned`: whether or not the data cube is aligned to the sky (RA/Dec) axes or the IFU (α/β) axes
 - `voronoi_bins`: a map giving unique labels to each spaxel which place them within voronoi bins
 - `statistical_errors`: whether or not the errors have been replaced by statistical errors (see `calculate_statistical_errors!`)
+- `statistical_errors_options`: the options (knot_spacing, window_half, max_spline_order, median) that were used to calculate
+    the statistical errors, which are reused whenever statistical errors are recalculated during the fitting process
 """
 mutable struct DataCube{T<:Vector{<:QWave}, S<:Array{<:QSIntensity, 3}}
 
@@ -119,6 +125,7 @@ mutable struct DataCube{T<:Vector{<:QWave}, S<:Array{<:QSIntensity, 3}}
 
     voronoi_bins::Union{Matrix{<:Integer},Nothing}
     statistical_errors::Bool
+    statistical_errors_options::NamedTuple
 
     # This is the constructor for the DataCube struct; see the DataCube docstring for details
     function DataCube(λ::T, I::S, σ::S, mask::Union{BitArray{3},Nothing}=nothing, psf_model::Union{Array{<:Real,3},Nothing}=nothing, 
@@ -127,7 +134,8 @@ mutable struct DataCube{T<:Vector{<:QWave}, S<:Array{<:QSIntensity, 3}}
         user_mask::Union{Vector{Tuple{W,W}},Nothing}=nothing, gaps::Union{Vector{Tuple{W,W}},Nothing}=nothing, 
         rest_frame::Bool=false, z::Union{Real,Nothing}=nothing, masked::Bool=false, vacuum_wave::Bool=true, 
         log_binned::Bool=false, dereddened::Bool=false, sky_aligned::Bool=false, voronoi_bins::Union{Matrix{<:Integer},Nothing}=nothing, 
-        format::Symbol=:MIRI, instrument_channel_edges::Union{T,Nothing}=nothing, statistical_errors::Bool=false) where {
+        format::Symbol=:MIRI, instrument_channel_edges::Union{T,Nothing}=nothing, statistical_errors::Bool=false,
+        statistical_errors_options::NamedTuple=DEFAULT_STAT_ERR_OPTIONS) where {
             T<:Vector{<:Quantity},S<:Array{<:Quantity,3},U<:Vector{<:Quantity},V<:Vector{<:Quantity},W<:Quantity
         }
 
@@ -207,7 +215,8 @@ mutable struct DataCube{T<:Vector{<:QWave}, S<:Array{<:QSIntensity, 3}}
         Tnew = typeof(λ)
         Snew = typeof(I)
         new{Tnew, Snew}(λ, I, σ, mask, psf_model, Ω, α, δ, θ_sky, psf, lsf, wcs, channel, band, nx, ny, nz, spectral_region,
-            rest_frame, masked, vacuum_wave, log_binned, dereddened, sky_aligned, voronoi_bins, statistical_errors)
+            rest_frame, masked, vacuum_wave, log_binned, dereddened, sky_aligned, voronoi_bins, statistical_errors,
+            statistical_errors_options)
     end
 
 end
@@ -406,6 +415,12 @@ function from_fits(filename::String, z::Union{Real,Nothing}=nothing)::DataCube
     if haskey(hdr0, "STATERR")
         statistical_errors = hdr0["STATERR"]
     end
+    statistical_errors_options = (
+        knot_spacing     = haskey(hdr0, "STKNOTS")  ? hdr0["STKNOTS"]  : DEFAULT_STAT_ERR_OPTIONS.knot_spacing,
+        window_half      = haskey(hdr0, "STWINHLF") ? hdr0["STWINHLF"] : DEFAULT_STAT_ERR_OPTIONS.window_half,
+        max_spline_order = haskey(hdr0, "STSPLORD") ? hdr0["STSPLORD"] : DEFAULT_STAT_ERR_OPTIONS.max_spline_order,
+        median           = haskey(hdr0, "STMEDIAN") ? hdr0["STMEDIAN"] : DEFAULT_STAT_ERR_OPTIONS.median
+    )
 
     redshift = z
     if haskey(hdr, "REDSHIFT")
@@ -425,7 +440,7 @@ function from_fits(filename::String, z::Union{Real,Nothing}=nothing)::DataCube
 
     DataCube(λ, Iν, σI, mask, psf_model, Ω, ra, dec, θ_sky, psf, lsf, wcs, channel, band, nothing, gaps, 
         rest_frame, redshift, masked, vacuum_wave, log_binned, dereddened, sky_aligned, nothing, format, nothing,
-        statistical_errors)
+        statistical_errors, statistical_errors_options)
 end
 
 
@@ -1074,13 +1089,15 @@ end
 This function calculates the 'statistical' errors of the given IFU cube, replacing its error cube.
 The statistical errors are defined as the standard deviation of the residuals between the flux and a cubic spline
 fit to the flux, within a small window (60 pixels). Emission lines are masked out during this process.
+The knot_spacing, window_half, max_spline_order, and median options are saved in the cube so that the same options
+are reused whenever the statistical errors are recalculated during the fitting process (i.e. for apertures or voronoi bins).
 """
-function calculate_statistical_errors!(cube::DataCube, 
+function calculate_statistical_errors!(cube::DataCube,
     lines_file::String=joinpath(@__DIR__, "..", "options", "lines.toml"),
-    overrides::Union{Vector{Tuple{T,T}},Nothing}=nothing; 
-    mask_width::typeof(1.0u"km/s")=1000.0u"km/s", 
-    knot_spacing::Int=7, window_half::Int=30, max_spline_order::Int=3,
-    median::Bool=false) where {T<:QLength}
+    overrides::Union{Vector{Tuple{T,T}},Nothing}=nothing;
+    mask_width::typeof(1.0u"km/s")=1000.0u"km/s",
+    knot_spacing::Int=DEFAULT_STAT_ERR_OPTIONS.knot_spacing, window_half::Int=DEFAULT_STAT_ERR_OPTIONS.window_half,
+    max_spline_order::Int=DEFAULT_STAT_ERR_OPTIONS.max_spline_order, median::Bool=DEFAULT_STAT_ERR_OPTIONS.median) where {T<:QLength}
 
     λ = cube.λ
 
@@ -1135,8 +1152,21 @@ function calculate_statistical_errors!(cube::DataCube,
         cube.σ[spaxel, :] .= σ_stat
     end
     cube.statistical_errors = true
+    cube.statistical_errors_options = (knot_spacing=knot_spacing, window_half=window_half,
+        max_spline_order=max_spline_order, median=median)
 
-end 
+end
+
+
+# Helper function for getting the statistical error options of a set of cubes that are being combined
+function combine_statistical_errors_options(cubes::Vector{<:DataCube})
+    opts = cubes[1].statistical_errors_options
+    if all(cube.statistical_errors for cube in cubes) && any(cube.statistical_errors_options != opts for cube in cubes)
+        @warn "The cubes being combined had their statistical errors calculated with different options. " *
+              "The options from the first cube ($opts) will be used if the statistical errors are recalculated."
+    end
+    opts
+end
 
 
 """
@@ -1697,13 +1727,18 @@ function save_fits(path::String, obs::Observation, channels::Vector)
 
         # Header information
         hdr0_keys = String["TARGNAME", "REDSHIFT", "CHANNEL", "BAND", "TARG_RA", "TARG_DEC", "INSTRUME",
-                           "ROTANGLE", "NCHAN", "RESTFRAM", "MASKED", "VACWAVE", "LOGBIN", "DERED", "STATERR", "DATAMODL", "NAXIS"]
+                           "ROTANGLE", "NCHAN", "RESTFRAM", "MASKED", "VACWAVE", "LOGBIN", "DERED", "STATERR",
+                           "STKNOTS", "STWINHLF", "STSPLORD", "STMEDIAN", "DATAMODL", "NAXIS"]
         hdr1_keys =  String["NAXIS", "NAXIS1", "NAXIS2", "NAXIS3", "PIXAR_SR", "PIXAR_A2"]
             
         hdr0_vals = Any[obs.name, obs.z, string(channel), obs.channels[channel].band, ustrip(obs.α), ustrip(obs.δ), 
                         obs.instrument, ustrip(obs.channels[channel].θ_sky), nchannels(obs.channels[channel].spectral_region), 
                         obs.rest_frame, obs.masked, obs.vacuum_wave, obs.log_binned, obs.dereddened, 
-                        obs.channels[channel].statistical_errors, "IFUCubeModel", 0]
+                        obs.channels[channel].statistical_errors,
+                        obs.channels[channel].statistical_errors_options.knot_spacing,
+                        obs.channels[channel].statistical_errors_options.window_half,
+                        obs.channels[channel].statistical_errors_options.max_spline_order,
+                        obs.channels[channel].statistical_errors_options.median, "IFUCubeModel", 0]
         hdr1_vals = Any[3, size(obs.channels[channel].I, 1), size(obs.channels[channel].I, 2), size(obs.channels[channel].I, 3),
                         ustrip(obs.channels[channel].Ω), ustrip(uconvert(u"arcsecond^2", obs.channels[channel].Ω))]
                 
@@ -1711,7 +1746,9 @@ function save_fits(path::String, obs::Observation, channels::Vector)
                                "Right ascension of target (deg.)", "Declination of target (deg.)",
                                "Instrument name", "rotation angle to sky axes", "number of individual wavelength channels/bands in the data", 
                                "data in rest frame?", "data masked?", "vacuum wavelengths?", "log binned?", "dereddened?", 
-                               "statistical errors?", "data model", 
+                               "statistical errors?", "stat. errors: spline knot spacing",
+                               "stat. errors: window half-width", "stat. errors: max spline order",
+                               "stat. errors: median?", "data model", 
                                "Number of data axes"]
         hdr1_comments = String["length of the first axis", "length of the second axis", "length of the third axis", "Number of data axes",
                                "Nominal pixel area in steradians", "Nominal pixel area in arcsec^2"]
@@ -2902,7 +2939,8 @@ function combine_channels!(obs::Observation, channels=nothing, concat_type=:full
         user_mask, gap_mask, obs.rest_frame, obs.z, obs.masked, obs.vacuum_wave, 
         false, obs.dereddened, obs.sky_aligned,
         obs.channels[channels[output_wcs_frame]].voronoi_bins, format, 
-        instrument_channel_edges, all([obs.channels[ch].statistical_errors for ch in channels])
+        instrument_channel_edges, all([obs.channels[ch].statistical_errors for ch in channels]),
+        combine_statistical_errors_options([obs.channels[ch] for ch in channels])
     )
 
     # redo log binning if necessary
@@ -3097,7 +3135,7 @@ function combine_observations(observations::Vector{Observation}; frames=nothing,
             string(band), nothing, gaps, observations[1].rest_frame, observations[1].z, observations[1].masked,
             observations[1].vacuum_wave, observations[1].log_binned, observations[1].dereddened, observations[1].sky_aligned,
             nothing, Symbol(observations[1].instrument), instrument_channel_edges, 
-            all([cube.statistical_errors for cube in cubes])
+            all([cube.statistical_errors for cube in cubes]), combine_statistical_errors_options(cubes)
         )
         push!(ra_all, α_out)
         push!(dec_all, δ_out)

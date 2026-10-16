@@ -127,9 +127,14 @@ end
 # to the best-fit values) and out_params_best holds the best-fit values.  When bootstrapping, two ParamMaps are generated,
 # one for each, otherwise param_maps_best is nothing.  The model cube is always constructed from the best-fit values since 
 # these are guaranteed to be self-consistent.
-function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractArray{<:Number}, 
-    out_params_best::AbstractArray{<:Number}, out_np_ssp::AbstractArray{Int}, cube_fitter::CubeFitter, cube_data::NamedTuple, 
-    aperture::Bool=false)
+# Also returns a copy of cube_data whose errors are replaced by the errors actually used in the fit (i.e. as recomputed by
+# make_normalized_spaxel, which may include re-derived statistical errors for apertures/voronoi bins, σ_min, and the
+# systematic error), so that the saved error cube is consistent with the fit.  σ_min and mask_bad must match the values
+# passed to fit_spaxel.
+function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractArray{<:Number},
+    out_params_best::AbstractArray{<:Number}, out_np_ssp::AbstractArray{Int}, cube_fitter::CubeFitter, cube_data::NamedTuple,
+    aperture::Bool=false; σ_min::Vector=zeros(eltype(cube_data.σ), size(cube_data.σ)[end]),
+    mask_bad::Union{BitVector,Nothing}=nothing)
 
     # Create the CubeModel and ParamMaps structs to be filled in
     np_ssp = maximum(out_np_ssp)
@@ -143,8 +148,9 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
     if isnothing(firsti)
         error("No spaxels were successfully fit; cannot generate output cubes/maps.")
     end
-    spax = make_normalized_spaxel(cube_data, firsti, cube_fitter; use_ap=aperture, 
-        use_vorbins=!isnothing(cube_fitter.cube.voronoi_bins))
+    # (mask_bad is copied since make_normalized_spaxel modifies it in-place)
+    spax = make_normalized_spaxel(cube_data, firsti, cube_fitter; use_ap=aperture,
+        use_vorbins=!isnothing(cube_fitter.cube.voronoi_bins), σ_min=σ_min, mask_bad=isnothing(mask_bad) ? nothing : copy(mask_bad))
     spax_model = spax
     if length(cube_fitter.spectral_region.gaps) > 0
         spax_model = get_model_spaxel(cube_fitter, spax, nothing)
@@ -163,9 +169,13 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
         restframe_factor = 1 / (1 + cube_fitter.z)
     end
 
-    # prepare an array that will hold unit strings for the output    
+    # prepare an array that will hold unit strings for the output
     param_units = Vector{String}(undef, size(param_maps.data, 3))
     param_units .= ""
+
+    # prepare an array that will hold the errors used in the fit (same shape as cube_data.σ; anything that
+    # was not fit keeps its original errors).  Must be a copy since cube_data.σ may be the cube's own error array.
+    σ_fit = copy(cube_data.σ)
 
     # Loop over each spaxel and fill in the associated fitting parameters into the ParamMaps and CubeModel
     # I know this is long and ugly and looks stupid but it works for now and I'll make it pretty later
@@ -205,8 +215,10 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
         if !isnothing(cube_fitter.cube.voronoi_bins)
             iindex = CartesianIndex(cube_fitter.cube.voronoi_bins[index])
         end
-        spax = make_normalized_spaxel(cube_data, iindex, cube_fitter; use_ap=aperture, 
-            use_vorbins=!isnothing(cube_fitter.cube.voronoi_bins))
+        spax = make_normalized_spaxel(cube_data, iindex, cube_fitter; use_ap=aperture,
+            use_vorbins=!isnothing(cube_fitter.cube.voronoi_bins), σ_min=σ_min, mask_bad=isnothing(mask_bad) ? nothing : copy(mask_bad))
+        # Save the (un-normalized) errors that were used in the fit
+        σ_fit[iindex, :] .= spax.σ .* spax.N
         spax_model = copy(spax)
         if length(cube_fitter.spectral_region.gaps) > 0
             @debug "assign_outputs: building gap-filled model spaxel for $index ($(length(cube_fitter.spectral_region.gaps)) gap(s))"
@@ -320,7 +332,7 @@ function assign_outputs(out_params::AbstractArray{<:Number}, out_errs::AbstractA
     end
 
     @debug "assign_outputs: done — processed $(length(spaxels)) spaxels"
-    param_maps, param_maps_best, param_units, cube_model
+    param_maps, param_maps_best, param_units, cube_model, merge(cube_data, (σ=σ_fit,))
 end
 
 

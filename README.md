@@ -33,6 +33,12 @@
 ---
 ## Changelog
 
+### 10/16/26
+
+- Bugfix in saved ERROR output extension of the "_full_model.fits" files if voronoi binning or an aperture is used alongside calculate_statistical_errors!.  Previously, the saved errors did not match the actual errors using during the fitting process since they were recalculated on the combined spectra to account for correlated noise, but the updated values were never saved.  This is now rectified.
+
+- There are now keyword options in `calculate_statistical_errors!` to manually adjust the spline knot spacing (`knot_spacing`, in pixels), half of the rolling window size within which standard deviations are calculated (`window_half`, in pixels), and maximum spline order (`max_spline_order`).  The defaults are 7, 30, and 3, respectively.  These values are saved and propagated to any potential recalculations that must happen during voronoi binning or aperture summing.
+
 ### 08/25/26
 
 - Bugfix in line SNR calculations, which inadvertently ignored user-masked regions of the spectrum.  Therefore, SNRs of lines next to masked regions could be artifically reduced due to a mismatch between the data and the continuum model within the user-masked region, inflating the calculated variance of the residuals.

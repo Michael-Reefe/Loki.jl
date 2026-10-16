@@ -182,13 +182,14 @@ function line_poisson_factor(I::Number, I_cont::Number)
 end
 
 
-function calculate_statistical_errors(I::Vector{S}, I_spline::Vector{S}, mask::BitVector) where {S<:Number}
+function calculate_statistical_errors(I::Vector{S}, I_spline::Vector{S}, mask::BitVector;
+    window_half::Int=DEFAULT_STAT_ERR_OPTIONS.window_half, median::Bool=DEFAULT_STAT_ERR_OPTIONS.median) where {S<:Number}
 
     @debug "calculate_statistical_errors: length(I)=$(length(I)), $(sum(mask)) masked pixels, $(sum(.~mask)) unmasked for std estimation"
     l_mask = sum(.~mask)
     # Statistical uncertainties based on the local RMS of the residuals with a cubic spline fit
     σ_stat = zeros(eltype(I), l_mask)
-    window_size = min(60, l_mask)
+    window_size = min(2window_half, l_mask)
     for i in 1:l_mask
         indices = sortperm(abs.((1:l_mask) .- i))[1:window_size]
         σ_stat[i] = std(I[.~mask][indices] .- I_spline[.~mask][indices])
@@ -201,6 +202,10 @@ function calculate_statistical_errors(I::Vector{S}, I_spline::Vector{S}, mask::B
     end
     # Add the Poisson noise from the line flux itself on top of the continuum noise
     σ_stat[mask] .*= line_poisson_factor.(I[mask], I_spline[mask])
+    # Optionally replace the errors with their median
+    if median
+        σ_stat .= nanmedian(ustrip.(σ_stat)) .* unit(σ_stat[1])
+    end
     n_nan_σ = count(isnan, ustrip.(σ_stat))
     if n_nan_σ > 0
         @debug "calculate_statistical_errors: WARNING — $n_nan_σ NaN values in σ_stat after computation"
@@ -210,6 +215,19 @@ function calculate_statistical_errors(I::Vector{S}, I_spline::Vector{S}, mask::B
 
     σ_stat
 
+end
+
+
+# Recalculate the statistical errors of a spectrum using the same options that were used to calculate the statistical
+# errors of the cube (see calculate_statistical_errors!).  The spline is refit here (rather than reusing one obtained
+# with the default options) so that the knot spacing and spline order are consistent.
+function calculate_statistical_errors(cube_fitter::CubeFitter, λ::Vector{<:QWave}, I::Vector{S}, σ::Vector{S},
+    mask::BitVector) where {S<:Number}
+    opts = cube_fitter.cube.statistical_errors_options
+    @debug "calculate_statistical_errors: recalculating with options $opts"
+    _, I_spline = continuum_cubic_spline(λ, I, σ, cube_fitter.linemask_overrides; do_err=false, scale=opts.knot_spacing,
+        max_spline_order=opts.max_spline_order)
+    calculate_statistical_errors(I, I_spline, mask; window_half=opts.window_half, median=opts.median)
 end
 
 
